@@ -223,9 +223,15 @@ export type {
 export type {
   ToolPolicyDecision,
   ToolPolicyDecisionReason,
+  ToolPolicySnapshot,
   ToolSafetyClassification,
 } from "./tool-policy.js";
-export { classifyToolSafety, decideToolPolicy } from "./tool-policy.js";
+export {
+  buildToolPolicySnapshot,
+  classifyToolSafety,
+  decideToolPolicy,
+  decideToolPolicyFromSnapshot,
+} from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
   EVAL_SUITE_SCHEMA_VERSION,

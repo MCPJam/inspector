@@ -134,6 +134,15 @@ import {
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
 import {
+  isSealedHarnessProxyToken,
+  sealHarnessProxyToken,
+} from "./harness-proxy-policy-seal.js";
+import {
+  readHarnessPolicyBlockMarker,
+  type HarnessPolicyBlockRecord,
+} from "./harness-proxy-policy-enforcement.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
   harnessScopeStepUpServerMatches,
   subscribeHarnessScopeStepUp,
   type HarnessScopeStepUpEvent,
@@ -159,7 +168,7 @@ export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
  * tunnel + adapter-http (local) or direct `/api/web/harness-mcp` (hosted). A
  * selected id with no live config is skipped.
  */
-async function buildHarnessProxyMcpJsonFromManager(args: {
+export async function buildHarnessProxyMcpJsonFromManager(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
   authHeader: string;
@@ -169,6 +178,15 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   /** Plugin origin per server id (INS-7). A plugin-contributed server that
    *  can't be delivered fails the turn instead of being skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
+  /**
+   * Per-server resolved `toolPolicy` decisions for this run. A server with a
+   * snapshot gets a SEALED token (policy + credential in one opaque value) so
+   * the out-of-process MCP calls are enforced at the proxy; a server without
+   * one keeps today's bare token.
+   */
+  toolPolicy?: Record<string, ToolPolicySnapshot>;
+  /** Seal expiry for the sealed envelope (unix ms). */
+  toolPolicySealExpiresAtMs?: number;
 }) {
   const {
     manager,
@@ -178,6 +196,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     strategy,
     pluginOrigins,
     scopeStepUpCorrelationId,
+    toolPolicy,
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
@@ -222,10 +241,27 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
+      const policy = toolPolicy?.[id];
       inputs.push({
         name: id,
         proxyUrl: url,
-        proxyToken: token,
+        // A policied server carries the SEALED token INSTEAD of the bare one:
+        // the sandbox must not hold a working unpoliced credential, or removing
+        // the policy from `.mcp.json` would restore unpoliced access. Sealing
+        // throws when the deployment can't seal — refusing the run rather than
+        // running it unenforced.
+        ...(policy
+          ? {
+              sealedProxyToken: sealHarnessProxyToken({
+                token,
+                serverId: id,
+                policy,
+                expiresAtMs:
+                  args.toolPolicySealExpiresAtMs ??
+                  Date.now() + DEFAULT_POLICY_SEAL_TTL_MS,
+              }),
+            }
+          : { proxyToken: token }),
         scopeStepUpCorrelationId,
       });
     }
@@ -234,6 +270,14 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     // names with no Convex row), reached through the per-server adapter tunnel.
     // The tunnel's `?k=` secret is the auth (adapter-http validate-when-present)
     // — no Convex identity token to mint.
+    // The local plane's route (`adapter-http`) is validate-when-present: a
+    // dropped token still works, so a sealed policy would not be enforceable
+    // there. A policied run must never reach it.
+    if (toolPolicy) {
+      throw new Error(
+        "TOOL_POLICY_UNSUPPORTED: a tool policy cannot be enforced on the local-mcp harness plane (adapter-http accepts an absent proxy token), so the run is refused rather than run unenforced"
+      );
+    }
     for (const id of configured) {
       const url = await resolveHarnessProxyUrl({
         strategy,
@@ -243,8 +287,25 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
       inputs.push({ name: id, proxyUrl: url, scopeStepUpCorrelationId });
     }
   }
+  // DERIVE, don't declare: verify the assembled config actually carries a
+  // sealed token for every policied server. A policied entry that ended up with
+  // a bare token would be an unenforced run.
+  const mcpJson = buildHarnessProxyMcpJson(inputs);
+  if (toolPolicy) {
+    const keyToName = harnessServerKeyToName(inputs);
+    for (const [key, entry] of Object.entries(mcpJson.mcpServers)) {
+      const serverId = keyToName[key];
+      if (!serverId || !toolPolicy[serverId]) continue;
+      const header = entry.headers?.["X-MCPJam-Proxy-Token"];
+      if (!isSealedHarnessProxyToken(header)) {
+        throw new Error(
+          `TOOL_POLICY_UNSEALED: harness .mcp.json entry for serverId=${serverId} carries an unsealed proxy token while a tool policy is in force — refusing to run unenforced`
+        );
+      }
+    }
+  }
   return {
-    mcpJson: buildHarnessProxyMcpJson(inputs),
+    mcpJson,
     // Sanitized .mcp.json key → serverId, so Claude Code's mcp__<key>__<tool>
     // tool names map back to a serverId for eval matching / spans / MCP App
     // rendering (which all key off serverId + the un-namespaced tool name).
@@ -410,6 +471,12 @@ export function harnessRuntimeFingerprint(parts: {
  */
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
 
+/** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
+ *  for a real harness turn, short enough to bound a leaked seal (§3's
+ *  out-of-scope replay is bounded by exactly this and the inner token's own
+ *  expiry). */
+const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none"
@@ -441,6 +508,8 @@ export async function runHarnessTurn(
     hostId,
     harness,
     harnessMcpProxy,
+    harnessToolPolicy,
+    onHarnessPolicyBlocks,
     builtInTools,
     computerWorkdir,
     harnessSandboxBinding,
@@ -569,6 +638,16 @@ export async function runHarnessTurn(
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
+  // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
+  // block happens on whichever replica served the call; it is accounted for
+  // HERE, off the result the harness reports back, and handed to the caller
+  // (`onHarnessPolicyBlocks`) as the same records the in-process gate produces.
+  const harnessPolicyBlocks: HarnessPolicyBlockRecord[] = [];
+  const flushHarnessPolicyBlocks = () => {
+    if (harnessPolicyBlocks.length === 0) return;
+    onHarnessPolicyBlocks?.([...harnessPolicyBlocks]);
+    harnessPolicyBlocks.length = 0;
+  };
   // ── Live trace emission (parity with runChatEngineLoop's writeTraceEvent) ──
   // The Trace tab is built entirely from `data-trace-event` SSE parts; the
   // harness path must emit turn_start / trace_snapshot / turn_finish or the tab
@@ -823,6 +902,9 @@ export async function runHarnessTurn(
               projectId,
               strategy: harnessMcpProxy ?? { plane: "local-mcp" },
               scopeStepUpCorrelationId: turnId,
+              // Policied servers get a SEALED token instead of a bare one, so
+              // the sandbox's own MCP calls are enforced at the proxy.
+              ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
               // INS-7: plugin-contributed servers ride this SAME proxy path as
               // ordinary server ids (they are ordinary server ids) — the origin
               // map only decides how a delivery failure is reported.
@@ -1977,6 +2059,29 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
+            // A tool call the MCP proxy blocked on policy. Trusted only when
+            // THIS run sealed a policy for that server: the marker rides a
+            // result the upstream server also writes into, and an unpoliced run
+            // that honoured it would let a server hide its own call from the
+            // matcher.
+            const policyBlock =
+              meta.serverId && harnessToolPolicy?.[meta.serverId]
+                ? readHarnessPolicyBlockMarker(output)
+                : null;
+            if (policyBlock) {
+              harnessPolicyBlocks.push({
+                toolName: policyBlock.toolName,
+                reason: policyBlock.reason,
+                classification: policyBlock.classification,
+                at: Date.now(),
+                toolCallId,
+                ...(meta.serverId ? { serverId: meta.serverId } : {}),
+              });
+              // Reported as it happens, not at finish: the caller excludes
+              // blocked `toolCallId`s from the matcher off the returned
+              // transcript, which it reads as soon as the turn resolves.
+              flushHarnessPolicyBlocks();
+            }
             if (
               scopeStepUpCreation &&
               toolCallId === suspendedHarnessToolCallId
@@ -1995,34 +2100,41 @@ export async function runHarnessTurn(
               output,
               providerExecuted: true,
             });
-            await onToolResult?.({
-              toolCallId,
-              toolName: meta.toolName,
-              output,
-              isError,
-              stepIndex,
-              promptIndex,
-              serverId: meta.serverId,
-            });
-            // Record a tool span for the turn trace (cumulative; snapshotted into
-            // each onStepFinish and the final PersistedTurnTrace.spans).
-            capturedSpans.push({
-              id: crypto.randomUUID(),
-              name: meta.toolName,
-              category: "tool",
-              // Turn-relative offsets (see the llm span above).
-              ...createOffsetInterval(
-                traceBaseMs,
-                toolStartMs.get(toolCallId) ?? Date.now(),
-                Date.now()
-              ),
-              promptIndex,
-              stepIndex,
-              status: isError ? "error" : "ok",
-              toolCallId,
-              toolName: meta.toolName,
-              ...(meta.serverId ? { serverId: meta.serverId } : {}),
-            });
+            // A policy block is neither a tool result nor a tool span: it never
+            // reached the server, so counting it as either would attribute a
+            // MCPJam refusal to the customer's tool (a `notMeasured` +
+            // `blockedByPolicy` outcome, never `failed`). It stays in the
+            // transcript below, because the model did see the refusal.
+            if (!policyBlock) {
+              await onToolResult?.({
+                toolCallId,
+                toolName: meta.toolName,
+                output,
+                isError,
+                stepIndex,
+                promptIndex,
+                serverId: meta.serverId,
+              });
+              // Record a tool span for the turn trace (cumulative; snapshotted
+              // into each onStepFinish and the final PersistedTurnTrace.spans).
+              capturedSpans.push({
+                id: crypto.randomUUID(),
+                name: meta.toolName,
+                category: "tool",
+                // Turn-relative offsets (see the llm span above).
+                ...createOffsetInterval(
+                  traceBaseMs,
+                  toolStartMs.get(toolCallId) ?? Date.now(),
+                  Date.now()
+                ),
+                promptIndex,
+                stepIndex,
+                status: isError ? "error" : "ok",
+                toolCallId,
+                toolName: meta.toolName,
+                ...(meta.serverId ? { serverId: meta.serverId } : {}),
+              });
+            }
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,
@@ -2461,6 +2573,9 @@ export async function runHarnessTurn(
   // `execute`'s finally rather than the SDK's `onFinish`.
   const onFinishEngine = async (receiptWriter?: ChunkWriter) => {
     clearReservationHeartbeat();
+    // Anything not already reported at detection (a turn that ended between a
+    // block and its flush) still has to be accounted for.
+    flushHarnessPolicyBlocks();
     // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
     // + clear the E2B egress rule before the persistence/cleanup callbacks below,
     // which could hang and would otherwise keep the credential live until TTL/cron.

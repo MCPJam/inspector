@@ -75,6 +75,7 @@ import {
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
 import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
   countModelSteps,
@@ -2213,14 +2214,27 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
     );
   }
-  if (toolPolicy && harnessAdmission.harness) {
-    const reason =
-      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.";
-    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
-    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
-      reason: "TOOL_POLICY_UNSUPPORTED",
-      harness: harnessAdmission.harness,
+  // Harness MCP calls run out of process, so the policy is enforced at the MCP
+  // proxy the generated `.mcp.json` points at — sealed into the proxy token, so
+  // dropping the policy drops the credential. Refused only when this deployment
+  // cannot seal it.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: Boolean(harnessAdmission.harness),
+  });
+  if (harnessPolicyRefusal) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: harnessPolicyRefusal,
     });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessPolicyRefusal,
+      {
+        reason: "TOOL_POLICY_UNSUPPORTED",
+        harness: harnessAdmission.harness,
+      }
+    );
   }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
@@ -2520,11 +2534,17 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  if (toolPolicy && harnessOfHostConfig(effectiveHostConfig)) {
+  // Enforced at the MCP proxy for harness runs (see the suite path); refused
+  // only where this deployment cannot seal the policy into the proxy token.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+  });
+  if (harnessPolicyRefusal) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.",
+      harnessPolicyRefusal,
       { reason: "TOOL_POLICY_UNSUPPORTED" }
     );
   }
@@ -2938,11 +2958,17 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  if (toolPolicy && harnessOfHostConfig(effectiveHostConfig)) {
+  // Enforced at the MCP proxy for harness runs (see the suite path); refused
+  // only where this deployment cannot seal the policy into the proxy token.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+  });
+  if (harnessPolicyRefusal) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.",
+      harnessPolicyRefusal,
       { reason: "TOOL_POLICY_UNSUPPORTED" }
     );
   }
