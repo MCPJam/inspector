@@ -634,20 +634,32 @@ jobs:
     uses: ./.github/workflows/deploy-soundcheck.yml
     secrets: inherit
 
-  # Deliberately does NOT wait on deploy-webapp / the satellites. Its `if` never
-  # required them — with `always()` it ran even when they failed — so listing
-  # them in `needs` only added ~4 min of idle wall clock after the packages were
-  # already on npm. The published npm versions are the thing the tag and GitHub
-  # release describe, and those exist as soon as publish-packages succeeds.
+  # These `needs` look like dead weight — the `if` below never required the
+  # deploy jobs, and with `always()` this runs even when they fail. They are
+  # NOT dead weight, and removing them breaks the satellite ordering invariant:
   #
-  # Consequence to know: the tag and GitHub release can now appear a few minutes
-  # before the production webapp finishes deploying (or when that deploy fails).
-  # The artifacts it attaches are still guaranteed — publish-packages requires
-  # artifact-gate, which requires both desktop builds.
+  # This job pushes the version commit, which touches `package-lock.json` — a
+  # path in BOTH satellites' `push:` triggers. If the push lands while
+  # deploy-webapp is still running, those push-triggered runs find the
+  # `slack-app` / `soundcheck` concurrency groups free (the release's own
+  # satellite jobs have not started — they are waiting on the webapp) and
+  # deploy the satellites AHEAD of the server whose contract they render.
+  #
+  # Waiting is what makes the push safe: by the time it happens the satellite
+  # jobs already hold/released those groups, so the push-triggered run is an
+  # idempotent duplicate that lands after — exactly what the comment on
+  # deploy-slack-app above describes.
+  #
+  # Note this costs nothing when deploy_webapp=false: those jobs are skipped,
+  # and `always()` lets this one proceed the moment publish-packages is done.
   finalize:
     needs:
       - preflight
       - publish-packages
+      - deploy-backend-prod
+      - deploy-webapp
+      - deploy-slack-app
+      - deploy-soundcheck
     if: |
       always() &&
       needs.preflight.result == 'success' &&
