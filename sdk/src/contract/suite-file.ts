@@ -203,13 +203,23 @@ export type EvalSuiteFileTarget = z.infer<typeof evalSuiteFileTargetSchema>;
  * semantics are pinned so a loader is accountable to this file rather than to
  * memory:
  *
- *   - `minEligibleTrials`     — no default; absent means "no minimum".
+ *   - `minEligibleTrials`     — no numeric default, but ABSENT IS NOT "no
+ *     minimum". Omission selects the default coverage floor: every configured
+ *     trial must have been attempted, and the suite must have at least one
+ *     gradeable trial. An explicit `N` REPLACES that floor with
+ *     `eligibleTrials >= N`, which deliberately tolerates unattempted trials.
  *   - `minCompletionRate`     — defaults to **0.8**.
  *   - `maxEvaluatorErrorRate` — defaults to **0.1**.
  *
+ * The three are INDEPENDENT checks; the loader resolves the coverage rule into
+ * `ResolvedEvalSuiteFileValidity.coverage`, and
+ * `contract/verdict-policy.ts` is where a verdict is decided against it.
+ *
  * A run that misses any of these is INVALID, which is not the same as failed: a
  * suite whose judge errored on half its iterations has not measured the server,
- * and reporting that as a failure blames the server for the grader.
+ * and reporting that as a failure blames the server for the grader. Reading
+ * omission as "no minimum" is the same bug in a quieter form: it lets a suite
+ * that ran one trial out of thirty report a confident pass.
  */
 export const evalSuiteFileValiditySchema = z
   .object({
@@ -221,7 +231,19 @@ export const evalSuiteFileValiditySchema = z
 export type EvalSuiteFileValidity = z.infer<typeof evalSuiteFileValiditySchema>;
 
 /**
- * Which tools the agent may call.
+ * Which tools the agent is RESTRAINED from calling.
+ *
+ * `mode` does the restraining: `readOnly` permits only tools an annotation
+ * classifies read-only, `default` permits everything except tools annotated
+ * `destructiveHint`. `deny` removes a tool by name under either mode.
+ *
+ * `allow` is an OVERRIDE, not a whitelist — it exempts a named tool from the
+ * mode-derived rules (including `default` mode's destructive deny-by-default),
+ * and it never restricts anything on its own. `{ mode: "default", allow:
+ * ["read_file"] }` therefore restrains NOTHING; the tools an author wants
+ * stopped belong in `deny`, or the suite belongs in `readOnly` mode. Stated
+ * here because reading `allow` as "the only tools the agent may call" is the
+ * one misreading that silently produces an unrestricted run.
  *
  * `allow`/`deny` entries are non-empty tool names; the empty string is rejected
  * structurally (rather than in a refinement) so the generated JSON Schema

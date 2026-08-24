@@ -251,6 +251,14 @@ export function HostConfigCompareView({
     if (!codexEnabled) excluded.add("codex");
     return excluded;
   }, [claudeCodeEnabled, codexEnabled, presetOnly]);
+  // Public caniuse still displays flag-gated hosts as reference data, but
+  // must not offer their verify links because those links auto-create a host.
+  const disabledVerifyTemplateIds = useMemo(() => {
+    const disabled = new Set<string>();
+    if (presetOnly || !claudeCodeEnabled) disabled.add("claude-code");
+    if (presetOnly || !codexEnabled) disabled.add("codex");
+    return disabled;
+  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
@@ -689,6 +697,7 @@ export function HostConfigCompareView({
                         selectedHostIdSet.size > 1 ? handleToggleHost : undefined
                       }
                       verifyBaseUrl={verifyBaseUrl}
+                      disabledVerifyTemplateIds={disabledVerifyTemplateIds}
                     />
                   </div>
                 ) : (
