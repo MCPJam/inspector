@@ -1,6 +1,7 @@
 ---
 "@mcpjam/inspector": minor
 "@mcpjam/sdk": minor
+"@mcpjam/cli": minor
 ---
 
 Let agents see and drive MCP App widgets, not just read their HTML.

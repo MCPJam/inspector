@@ -190,4 +190,36 @@ describe("POST /v1/projects/:projectId/servers/:serverId/widgets/render", () => 
     await post();
     expect(disposeMock).toHaveBeenCalledTimes(1);
   });
+
+  it("labels a re-encoded screenshot as JPEG, not PNG", async () => {
+    // The harness re-shoots as progressively lower-quality JPEG when the PNG
+    // is over its byte budget — the common path for photographic widgets — so
+    // a hardcoded image/png mislabels exactly the screenshots most likely to
+    // be re-encoded, and a client that trusts the type fails to render a
+    // perfectly good image. `/9j/` is base64 for JPEG's SOI marker.
+    renderWidgetMock.mockResolvedValue(
+      renderedResult({ screenshotBase64: "/9j/4AAQSkZJRg==" }),
+    );
+    const body = await (
+      await post({ toolName: "show_map", includeScreenshot: true })
+    ).json();
+    expect(body.screenshot.mimeType).toBe("image/jpeg");
+  });
+
+  it("gives up on a render that outruns the wall clock", async () => {
+    // The first cut set a timer that only logged, and `runV1ServerOp`'s
+    // timeoutMs bounds the MCP manager rather than the Playwright render — so
+    // a stuck widget held its request, its Chromium and its concurrency slot
+    // indefinitely, past the wall clock the module advertises.
+    vi.useFakeTimers();
+    try {
+      renderWidgetMock.mockImplementation(() => new Promise(() => {}) as never);
+      const pending = post();
+      await vi.advanceTimersByTimeAsync(46_000);
+      const response = await pending;
+      expect(response.status).toBe(504);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

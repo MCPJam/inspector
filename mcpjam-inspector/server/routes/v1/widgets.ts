@@ -47,6 +47,56 @@ import { v1Resource } from "./envelope.js";
 const widgets = new Hono();
 
 /**
+ * Resolve `work`, or reject once `ms` have passed.
+ *
+ * The loser is NOT cancelled — the render core takes no abort signal — so this
+ * bounds the REQUEST, and the caller's `finally` (disposing the harness) is
+ * what bounds the browser. Both are needed: without the race a stuck widget
+ * holds the request forever; without the disposal it holds Chromium forever.
+ */
+async function raceDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  toolName: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          logger.warn("[v1/widgets] render exceeded its wall clock", {
+            toolName,
+          });
+          reject(
+            new WebRouteError(
+              504,
+              ErrorCode.TIMEOUT,
+              `Rendering "${toolName}" exceeded the ${ms / 1000}s limit.`,
+            ),
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Read an image's type from its own first bytes.
+ *
+ * Only PNG and JPEG are possible here (the harness shoots one or the other),
+ * and an unrecognised prefix falls back to PNG — the harness's default and the
+ * only other thing it emits.
+ */
+function detectImageMimeType(base64: string): string {
+  // `/9j/` is the base64 prefix of JPEG's SOI marker; `iVBORw0KG` is PNG's.
+  if (base64.startsWith("/9j/")) return "image/jpeg";
+  return "image/png";
+}
+
+/**
  * Concurrent renders per replica.
  *
  * Each one holds a Chromium context for the length of a page load, so this is
@@ -122,33 +172,39 @@ widgets.post(
         }
         activeRenders += 1;
         const startedAt = Date.now();
-        // The wall clock guards the RENDER, which is the unbounded part: a
-        // widget that fetches from a slow CDN can sit in load forever, and the
-        // harness's own per-phase timeouts do not compose into a request-level
-        // ceiling.
-        const timeout = setTimeout(() => {
-          logger.warn("[v1/widgets] render exceeded its wall clock", {
-            toolName: body.toolName,
-          });
-        }, RENDER_WALL_CLOCK_MS);
 
         let result:
           | Awaited<ReturnType<typeof renderWidgetForRequest>>
           | undefined;
         try {
-          result = await renderWidgetForRequest({
-            mcpClientManager: manager,
-            serverId: body.serverId,
-            toolName: body.toolName,
-            parameters: body.parameters ?? {},
-            injectOpenAiCompat: body.injectOpenAiCompat === true,
-            ...(body.viewport ? { viewport: body.viewport } : {}),
-            keepMounted: false,
-            // D12: snapshot by default, screenshot on request.
-            ...(body.includeSnapshot === false
-              ? {}
-              : { captureSnapshot: true }),
-          });
+          // A REAL deadline, not a log line. The first cut set a timer that
+          // only warned, and `runV1ServerOp`'s `timeoutMs` configures the
+          // ephemeral MCP manager rather than the Playwright render that
+          // follows it — so a widget stuck loading from a slow CDN held its
+          // request, its Chromium, and its concurrency slot indefinitely,
+          // past the wall clock the module advertises.
+          //
+          // The loser of this race is not cancelled (the render core takes no
+          // abort signal), but the `finally` disposes the harness, which is
+          // what actually kills the browser and frees the slot. So the
+          // resources are bounded even though the promise may dangle.
+          result = await raceDeadline(
+            renderWidgetForRequest({
+              mcpClientManager: manager,
+              serverId: body.serverId,
+              toolName: body.toolName,
+              parameters: body.parameters ?? {},
+              injectOpenAiCompat: body.injectOpenAiCompat === true,
+              ...(body.viewport ? { viewport: body.viewport } : {}),
+              keepMounted: false,
+              // D12: snapshot by default, screenshot on request.
+              ...(body.includeSnapshot === false
+                ? {}
+                : { captureSnapshot: true }),
+            }),
+            RENDER_WALL_CLOCK_MS,
+            body.toolName,
+          );
 
           const observation = result.observation;
           if (observation.status === "no_ui_resource") {
@@ -160,9 +216,16 @@ widgets.post(
           }
           if (observation.status === "browser_unavailable") {
             throw new WebRouteError(
-              // The deployment cannot do this, which is a capability fact
-              // about us — not the caller's input and not the server's fault.
-              503 as never,
+              // 422, and the status argument is NOT what decides that:
+              // `v1OnError` derives the wire status from the public CODE
+              // (`V1_ERROR_STATUS`), so the earlier `503 as never` cast here
+              // was decoration that changed nothing while implying it did.
+              //
+              // 422 is also the honest answer. The public union has no 503,
+              // and "this deployment does not have a browser" is a standing
+              // capability fact rather than a transient outage — a caller
+              // should stop asking, not back off and retry.
+              422,
               ErrorCode.FEATURE_NOT_SUPPORTED,
               `Headless Chromium is unavailable on this deployment (${CHROMIUM_INSTALL_HINT}).`,
             );
@@ -190,7 +253,14 @@ widgets.post(
             ...(body.includeScreenshot === true && observation.screenshotBase64
               ? {
                   screenshot: {
-                    mimeType: "image/png",
+                    // DETECTED, not assumed. The harness re-shoots as
+                    // progressively lower-quality JPEG when the PNG is over
+                    // its byte budget — the common path for photographic or
+                    // complex widgets — so a hardcoded `image/png` mislabels
+                    // exactly the screenshots most likely to be re-encoded,
+                    // and a client that trusts the type fails to render a
+                    // perfectly good image.
+                    mimeType: detectImageMimeType(observation.screenshotBase64),
                     base64: observation.screenshotBase64,
                   },
                 }
@@ -201,16 +271,27 @@ widgets.post(
             },
           };
         } finally {
-          clearTimeout(timeout);
-          activeRenders -= 1;
-          // Always tear the browser down. Detached but observably so — a
-          // leaked Chromium is the failure mode that takes a replica out, and
-          // it must never be silent.
-          void result?.harness?.dispose().catch((error) => {
-            logger.warn("[v1/widgets] harness disposal failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
+          // THE SLOT IS HELD UNTIL THE BROWSER IS ACTUALLY GONE. Decrementing
+          // before a detached `dispose()` settles would let the next request
+          // launch a browser while every previous context still existed —
+          // which defeats the per-replica ceiling this counter exists to be,
+          // and accumulates Chromium processes until the replica dies.
+          //
+          // Still detached from the RESPONSE: the caller is not made to wait
+          // for teardown, only the next render is.
+          void (async () => {
+            try {
+              await result?.harness?.dispose();
+            } catch (error) {
+              // A leaked Chromium is the failure mode that takes a replica
+              // out; it must never be silent.
+              logger.warn("[v1/widgets] harness disposal failed", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            } finally {
+              activeRenders -= 1;
+            }
+          })();
         }
       },
       (ctx, result) => v1Resource(ctx, result),

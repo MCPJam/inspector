@@ -254,6 +254,48 @@ const SNAPSHOT_INTERACTIVE_ROLES = [
   "spinbutton",
 ] as const;
 
+/** Per-element attribute lookup budget while enriching a snapshot. */
+const SNAPSHOT_ATTRIBUTE_TIMEOUT_MS = 1_000;
+
+/**
+ * Pull addressable `(role, name)` pairs out of a Playwright ARIA snapshot.
+ *
+ * The snapshot is line-oriented YAML-ish: `- button "Submit"`, `- textbox`,
+ * `- link "Docs" [ref=e3]`. Only the roles a scripted step can act on are
+ * listed, because a target the caller cannot use is noise they still pay
+ * tokens for.
+ *
+ * A `(role, name)` pair seen more than once is marked `ambiguous` on EVERY
+ * occurrence — including the first, which only the second sighting proves —
+ * so a caller knows to add `nth` before using it rather than discovering the
+ * collision when the step fails.
+ */
+export function parseSnapshotElements(tree: string): SnapshotElement[] {
+  const roles = new Set<string>(SNAPSHOT_INTERACTIVE_ROLES);
+  const elements: SnapshotElement[] = [];
+  const counts = new Map<string, number>();
+  for (const line of tree.split("\n")) {
+    if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
+    // `- <role>` optionally followed by a quoted accessible name. Anything
+    // after (refs, state flags like `[checked]`) is deliberately ignored.
+    const match = /^\s*-\s+([a-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?/.exec(line);
+    if (!match) continue;
+    const role = match[1]!;
+    if (!roles.has(role)) continue;
+    const name = match[2]
+      ? match[2].replace(/\\(["\\])/g, "$1")
+      : undefined;
+    const key = `${role}\u0000${name ?? ""}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    elements.push({ role: { role, ...(name ? { name } : {}) } });
+  }
+  for (const element of elements) {
+    const key = `${element.role!.role}\u0000${element.role!.name ?? ""}`;
+    if ((counts.get(key) ?? 0) > 1) element.ambiguous = true;
+  }
+  return elements;
+}
+
 export interface HarnessBudgets {
   /** Per-rendered-widget cap on `executeAction` calls before forced dismiss. */
   maxBrowserStepsPerWidget: number;
@@ -1263,6 +1305,27 @@ export class McpAppBrowserHarness {
         note: "no_rendered_widget",
       };
     }
+    // The SAME per-widget budget `executeAction` enforces, and for the same
+    // reason: a scripted step drives the page and captures a frame, so a
+    // caller that only ever posts semantic steps would otherwise drive a
+    // runaway widget forever — refreshing the session TTL on every call —
+    // while the coordinate path next door is capped at twelve. This became
+    // reachable when the step path was exposed as its own route; before that
+    // only the eval runner drove it, with its own bounded step list.
+    const stepBudgetExceeded =
+      widget.actionCount >= this.budgets.maxBrowserStepsPerWidget;
+    if (stepBudgetExceeded) {
+      await this.unmount(input.toolCallId);
+      return {
+        step,
+        ok: false,
+        reason: "per-widget step budget exhausted",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: Date.now() - started,
+        note: "step_budget_exceeded",
+      };
+    }
     widget.actionCount += 1;
     this.toolCallBuffer = [];
     this.followUpBuffer = [];
@@ -1564,62 +1627,37 @@ export class McpAppBrowserHarness {
       truncated = true;
     }
 
-    const elements: SnapshotElement[] = [];
-    for (const role of SNAPSHOT_INTERACTIVE_ROLES) {
-      if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
-      let handles: Locator[];
+    // ELEMENTS ARE DERIVED FROM THE TREE, not from DOM attributes.
+    //
+    // The first cut read `aria-label` and fell back to `innerText`, which is
+    // wrong for most real forms: a control named through `<label for>`,
+    // `aria-labelledby`, an `alt`, or a `title` has no `aria-label` and often
+    // no text of its own, so it came back role-only and ambiguous — while the
+    // tree printed directly above it showed the name perfectly well. The
+    // snapshot contradicted itself, and the read-a-control-and-post-it-back
+    // workflow this exists for broke on exactly the widgets people build.
+    //
+    // Playwright's ARIA snapshot already carries the COMPUTED accessible name,
+    // which is the same string `getByRole(role, { name })` matches on. Parsing
+    // it means the elements can only ever agree with the tree beside them.
+    const elements = parseSnapshotElements(tree);
+    // Test ids are not in the tree, so they are looked up only for the
+    // elements already selected — bounded work, and purely additive: a target
+    // is usable without one.
+    for (const element of elements) {
+      if (!element.role?.name) continue;
       try {
-        handles = await frame
-          .getByRole(role as Parameters<FrameLocator["getByRole"]>[0])
-          .all();
+        const testId = await frame
+          .getByRole(
+            element.role.role as Parameters<FrameLocator["getByRole"]>[0],
+            { name: element.role.name, exact: true },
+          )
+          .first()
+          .getAttribute("data-testid", { timeout: SNAPSHOT_ATTRIBUTE_TIMEOUT_MS });
+        if (testId) element.testId = testId;
       } catch {
-        continue;
-      }
-      // Count per accessible NAME, not per role: `nth` in a scripted-step
-      // target disambiguates within a (role, name) pair, so that is the pair
-      // whose multiplicity the caller needs told about.
-      const seen = new Map<string, number>();
-      for (const handle of handles) {
-        if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
-        let name = "";
-        let testId: string | undefined;
-        try {
-          name = (
-            await handle.getAttribute("aria-label", {
-              timeout: SCRIPTED_STEP_TIMEOUT_MS,
-            })
-          )?.trim() ??
-            (await handle.innerText({ timeout: SCRIPTED_STEP_TIMEOUT_MS }))
-              .trim();
-          testId =
-            (await handle.getAttribute("data-testid", {
-              timeout: SCRIPTED_STEP_TIMEOUT_MS,
-            })) ?? undefined;
-        } catch {
-          // An element that detached mid-walk is simply not listed. It cannot
-          // be targeted either, so omitting it is the honest answer.
-          continue;
-        }
-        const key = `${role}\u0000${name}`;
-        const index = seen.get(key) ?? 0;
-        seen.set(key, index + 1);
-        elements.push({
-          role: { role, ...(name ? { name } : {}) },
-          ...(testId ? { testId } : {}),
-          ...(index > 0 ? { ambiguous: true as const } : {}),
-        });
-      }
-      // Retro-flag the FIRST of a duplicated (role, name): the caller needs to
-      // know the target is ambiguous before it uses it, and only the second
-      // sighting proves it.
-      for (const [key, count] of seen) {
-        if (count <= 1) continue;
-        const [dupRole, dupName] = key.split("\u0000");
-        const first = elements.find(
-          (entry) =>
-            entry.role?.role === dupRole && (entry.role?.name ?? "") === dupName
-        );
-        if (first) first.ambiguous = true;
+        // A detached or ambiguous element simply has no test id listed. It is
+        // still addressable by role and name.
       }
     }
 

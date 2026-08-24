@@ -340,11 +340,17 @@ export class WidgetRenderSessionRegistry {
   /**
    * Capture a text view of the session's mounted widget.
    *
-   * REFRESHES the TTL but does not take the in-flight lock: a snapshot only
-   * reads, so two concurrent snapshots cannot interleave input the way two
-   * actions would. It is still refused while an ACTION is in flight — reading
-   * the tree halfway through a click would describe a state that never existed
-   * as far as the caller is concerned.
+   * TAKES THE IN-FLIGHT LOCK for the whole capture, exactly as the action
+   * paths do. Checking `inFlight` and then not claiming it looked safe — a
+   * snapshot only reads — and was not: an action arriving after the check
+   * still saw `inFlight === 0` and drove the same page, so the tree and the
+   * element enrichment could describe two different DOM states. Worse, an
+   * unmarked capture is not protected from the idle sweep, which could dispose
+   * the page mid-read.
+   *
+   * It does NOT consume the widget's step budget. Looking is not acting, and a
+   * caller forced to spend interaction steps on looking would interact blind
+   * to save them.
    */
   async captureSnapshot(
     sessionId: string,
@@ -355,16 +361,21 @@ export class WidgetRenderSessionRegistry {
         `Widget session "${sessionId}" is already running an action.`,
       );
     }
-    const snapshot = await session.harness.captureSnapshot(
-      session.mountedWidgetId,
-    );
-    if (this.sessions.get(sessionId) !== session) {
-      throw new WidgetSessionNotFoundError(
-        `Widget session "${sessionId}" was closed during the snapshot.`,
+    session.inFlight += 1;
+    try {
+      const snapshot = await session.harness.captureSnapshot(
+        session.mountedWidgetId,
       );
+      if (this.sessions.get(sessionId) !== session) {
+        throw new WidgetSessionNotFoundError(
+          `Widget session "${sessionId}" was closed during the snapshot.`,
+        );
+      }
+      session.expiresAt = this.now() + this.idleTimeoutMs;
+      return { snapshot, expiresAt: session.expiresAt };
+    } finally {
+      session.inFlight -= 1;
     }
-    session.expiresAt = this.now() + this.idleTimeoutMs;
-    return { snapshot, expiresAt: session.expiresAt };
   }
 
   /**

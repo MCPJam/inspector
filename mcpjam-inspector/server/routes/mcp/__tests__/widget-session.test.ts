@@ -418,6 +418,39 @@ describe("widget-session route", () => {
       expect(step.status).toBe(404);
     });
 
+    it("stops driving once the per-widget step budget is spent", async () => {
+      // `executeAction` has always enforced this; `runScriptedStep` only
+      // incremented the counter. Exposing the step path as its own route made
+      // that a reachable bypass — a caller posting only semantic steps could
+      // drive a runaway widget forever, refreshing the session TTL each time,
+      // while the coordinate path next door capped out at twelve.
+      harnessState.stepResult = {
+        ok: false,
+        reason: "per-widget step budget exhausted",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: 1,
+        note: "step_budget_exceeded",
+      };
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: { kind: "key", key: "Enter" } }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()).note).toBe("step_budget_exceeded");
+      // A terminal note disposes the session, so the NEXT call 404s rather
+      // than holding Chromium for a widget nothing can drive.
+      const after = await app.request(
+        `/api/mcp/widget-session/${sessionId}/snapshot`,
+      );
+      expect(after.status).toBe(404);
+    });
+
     it("reports a failed assertion as a 200 with ok:false", async () => {
       // A failed assertion is an ANSWER, not a transport error: the widget was
       // driven successfully and did not do the thing. Returning 500 would make
