@@ -30,6 +30,7 @@ import {
   type StructuredCaseResult,
   type StructuredRunReport,
 } from "./structured-reporting.js";
+import type { EvalDecisionSummary } from "./eval-decision-summary.js";
 
 function classify(
   status: PlatformRunCompareCase["status"]
@@ -133,6 +134,7 @@ export function buildRunCompareReport(
     durationMs?: number;
     flakyCases?: FlakyCase[];
     metadata?: Record<string, unknown>;
+    decisionSummary?: EvalDecisionSummary;
   } = {}
 ): StructuredRunReport {
   const cases = [
@@ -164,5 +166,8 @@ export function buildRunCompareReport(
       flakyCases: options.flakyCases ?? [],
       ...(options.metadata ?? {}),
     },
+    ...(options.decisionSummary
+      ? { decisionSummary: options.decisionSummary }
+      : {}),
   };
 }
