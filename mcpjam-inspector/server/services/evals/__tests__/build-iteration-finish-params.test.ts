@@ -80,7 +80,7 @@ describe("buildIterationFinishParams — stage derivation", () => {
   test("writes a full chain when the authored case is supplied", () => {
     const params = build({ stageCase: authoredCase, spans: [okToolSpan] });
     const metadata = params.metadata as Record<string, unknown>;
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(3);
     expect(rowsOf(params)).toHaveLength(6);
     expect(stage(params, "call").state).toBe("passed");
   });
@@ -252,7 +252,7 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
     expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
     expect(metadata.failureCategory).toBe("setup");
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(3);
     // Never a fabricated failure: nothing was measured, so nothing "failed".
     expect(metadata.firstFailedStage).toBeUndefined();
   });
