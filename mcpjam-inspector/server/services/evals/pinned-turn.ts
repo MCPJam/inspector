@@ -15,9 +15,15 @@
 
 import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { decideToolPolicy } from "@mcpjam/sdk/contract";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
 import type { PinnedToolCall } from "@/shared/steps";
 import type { BrowserSessionContext } from "../browser-session-context";
+import {
+  TOOL_POLICY_BLOCK_MARKER,
+  toolAnnotationsKey,
+  type ToolPolicyGate,
+} from "./tool-policy-gate";
 
 /** Stable error token for "the pinned turn's server isn't connected to this run". */
 export const PINNED_SERVER_NOT_CONNECTED = "pinned_server_not_connected";
@@ -53,6 +59,7 @@ export interface RunPinnedTurnParams {
   browser: Pick<BrowserSessionContext, "renderPinnedToolResult">;
   /** Turn index, used to build a unique synthetic toolCallId. */
   promptIndex: number;
+  toolPolicyGate?: ToolPolicyGate | null;
 }
 
 export interface PinnedTurnResult {
@@ -112,9 +119,7 @@ export function buildPinnedTurnAccounting(
     summary: result.summary,
     toolCalls: result.toolCall ? [result.toolCall] : [],
     toolErrors: result.toolError ? [result.toolError] : [],
-    ...(result.iterationError
-      ? { iterationError: result.iterationError }
-      : {}),
+    ...(result.iterationError ? { iterationError: result.iterationError } : {}),
     setupFailure: result.iterationError !== undefined,
   };
 }
@@ -128,8 +133,14 @@ export function buildPinnedTurnAccounting(
 export async function runPinnedTurn(
   params: RunPinnedTurnParams
 ): Promise<PinnedTurnResult> {
-  const { pinned, resolvedServerKey, mcpClientManager, browser, promptIndex } =
-    params;
+  const {
+    pinned,
+    resolvedServerKey,
+    mcpClientManager,
+    browser,
+    promptIndex,
+    toolPolicyGate,
+  } = params;
   const args = (pinned.arguments ?? {}) as Record<string, unknown>;
 
   if (!resolvedServerKey) {
@@ -160,6 +171,37 @@ export async function runPinnedTurn(
   let toolCallOk = false;
   let toolError: ToolErrorRecord | undefined;
   const toolCallId = `pinned-${promptIndex}-${Date.now()}`;
+  if (toolPolicyGate) {
+    const decision = decideToolPolicy({
+      toolName: pinned.toolName,
+      annotations: toolPolicyGate.annotations.get(
+        toolAnnotationsKey(resolvedServerKey, pinned.toolName)
+      ),
+      policy: toolPolicyGate.policy,
+    });
+    if (!decision.allowed) {
+      toolPolicyGate.recordBlock({
+        toolName: pinned.toolName,
+        reason: decision.reason,
+        classification: decision.classification,
+        toolCallId,
+      });
+      return {
+        toolCall: null,
+        toolCallId,
+        toolResult: {
+          content: [
+            {
+              type: "text",
+              text: `Call blocked by tool policy: ${decision.reason}`,
+            },
+          ],
+          [TOOL_POLICY_BLOCK_MARKER]: true,
+        },
+        summary: `Pinned tool call ${pinned.toolName} blocked by tool policy: ${decision.reason}`,
+      };
+    }
+  }
   try {
     rawResult = await mcpClientManager.executeTool(
       resolvedServerKey,
