@@ -130,6 +130,7 @@ import type {
   EvalSuiteFileToolPolicy,
 } from "@mcpjam/sdk/contract";
 import {
+  buildHarnessToolPolicySnapshots,
   createToolPolicyGate,
   toolAnnotationsKey,
   UnmatchedToolPolicyNameError,
@@ -4024,6 +4025,19 @@ const runHostedIterationWithBrowser = async (
   const harnessMcpProxy = resolvedExecution.harness
     ? resolveWebAuthorizedHarnessStrategy()
     : undefined;
+  // D4b: a harness runs its MCP calls itself, in a sandbox, against the
+  // generated `.mcp.json` — no in-process tool map exists to wrap, so the
+  // decision travels to the MCP proxy sealed inside the proxy token and is
+  // applied there. Harness-gated: the emulated path stays on the in-process
+  // gate alone.
+  const harnessToolPolicy =
+    resolvedExecution.harness && toolPolicy
+      ? buildHarnessToolPolicySnapshots({
+          policy: toolPolicy,
+          serverIds: selectedServers,
+          annotations: toolAnnotations ?? new Map(),
+        })
+      : undefined;
   // The run's PINNED skills, in the shape the harness materializes on box.
   //
   // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
@@ -4303,6 +4317,26 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The sealed policy + the sink that accounts its refusals. Blocks land on
+    // the SAME gate the in-process path records into, so `policyBlocks` and the
+    // matcher exclusion below cover both origins with no second code path.
+    ...(harnessToolPolicy
+      ? {
+          harnessToolPolicy,
+          onHarnessPolicyBlocks: (blocks) => {
+            for (const block of blocks) {
+              toolPolicyGate?.recordBlock({
+                toolName: block.toolName,
+                reason: block.reason,
+                classification: block.classification,
+                ...(block.toolCallId
+                  ? { toolCallId: block.toolCallId }
+                  : {}),
+              });
+            }
+          },
+        }
+      : {}),
     // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
     // not when truthy: `[]` says "this run delivers no skills" (the
     // `skillsOverride: "exclude"` arm), while absent falls through to the
