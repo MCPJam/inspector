@@ -19,6 +19,7 @@ import {
 } from "../../utils/org-model-config.js";
 import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
+import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -79,6 +80,19 @@ export async function prepareSuiteReplayFromRun(
   const replayConfig = await fetchReplayConfig(sourceRunId, convexAuthToken);
   if (!replayConfig || replayConfig.servers.length === 0) {
     throw new Error("No replay configuration found for this run");
+  }
+
+  // Recovered BEFORE the replay run row is created: an unrecoverable policy
+  // must abort the replay outright, not strand a created run.
+  const replayToolPolicy = await recoverToolPolicyFromSourceRun({
+    convexClient,
+    sourceRunId,
+  });
+  if (replayToolPolicy) {
+    logger.info("[evals] Replay inherits the source run's tool policy", {
+      sourceRunId,
+      mode: replayToolPolicy.mode,
+    });
   }
 
   const replayManager = buildReplayManager(replayConfig);
@@ -180,6 +194,7 @@ export async function prepareSuiteReplayFromRun(
           mcpClientManager: replayManager,
           recorder,
           suiteInjectOpenAiCompat,
+          ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
         });
       },
       cleanup: () => replayManager.disconnectAllServers(),

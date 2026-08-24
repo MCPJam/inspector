@@ -5,6 +5,7 @@ import {
   createOffsetInterval,
 } from "@/shared/eval-trace";
 import type { ModelMessage } from "ai";
+import { isToolPolicyBlockResult } from "./tool-policy-gate.js";
 
 /**
  * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
@@ -43,14 +44,6 @@ type StepSpanMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
-};
-
-type ToolSpanMeta = {
-  toolCallId?: string;
-  serverId?: string;
-  messageStartIndex?: number;
-  messageEndIndex?: number;
-  status?: EvalTraceSpanStatus;
 };
 
 /** Mutable state for `generateText` eval tracing (prepareStep + wrapped tools + onStepFinish). */
@@ -273,9 +266,12 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
+        let policyBlocked = false;
         let mcpErrorCode: number | undefined;
         try {
           const result = await origExecute(input, options);
+          policyBlocked = isToolPolicyBlockResult(result);
+          if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
             success = false;
           }
@@ -287,36 +283,18 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         } finally {
           const toolFinishedAt = Date.now();
           ctx.openTools.delete(toolCallId);
-          ctx.recordedSpans.push({
-            id: `tool-${toolCallId}`,
-            name,
-            category: "tool",
-            parentId: stepSpanId,
-            promptIndex: resolvedPromptIndex,
-            stepIndex: stepNumber,
-            toolCallId,
-            toolName: name,
-            serverId,
-            status: success ? "ok" : "error",
-            ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
-            ...createOffsetInterval(
-              ctx.runStartedAt,
-              toolStartedAt,
-              toolFinishedAt,
-            ),
-          });
-          if (!success) {
+          if (!policyBlocked) {
             ctx.recordedSpans.push({
-              id: `tool-err-${toolCallId}`,
-              name: `${name} error`,
-              category: "error",
+              id: `tool-${toolCallId}`,
+              name,
+              category: "tool",
               parentId: stepSpanId,
               promptIndex: resolvedPromptIndex,
               stepIndex: stepNumber,
               toolCallId,
               toolName: name,
               serverId,
-              status: "error",
+              status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
                 ctx.runStartedAt,
@@ -324,6 +302,26 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolFinishedAt,
               ),
             });
+            if (!success) {
+              ctx.recordedSpans.push({
+                id: `tool-err-${toolCallId}`,
+                name: `${name} error`,
+                category: "error",
+                parentId: stepSpanId,
+                promptIndex: resolvedPromptIndex,
+                stepIndex: stepNumber,
+                toolCallId,
+                toolName: name,
+                serverId,
+                status: "error",
+                ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
+                ...createOffsetInterval(
+                  ctx.runStartedAt,
+                  toolStartedAt,
+                  toolFinishedAt,
+                ),
+              });
+            }
           }
         }
       },

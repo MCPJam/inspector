@@ -52,6 +52,25 @@ describe("RunHeaderCompactStats", () => {
     ).toBeInTheDocument();
   });
 
+  it("reports iterations with policy-blocked calls", () => {
+    render(
+      <RunHeaderCompactStats
+        run={makeRun({
+          summary: {
+            total: 7,
+            passed: 6,
+            failed: 1,
+            passRate: 6 / 7,
+            policyBlockedIterations: 2,
+          },
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("2 iteration(s) had calls blocked by policy"),
+    ).toBeInTheDocument();
+  });
+
   it("keeps percent-based stored summaries compact in sidebar contexts", () => {
     render(
       <RunHeaderCompactStats
