@@ -88,6 +88,14 @@ export type ConnectionDefaults = {
   firstPageOnly?: true;
   supportsMrtr?: false;
   /**
+   * Resolved from `mcpProfile.toolListChanged`. `suppressListenChannel` stops
+   * the client opening the server→client notification stream at all;
+   * `dropToolListChanged` lets it open but ignores
+   * `notifications/tools/list_changed`. Same only-the-non-default rule.
+   */
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when
    * the policy is validly ON — the client surfaces an `invalid` policy as a

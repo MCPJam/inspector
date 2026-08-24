@@ -230,6 +230,63 @@ describe("applyHostParamMirroring", () => {
   });
 });
 
+describe("conformanceKnobsFromMcpProfile — toolListChanged", () => {
+  it("reads each false leaf", () => {
+    expect(
+      conformanceKnobsFromMcpProfile({
+        toolListChanged: { listens: false, refetches: false },
+      })
+    ).toEqual({
+      firstPageOnly: undefined,
+      supportsMrtr: undefined,
+      suppressListenChannel: true,
+      dropToolListChanged: true,
+    });
+  });
+
+  it("treats true leaves, an empty record and junk as conforming", () => {
+    for (const toolListChanged of [
+      { listens: true, refetches: true },
+      {},
+      null,
+      "nope",
+    ]) {
+      const knobs = conformanceKnobsFromMcpProfile({ toolListChanged });
+      expect(knobs.suppressListenChannel).toBeUndefined();
+      expect(knobs.dropToolListChanged).toBeUndefined();
+    }
+  });
+});
+
+describe("applyHostConformanceKnobs — toolListChanged", () => {
+  const conforming = {
+    firstPageOnly: undefined,
+    supportsMrtr: undefined,
+    suppressListenChannel: undefined,
+    dropToolListChanged: undefined,
+  } as const;
+
+  it("adds the host's knobs to a body that carried none", () => {
+    expect(
+      applyHostConformanceKnobs(undefined, {
+        ...conforming,
+        suppressListenChannel: true,
+      })
+    ).toEqual({ suppressListenChannel: true });
+  });
+
+  it("REMOVES a body-supplied knob when the host is conforming", () => {
+    // The security property: a share-link body must not be able to silence a
+    // conforming host's notifications by posting the pin itself.
+    expect(
+      applyHostConformanceKnobs(
+        { suppressListenChannel: true, dropToolListChanged: true },
+        conforming
+      )
+    ).toEqual({});
+  });
+});
+
 describe("conformanceKnobsFromMcpProfile", () => {
   it("reads the non-default literals", () => {
     expect(
@@ -237,7 +294,12 @@ describe("conformanceKnobsFromMcpProfile", () => {
         paginationTraversal: "firstPageOnly",
         mrtrSupport: "none",
       })
-    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
+    ).toEqual({
+      firstPageOnly: true,
+      supportsMrtr: false,
+      suppressListenChannel: undefined,
+      dropToolListChanged: undefined,
+    });
   });
 
   it("collapses the default literals, an absent profile and junk to undefined", () => {
@@ -253,6 +315,8 @@ describe("conformanceKnobsFromMcpProfile", () => {
       expect(conformanceKnobsFromMcpProfile(profile)).toEqual({
         firstPageOnly: undefined,
         supportsMrtr: undefined,
+        suppressListenChannel: undefined,
+        dropToolListChanged: undefined,
       });
     }
   });

@@ -42,6 +42,19 @@ export interface HostConnectionProfile {
    * the profile → wire mapping in one place.
    */
   supportsMrtr?: false;
+  /**
+   * `true` = the client never opens the server→client notification channel
+   * (legacy: the standalone GET SSE stream; 2026-07-28:
+   * `subscriptions/listen`). ChatGPT measures this way — prober saw it never
+   * open one — so a host emulating ChatGPT must not either.
+   */
+  suppressListenChannel?: true;
+  /**
+   * `true` = the client ignores `notifications/tools/list_changed` instead of
+   * acting on it. Only meaningful when the channel is open, since nothing can
+   * arrive otherwise.
+   */
+  dropToolListChanged?: true;
   /** undefined = spec default (filter app-only tools); false = host opts out. */
   respectToolVisibility: boolean | undefined;
 }
@@ -107,6 +120,17 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+  // A nested record rather than an enum, but the same discipline: only an
+  // explicit `false` leaf degrades, and absent stays absent. Narrowed like
+  // `initialize` above — `mcpProfile` is an untyped record here.
+  const toolListChanged =
+    mcpProfile && isRecord(mcpProfile.toolListChanged)
+      ? mcpProfile.toolListChanged
+      : undefined;
+  const suppressListenChannel =
+    toolListChanged?.listens === false ? (true as const) : undefined;
+  const dropToolListChanged =
+    toolListChanged?.refetches === false ? (true as const) : undefined;
 
   const clientCapabilities = isRecord(hostConfig.clientCapabilities)
     ? hostConfig.clientCapabilities
@@ -126,6 +150,8 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(suppressListenChannel ? { suppressListenChannel } : {}),
+    ...(dropToolListChanged ? { dropToolListChanged } : {}),
     respectToolVisibility,
   };
 }

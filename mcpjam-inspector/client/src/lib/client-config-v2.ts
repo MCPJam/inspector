@@ -844,6 +844,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // A record, so emptiness is per-leaf: `{}` carries nothing (the
+    // canonicalizer drops it), but any boolean leaf is a real setting.
+    (profile.toolListChanged === undefined ||
+      Object.values(profile.toolListChanged).every(
+        (value) => value === undefined
+      )) &&
     !profile.apps &&
     !profile.extensions
   );

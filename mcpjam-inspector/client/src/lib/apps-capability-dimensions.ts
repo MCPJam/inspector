@@ -15,7 +15,7 @@ import type {
 /** Boolean MCP Apps spec-bridge dimensions (excludes the two non-boolean fields). */
 export type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
-  "availableDisplayModes" | "widgetDisplayModeRequests"
+  "availableDisplayModes" | "widgetDisplayModeRequests" | "toolResult"
 >;
 
 /** Per-dimension matrix metadata. Description is shown on row hover. */

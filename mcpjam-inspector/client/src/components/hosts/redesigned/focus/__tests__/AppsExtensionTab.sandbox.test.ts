@@ -41,6 +41,29 @@ describe("focusTabForNodeId — sandbox routing", () => {
 });
 
 describe("AppsExtensionTab — sandbox JSON round-trip", () => {
+  it("round-trips browser storage API findings below CSP and permissions", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          csp: { connectDomains: ["https://api.openai.com"] },
+          permissions: { clipboardWrite: {} },
+          browserStorage: {
+            localStorage: true,
+            sessionStorage: false,
+            indexedDB: true,
+          },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.browserStorage).toEqual({
+      localStorage: true,
+      sessionStorage: false,
+      indexedDB: true,
+    });
+  });
+
   it("reads the four spec CSP allowlists from spec position into restrictTo storage", () => {
     // The user types SEP-1865 shape: the four allowlists live directly
     // under `sandbox.csp` (no `restrictTo` wrapper) so they map to

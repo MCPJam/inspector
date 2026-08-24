@@ -48,6 +48,8 @@ export interface ApiContext {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
@@ -444,6 +446,8 @@ function conformanceWireFields(apiContext: ApiContext): {
   mirrorToolParamHeaders?: false;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
 } {
   return {
     ...(apiContext.mirrorToolParamHeaders === false
@@ -451,6 +455,12 @@ function conformanceWireFields(apiContext: ApiContext): {
       : {}),
     ...(apiContext.firstPageOnly === true
       ? { firstPageOnly: true as const }
+      : {}),
+    ...(apiContext.suppressListenChannel === true
+      ? { suppressListenChannel: true as const }
+      : {}),
+    ...(apiContext.dropToolListChanged === true
+      ? { dropToolListChanged: true as const }
       : {}),
     ...(apiContext.supportsMrtr === false
       ? { supportsMrtr: false as const }
@@ -522,6 +532,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -599,6 +611,8 @@ export function buildResolvedServerBatchRequest(input: {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
@@ -644,6 +658,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   mirrorToolParamHeaders?: boolean;
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;

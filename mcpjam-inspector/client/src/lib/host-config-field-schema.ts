@@ -629,6 +629,93 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     })
   );
 
+/** Tool Result parts relayed back only to a widget that called the tool. */
+const TOOL_RESULT_CONTENT_KINDS = [
+  ["text", "Text"],
+  ["image", "Image"],
+  ["audio", "Audio"],
+  ["resource", "Embedded resource"],
+  ["resourceLink", "Resource link"],
+] as const;
+const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "toolResult.structuredContent",
+    section: "protocol",
+    subsection: "Tool results received by widgets",
+    label: "Structured content",
+    path: "mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent",
+    description:
+      "Forwards structuredContent to an MCP App widget after it calls a tool.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      mcpProfile(cfg)?.apps?.mcpAppsOverrides?.toolResult?.structuredContent,
+  },
+  ...TOOL_RESULT_CONTENT_KINDS.map(
+    ([key, label]): HostConfigFieldDef => ({
+      id: `toolResult.content.${key}`,
+      section: "protocol",
+      subsection: "Tool results received by widgets",
+      label,
+      path: `mcpProfile.apps.mcpAppsOverrides.toolResult.content.${key}`,
+      description: `Forwards ${label.toLowerCase()} content to an MCP App widget after it calls a tool.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        cfg.mcpProfile?.apps?.mcpAppsOverrides?.toolResult?.content?.[key],
+    })
+  ),
+];
+
+/** Browser APIs observed inside the sandboxed widget iframe. */
+const BROWSER_STORAGE_KEYS = [
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+] as const;
+const BROWSER_STORAGE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  BROWSER_STORAGE_KEYS.map(
+    (key): HostConfigFieldDef => ({
+    id: `sandbox.browserStorage.${key}`,
+    section: "apps",
+    subsection: "Sandbox",
+    label: key === "indexedDB" ? "IndexedDB" : key,
+    path: `mcpProfile.apps.sandbox.browserStorage.${key}`,
+    description: `${key} works inside the sandboxed app iframe (probe-measured browser behavior, not MCP).`,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.browserStorage?.[key],
+    })
+  );
+
+/**
+ * How the client handles `notifications/tools/list_changed`. Two
+ * independently-measured facts: whether it opens the server→client channel at
+ * all, and whether it acts on the notification once one arrives.
+ */
+const TOOL_LIST_CHANGED_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
+  [
+    [
+      "listens",
+      "Opens notification channel",
+      "Client opens the server-to-client notification channel (legacy: standalone GET SSE stream; 2026-07-28: subscriptions/listen).",
+    ],
+    [
+      "refetches",
+      "Re-fetches after list_changed",
+      "Client acts on notifications/tools/list_changed instead of keeping its cached tool list. Only observable when the channel is open.",
+    ],
+  ] as const
+).map(
+  ([key, label, description]): HostConfigFieldDef => ({
+    id: `toolListChanged.${key}`,
+    section: "protocol",
+    subsection: "Tool list changed",
+    label,
+    path: `mcpProfile.toolListChanged.${key}`,
+    description,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolListChanged?.[key],
+  })
+);
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -855,6 +942,11 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
+  // Protocol · Tool results received by widgets
+  // ============================================================
+  ...TOOL_RESULT_WIDGET_FIELDS,
+
+  // ============================================================
   // Protocol · Client capabilities supported
   // ============================================================
   {
@@ -1029,6 +1121,8 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.permissions?.mode,
   },
   ...SANDBOX_PERMISSION_FIELDS,
+  ...BROWSER_STORAGE_FIELDS,
+  ...TOOL_LIST_CHANGED_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

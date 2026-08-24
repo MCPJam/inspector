@@ -112,6 +112,12 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.supportsMrtr === false
       ? { supportsMrtr: false }
       : {}),
+    ...(options.connectionDefaults?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(options.connectionDefaults?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
   };
 }
 

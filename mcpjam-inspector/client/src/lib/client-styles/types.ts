@@ -287,6 +287,22 @@ export type McpAppsCapabilities = {
   downloadFile?: boolean;
   requestTeardown?: boolean;
   /**
+   * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
+   * calls. It shares storage with the app bridge overrides but is not an
+   * `app.*` capability, so the resolved bridge surface intentionally ignores
+   * it.
+   */
+  toolResult?: {
+    structuredContent?: boolean;
+    content?: {
+      text?: boolean;
+      image?: boolean;
+      audio?: boolean;
+      resource?: boolean;
+      resourceLink?: boolean;
+    };
+  };
+  /**
    * Host policy for `ui/request-display-mode` originating from the widget.
    * SEP-1865 permits the host to decline these requests; this row exposes
    * that decision as a knob.

@@ -1,24 +1,28 @@
 import { cn } from "@/lib/utils";
 import type { SupportLevel } from "./support-level";
 
+type SupportChipLevel = SupportLevel | "unknown";
+
 /**
  * caniuse-style support pill: a colored dot + label. Tinted surface (`/40–/50`)
  * with a full-token dot and `text-foreground`, per the surface-vs-foreground
  * opacity convention.
  */
 
-const LEVEL_SURFACE: Record<SupportLevel, string> = {
+const LEVEL_SURFACE: Record<SupportChipLevel, string> = {
   supported: "bg-success/50 text-foreground",
   partial: "bg-warning/50 text-foreground",
   neutral: "bg-muted/40 text-muted-foreground",
   unsupported: "bg-destructive/50 text-foreground",
+  unknown: "bg-muted/40 text-muted-foreground",
 };
 
-const LEVEL_DOT: Record<SupportLevel, string> = {
+const LEVEL_DOT: Record<SupportChipLevel, string> = {
   supported: "bg-success",
   partial: "bg-warning",
   neutral: "bg-muted-foreground/50",
   unsupported: "bg-destructive",
+  unknown: "bg-muted-foreground/50",
 };
 
 export function SupportChip({
@@ -27,7 +31,7 @@ export function SupportChip({
   className,
   truncateLabel = false,
 }: {
-  level: SupportLevel;
+  level: SupportChipLevel;
   label: string;
   className?: string;
   truncateLabel?: boolean;

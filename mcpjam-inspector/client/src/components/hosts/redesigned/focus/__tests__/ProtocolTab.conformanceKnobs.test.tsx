@@ -35,6 +35,12 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
       <div data-testid="mrtr">
         {draft.mcpProfile?.mrtrSupport ?? "<undefined>"}
       </div>
+      <div data-testid="listens">
+        {String(draft.mcpProfile?.toolListChanged?.listens ?? "<undefined>")}
+      </div>
+      <div data-testid="refetches">
+        {String(draft.mcpProfile?.toolListChanged?.refetches ?? "<undefined>")}
+      </div>
       <div data-testid="profile">
         {draft.mcpProfile === undefined ? "<no-profile>" : "profile"}
       </div>
@@ -187,5 +193,111 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
     expect(applied).not.toBeNull();
     expect(applied!.mcpProfile?.paginationTraversal).toBeUndefined();
     expect(applied!.mcpProfile?.mrtrSupport).toBeUndefined();
+  });
+});
+
+describe("ProtocolTab tool results received by widgets", () => {
+  it("round-trips structured content and the observed content kinds", () => {
+    const draft: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: {
+            toolResult: {
+              structuredContent: false,
+              content: { text: true, image: false, resourceLink: true },
+            },
+          },
+        },
+      },
+    };
+
+    const doc = protocolToJson(draft);
+    expect(doc.toolResultsToWidgets).toEqual({
+      structuredContent: false,
+      content: { text: true, image: false, resourceLink: true },
+    });
+
+    const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
+    expect(applied?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult).toEqual(
+      draft.mcpProfile.apps?.mcpAppsOverrides?.toolResult,
+    );
+  });
+});
+
+describe("ProtocolTab tool list changed controls", () => {
+  const listensSwitch = () =>
+    screen.getByRole("switch", { name: "Opens notification channel" });
+  const refetchesSwitch = () =>
+    screen.getByRole("switch", {
+      name: "Re-fetches tools after the notification",
+    });
+
+  it("renders conforming defaults with nothing stored", () => {
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+    expect(listensSwitch()).toBeChecked();
+    expect(refetchesSwitch()).toBeChecked();
+    expect(screen.getByTestId("listens")).toHaveTextContent("<undefined>");
+    expect(screen.getByTestId("profile")).toHaveTextContent("<no-profile>");
+  });
+
+  it("stores false when a switch is turned off", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+    await user.click(listensSwitch());
+    expect(screen.getByTestId("listens")).toHaveTextContent("false");
+  });
+
+  it("writes ABSENCE when switched back on, collapsing the profile", async () => {
+    // The whole point of the knob: re-enabling must leave no trace, or a host
+    // that merely visited this tab mints a new canonical hash.
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+    await user.click(listensSwitch());
+    expect(screen.getByTestId("profile")).toHaveTextContent("profile");
+    await user.click(listensSwitch());
+    expect(screen.getByTestId("listens")).toHaveTextContent("<undefined>");
+    expect(screen.getByTestId("profile")).toHaveTextContent("<no-profile>");
+  });
+
+  it("disables re-fetch once the channel is closed", async () => {
+    // Nothing can arrive, so the answer is unobservable rather than merely
+    // unset — the UI must not invite a claim the probe could never make.
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+    await user.click(listensSwitch());
+    expect(refetchesSwitch()).toBeDisabled();
+  });
+
+  it("round-trips through the JSON document", () => {
+    const draft = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1 as const,
+        toolListChanged: { listens: false },
+      },
+    };
+    const doc = protocolToJson(draft);
+    expect(doc.toolListChanged).toEqual({ listens: false });
+
+    const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
+    expect(applied).not.toBeNull();
+    expect(applied?.mcpProfile?.toolListChanged).toEqual({ listens: false });
+  });
+
+  it("drops non-boolean leaves from the document", () => {
+    const applied = applyJsonToDraft(
+      {
+        ...protocolToJson(emptyHostConfigInputV2()),
+        toolListChanged: { listens: "no", refetches: false },
+      } as unknown as ReturnType<typeof protocolToJson>,
+      emptyHostConfigInputV2(),
+    );
+    // Assert the save SURVIVED first — a rejected document also reads as
+    // `undefined` below, which would pass for the wrong reason.
+    expect(applied).not.toBeNull();
+    // Fail-closed: an unreadable leaf reads as conforming, not as degraded.
+    expect(applied?.mcpProfile?.toolListChanged).toEqual({ refetches: false });
   });
 });
