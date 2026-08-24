@@ -166,6 +166,27 @@ export function describeRunDisclosureDetail(
   } else {
     lines.push("No analyzer or judge can fire for this run");
   }
+  // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
+  // — it is what happens to content once it exists, not a fact about whether
+  // this run executed. A consequential setting like a non-DLP redaction
+  // module or a captureLevel of "full" must not be silently absent from the
+  // one tooltip a user sees before clicking Run all.
+  lines.push(
+    `Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`,
+  );
+  lines.push(
+    `Redaction: ${disclosure.capture.redaction.kind}` +
+      (disclosure.capture.redaction.isDlp
+        ? ""
+        : ` — not a DLP system (${disclosure.capture.redaction.limitation})`),
+  );
+  lines.push(
+    `Export defaults: ${
+      disclosure.capture.exportDefaults.includeContent
+        ? "includes content"
+        : "excludes content"
+    } (${disclosure.capture.exportDefaults.note})`,
+  );
   lines.push(
     disclosure.retention.effectiveToday === "kept-indefinitely"
       ? "Retention: kept indefinitely"

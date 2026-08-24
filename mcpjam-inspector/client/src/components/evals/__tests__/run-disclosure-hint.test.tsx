@@ -329,6 +329,51 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       true,
     );
   });
+
+  it("renders capture and redaction facts — the tooltip's only pre-launch view of what gets stored", () => {
+    // Consequential settings (full capture, a non-DLP redaction module,
+    // content-inclusive export defaults) must not be silently absent just
+    // because this hint prioritizes destinations and analysis.
+    const state = stateOf({
+      disclosure: baseDisclosure({
+        capture: {
+          captureLevel: "full",
+          reportingMode: "standard",
+          tiersImplemented: false,
+          redaction: {
+            kind: "credential-shaped",
+            module: "x",
+            isDlp: false,
+            limitation: "not DLP",
+            appliesTo: [],
+          },
+          exportDefaults: {
+            includeContent: false,
+            ruleLocation: "x",
+            note: "redacted by default",
+          },
+        },
+      }),
+    });
+    const detail = describeRunDisclosureDetail(state);
+    expect(
+      detail.some((line) => /Capture: full · reporting standard/.test(line)),
+    ).toBe(true);
+    expect(
+      detail.some((line) =>
+        /Redaction: credential-shaped — not a DLP system \(not DLP\)/.test(
+          line,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      detail.some((line) =>
+        /Export defaults: excludes content \(redacted by default\)/.test(
+          line,
+        ),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("RunDisclosureHint — read-only, never gates the run", () => {
