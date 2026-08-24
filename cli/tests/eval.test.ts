@@ -197,11 +197,11 @@ interface EvalFixtureOptions {
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
-  runCaseResult?: "passed" | "failed";
+  runCaseResult?: "passed" | "failed" | "inconclusive";
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?: "running" | "completed";
   runCaseIterationFetchError?: boolean;
-  runOneResult?: "passed" | "failed";
+  runOneResult?: "passed" | "failed" | "inconclusive";
   /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
   disclosureUnavailable?: boolean;
 }
@@ -684,9 +684,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           status: options.runCaseStatus ?? "completed",
           result,
           summary:
-            result === "passed"
-              ? { total: 1, passed: 1, failed: 0, passRate: 1 }
-              : { total: 1, passed: 0, failed: 1, passRate: 0 },
+            result === "failed"
+              ? { total: 1, passed: 0, failed: 1, passRate: 0 }
+              : { total: 1, passed: 1, failed: 0, passRate: 1 },
           source: "api",
           notes: null,
           createdAt: 10,
@@ -720,7 +720,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               title: "echo works",
               iterationNumber: 1,
               status: "completed",
-              result,
+              result: result === "inconclusive" ? "passed" : result,
               model: null,
               provider: null,
               startedAt: 10,
@@ -803,9 +803,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           status: "completed",
           result,
           summary:
-            result === "passed"
-              ? { total: 2, passed: 2, failed: 0, passRate: 1 }
-              : { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+            result === "failed"
+              ? { total: 2, passed: 1, failed: 1, passRate: 0.5 }
+              : { total: 2, passed: 2, failed: 0, passRate: 1 },
           source: "api",
           notes: null,
           createdAt: 1,
@@ -890,7 +890,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               title: "echo works",
               iterationNumber: 1,
               status: "completed",
-              result,
+              result: result === "inconclusive" ? "passed" : result,
               model: null,
               provider: null,
               startedAt: 1,
@@ -3418,5 +3418,74 @@ test("eval run rejects --compose-host together with --environment", async () => 
     assert.equal(fixture.runBodies.length, 0);
   } finally {
     await fixture.close();
+  }
+});
+
+test("eval gate exits 3 on an INCONCLUSIVE run, not 1", async () => {
+  // Verdict policy 2 lets the platform decline to decide. The fixture's
+  // summary for it is fully PASSING, so gating the numbers would exit 0 —
+  // and a partial one would exit 1 and read as a regression. Neither is a
+  // verdict this run established.
+  const fixture = await startEvalFixture({ runOneResult: "inconclusive" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout.trim());
+    assert.equal(payload.gate.outcome, "incomplete");
+    assert.equal(payload.gate.verdicts[0].status, "non_gateable");
+    assert.match(payload.gate.verdicts[0].message, /inconclusive/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait keeps its shipped exit mapping under verdict policy 2", async () => {
+  // Pinned deliberately: `eval run --wait` reports the RUN, it does not gate
+  // it, so a graded verdict — failed or inconclusive — still exits 0. Exit 1
+  // stays reserved for a launch/observation failure, and exit 5 belongs to
+  // E1; nothing here may start using it.
+  for (const result of ["failed", "inconclusive"] as const) {
+    const fixture = await startEvalFixture({ runCaseResult: result });
+    try {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+            "--format",
+            "json",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+
+      assert.equal(run.result.exitCode, 0);
+      const receipt = JSON.parse(run.stdout.trim());
+      assert.equal(receipt.runs[0].result, result);
+    } finally {
+      await fixture.close();
+    }
   }
 });

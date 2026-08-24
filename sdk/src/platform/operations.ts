@@ -2208,6 +2208,8 @@ function resolveSuiteHostTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
+    repetitions?: number;
+    /** Deprecated alias for repetitions. */
     iterations?: number;
     notes?: string;
     minPassRate?: number;
@@ -2219,8 +2221,8 @@ function runKnobBody(
   caseIds: string[] | undefined,
 ): Record<string, unknown> {
   return {
-    ...(input.iterations !== undefined
-      ? { iterationOverride: input.iterations }
+    ...(input.repetitions !== undefined || input.iterations !== undefined
+      ? { iterationOverride: input.repetitions ?? input.iterations }
       : {}),
     ...(caseIds ? { caseIds } : {}),
     ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
@@ -2792,6 +2794,15 @@ const composeRunTargetInput = z
   );
 
 const RUN_KNOB_FIELDS = {
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+    ),
   iterations: z
     .number()
     .int()
@@ -2847,7 +2858,8 @@ const RUN_KNOB_FIELDS = {
     ),
 } as const;
 
-const runEvalSuiteInput = z.object({
+const runEvalSuiteInput = z
+  .object({
   project: z
     .string()
     .trim()
@@ -2910,8 +2922,17 @@ const runEvalSuiteInput = z.object({
       "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
     ),
   compose: composeRunTargetInput.optional(),
-  ...RUN_KNOB_FIELDS,
-});
+    ...RUN_KNOB_FIELDS,
+  })
+  .superRefine((input, ctx) => {
+    if (input.repetitions !== undefined && input.iterations !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repetitions"],
+        message: "Use either repetitions or the deprecated iterations alias, not both.",
+      });
+    }
+  });
 
 export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
 
@@ -3449,8 +3470,17 @@ const runEvalCaseInput = z.object({
       "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
     ),
   compose: composeRunTargetInput.optional(),
+  repetitions: RUN_KNOB_FIELDS.repetitions,
   iterations: RUN_KNOB_FIELDS.iterations,
   idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
+}).superRefine((input, ctx) => {
+  if (input.repetitions !== undefined && input.iterations !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["repetitions"],
+      message: "Use either repetitions or the deprecated iterations alias, not both.",
+    });
+  }
 });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
@@ -3593,8 +3623,8 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.iterations !== undefined
-              ? { iterationOverride: input.iterations }
+            ...(input.repetitions !== undefined || input.iterations !== undefined
+              ? { iterationOverride: input.repetitions ?? input.iterations }
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }

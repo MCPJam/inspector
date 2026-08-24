@@ -39,12 +39,25 @@ export interface StructuredRunReport {
   schemaVersion: 1;
   kind: string;
   passed: boolean;
+  /**
+   * The backend's verdict, carried through rather than recomputed. Absent on a
+   * report built from anything but eval runs.
+   *
+   * `passed` alone cannot express `inconclusive`: a run the platform could not
+   * measure is not a pass, but calling it a failure reports a defect nothing
+   * observed. So `passed` stays false and this says WHY, and no synthetic
+   * failing case is fabricated for it — which is also why an inconclusive run
+   * leaves `summary.failed` untouched.
+   */
+  verdict?: StructuredRunVerdict;
   summary: StructuredRunSummary;
   cases: StructuredCaseResult[];
   durationMs: number;
   metadata: Record<string, unknown>;
   decisionSummary?: EvalDecisionSummary;
 }
+
+export type StructuredRunVerdict = "passed" | "failed" | "inconclusive";
 
 export interface StructuredEvalRunInput {
   run: PlatformEvalRun;
@@ -141,6 +154,7 @@ export function buildEvalRunReport(
 
     if (
       input.run.result !== "passed" &&
+      input.run.result !== "inconclusive" &&
       !cases.some(
         (entry) => entry.id.startsWith(`${input.run.id}:`) && !entry.passed
       )
@@ -169,6 +183,9 @@ export function buildEvalRunReport(
     schemaVersion: 1,
     kind: "eval-run",
     passed,
+    ...(inputs.length > 0
+      ? { verdict: structuredEvalVerdict(inputs, passed) }
+      : {}),
     summary: summarizeStructuredCases(cases),
     cases,
     durationMs: evalRunDurationMs(inputs.map((input) => input.run)),
@@ -180,6 +197,17 @@ export function buildEvalRunReport(
         result: input.run.result,
         summary: input.run.summary,
         iterationsComplete: input.iterationsComplete,
+        ...(input.run.verdictPolicyVersion !== undefined
+          ? { verdictPolicyVersion: input.run.verdictPolicyVersion }
+          : {}),
+        ...(input.run.verdictSummary !== undefined
+          ? { verdictSummary: input.run.verdictSummary }
+          : {}),
+        ...(input.run.verdictPolicyIntegrityError !== undefined
+          ? {
+              verdictPolicyIntegrityError: input.run.verdictPolicyIntegrityError,
+            }
+          : {}),
       })),
       ...(options.metadata ?? {}),
     },
@@ -187,6 +215,28 @@ export function buildEvalRunReport(
       ? { decisionSummary: options.decisionSummary }
       : {}),
   };
+}
+
+/**
+ * The report's verdict, read off the runs the backend decided.
+ *
+ * A failure anywhere wins, because one measured regression is a regression
+ * whatever else was unmeasurable. Otherwise an inconclusive run withholds the
+ * report's verdict rather than being folded into either side.
+ */
+function structuredEvalVerdict(
+  inputs: readonly StructuredEvalRunInput[],
+  passed: boolean
+): StructuredRunVerdict {
+  if (passed) return "passed";
+  const results = inputs.map((input) => input.run.result);
+  if (results.some((result) => result === "failed")) return "failed";
+  const reportable = inputs.every(
+    (input) => input.iterationsComplete && input.iterationError === undefined
+  );
+  return reportable && results.some((result) => result === "inconclusive")
+    ? "inconclusive"
+    : "failed";
 }
 
 export function summarizeStructuredCases(

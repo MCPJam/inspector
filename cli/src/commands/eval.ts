@@ -113,6 +113,7 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   TERMINAL_RUN_STATUSES,
   evalGateExitCode,
+  isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
@@ -1173,9 +1174,14 @@ async function runEvalGate(
           }
         }
 
-        if (isNonVerdictRunStatus(run.status)) {
+        if (
+          isNonVerdictRunStatus(run.status) ||
+          isNonVerdictRunResult(run.result)
+        ) {
           // Cancelled / timed out: the run has not told us the server
-          // regressed, it has told us nothing.
+          // regressed, it has told us nothing. Same for a policy-2
+          // `inconclusive` result, where the platform itself declined to
+          // decide and its summary counts are the evidence it rejected.
           return {
             report: {
               outcome: "incomplete" as const,
@@ -1184,7 +1190,9 @@ async function runEvalGate(
                 {
                   gate: "run",
                   status: "non_gateable" as const,
-                  message: `run is ${run.status}; no verdict was established`,
+                  message: isNonVerdictRunResult(run.result)
+                    ? "run is inconclusive; no verdict was established"
+                    : `run is ${run.status}; no verdict was established`,
                 },
               ],
             },
@@ -2232,7 +2240,12 @@ export function registerEvalCommands(program: Command): void {
         "--all-targets",
         "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
       )
-      .option("--iterations <n>", "Run each case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run each case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -2316,6 +2329,7 @@ export function registerEvalCommands(program: Command): void {
         environment?: string[];
         host?: string[];
         allTargets?: boolean;
+        repetitions?: number;
         iterations?: number;
         case?: string[];
         excludeSkills?: boolean;
@@ -2336,6 +2350,14 @@ export function registerEvalCommands(program: Command): void {
       }
       if (!options.file && !options.suite) {
         throw usageError("Provide --suite <id-or-name> or --file <path>.");
+      }
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
       }
       if (
         (options.reporter !== undefined || options.out !== undefined) &&
@@ -2412,8 +2434,8 @@ export function registerEvalCommands(program: Command): void {
                     : {}),
                   ...(options.host ? { host: options.host } : {}),
                   ...(options.allTargets ? { allTargets: true } : {}),
-                  ...(options.iterations !== undefined
-                    ? { iterations: options.iterations }
+                  ...(options.repetitions !== undefined || options.iterations !== undefined
+                    ? { repetitions: options.repetitions ?? options.iterations }
                     : {}),
                   ...(options.case?.length ? { case: options.case } : {}),
                   ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -2448,8 +2470,10 @@ export function registerEvalCommands(program: Command): void {
               ...selectorField("environment", "environments", options.environment),
               ...selectorField("host", "hosts", options.host),
               ...(options.allTargets ? { allAttached: true } : {}),
-              ...(options.iterations !== undefined
-                ? { iterations: options.iterations }
+              ...(options.repetitions !== undefined
+                ? { repetitions: options.repetitions }
+                : options.iterations !== undefined
+                  ? { iterations: options.iterations }
                 : {}),
               ...(options.case?.length ? { cases: options.case } : {}),
               ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -3644,7 +3668,12 @@ export function registerEvalCommands(program: Command): void {
         "--host <id-or-name>",
         "Attached host to run against, so the run is stamped with that host's config"
       )
-      .option("--iterations <n>", "Run the case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run the case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -3684,11 +3713,20 @@ export function registerEvalCommands(program: Command): void {
         server?: string[];
         environment?: string;
         host?: string;
+        repetitions?: number;
         iterations?: number;
         idempotencyKey?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
       await executeOp(
         runEvalCaseOperation,
         {
@@ -3698,8 +3736,10 @@ export function registerEvalCommands(program: Command): void {
           ...(options.server?.length ? { servers: options.server } : {}),
           ...(options.environment ? { environment: options.environment } : {}),
           ...(options.host ? { host: options.host } : {}),
-          ...(options.iterations !== undefined
-            ? { iterations: options.iterations }
+          ...(options.repetitions !== undefined
+            ? { repetitions: options.repetitions }
+            : options.iterations !== undefined
+              ? { iterations: options.iterations }
             : {}),
           ...(options.idempotencyKey
             ? { idempotencyKey: options.idempotencyKey }
