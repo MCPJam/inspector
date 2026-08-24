@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ShieldQuestion } from "lucide-react";
 import {
   Tooltip,
@@ -99,6 +100,9 @@ export function formatRunDisclosureSummary(
     return "Checking what this run discloses…";
   }
   if (state.status === "error" || !state.disclosure) {
+    if (state.error?.hostAxisUnavailable) {
+      return "Disclosure unavailable for host-targeted runs";
+    }
     return state.error?.contractUnavailable
       ? "Disclosure not available on this deployment yet"
       : "Disclosure unavailable";
@@ -235,6 +239,7 @@ export function describeRunDisclosureDetail(
 export function SuiteRunDisclosureHint({
   suiteId,
   environmentIds,
+  hostAxis = false,
   suppressed = false,
   label = "What running this suite discloses",
   className,
@@ -243,6 +248,17 @@ export function SuiteRunDisclosureHint({
 }: {
   suiteId: string | null | undefined;
   environmentIds?: readonly string[];
+  /**
+   * Set when Run all launches on the HOST axis (no attached environments,
+   * but hosts attached — environment axis always wins when both are
+   * attached, same rule `computeRunTargets` uses). `environmentIds` would
+   * then be empty, and fetching with no selector at all would silently
+   * return the suite-base disclosure and present it as the plan for a
+   * specific host's launch — which can pin a different model/rail. Skips
+   * the fetch entirely instead, mirroring the SDK's `isHostAxisLaunch`
+   * refusal in `runEvalSuiteOperation`.
+   */
+  hostAxis?: boolean;
   /** Set when Run all cannot launch at all (no cases, no servers configured). */
   suppressed?: boolean;
   label?: string;
@@ -254,10 +270,51 @@ export function SuiteRunDisclosureHint({
   if (!flagEnabled || suppressed || !suiteId) {
     return null;
   }
+  if (hostAxis) {
+    return (
+      <HostAxisDisclosureHint label={label} className={className} side={side} align={align} />
+    );
+  }
   return (
     <SuiteDisclosureFetcher
       suiteId={suiteId}
       environmentIds={environmentIds}
+      label={label}
+      className={className}
+      side={side}
+      align={align}
+    />
+  );
+}
+
+/** No fetch — see `hostAxis` on `SuiteRunDisclosureHint` for why. */
+function HostAxisDisclosureHint({
+  label,
+  className,
+  side,
+  align,
+}: {
+  label?: string;
+  className?: string;
+  side?: "top" | "bottom" | "left" | "right";
+  align?: "start" | "center" | "end";
+}) {
+  const [open, setOpen] = useState(false);
+  const state: RunDisclosureState = {
+    status: "error",
+    disclosure: null,
+    error: {
+      message:
+        "This suite runs on the host axis — the backend cannot compute a disclosure for a specific host launch.",
+      contractUnavailable: false,
+      hostAxisUnavailable: true,
+    },
+    open,
+    setOpen,
+  };
+  return (
+    <RunDisclosureHint
+      state={state}
       label={label}
       className={className}
       side={side}

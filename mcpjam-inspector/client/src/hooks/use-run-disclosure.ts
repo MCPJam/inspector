@@ -28,6 +28,18 @@ export interface RunDisclosureErrorInfo {
    * available on this deployment" rather than "couldn't load".
    */
   contractUnavailable: boolean;
+  /**
+   * True when this state describes a HOST-axis launch, never a fetch
+   * failure — `testSuites:getRunDisclosure` has no host selector (see
+   * `eval-disclosure.ts`), so there is nothing to await here. Mirrors the
+   * SDK's `isHostAxisLaunch` refusal in `runEvalSuiteOperation`, which skips
+   * the same fetch for the same reason rather than silently requesting the
+   * misleading suite-base disclosure. Optional — every REAL fetch failure
+   * (the only place this hook itself constructs one) sets it explicitly to
+   * `false`; only the static host-axis state in `run-disclosure-hint.tsx`
+   * sets it `true`.
+   */
+  hostAxisUnavailable?: boolean;
 }
 
 export interface RunDisclosureState {
@@ -117,6 +129,7 @@ export function useRunDisclosure({
         setError({
           message: err instanceof Error ? err.message : String(err),
           contractUnavailable: isContractUnavailableError(err),
+          hostAxisUnavailable: false,
         });
         setStatus("error");
       }

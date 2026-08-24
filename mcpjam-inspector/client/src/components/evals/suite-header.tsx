@@ -665,6 +665,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               <SuiteRunDisclosureHint
                 suiteId={suite._id}
                 environmentIds={suite.environmentIds}
+                // Environment axis always wins when both are attached (same
+                // rule `computeRunTargets` uses) — host axis only when there
+                // are no attached environments but there are attached hosts.
+                hostAxis={
+                  (suite.environmentIds?.length ?? 0) === 0 &&
+                  (suite.hostAttachments?.length ?? 0) > 0
+                }
                 suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
             </span>

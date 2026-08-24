@@ -557,6 +557,35 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
       screen.getByLabelText("What running this suite discloses"),
     ).toBeInTheDocument();
   });
+
+  it("never fetches on the host axis — renders a static unavailable hint instead", () => {
+    // `testSuites:getRunDisclosure` has no host selector: fetching here would
+    // silently return the suite-base disclosure and present it as the plan
+    // for a host-targeted launch, which can pin a different model/rail.
+    // Mirrors the SDK's `isHostAxisLaunch` refusal for the same reason.
+    render(
+      <SuiteRunDisclosureHint suiteId="suite-1" hostAxis environmentIds={[]} />,
+    );
+    expect(useRunDisclosureMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("What running this suite discloses"),
+    ).toBeInTheDocument();
+  });
+
+  it("host-axis summary reads distinctly from a generic fetch failure", () => {
+    render(<SuiteRunDisclosureHint suiteId="suite-1" hostAxis />);
+    expect(
+      formatRunDisclosureSummary({
+        status: "error",
+        disclosure: null,
+        error: {
+          message: "n/a",
+          contractUnavailable: false,
+          hostAxisUnavailable: true,
+        },
+      }),
+    ).toBe("Disclosure unavailable for host-targeted runs");
+  });
 });
 
 describe("ReviewStep — the runDisclosureState slot is props-only and optional", () => {

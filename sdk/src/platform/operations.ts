@@ -176,10 +176,28 @@ export interface PlatformOperationContext {
 
 /**
  * Ceiling on the pre-run disclosure fetch, independent of whatever deadline
- * the caller's own signal carries. Generous for a single GET — this exists to
- * cap a STALL, not to compete with a legitimately slow network.
+ * the caller's own signal carries.
+ *
+ * Deliberately SHORT, not generous: this fetch is awaited BEFORE
+ * `createEvalRun(Group)`, sequentially, sharing the SAME caller-supplied
+ * deadline signal (`runPlatformOperation` in the CLI creates one
+ * `AbortController` for the whole operation and threads its signal through
+ * both calls). A bound anywhere near the caller's own timeout risks the
+ * disclosure fetch alone consuming most or all of it — `boundedDisclosureSignal`
+ * still forwards a genuine caller abort into this fetch to cut it short, but
+ * by the time that forwarded abort lands, the caller's signal is ALREADY
+ * aborted, and `createEvalRun` — sharing that same signal — then fails
+ * immediately with zero chance to run, turning a best-effort read into a
+ * failed launch. A single lightweight GET to our own backend has no business
+ * needing more than a few seconds under normal conditions, so this stays
+ * short enough to leave the launch call a fair remaining share of any
+ * realistic `--timeout` (the CLI default is 30s), while still catching a
+ * genuine stall. Not a complete fix for a pathologically small caller
+ * timeout (e.g. `--timeout 500`) — that would need the operation to know its
+ * OWN remaining budget, which `PlatformOperationContext` does not carry
+ * today.
  */
-const DISCLOSURE_FETCH_TIMEOUT_MS = 10_000;
+const DISCLOSURE_FETCH_TIMEOUT_MS = 3_000;
 
 /**
  * A signal for the best-effort disclosure fetch that is bounded by ITS OWN
