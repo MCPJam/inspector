@@ -61,7 +61,7 @@ import {
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
  */
-export const STAGE_ANALYZER_VERSION = 2;
+export const STAGE_ANALYZER_VERSION = 3;
 
 /**
  * Why a stage landed where it did.
@@ -132,6 +132,18 @@ export const STAGE_REASONS = [
   "observed",
   /** No span proves it directly; a later stage's success implies it. */
   "impliedByLaterEvidence",
+  // ── advisory judge (tier 2: consulted only where deterministic
+  //    evidence is silent — see `deriveUserValue`) ──
+  /** The judge scored at or above the threshold. */
+  "judgeObserved",
+  /** The judge scored inside the partial band (>= partialFloor, < threshold). */
+  "judgePartial",
+  /** The judge scored below the partial floor. */
+  "judgeFailed",
+  /** A verdict was owed and has not arrived yet. */
+  "judgePending",
+  /** No verdict was ever owed for this iteration. */
+  "judgeNotRequested",
 ] as const;
 export type StageReason = (typeof STAGE_REASONS)[number];
 
@@ -293,6 +305,21 @@ export type StageEvidence = {
   setupSignals?: StageSetupSignals;
   /** The grader threw. Never folded into a server-side category. */
   evaluatorErrored?: boolean;
+  /**
+   * Advisory judge evidence for this iteration. TIER 2: consulted only where
+   * deterministic evidence is silent. Never overturns a predicate failure.
+   */
+  judgeEvidence?: {
+    status: "scored" | "error" | "skipped" | "not_applicable" | "pending";
+    /**
+     * `pending` only: was a verdict ever actually owed? Drives the
+     * `judgePending` vs `judgeNotRequested` split.
+     */
+    pendingKind?: "scheduled" | "not_requested";
+    verdict?: "pass" | "partial" | "fail";
+    /** Bounded by the EXISTING evidence caps, same as predicate reasons. */
+    reasons?: readonly string[];
+  };
 };
 
 export type StageDerivationInput = {
@@ -681,7 +708,64 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
     return row("userValue", "passed", "observed");
   }
   if (e.traceAbsent) return row("userValue", "notMeasured", "traceAbsent");
+  // TIER 2. Everything above is deterministic; a judge is only consulted once
+  // the deterministic evidence has said nothing. An untraced run is not
+  // judgeable, so `traceAbsent` still outranks a verdict.
+  const judge = e.judgeEvidence;
+  if (judge) {
+    const evidence = boundedJudgeReasons(judge.reasons);
+    if (judge.status === "scored") {
+      if (judge.verdict === "pass") {
+        return row("userValue", "passed", "judgeObserved", evidence);
+      }
+      if (judge.verdict === "partial") {
+        return row("userValue", "failed", "judgePartial", evidence);
+      }
+      if (judge.verdict === "fail") {
+        return row("userValue", "failed", "judgeFailed", evidence);
+      }
+    }
+    if (judge.status === "error") {
+      // The existing evaluator reason, so a judge that blew up buckets exactly
+      // like any other broken grader — no new failure category.
+      return row("userValue", "notMeasured", "evaluatorError", evidence);
+    }
+    if (judge.status === "pending") {
+      return row(
+        "userValue",
+        "notMeasured",
+        judge.pendingKind === "not_requested"
+          ? "judgeNotRequested"
+          : "judgePending",
+        evidence
+      );
+    }
+    // `skipped` / `not_applicable` fall through to the floor.
+  }
   return row("userValue", "notMeasured", "noEvidenceCaptured");
+}
+
+/**
+ * Judge reasons under the SAME caps predicate reasons already obey.
+ *
+ * They land in `predicateReasons` — the refs type's only free-text slot —
+ * rather than in a new field, because `StageEvidenceRefs` is mirrored by the
+ * backend's row validator and a widened shape is a deploy-order hazard for a
+ * cosmetic gain. The row's `reason` already says a judge decided it.
+ */
+function boundedJudgeReasons(
+  reasons: readonly string[] | undefined
+): StageEvidenceRefs | undefined {
+  if (!reasons || reasons.length === 0) return undefined;
+  const bounded = reasons
+    .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+    .slice(0, MAX_EVIDENCE_REASONS)
+    .map((r) =>
+      r.length > MAX_EVIDENCE_REASON_CHARS
+        ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}\u2026`
+        : r
+    );
+  return bounded.length > 0 ? { predicateReasons: bounded } : undefined;
 }
 
 /**
@@ -816,23 +900,41 @@ export function deriveStageResults(
     return finalize([connection, discovery, ...rest], evidence, "setup");
   }
 
-  const derived: StageResultRow[] = USER_VALUE_STAGES.map((stage) => {
-    if (!applies[stage]) return inapplicable(stage);
-    switch (stage) {
-      case "connection":
-        return deriveConnection(evidence);
-      case "discovery":
-        return deriveDiscovery(evidence);
-      case "selection":
-        return deriveSelection(evidence);
-      case "call":
-        return deriveCall(evidence, authored);
-      case "response":
-        return deriveResponse(evidence, authored);
-      case "userValue":
-        return deriveUserValue(evidence);
+  const upstream: StageResultRow[] = USER_VALUE_STAGES.slice(0, 5).map(
+    (stage) => {
+      if (!applies[stage]) return inapplicable(stage);
+      switch (stage) {
+        case "connection":
+          return deriveConnection(evidence);
+        case "discovery":
+          return deriveDiscovery(evidence);
+        case "selection":
+          return deriveSelection(evidence);
+        case "call":
+          return deriveCall(evidence, authored);
+        default:
+          return deriveResponse(evidence, authored);
+      }
     }
-  });
+  );
+
+  // A judge verdict is DISCARDED when the chain broke upstream. The advisory
+  // input only ever fills a silence deterministic evidence left in a run that
+  // otherwise got as far as user value; on a run whose connection or tool call
+  // failed, "the judge says the user got what they wanted" is a claim the run
+  // itself disproves, and it would overwrite `notReached` with a verdict.
+  const brokeUpstream = upstream.some((r) => r.state === "failed");
+  const userValueEvidence =
+    brokeUpstream && evidence.judgeEvidence
+      ? { ...evidence, judgeEvidence: undefined }
+      : evidence;
+
+  const derived: StageResultRow[] = [
+    ...upstream,
+    applies.userValue
+      ? deriveUserValue(userValueEvidence)
+      : inapplicable("userValue"),
+  ];
 
   // Precedence 3: position — but only over stages that decided NOTHING of
   // their own.

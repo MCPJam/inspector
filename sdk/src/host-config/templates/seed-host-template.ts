@@ -826,10 +826,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "chatgpt",
         // Canonical id (openai/<slug>) so the chat-composer model picker
         // resolves it. Bare "gpt-5" never matched a SUPPORTED_MODELS
-        // entry → silently fell back. `gpt-5-nano` is the smallest free
-        // GPT-5 variant in MCPJAM_GUEST_ALLOWED_MODEL_IDS — guests get
-        // it without an OpenAI key. Bigger GPT-5s (5.4/5.5) are gated.
-        modelId: "openai/gpt-5-nano",
+        // entry → silently fell back. Luna is the current default ChatGPT
+        // model and is hosted (every hosted model is guest-allowed), so
+        // guests still get it without an OpenAI key.
+        modelId: "openai/gpt-5.6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
