@@ -288,18 +288,35 @@ export function isAllowedHost(
     const host = hostHeader.toLowerCase();
     // Extract hostname without port for comparison
     const hostWithoutPort = host.split(":")[0];
-
-    return allowedHosts.some((allowed) => {
-      // Support exact match or subdomain matching (e.g., "*.railway.app")
-      if (allowed.startsWith("*.")) {
-        const domain = allowed.slice(2);
-        return (
-          hostWithoutPort === domain || hostWithoutPort.endsWith(`.${domain}`)
-        );
-      }
-      return hostWithoutPort === allowed;
-    });
+    return hostnameMatchesAllowlist(hostWithoutPort, allowedHosts);
   }
 
   return false;
+}
+
+/**
+ * Does a lowercased, port-stripped hostname match one of the admin-configured
+ * `MCPJAM_ALLOWED_HOSTS` entries? Exact match, or a `*.domain` subdomain match.
+ *
+ * This is the ALLOWLIST half of `isAllowedHost` on its own — it deliberately
+ * does NOT include the localhost auto-allow. The origin-validation gate reuses
+ * it so both gates agree on the configured allowlist (a host allowlisted for
+ * token delivery is also accepted as a request Origin), while origin validation
+ * keeps its own exact-origin rule for localhost (specific scheme + port).
+ */
+export function hostnameMatchesAllowlist(
+  hostnameWithoutPort: string,
+  allowedHosts: string[]
+): boolean {
+  return allowedHosts.some((allowed) => {
+    // Support exact match or subdomain matching (e.g., "*.railway.app")
+    if (allowed.startsWith("*.")) {
+      const domain = allowed.slice(2);
+      return (
+        hostnameWithoutPort === domain ||
+        hostnameWithoutPort.endsWith(`.${domain}`)
+      );
+    }
+    return hostnameWithoutPort === allowed;
+  });
 }
