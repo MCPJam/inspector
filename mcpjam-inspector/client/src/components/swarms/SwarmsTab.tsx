@@ -971,7 +971,11 @@ export function SwarmsTab({
           }}
           launchJourney={launchJourney}
           onCancel={() => {
-            toast.success("Swarm cancelled");
+            // "Discarded", not "cancelled": cancel here happens before launch
+            // and just drops the draft. "Cancelled" collides with the swarm-run
+            // status meaning (a running swarm someone stopped), which never
+            // happened.
+            toast.success("New swarm discarded");
             navigate(routePaths.swarms);
           }}
           onDone={(runLabels) => {

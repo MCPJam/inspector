@@ -132,8 +132,9 @@ const {
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/useProjectEnvironments")>();
+  const actual = await importOriginal<
+    typeof import("@/hooks/useProjectEnvironments")
+  >();
   return {
     ...actual,
     useCreateProjectEnvironment: () => createEnvironmentMock,
@@ -257,8 +258,7 @@ const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 // The create flow is entered and left by NAVIGATION now (`/swarms/new`), not
 // by in-page state, so the entry/exit assertions need the navigate call.
 vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/app-navigation")>();
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
   return { ...actual, useAppNavigate: () => navigateMock };
 });
 
@@ -392,18 +392,17 @@ beforeEach(() => {
         created: true,
       }))
   );
-  createEnvironmentMock.mockImplementation(async (args: {
-    hostId: string;
-    name: string;
-  }) => ({
-    environmentId: `created-${args.hostId}`,
-    projectId: "proj-1",
-    name: args.name,
-    hostId: args.hostId,
-    revision: 1,
-    createdAt: 1,
-    updatedAt: 1,
-  }));
+  createEnvironmentMock.mockImplementation(
+    async (args: { hostId: string; name: string }) => ({
+      environmentId: `created-${args.hostId}`,
+      projectId: "proj-1",
+      name: args.name,
+      hostId: args.hostId,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+  );
   environmentsRef.current = [
     {
       environmentId: "env-1",
@@ -485,8 +484,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
     // BB-64: leaving silently read as "did my click even register?". The
     // toast is the acknowledgement, and it must fire only on a real cancel —
-    // never on a successful launch (that path is onDone, not onCancel).
-    expect(toast.success).toHaveBeenCalledWith("Swarm cancelled");
+    // never on a successful launch (that path is onDone, not onCancel). The
+    // negative half is pinned in the launch test below.
+    expect(toast.success).toHaveBeenCalledWith("New swarm discarded");
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -654,7 +654,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i })
+    );
 
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
@@ -978,8 +980,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/Refund Chaser/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("new-swarm-running-stop"));
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith("/swarms?view=sessions"),
+      expect(navigateMock).toHaveBeenCalledWith("/swarms?view=sessions")
     );
+    // BB-64: the discard toast is cancel-only. A real launch leaves via onDone,
+    // so it must never fire — the negative half of the cancel test's claim.
+    expect(toast.success).not.toHaveBeenCalledWith("New swarm discarded");
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
@@ -1366,9 +1371,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
-    expect(
-      "environmentIds" in launchJourneyRunMock.mock.calls[0][0]
-    ).toBe(false);
+    expect("environmentIds" in launchJourneyRunMock.mock.calls[0][0]).toBe(
+      false
+    );
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1400,10 +1405,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(updateJourneyMock).toHaveBeenCalledTimes(1);
     const patch = updateJourneyMock.mock.calls[0][0];
     expect(patch.journeyRefId).toBe("j-existing");
-    expect(patch.rubric.map((c: { predicate: { type: string } }) => c.predicate.type)).toEqual([
-      "noToolErrors",
-      "finalAssistantMessageNonEmpty",
-    ]);
+    expect(
+      patch.rubric.map((c: { predicate: { type: string } }) => c.predicate.type)
+    ).toEqual(["noToolErrors", "finalAssistantMessageNonEmpty"]);
     expect("environmentIds" in patch).toBe(false);
     expect("hostIds" in patch).toBe(false);
     // Never send judgeConfig when the author didn't set one — null/undefined
@@ -1482,9 +1486,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
-    expect(
-      "swarmRefId" in createJourneyMock.mock.calls[0][0]
-    ).toBe(false);
+    expect("swarmRefId" in createJourneyMock.mock.calls[0][0]).toBe(false);
     await screen.findByTestId("new-swarm-running-step");
   });
 
@@ -1534,9 +1536,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() =>
       expect(launchJourneyRunMock.mock.calls.length).toBeGreaterThan(0)
     );
-    expect((launchJourneyRunMock.mock.calls[0]![0] as any).swarmRunGroupId).toBe(
-      firstGroupId
-    );
+    expect(
+      (launchJourneyRunMock.mock.calls[0]![0] as any).swarmRunGroupId
+    ).toBe(firstGroupId);
   });
 
   it("counts reused journeys in the session estimate", async () => {
@@ -1581,7 +1583,9 @@ describe("SwarmsTab — New swarm create flow", () => {
       await screen.findByText(/run 3 sessions total in this swarm/i)
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i })
+    );
     fireEvent.click(screen.getByRole("radio", { name: /launch gate/i }));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
@@ -1705,9 +1709,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     fillDescribe();
     // Auto-seed has env-1; one more click adds env-2.
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
-    expect(screen.getByTestId("new-swarm-environments-picker")).toHaveTextContent(
-      "2 env"
-    );
+    expect(
+      screen.getByTestId("new-swarm-environments-picker")
+    ).toHaveTextContent("2 env");
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
@@ -1735,9 +1739,12 @@ describe("SwarmsTab — New swarm create flow", () => {
       target: { value: "Operator" },
     });
     // New draft starts with one empty goal input.
-    fireEvent.change(screen.getByPlaceholderText(/what should they try to do/i), {
-      target: { value: "Resolve a stuck ticket" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(/what should they try to do/i),
+      {
+        target: { value: "Resolve a stuck ticket" },
+      }
+    );
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
@@ -1853,9 +1860,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
-    await waitFor(() =>
-      expect(createEnvironmentMock).toHaveBeenCalledTimes(2)
-    );
+    await waitFor(() => expect(createEnvironmentMock).toHaveBeenCalledTimes(2));
     await screen.findByTestId("new-swarm-proposed-personas");
     expect(generateSwarmPersonaBatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1887,7 +1892,9 @@ describe("SwarmsTab create flow — insight grouping", () => {
   it("offers the row in Shared setup and says the setting is project-wide", () => {
     openDescribe();
     const row = screen.getByTestId("new-swarm-insight-grouping");
-    expect(within(row).getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+    expect(
+      within(row).getByTestId("cluster-tuning-trigger")
+    ).toBeInTheDocument();
     expect(row).toHaveTextContent(/Saved for this project/i);
   });
 
@@ -1896,15 +1903,17 @@ describe("SwarmsTab create flow — insight grouping", () => {
     openDescribe();
     await user.click(
       within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
+        "cluster-tuning-trigger"
+      )
     );
 
     expect(screen.getByTestId("cluster-tuning-apply")).toHaveTextContent(
-      "Save default",
+      "Save default"
     );
     // Nothing has run, so re-summarizing "every session" is not on offer.
-    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("cluster-tuning-force")
+    ).not.toBeInTheDocument();
   });
 
   it("writes the chosen preset to the project", async () => {
@@ -1912,8 +1921,8 @@ describe("SwarmsTab create flow — insight grouping", () => {
     openDescribe();
     await user.click(
       within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
+        "cluster-tuning-trigger"
+      )
     );
     await user.click(screen.getByTestId("cluster-tuning-preset-detailed"));
     await user.click(screen.getByTestId("cluster-tuning-apply"));
@@ -1933,8 +1942,8 @@ describe("SwarmsTab create flow — insight grouping", () => {
     openDescribe();
     expect(
       within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
+        "cluster-tuning-trigger"
+      )
     ).toHaveTextContent("Broad");
   });
 });
@@ -2079,7 +2088,9 @@ describe("SwarmsTab create flow — survives a remount", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
 
     // Back to Describe, then Cancel out of the flow entirely.
-    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^back to describe$/i })
+    );
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     remount();
 
@@ -2328,10 +2339,9 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     fireEvent.change(within(detail).getByLabelText("Persona role"), {
       target: { value: "Renamed role" },
     });
-    fireEvent.change(
-      within(detail).getByLabelText("Use cases and context"),
-      { target: { value: "Fresh context" } }
-    );
+    fireEvent.change(within(detail).getByLabelText("Use cases and context"), {
+      target: { value: "Fresh context" },
+    });
 
     expect(
       within(detail).getByDisplayValue("Renamed persona")
@@ -2355,9 +2365,9 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
       ).not.toBeInTheDocument();
     });
     // The edit survived the collapse.
-    expect(
-      screen.getByTestId("new-swarm-proposed-personas")
-    ).toHaveTextContent("Renamed persona");
+    expect(screen.getByTestId("new-swarm-proposed-personas")).toHaveTextContent(
+      "Renamed persona"
+    );
   });
 
   it("adds an existing persona from this step, and stops offering it once added", async () => {
@@ -2407,9 +2417,7 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
       within(detail).queryByRole("button", { name: /close persona detail/i })
     ).not.toBeInTheDocument();
     // Save changes is the one control the header carries.
-    expect(
-      within(detail).getByTestId("new-swarm-persona-save")
-    ).toBeVisible();
+    expect(within(detail).getByTestId("new-swarm-persona-save")).toBeVisible();
 
     // Remove is still one click away, on the sibling row.
     expect(
