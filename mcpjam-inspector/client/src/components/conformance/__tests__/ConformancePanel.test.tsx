@@ -274,7 +274,9 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /run available checks/i }),
+    );
 
     // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
     // from protocol readiness = 98. The number appears twice: the pooled
@@ -293,14 +295,15 @@ describe("ConformanceTab", () => {
     // The advisory that deducted is visible, tier and all.
     expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
     expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
-
   });
 
   it("renders no score card when nothing was applicable", async () => {
     setupSuccessfulRunMocks();
 
     render(<ConformanceTab server={createHttpServer()} />);
-    fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /run available checks/i }),
+    );
 
     await waitFor(() =>
       expect(screen.getByText("Protocol summary")).toBeInTheDocument(),
@@ -338,6 +341,17 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Apps")).toBeDefined();
     expect(screen.getByText("Tasks")).toBeDefined();
     expect(screen.getByText("OAuth")).toBeDefined();
+  });
+
+  it("shows the readiness sections without a flag of their own", () => {
+    // This file mocks no feature-flag provider, so the sections appearing here
+    // IS the assertion: reaching this page already required
+    // `mcpjam-conformance`, and a second flag would have gated an audience
+    // against itself. If one is ever reintroduced, this fails.
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
+    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
   });
 
   it("runs the tasks suite and renders its summary with the resolved wire", async () => {
@@ -426,7 +440,9 @@ describe("ConformanceTab", () => {
     await user.click(screen.getByRole("button", { name: /Protocol/ }));
 
     expect(screen.getByText("Ping")).toBeDefined();
-    expect(screen.getByText(/checks in this suite — not run yet/)).toBeDefined();
+    expect(
+      screen.getByText(/checks in this suite — not run yet/),
+    ).toBeDefined();
   });
 
   it("explains a check when its catalog row is clicked", async () => {
@@ -437,15 +453,11 @@ describe("ConformanceTab", () => {
 
     // The row shows the canonical title; the explanation stays hidden until
     // the row itself is opened.
-    expect(
-      screen.queryByText("Server responds to ping requests."),
-    ).toBeNull();
+    expect(screen.queryByText("Server responds to ping requests.")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /^Ping/ }));
 
-    expect(
-      screen.getByText("Server responds to ping requests."),
-    ).toBeDefined();
+    expect(screen.getByText("Server responds to ping requests.")).toBeDefined();
   });
 
   it("narrows the protocol catalog to the pinned version's era", async () => {
@@ -892,6 +904,56 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Failed")).toBeDefined();
   });
 
+  it("marks a pending failed protocol check unscored and leaves a scored failure unmarked", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: true,
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "failed",
+            durationMs: 1,
+            error: { message: "pong missing" },
+          },
+          {
+            id: "wire-schema-valid",
+            category: "protocol",
+            title: "Wire schema is valid",
+            description: "Schema check.",
+            status: "failed",
+            durationMs: 1,
+            error: { message: "schema mismatch" },
+          },
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "1",
+          manifestDigest: "digest",
+          checkerVersion: "1",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Protocol summary");
+
+    const pendingRow = screen
+      .getByText("Wire schema is valid")
+      .closest("button");
+    expect(pendingRow).toHaveTextContent("unscored");
+    expect(
+      screen.getByTitle("unscored by this run's profile").closest("button"),
+    ).toBe(pendingRow);
+
+    const scoredRow = screen.getByText("Ping").closest("button");
+    expect(scoredRow).not.toHaveTextContent("unscored");
+  });
+
   it("badges an incomplete tasks run distinctly from a passing one", async () => {
     setupSuccessfulRunMocks();
     mockRunTasks.mockResolvedValue({
@@ -975,5 +1037,4 @@ describe("ConformanceTab", () => {
     ).toBeDefined();
     expect(screen.getAllByText("404").length).toBe(2);
   });
-
 });
