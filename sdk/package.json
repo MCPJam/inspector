@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "6.4.0",
+  "version": "6.5.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -108,6 +108,8 @@
     "bundle:runtimes": "npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime",
     "generate:eval-suite-schema": "tsx scripts/generate-eval-suite-schema.ts",
     "check:eval-suite-schema": "tsx scripts/generate-eval-suite-schema.ts --check",
+    "generate:eval-verdict-policy-schema": "tsx scripts/generate-eval-verdict-policy-schema.ts",
+    "check:eval-verdict-policy-schema": "tsx scripts/generate-eval-verdict-policy-schema.ts --check",
     "generate:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts",
     "check:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts --check",
     "check:host-catalog-fallback:remote": "node --import tsx scripts/check-host-catalog-fallback-remote.ts",
