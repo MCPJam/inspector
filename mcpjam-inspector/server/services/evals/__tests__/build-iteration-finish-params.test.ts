@@ -80,7 +80,7 @@ describe("buildIterationFinishParams — stage derivation", () => {
   test("writes a full chain when the authored case is supplied", () => {
     const params = build({ stageCase: authoredCase, spans: [okToolSpan] });
     const metadata = params.metadata as Record<string, unknown>;
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(3);
     expect(rowsOf(params)).toHaveLength(6);
     expect(stage(params, "call").state).toBe("passed");
   });
@@ -154,6 +154,81 @@ describe("buildIterationFinishParams — stage derivation", () => {
     expect(metadata.stepResults).toHaveLength(1);
     expect(metadata.stageResults).toHaveLength(6);
   });
+
+  test("policy blocks are metadata, not failures, and block stage measurement", () => {
+    const params = build({
+      stageCase: authoredCase,
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.policyBlocks).toHaveLength(1);
+    expect(metadata.failureCategory).toBeUndefined();
+    expect(metadata.firstFailedStage).toBeUndefined();
+    const applicable = rowsOf(params).filter(
+      (row) => row.state !== "notApplicable"
+    );
+    expect(applicable.every((row) => row.state === "notMeasured")).toBe(true);
+    expect(applicable.every((row) => row.reason === "blockedByPolicy")).toBe(
+      true
+    );
+  });
+
+  test("the effective tool policy is snapshotted so a replay can recover it", () => {
+    // The run row cannot carry the policy yet (backend field is Lane B), and a
+    // replay re-dials the ORIGINAL servers with the ORIGINAL credentials — so
+    // this snapshot is the only thing standing between a replay and executing
+    // for real the calls the source run blocked.
+    const params = build({
+      stageCase: authoredCase,
+      toolPolicy: { mode: "readOnly", deny: ["write_file"] },
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.toolPolicy).toEqual({
+      mode: "readOnly",
+      deny: ["write_file"],
+    });
+  });
+
+  test("no policy means no snapshot key at all", () => {
+    const params = build({ stageCase: authoredCase });
+    expect(
+      Object.hasOwn(params.metadata as Record<string, unknown>, "toolPolicy")
+    ).toBe(false);
+  });
+
+  test("an independent stage tool error retains ordinary failure attribution", () => {
+    const params = build({
+      stageCase: authoredCase,
+      status: "failed",
+      stageToolErrors: [{ kind: "protocol-error", toolName: "write_file" }],
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.stageResults).toBeDefined();
+    expect(metadata.failureCategory).toBe("serverData");
+    expect(metadata.firstFailedStage).toBe("call");
+    expect(
+      (metadata.stageResults as StageResultRow[]).some(
+        (row) => row.state === "failed" && row.reason === "protocolError"
+      )
+    ).toBe(true);
+  });
 });
 
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
@@ -177,7 +252,7 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
     expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
     expect(metadata.failureCategory).toBe("setup");
-    expect(metadata.stageAnalyzerVersion).toBe(2);
+    expect(metadata.stageAnalyzerVersion).toBe(3);
     // Never a fabricated failure: nothing was measured, so nothing "failed".
     expect(metadata.firstFailedStage).toBeUndefined();
   });

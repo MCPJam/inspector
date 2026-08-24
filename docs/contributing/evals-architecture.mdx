@@ -153,6 +153,99 @@ Constraints that bite contributors:
 
 Per-case predicate resolution (suite defaults vs `inherit` / `replace` / `extend` overrides) is centralized in `mcpjam-inspector/shared/eval-matching.ts` (`resolveCaseSuccessPredicates`).
 
+## Tool-policy enforcement
+
+Eval tool safety is enforced at execution time, not by hiding tools from the
+model. A denied tool remains visible-but-blocked: hiding it would make the
+model's non-selection look like a `selection`-stage miss caused by the model or
+server, instead of a decision made by our policy gate. A blocked call is
+recorded as a policy block, does not call the MCP server, does not create a
+tool trace span, and is not an eval failure. Applicable stage rows become
+`notMeasured` with reason `blockedByPolicy`.
+
+The shared contract applies this precedence:
+
+1. An explicit `deny` entry blocks the tool.
+2. An explicit `allow` entry allows the tool.
+3. `destructiveHint: true` is blocked by default.
+4. In `readOnly` mode, only an explicitly read-only classification is allowed.
+5. `default` mode allows the remaining tools.
+
+Server annotations are advisory and **UNTRUSTED**. A tool is explicitly
+read-only only when `readOnlyHint === true` and `destructiveHint !== true`.
+Destructive and contradictory or malformed annotations are not treated as
+safe. Explicit name-based denies also apply to MCPJam internal tools; mode
+derived rules apply only to MCP-server tools.
+
+`allow` in `mode: "default"` is an override, not an allowlist: it does not
+restrict the set of tools available to the model. In `readOnly` mode, the
+mode-derived rule does not restrain the sandbox `bash` tool or skills because
+those internal tools do not carry `_serverId`. Runs selecting `readOnly` with a
+sandbox-enabled suite emit a launch warning for this limitation.
+
+Harness evals run their MCP calls out of process, so they never reach the
+in-process execution gate. They are enforced instead at the MCP proxy every
+generated `.mcp.json` entry points at. At launch the runner resolves the policy
+for every known tool of every selected server with the same shared contract, and
+seals that decision table together with the proxy credential into the
+`X-MCPJam-Proxy-Token` value the sandbox receives; the proxy opens it and blocks
+a denied `tools/call` before the upstream call happens. Because the policy
+encloses the credential, removing the policy from `.mcp.json` also removes
+access. A tool that appears only after launch is denied (`unknownAtLaunch`).
+`tools/list` is not filtered, and a block is returned as a successful MCP
+result, so it is accounted exactly like an in-process block: `notMeasured` with
+reason `blockedByPolicy`, never a failure attributed to the server. A policied
+harness run is still refused at launch on a deployment that cannot seal
+(`COMPUTERS_TERMINAL_TOKEN_SECRET` absent or too weak), rather than running
+unenforced.
+
+Hosted platform-authored suites currently lack the backend field required to
+carry this policy. The hosted CLI therefore continues to refuse authored
+`defaults.toolPolicy` rather than running without enforcement.
+
+## Run verdict policy (contract only)
+
+`sdk/src/contract/verdict-policy.ts` pins how a completed run becomes a verdict
+under `verdictPolicyVersion: 2`. It is a **contract with no producer yet** —
+nothing in the SDK, the hosted runner, or the backend emits an
+`EvalVerdictDecision`. Anything that reads one must check the version first: a
+row with no `verdictPolicyVersion` is a legacy percent-threshold row and must
+never be reinterpreted under these semantics.
+
+The rules the contract enforces, all of them checked by zod refinements rather
+than left to the producer:
+
+- **Validity is decided before the task verdict.** A run that cannot be
+  believed is `inconclusive`, never `failed` — the two mean different things to
+  whoever is paged. Validity has three independent checks: coverage,
+  `minCompletionRate` (default **0.8**), and `maxEvaluatorErrorRate` (default
+  **0.1**).
+- **Coverage.** Omitting `minEligibleTrials` does **not** mean "no minimum": it
+  selects the default floor — every configured trial attempted, and at least one
+  gradeable trial. An explicit `minEligibleTrials: N` *replaces* that floor with
+  `eligibleTrials >= N`, deliberately tolerating unattempted trials.
+- **Every rate carries its own arithmetic** — numerator, denominator, and the
+  exclusions that shrank the denominator. A zero denominator is
+  `state: "notMeasured"` with a `null` value, never a silent pass: an
+  unsatisfiable bound fails from both directions.
+- **A measured case passes at `passRate >= effectivePassThreshold`** (equality
+  passes), and a case with zero eligible trials is `inconclusive` even at
+  threshold 0. If validity holds, every measured case must meet its own
+  threshold for the run to pass.
+- **Lifecycle status and task verdict are orthogonal.** A trial that ran to
+  `completed` with a failing task verdict is normal, graded failure; a
+  lifecycle-`failed` trial has no verdict to grade and is excluded as
+  `executionFailed`. There is no status-to-verdict mapper, on purpose.
+
+Same generation and mirror discipline as the suite file: the draft 2020-12
+schema and its `.ts` twin are generated by
+`npm run generate:eval-verdict-policy-schema -w @mcpjam/sdk` (checked by
+`check:eval-verdict-policy-schema` and by a test), and
+`sdk/tests/fixtures/eval-verdict-policy-parity-fixtures.json` is the canonical
+corpus to be copied verbatim into the backend when the Convex mirror lands —
+including an aggregation cohort that pins the expected output a future producer
+must reproduce.
+
 ## Where the code lives
 
 | Area | Location |
@@ -160,6 +253,7 @@ Per-case predicate resolution (suite defaults vs `inherit` / `replace` / `extend
 | SDK eval primitives | `sdk/src/EvalTest.ts`, `sdk/src/EvalSuite.ts`, `sdk/src/eval-result-mapping.ts` |
 | SDK reporting | `sdk/src/report-eval-results.ts`, `sdk/src/eval-reporting-types.ts`, `sdk/src/upload-eval-artifact.ts` |
 | Predicates | `sdk/src/predicates/` |
+| Run verdict contract | `sdk/src/contract/verdict-policy.ts` (+ generated `eval-verdict-policy.schema.json`) |
 | Host config core | `sdk/src/host-config/` |
 | Ingestion proxy | `mcpjam-inspector/server/routes/v1/eval-ingest.ts` |
 | Suite/case/run routes | `mcpjam-inspector/server/routes/shared/evals.ts` |
