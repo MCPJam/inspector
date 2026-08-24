@@ -169,6 +169,17 @@ function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
   dispose: () => void;
 } {
   const controller = new AbortController();
+  if (callerSignal?.aborted) {
+    // Already aborted before this helper ran — e.g. propagated from an
+    // earlier best-effort lookup, or a caller-supplied pre-aborted signal.
+    // `addEventListener("abort", ...)` alone would never fire for an event
+    // that already happened, leaving the fetch to run for the full timeout.
+    controller.abort();
+    return {
+      signal: controller.signal,
+      dispose: () => {},
+    };
+  }
   const timeoutId = setTimeout(
     () => controller.abort(),
     DISCLOSURE_FETCH_TIMEOUT_MS,

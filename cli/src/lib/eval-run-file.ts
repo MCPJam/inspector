@@ -25,6 +25,7 @@ import {
   updateEvalSuiteOperation,
   type PlatformApiClient,
   type PlatformEvalCase,
+  type PlatformEvalRunDisclosure,
   type RunEvalSuiteInput,
   type RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
@@ -551,6 +552,7 @@ export async function executeEvalRunFromFile(
   context: {
     client: PlatformApiClient;
     signal: AbortSignal;
+    onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
   },
   params: {
     source: { text: string; bytes: number; buffer: Uint8Array };
@@ -740,6 +742,10 @@ export async function executeEvalRunFromFile(
       ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
       ...(knobs.compose ? { compose: knobs.compose } : {}),
     },
-    { client: context.client, signal: context.signal },
+    {
+      client: context.client,
+      signal: context.signal,
+      onDisclosure: context.onDisclosure,
+    },
   );
 }

@@ -2326,10 +2326,19 @@ export function registerEvalCommands(program: Command): void {
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          // Fired the moment the operation resolves the disclosure for the
+          // FROZEN launch plan — before it creates the run. Printing here,
+          // synchronously from the callback, is what makes this actually
+          // pre-run for a human watching the terminal: reading it off the
+          // finished receipt afterward would print it only after the run had
+          // already been created and had possibly already sent content.
+          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
+            writeRunDisclosure(globalOptions.format, disclosure);
+          };
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(
-              { client: context.client, signal: context.signal },
+              { client: context.client, signal: context.signal, onDisclosure },
               {
                 source,
                 label: options.file === "-" ? "<stdin>" : options.file,
@@ -2395,17 +2404,18 @@ export function registerEvalCommands(program: Command): void {
                 : {}),
               ...composeField(options),
             },
-            { client: context.client, signal: context.signal }
+            { client: context.client, signal: context.signal, onDisclosure }
           );
         },
         { projectScope: resolved.projectScope }
       );
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
-      // stream unparseable for the CI callers that read it.
+      // stream unparseable for the CI callers that read it. The human-mode
+      // block already printed from `onDisclosure`, ahead of the launch
+      // itself — nothing to print again here.
       if (!options.wait) {
         writeResult(result, globalOptions.format);
-        writeRunDisclosure(globalOptions.format, result.disclosure);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
         // A partial or wholly failed fan-out is not a success. Exiting 0 would
         // let a pipeline treat "1 of 3 runs never started" as a clean launch.
@@ -2536,7 +2546,6 @@ export function registerEvalCommands(program: Command): void {
           { launch: result, runs: completion.runs },
           globalOptions.format
         );
-        writeRunDisclosure(globalOptions.format, result.disclosure);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
       }
 
