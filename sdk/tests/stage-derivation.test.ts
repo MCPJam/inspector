@@ -927,7 +927,9 @@ describe("honest degradation for rows that never produced a verdict", () => {
         evidence: { traceAbsent: true },
         iteration: { status: "failed", error: "server not connected" },
       });
-    expect(stageAnalyzerVersion).toBe(2);
+    // v3 added judge evidence and nothing else; the rows it emits with no
+    // judge evidence are the v1/v2 rows unchanged, which is what this pins.
+    expect(stageAnalyzerVersion).toBe(3);
     const applicable = stageResults.filter((r) => r.state !== "notApplicable");
     expect(applicable.map((r) => ({ stage: r.stage, state: r.state, reason: r.reason }))).toEqual(
       applicable.map((r) => ({
