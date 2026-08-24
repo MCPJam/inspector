@@ -144,11 +144,23 @@ export interface PlatformOperationContext {
    * contract, a transient error) never blocks or fails the launch — this
    * callback simply does not fire, and the receipt's `disclosure` field is
    * absent. Never called for `runEvalCaseOperation`, which shares no target
-   * resolution with the suite op.
+   * resolution with the suite op. See `onDisclosureUnavailable` for the
+   * failure counterpart.
    */
   onDisclosure?: (
     disclosure: PlatformEvalRunDisclosure,
   ) => void | Promise<void>;
+  /**
+   * Fired INSTEAD of `onDisclosure` when the fetch for the frozen launch
+   * plan failed — a backend predating the contract, a timeout, a transient
+   * error. Still never blocks or fails the launch (the same best-effort
+   * guarantee `onDisclosure` carries); this exists so a caller can say
+   * something was ATTEMPTED and failed, rather than rendering nothing at
+   * all. An absent disclosure with no signal at all is indistinguishable
+   * from "this build has no disclosure feature" — the same failure class
+   * the backend's `executionAbsence.kind` exists to prevent one layer up.
+   */
+  onDisclosureUnavailable?: (reason: string) => void;
 }
 
 /**
@@ -198,6 +210,29 @@ function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
       callerSignal?.removeEventListener("abort", onCallerAbort);
     },
   };
+}
+
+/**
+ * A short, human-readable reason a disclosure fetch failed — for
+ * `onDisclosureUnavailable`, so a caller can say something was ATTEMPTED and
+ * failed rather than rendering nothing at all. Deliberately coarse: this is
+ * a best-effort planning aid's failure message, not a diagnostic surface.
+ */
+function disclosureUnavailableReason(error: unknown): string {
+  if (error instanceof PlatformApiError) {
+    if (
+      error.code === "FEATURE_NOT_SUPPORTED" &&
+      (error.details as Record<string, unknown> | undefined)?.reason ===
+        "contract_unavailable"
+    ) {
+      return "this deployment predates the pre-run disclosure contract";
+    }
+    return error.message;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return "the disclosure fetch timed out";
+  }
+  return "the disclosure fetch failed";
 }
 
 export const getMeOperation: PlatformOperation<
@@ -2980,7 +3015,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal, onDisclosure }) {
+  async execute(input, { client, signal, onDisclosure, onDisclosureUnavailable }) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3167,6 +3202,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     // genuine caller cancellation; it just cannot itself abort anything but
     // this one fetch.
     const disclosureBound = boundedDisclosureSignal(signal);
+    let disclosureFailureReason: string | undefined;
     try {
       disclosure = await client.getEvalRunDisclosure(
         {
@@ -3181,15 +3217,17 @@ export const runEvalSuiteOperation: PlatformOperation<
         },
         { signal: disclosureBound.signal },
       );
-    } catch {
+    } catch (error) {
       disclosure = undefined;
+      disclosureFailureReason = disclosureUnavailableReason(error);
     } finally {
       disclosureBound.dispose();
     }
-    // OUTSIDE the fetch's try/catch on purpose: `onDisclosure` is caller code
-    // we do not control, and a callback that throws must not be able to erase
-    // a disclosure that was already fetched successfully — only a FETCH
-    // failure may leave `disclosure` unset.
+    // OUTSIDE the fetch's try/catch on purpose: `onDisclosure`/
+    // `onDisclosureUnavailable` are caller code we do not control, and a
+    // callback that throws must not be able to erase a disclosure that was
+    // already fetched successfully — only a FETCH failure may leave
+    // `disclosure` unset.
     if (disclosure) {
       try {
         // `onDisclosure` may be async — TypeScript accepts an async function
@@ -3204,6 +3242,16 @@ export const runEvalSuiteOperation: PlatformOperation<
       } catch {
         // The callback's own synchronous failure is likewise the caller's
         // concern, not a reason to drop the disclosure from the receipt.
+      }
+    } else if (disclosureFailureReason) {
+      // An absent disclosure with NO signal at all is indistinguishable from
+      // "this build has no disclosure feature" — a caller that wants to say
+      // "attempted, failed" rather than rendering nothing gets the chance to
+      // here. Still never blocks or fails the launch.
+      try {
+        onDisclosureUnavailable?.(disclosureFailureReason);
+      } catch {
+        // The callback's own failure is the caller's concern.
       }
     }
 

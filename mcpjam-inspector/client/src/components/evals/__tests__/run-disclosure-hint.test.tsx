@@ -328,6 +328,23 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
     expect(detail.some((line) => line.includes("Vercel AI Gateway"))).toBe(
       true,
     );
+    // "fires automatically" vs "fires only if asked" are different consent
+    // stories — the fixture's Goal-completion judge is explicit-request-only,
+    // Run insights report is auto-on-completion.
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("Goal-completion judge") &&
+          line.includes("fires only if requested"),
+      ),
+    ).toBe(true);
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("Run insights report") &&
+          line.includes("auto-fires on completion"),
+      ),
+    ).toBe(true);
   });
 
   it("renders capture and redaction facts — the tooltip's only pre-launch view of what gets stored", () => {

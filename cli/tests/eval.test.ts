@@ -202,6 +202,8 @@ interface EvalFixtureOptions {
   runCaseStatus?: "running" | "completed";
   runCaseIterationFetchError?: boolean;
   runOneResult?: "passed" | "failed";
+  /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
+  disclosureUnavailable?: boolean;
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -500,6 +502,17 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         environmentId: url.searchParams.get("environmentId"),
         environmentIds: url.searchParams.get("environmentIds"),
       });
+      if (options.disclosureUnavailable) {
+        res.statusCode = 422;
+        res.end(
+          JSON.stringify({
+            code: "FEATURE_NOT_SUPPORTED",
+            message: "This deployment predates the disclosure contract",
+            details: { reason: "contract_unavailable" },
+          }),
+        );
+        return;
+      }
       res.end(
         JSON.stringify({
           contractVersion: 1,
@@ -1982,6 +1995,53 @@ test("eval run prints the disclosure block in human mode, before the run link", 
       run.stdout,
       /Export defaults: excludes content \(redacted by default\)/,
     );
+    // "fires automatically" vs "fires only if asked" are different consent
+    // stories — the fixture's goalCompletion touchpoint is
+    // explicit-request-only, runInsights is auto-on-completion, and this
+    // renderer must not flatten that distinction just because both "fire".
+    assert.match(
+      run.stdout,
+      /Goal-completion judge fires only if explicitly requested/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report fires automatically on completion/,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints a disclosure-unavailable line in human mode when the fetch fails", async () => {
+  // An absent disclosure with NO output at all is indistinguishable from "no
+  // disclosure feature on this build" — this is the failure counterpart to
+  // the happy-path block above.
+  const fixture = await startEvalFixture({ disclosureUnavailable: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(
+      run.stdout,
+      /Pre-run disclosure unavailable: this deployment predates the pre-run disclosure contract/,
+    );
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
   } finally {
     await fixture.close();
   }

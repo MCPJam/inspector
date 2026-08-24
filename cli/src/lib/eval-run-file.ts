@@ -553,6 +553,7 @@ export async function executeEvalRunFromFile(
     client: PlatformApiClient;
     signal: AbortSignal;
     onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+    onDisclosureUnavailable?: (reason: string) => void;
   },
   params: {
     source: { text: string; bytes: number; buffer: Uint8Array };
@@ -746,6 +747,7 @@ export async function executeEvalRunFromFile(
       client: context.client,
       signal: context.signal,
       onDisclosure: context.onDisclosure,
+      onDisclosureUnavailable: context.onDisclosureUnavailable,
     },
   );
 }

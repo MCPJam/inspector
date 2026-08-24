@@ -878,18 +878,50 @@ describe("run_eval_suite pre-run disclosure (G4b)", () => {
     expect(callOrder).toContain("createEvalRunGroup");
   });
 
-  it("never blocks or fails the launch when the disclosure fetch is unavailable", async () => {
+  it("never blocks or fails the launch when the disclosure fetch is unavailable, and fires onDisclosureUnavailable instead", async () => {
     // BEST EFFORT: a backend that predates the contract must not turn a
-    // launch into a failure — this is a planning aid, not a gate.
+    // launch into a failure — this is a planning aid, not a gate. But an
+    // absent disclosure with NO signal at all is indistinguishable from "no
+    // disclosure feature on this build" — onDisclosureUnavailable exists so
+    // a caller can say "attempted, failed" instead of rendering nothing.
     const { client } = makeClient({ disclosureUnavailable: true });
     let onDisclosureCalled = false;
+    let unavailableReason: string | undefined;
     const result = await runEvalSuiteOperation.execute(
       { suite: "Smoke" },
-      { client, onDisclosure: () => (onDisclosureCalled = true) },
+      {
+        client,
+        onDisclosure: () => (onDisclosureCalled = true),
+        onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+      },
     );
     expect(result.outcome).toBe("started");
     expect(result.disclosure).toBeUndefined();
     expect(onDisclosureCalled).toBe(false);
+    expect(unavailableReason).toMatch(
+      /predates the pre-run disclosure contract/,
+    );
+  });
+
+  it("fires onDisclosureUnavailable with a timeout reason when the fetch stalls past its own budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient({ disclosureStalls: true });
+      let unavailableReason: string | undefined;
+      const resultPromise = runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(11_000);
+      const result = await resultPromise;
+      expect(result.outcome).toBe("started");
+      expect(unavailableReason).toMatch(/timed out/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not surface an unhandled rejection when an async onDisclosure callback rejects", async () => {

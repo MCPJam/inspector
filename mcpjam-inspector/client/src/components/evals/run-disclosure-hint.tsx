@@ -159,8 +159,15 @@ export function describeRunDisclosureDetail(
     // destinations, and pooling them under the first one's would misattribute
     // where the others' evidence actually goes.
     for (const touchpoint of firing) {
+      // "fires automatically" vs "fires only if asked" are different consent
+      // stories — flattening them just because both cases "fire" would hide
+      // the one distinction this hint exists to surface.
+      const firesLabel =
+        touchpoint.fires === "auto-on-completion"
+          ? "auto-fires on completion"
+          : "fires only if requested";
       lines.push(
-        `Analysis: ${touchpoint.label} → ${touchpoint.destinations.join(", ")}`,
+        `Analysis: ${touchpoint.label} (${firesLabel}) → ${touchpoint.destinations.join(", ")}`,
       );
     }
   } else {

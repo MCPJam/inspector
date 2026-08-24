@@ -472,8 +472,17 @@ function writeRunDisclosure(
     // destinations, and pooling them under the first one's would misattribute
     // where the others' evidence actually goes.
     for (const touchpoint of firingAnalysis) {
+      // "fires automatically" vs "fires only if asked" are different consent
+      // stories — one sends evidence the moment the run completes, with no
+      // further action from anyone; the other only on request. A surface
+      // whose whole job is telling people what happens before they agree to
+      // it must not flatten that distinction just because both cases "fire".
+      const firesLabel =
+        touchpoint.fires === "auto-on-completion"
+          ? "fires automatically on completion"
+          : "fires only if explicitly requested";
       lines.push(
-        `  Analysis: ${touchpoint.label} may send evidence to ${touchpoint.destinations.join(", ")}`
+        `  Analysis: ${touchpoint.label} ${firesLabel}, may send evidence to ${touchpoint.destinations.join(", ")}`
       );
     }
   } else {
@@ -2368,10 +2377,30 @@ export function registerEvalCommands(program: Command): void {
                   writeRunDisclosure(globalOptions.format, disclosure);
                 }
               : undefined;
+          // The failure counterpart: without this, a fetch that failed and a
+          // build with no disclosure feature at all look IDENTICAL to a
+          // human running this command — no output either way. Same
+          // reporter-stream rule as onDisclosure: only prints in human mode
+          // with no reporter configured, never gates or delays the launch.
+          const onDisclosureUnavailable =
+            reporter === undefined
+              ? (reason: string) => {
+                  if (globalOptions.format === "human") {
+                    process.stdout.write(
+                      `Pre-run disclosure unavailable: ${reason}\n`
+                    );
+                  }
+                }
+              : undefined;
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(
-              { client: context.client, signal: context.signal, onDisclosure },
+              {
+                client: context.client,
+                signal: context.signal,
+                onDisclosure,
+                onDisclosureUnavailable,
+              },
               {
                 source,
                 label: options.file === "-" ? "<stdin>" : options.file,
@@ -2437,7 +2466,12 @@ export function registerEvalCommands(program: Command): void {
                 : {}),
               ...composeField(options),
             },
-            { client: context.client, signal: context.signal, onDisclosure }
+            {
+              client: context.client,
+              signal: context.signal,
+              onDisclosure,
+              onDisclosureUnavailable,
+            }
           );
         },
         { projectScope: resolved.projectScope }
