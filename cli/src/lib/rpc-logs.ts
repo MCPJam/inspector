@@ -43,6 +43,22 @@ export function createCliRpcLogCollector(
   return new CliRpcLogCollector(serverNamesById);
 }
 
+export function attachCliDurationMs<T>(
+  payload: T,
+  durationMs: number,
+): T | (T & { _durationMs: number }) {
+  // Same non-object / array bail as `_rpcLogs`: a CallToolResult is an
+  // object; spreading an array would invent a fake keyed payload.
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+
+  return {
+    ...(payload as Record<string, unknown>),
+    _durationMs: durationMs,
+  } as T & { _durationMs: number };
+}
+
 export function attachCliRpcLogs<T>(
   payload: T,
   collector: CliRpcLogCollector | undefined,
