@@ -308,6 +308,10 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly toolsAnnotationsCache = new Map<
+    string,
+    Map<string, Record<string, unknown> | undefined>
+  >();
   /**
    * Servers whose CURRENT connection has completed a no-`cursor`
    * `tools/list` — the only call that writes upstream's aggregated
@@ -791,6 +795,7 @@ export class MCPClientManager {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -846,6 +851,7 @@ export class MCPClientManager {
       } catch (error) {
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
+          this.toolsAnnotationsCache.set(serverId, new Map());
           // A server without `tools/list` cannot declare `x-mcp-header` on
           // anything, so the mirroring source is trivially complete.
           this.aggregatedToolsListWarmed.add(serverId);
@@ -924,6 +930,25 @@ export class MCPClientManager {
       return undefined;
     }
     return { ...(metadata as Record<string, unknown>) };
+  }
+
+  /**
+   * Gets annotations for all tools from the most recent cached tools/list.
+   */
+  getAllToolAnnotations(
+    serverId: string
+  ): Record<string, Record<string, unknown> | undefined> {
+    const annotationsMap = this.toolsAnnotationsCache.get(serverId);
+    return annotationsMap ? Object.fromEntries(annotationsMap) : {};
+  }
+
+  /**
+   * Whether a complete tools/list response has populated the annotation cache.
+   * An empty map is still a valid populated response for a server with no
+   * tools; callers must distinguish that from a cold or invalidated cache.
+   */
+  hasCachedToolAnnotations(serverId: string): boolean {
+    return this.toolsAnnotationsCache.has(serverId);
   }
 
   /**
@@ -3075,6 +3100,7 @@ export class MCPClientManager {
 
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
+      this.toolsAnnotationsCache.delete(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3097,6 +3123,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3128,6 +3155,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3658,15 +3686,25 @@ export class MCPClientManager {
 
   private cacheToolsMetadata(
     serverId: string,
-    tools: Array<{ name: string; _meta?: any }>
+    tools: Array<{
+      name: string;
+      _meta?: any;
+      annotations?: Record<string, unknown>;
+    }>
   ): void {
     const metadataMap = new Map<string, any>();
+    const annotationsMap = new Map<
+      string,
+      Record<string, unknown> | undefined
+    >();
     for (const tool of tools) {
       if (tool._meta) {
         metadataMap.set(tool.name, tool._meta);
       }
+      annotationsMap.set(tool.name, tool.annotations);
     }
     this.toolsMetadataCache.set(serverId, metadataMap);
+    this.toolsAnnotationsCache.set(serverId, annotationsMap);
   }
 
   private isStdioConfig(config: MCPServerConfig): config is StdioServerConfig {

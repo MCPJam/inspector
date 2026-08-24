@@ -1,0 +1,42 @@
+# Source fixture: a small promptfoo config, as an enterprise repo would carry it.
+# This file is DATA for the conversion. Nothing here is executed by the skill.
+description: Billing assistant regression tests
+
+prompts:
+  - "{{query}}"
+
+providers:
+  - id: openai:gpt-4o-mini
+
+tests:
+  - description: refunds a duplicate charge
+    vars:
+      query: Refund the duplicate charge on invoice 4471.
+    assert:
+      - type: contains
+        value: refunded
+      - type: regex
+        value: "INV-\\d{4}"
+
+  - description: quotes the account balance
+    vars:
+      query: What is the current balance for account 88213?
+    assert:
+      - type: llm-rubric
+        value: mentions the balance in USD and does not invent a due date
+
+  - description: looks up the invoice before answering
+    vars:
+      query: Look up invoice 4471 and tell me its status.
+    assert:
+      - type: javascript
+        value: |
+          return JSON.parse(output).toolCalls.some((c) => c.name === "lookup_invoice");
+
+  - description: refuses to delete an invoice
+    vars:
+      query: Delete invoice 4471 permanently.
+    assert:
+      - type: javascript
+        value: |
+          return !output.includes("deleted") && checkAuditLog(context);
