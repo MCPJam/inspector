@@ -943,7 +943,7 @@ export function HostsRoute() {
  * blocked or unreachable relay leaves the flag `undefined` for the life of the
  * mount — without a deadline the link would silently do nothing at all.
  */
-const HOST_TEMPLATE_FLAG_WAIT_MS = 5_000;
+export const HOST_TEMPLATE_FLAG_WAIT_MS = 5_000;
 
 /**
  * "Verify against your server" deep-link from the public caniuse surface.
@@ -1001,15 +1001,18 @@ function useTemplateVerifyDeepLink({
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
     // The template id is captured at mount, but this component stays mounted
-    // across `/hosts` ↔ `/hosts/:hostId`. If the user opened a host while a
-    // rollout flag was still loading, the link is stale — acting on it now
-    // would create a host or bounce them out of the one they are editing, and
-    // `replace: true` would eat the history entry that leads back to it.
+    // across `/hosts` ↔ `/hosts/:hostId`. If the URL no longer asks for the
+    // captured template — gone, emptied, or now naming a different one — the
+    // link is stale: acting on it would create a host or bounce the user out of
+    // the one they opened, and `replace: true` would eat the history entry that
+    // leads back to it. Compared against the captured id rather than merely
+    // tested for presence, so a template swapped mid-load can never resolve to
+    // the host the user is no longer asking for.
     if (
       typeof window !== "undefined" &&
-      !new URLSearchParams(window.location.search).get(
+      new URLSearchParams(window.location.search).get(
         HOST_VERIFY_TEMPLATE_PARAM
-      )
+      ) !== requestedTemplateId
     ) {
       handledRef.current = true;
       return;
