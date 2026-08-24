@@ -1088,7 +1088,14 @@ refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
 would claim those guarantees. When supported by an eval runner, `toolPolicy`
 is enforced at execution time with denied tools kept visible but blocked;
-server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
+server annotations are advisory and **UNTRUSTED**. `mode` does the restraining:
+`readOnly` permits only tools annotated read-only, `default` permits everything
+except tools annotated `destructiveHint`. `deny` removes a named tool under
+either mode. `allow` is an **override, not a whitelist** — it exempts a named
+tool from the mode-derived rules (including `default` mode's destructive
+deny-by-default) and never restricts anything on its own. `{ mode: "default",
+allow: ["read_file"] }` therefore restrains nothing; tools you want blocked
+belong in `deny`, or the suite belongs in `readOnly` mode. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
