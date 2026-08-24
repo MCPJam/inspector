@@ -50,6 +50,7 @@ import {
   createAiSdkEvalTraceContext,
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
+import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 
 type ToolCall = { toolName: string; arguments: Record<string, any> };
@@ -129,6 +130,7 @@ export interface DriveHostedEvalTurnParams {
    *  (no interactive approval yet). The emulated eval path is unchanged (it
    *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
+  toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
    *  resolve the E2B sandbox. Forwarded (harness turns only) from the eval's
    *  resolved billing target; absent for org-level evals (no project/computer,
@@ -242,8 +244,14 @@ export async function driveHostedEvalTurn(
   // tools ride the same wrap so `computer` / `finish_widget` executions
   // land as tool spans in the trace UI like every other local tool.
   const traceCtx = createAiSdkEvalTraceContext(params.runStartedAt);
+  const mergedTools = {
+    ...prepared.allTools,
+    ...browser.computerWidgetTools,
+  };
   const tracedTools = wrapToolSetForEvalTrace(
-    { ...prepared.allTools, ...browser.computerWidgetTools },
+    params.toolPolicyGate
+      ? params.toolPolicyGate.wrap(mergedTools)
+      : mergedTools,
     traceCtx,
     promptIndex
   );

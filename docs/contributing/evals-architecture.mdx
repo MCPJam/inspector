@@ -153,6 +153,44 @@ Constraints that bite contributors:
 
 Per-case predicate resolution (suite defaults vs `inherit` / `replace` / `extend` overrides) is centralized in `mcpjam-inspector/shared/eval-matching.ts` (`resolveCaseSuccessPredicates`).
 
+## Tool-policy enforcement
+
+Eval tool safety is enforced at execution time, not by hiding tools from the
+model. A denied tool remains visible-but-blocked: hiding it would make the
+model's non-selection look like a `selection`-stage miss caused by the model or
+server, instead of a decision made by our policy gate. A blocked call is
+recorded as a policy block, does not call the MCP server, does not create a
+tool trace span, and is not an eval failure. Applicable stage rows become
+`notMeasured` with reason `blockedByPolicy`.
+
+The shared contract applies this precedence:
+
+1. An explicit `deny` entry blocks the tool.
+2. An explicit `allow` entry allows the tool.
+3. `destructiveHint: true` is blocked by default.
+4. In `readOnly` mode, only an explicitly read-only classification is allowed.
+5. `default` mode allows the remaining tools.
+
+Server annotations are advisory and **UNTRUSTED**. A tool is explicitly
+read-only only when `readOnlyHint === true` and `destructiveHint !== true`.
+Destructive and contradictory or malformed annotations are not treated as
+safe. Explicit name-based denies also apply to MCPJam internal tools; mode
+derived rules apply only to MCP-server tools.
+
+`allow` in `mode: "default"` is an override, not an allowlist: it does not
+restrict the set of tools available to the model. In `readOnly` mode, the
+mode-derived rule does not restrain the sandbox `bash` tool or skills because
+those internal tools do not carry `_serverId`. Runs selecting `readOnly` with a
+sandbox-enabled suite emit a launch warning for this limitation.
+
+Harness evals with `toolPolicy` are refused at launch because their MCP calls
+run out of process and cannot reach this execution gate. Harness enforcement is
+deferred to D4b. Policy blocks remain separate from eval failures.
+
+Hosted platform-authored suites currently lack the backend field required to
+carry this policy. The hosted CLI therefore continues to refuse authored
+`defaults.toolPolicy` rather than running without enforcement.
+
 ## Where the code lives
 
 | Area | Location |

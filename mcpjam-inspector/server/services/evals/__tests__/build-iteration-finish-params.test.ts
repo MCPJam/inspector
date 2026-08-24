@@ -154,6 +154,58 @@ describe("buildIterationFinishParams — stage derivation", () => {
     expect(metadata.stepResults).toHaveLength(1);
     expect(metadata.stageResults).toHaveLength(6);
   });
+
+  test("policy blocks are metadata, not failures, and block stage measurement", () => {
+    const params = build({
+      stageCase: authoredCase,
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.policyBlocks).toHaveLength(1);
+    expect(metadata.failureCategory).toBeUndefined();
+    expect(metadata.firstFailedStage).toBeUndefined();
+    const applicable = rowsOf(params).filter(
+      (row) => row.state !== "notApplicable"
+    );
+    expect(applicable.every((row) => row.state === "notMeasured")).toBe(true);
+    expect(applicable.every((row) => row.reason === "blockedByPolicy")).toBe(
+      true
+    );
+  });
+
+  test("an independent stage tool error retains ordinary failure attribution", () => {
+    const params = build({
+      stageCase: authoredCase,
+      status: "failed",
+      stageToolErrors: [{ kind: "protocol-error", toolName: "write_file" }],
+      policyBlocks: [
+        {
+          toolName: "write_file",
+          reason: "destructiveDefaultDeny",
+          classification: "destructive",
+          at: 123,
+        },
+      ],
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.policyBlockCount).toBe(1);
+    expect(metadata.stageResults).toBeDefined();
+    expect(metadata.failureCategory).toBe("serverData");
+    expect(metadata.firstFailedStage).toBe("call");
+    expect(
+      (metadata.stageResults as StageResultRow[]).some(
+        (row) => row.state === "failed" && row.reason === "protocolError"
+      )
+    ).toBe(true);
+  });
 });
 
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {

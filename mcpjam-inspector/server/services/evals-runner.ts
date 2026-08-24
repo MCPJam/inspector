@@ -71,9 +71,11 @@ import {
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
+  SKILL_TOOL_NAMES,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
+import { META_TOOL_NAMES } from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -117,10 +119,7 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
-import {
-  emitPinnedTurnSse,
-  type PinnedTurnSsePayload,
-} from "./evals/pinned-turn-sse.js";
+import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -128,7 +127,15 @@ import {
 import type {
   StageAuthoredCase,
   StageSetupSignals,
+  EvalSuiteFileToolPolicy,
 } from "@mcpjam/sdk/contract";
+import {
+  createToolPolicyGate,
+  toolAnnotationsKey,
+  UnmatchedToolPolicyNameError,
+  validateToolPolicyNames,
+  type ToolAnnotationsLookup,
+} from "./evals/tool-policy-gate.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   createRunSetupObserver,
@@ -418,12 +425,14 @@ export type RunEvalSuiteOptions = {
    * this for every runId-bearing run, empty included.
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
+  policyBlockCount?: number;
 };
 
 /**
@@ -955,7 +964,10 @@ function extractToolCallsFromConversation(params: {
           toolsCalled.push({
             toolName: call.toolName ?? call.name,
             arguments: call.args ?? call.input ?? {},
-          });
+            ...(typeof call.toolCallId === "string"
+              ? { toolCallId: call.toolCallId }
+              : {}),
+          } as ToolCall);
         }
       }
     }
@@ -979,7 +991,10 @@ function extractToolCallsFromConversation(params: {
               toolsCalled.push({
                 toolName: name,
                 arguments: argumentsValue,
-              });
+                ...(typeof item.toolCallId === "string"
+                  ? { toolCallId: item.toolCallId }
+                  : {}),
+              } as ToolCall);
             }
           }
         }
@@ -1001,7 +1016,10 @@ function extractToolCallsFromConversation(params: {
             toolsCalled.push({
               toolName,
               arguments: argumentsValue,
-            });
+              ...(typeof call.toolCallId === "string"
+                ? { toolCallId: call.toolCallId }
+                : {}),
+            } as ToolCall);
           }
         }
       }
@@ -1009,6 +1027,22 @@ function extractToolCallsFromConversation(params: {
   }
 
   return toolsCalled;
+}
+
+function extractToolCallsExcludingPolicyBlocks(
+  params: {
+    steps?: ReadonlyArray<any>;
+    messages: ModelMessage[];
+  },
+  blockedToolCallIds: ReadonlySet<string>
+): ToolCall[] {
+  return extractToolCallsFromConversation(params).filter((toolCall) => {
+    const toolCallId = (toolCall as ToolCall & { toolCallId?: unknown })
+      .toolCallId;
+    return (
+      typeof toolCallId !== "string" || !blockedToolCallIds.has(toolCallId)
+    );
+  });
 }
 
 function toolCallIdentity(toolCall: ToolCall): string {
@@ -1428,6 +1462,9 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -1835,6 +1872,9 @@ const executeTestCase = async (params: {
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
 }) => {
   const {
     test,
@@ -1865,6 +1905,9 @@ const executeTestCase = async (params: {
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1951,6 +1994,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2078,6 +2124,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2130,6 +2179,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2179,6 +2231,9 @@ const executeTestCase = async (params: {
       convexAuthToken,
       pinnedSkillSource,
       pinnedHarnessSkills,
+      ...(toolPolicy
+        ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+        : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2221,6 +2276,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteHostConfig,
   pinnedSkillSource,
   pinnedHarnessSkills,
+  toolPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2231,6 +2287,18 @@ export const runEvalSuiteWithAiSdk = async ({
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
+  }
+
+  if (
+    toolPolicy?.mode === "readOnly" &&
+    typeof (
+      config.environment as { computerEnvironmentId?: unknown } | undefined
+    )?.computerEnvironmentId === "string"
+  ) {
+    logger.warn(
+      "[evals] readOnly tool policy does not restrict the sandbox bash tool",
+      { suiteId }
+    );
   }
 
   // For quick runs (runId === null), we don't need a recorder
@@ -2248,6 +2316,7 @@ export const runEvalSuiteWithAiSdk = async ({
     total: 0,
     passed: 0,
     failed: 0,
+    policyBlockedIterations: 0,
   };
 
   // Create AbortController to cancel in-flight requests. Created BEFORE the
@@ -2279,6 +2348,7 @@ export const runEvalSuiteWithAiSdk = async ({
     expectedServerIds: serverIds,
     convexHttpUrl,
   });
+  let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
     // When a host policy is present we need the full tool set (including
@@ -2300,6 +2370,58 @@ export const runEvalSuiteWithAiSdk = async ({
       environment: config.environment,
       setupObserver,
     });
+    const toolAnnotations: ToolAnnotationsLookup = new Map();
+    if (toolPolicy) {
+      const uncachedServerIds = serverIds.filter(
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
+      );
+      if (uncachedServerIds.length > 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
+            ", "
+          )}.`,
+          {
+            reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
+            serverIds: uncachedServerIds,
+          }
+        );
+      }
+      try {
+        const availableToolNames = new Set([
+          ...Object.keys(tools),
+          "computer",
+          "finish_widget",
+          EVAL_BASH_TOOL_NAME,
+        ]);
+        resolvedToolPolicyWarnings = validateToolPolicyNames({
+          policy: toolPolicy,
+          availableToolNames,
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
+        });
+      } catch (error) {
+        if (error instanceof UnmatchedToolPolicyNameError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message,
+            { reason: "TOOL_POLICY_INVALID" }
+          );
+        }
+        throw error;
+      }
+      for (const serverId of serverIds) {
+        for (const [toolName, annotations] of Object.entries(
+          mcpClientManager.getAllToolAnnotations(serverId)
+        )) {
+          toolAnnotations.set(
+            toolAnnotationsKey(serverId, toolName),
+            annotations
+          );
+        }
+      }
+    }
 
     // Apply visibility filtering when a host policy is present. The filter
     // mutates `tools` in place (same as prepareChatV2) so downstream iteration
@@ -2379,6 +2501,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        ...(toolPolicy
+          ? {
+              toolPolicy,
+              toolAnnotations,
+              toolPolicyWarnings: resolvedToolPolicyWarnings,
+            }
+          : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
@@ -2545,6 +2674,9 @@ export const runEvalSuiteWithAiSdk = async ({
             summary.failed += 1;
           }
         }
+        summary.policyBlockedIterations += outcomes.filter(
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0
+        ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
         }
@@ -2568,6 +2700,9 @@ export const runEvalSuiteWithAiSdk = async ({
           passed: summary.passed,
           failed: summary.failed,
           passRate,
+          ...(summary.policyBlockedIterations > 0
+            ? { policyBlockedIterations: summary.policyBlockedIterations }
+            : {}),
         },
       });
     }
@@ -2696,12 +2831,22 @@ const runLocalIteration = async ({
   environment,
   convexAuthToken,
   pinnedSkillSource,
+  toolPolicy,
+  toolAnnotations,
+  toolPolicyWarnings,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3215,7 +3360,12 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
-      extractToolCalls: extractToolCallsFromConversation,
+      toolPolicyGate,
+      extractToolCalls: (params) =>
+        extractToolCallsExcludingPolicyBlocks(
+          params,
+          toolPolicyGate?.blockedToolCallIds() ?? new Set()
+        ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
@@ -3383,6 +3533,12 @@ const runLocalIteration = async ({
         ? { errorDetails: acc.iterationErrorDetails }
         : {}),
       predicateResults,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3416,6 +3572,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -3558,6 +3717,12 @@ const runLocalIteration = async ({
       browserInteractionSteps: browser.browserInteractionSteps,
       status: "failed",
       startedAt: runStartedAt,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3590,6 +3755,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -3651,6 +3819,9 @@ const runHostedIterationWithBrowser = async (
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3659,6 +3830,13 @@ const runHostedIterationWithBrowser = async (
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -4005,6 +4183,9 @@ const runHostedIterationWithBrowser = async (
     return {
       evaluation: failedEvaluation,
       iterationId,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   }
 
@@ -4062,7 +4243,10 @@ const runHostedIterationWithBrowser = async (
         accumulatedUsage,
         withSystemPrefix,
         extractToolCalls: (messages) =>
-          extractToolCallsFromConversation({ messages }),
+          extractToolCallsExcludingPolicyBlocks(
+            { messages },
+            toolPolicyGate?.blockedToolCallIds() ?? new Set()
+          ),
         buildTraceSnapshotEvent,
       })
     : undefined;
@@ -4089,6 +4273,7 @@ const runHostedIterationWithBrowser = async (
     endpointPath,
     extraBodyFields,
     toolChoice,
+    toolPolicyGate,
     abortSignal,
     maxSteps: MAX_STEPS,
     runStartedAt,
@@ -4131,7 +4316,10 @@ const runHostedIterationWithBrowser = async (
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
-      extractToolCallsFromConversation({ messages }),
+      extractToolCallsExcludingPolicyBlocks(
+        { messages },
+        toolPolicyGate?.blockedToolCallIds() ?? new Set()
+      ),
     acc: {
       messageHistory,
       capturedSpans,
@@ -4304,6 +4492,12 @@ const runHostedIterationWithBrowser = async (
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
     predicateResults,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlocks: toolPolicyGate.blocks }
+      : {}),
+    ...(toolPolicyGate?.warnings.length
+      ? { policyWarnings: toolPolicyGate.warnings }
+      : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
@@ -4336,6 +4530,9 @@ const runHostedIterationWithBrowser = async (
   return {
     evaluation,
     iterationId: iterationId ?? undefined,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlockCount: toolPolicyGate.blocks.length }
+      : {}),
   };
 };
 

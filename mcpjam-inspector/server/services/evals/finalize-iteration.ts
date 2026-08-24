@@ -39,6 +39,18 @@ import {
 type IterationStatus = "completed" | "failed" | "cancelled";
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type PolicyBlockRecord = { reason?: unknown };
+
+/**
+ * Stage derivation uses the first recorded block as the stable iteration
+ * summary reason when multiple policy blocks occur.
+ */
+function getIterationPolicyReason(
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+): string | undefined {
+  const reason = policyBlocks[0]?.reason;
+  return typeof reason === "string" ? reason : undefined;
+}
 
 /**
  * Adapt what the runner captured into the analyzer's evidence shape.
@@ -125,6 +137,7 @@ export function buildStageMetadata(args: {
   stageToolErrors?: unknown[];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
+  policy?: { blocked: boolean; reason?: string };
   status: "completed" | "failed";
   error?: string;
 }): Record<string, unknown> {
@@ -144,6 +157,7 @@ export function buildStageMetadata(args: {
         setupSignals: args.setupSignals,
       }),
       iteration: { status, ...(error ? { error } : {}) },
+      policy: args.policy,
     }),
   );
 }
@@ -216,6 +230,10 @@ export function buildIterationFinishParams(args: {
    * them unless they are threaded here.
    */
   stageToolErrors?: unknown[];
+  /** Execution-layer policy blocks; persisted as metadata, never a failure. */
+  policyBlocks?: PolicyBlockRecord[];
+  /** Non-fatal policy configuration warnings, persisted for run consumers. */
+  policyWarnings?: string[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -257,6 +275,8 @@ export function buildIterationFinishParams(args: {
     stepResults,
     stageCase,
     stageToolErrors,
+    policyBlocks,
+    policyWarnings,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
@@ -279,6 +299,16 @@ export function buildIterationFinishParams(args: {
     stageToolErrors,
     toolSignals,
     setupSignals,
+    policy:
+      policyBlocks &&
+      policyBlocks.length > 0 &&
+      !error &&
+      !(stageToolErrors && stageToolErrors.length > 0)
+        ? {
+            blocked: true,
+            reason: getIterationPolicyReason(policyBlocks),
+          }
+        : undefined,
     status,
     ...(error ? { error } : {}),
   });
@@ -306,6 +336,13 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...(policyBlocks?.length
+        ? {
+            policyBlocks,
+            policyBlockCount: policyBlocks.length,
+          }
+        : {}),
+      ...(policyWarnings?.length ? { policyWarnings } : {}),
       ...stageMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals

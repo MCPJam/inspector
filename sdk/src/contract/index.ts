@@ -220,6 +220,12 @@ export type {
   EvalSuiteFileToolPolicy,
   EvalSuiteFileValidity,
 } from "./suite-file.js";
+export type {
+  ToolPolicyDecision,
+  ToolPolicyDecisionReason,
+  ToolSafetyClassification,
+} from "./tool-policy.js";
+export { classifyToolSafety, decideToolPolicy } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
   EVAL_SUITE_SCHEMA_VERSION,

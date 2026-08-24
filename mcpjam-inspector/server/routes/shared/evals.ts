@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
@@ -187,6 +188,7 @@ export const RunEvalsRequestSchema = z.object({
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
+  toolPolicy: evalSuiteFileToolPolicySchema.optional(),
   tests: z.array(
     z
       .object({
@@ -496,6 +498,7 @@ export const RunTestCaseRequestSchema = z.object({
    * NOT mutate the persisted case's `matchOptions`.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  toolPolicy: evalSuiteFileToolPolicySchema.optional(),
   /**
    * Scope this single-case run to a single host attached to the suite. Mirrors
    * suite-run host selection and reuses `loadSuiteHostConfig`.
@@ -1889,6 +1892,7 @@ export async function prepareEvalRun(
     sourceHash,
     skillsOverride,
     ephemeralEnvironment,
+    toolPolicy,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2209,6 +2213,15 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
     );
   }
+  if (toolPolicy && harnessAdmission.harness) {
+    const reason =
+      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "TOOL_POLICY_UNSUPPORTED",
+      harness: harnessAdmission.harness,
+    });
+  }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
   // `hostConfigId`, so the record cannot disagree with the config the run
@@ -2401,6 +2414,7 @@ export async function prepareEvalRun(
       // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
     });
   };
 
@@ -2460,6 +2474,7 @@ export async function runEvalTestCaseWithManager(
     matchOptionsOverride,
     namedHostId,
     hostConfigOverride,
+    toolPolicy,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -2494,6 +2509,9 @@ export async function runEvalTestCaseWithManager(
     testCase.evalTestSuiteId,
     namedHostId
   );
+  const effectiveHostConfig =
+    (hostConfigOverride as Record<string, unknown> | undefined) ??
+    suiteHostConfig;
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined
@@ -2502,6 +2520,14 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+  if (toolPolicy && harnessOfHostConfig(effectiveHostConfig)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.",
+      { reason: "TOOL_POLICY_UNSUPPORTED" }
+    );
+  }
 
   // The same honesty gate the suite path applies, with the surface named: a
   // single-case run passes `runId: null`, and both sandbox-provisioning sites
@@ -2640,6 +2666,7 @@ export async function runEvalTestCaseWithManager(
     hostExecutionPolicy: suiteHostPolicy,
     // PR 4d: see comment on the suite-run wire-up site above.
     suiteHostConfig,
+    ...(toolPolicy ? { toolPolicy } : {}),
   });
 
   const expectedIterationId =
@@ -2865,6 +2892,7 @@ export async function streamEvalTestCaseWithManager(
     matchOptionsOverride,
     namedHostId,
     hostConfigOverride,
+    toolPolicy,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -2899,6 +2927,9 @@ export async function streamEvalTestCaseWithManager(
     testCase.evalTestSuiteId,
     namedHostId
   );
+  const effectiveHostConfig =
+    (hostConfigOverride as Record<string, unknown> | undefined) ??
+    suiteHostConfig;
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined
@@ -2907,6 +2938,14 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+  if (toolPolicy && harnessOfHostConfig(effectiveHostConfig)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "TOOL_POLICY_UNSUPPORTED: toolPolicy cannot be enforced for harness evals because MCP calls run out of process. Harness policy enforcement is deferred to D4b.",
+      { reason: "TOOL_POLICY_UNSUPPORTED" }
+    );
+  }
 
   // The same honesty gate the suite path applies, with the surface named: a
   // single-case run passes `runId: null`, and both sandbox-provisioning sites
@@ -3123,6 +3162,7 @@ export async function streamEvalTestCaseWithManager(
           // `resolveExecutionContext`. PR 5 will reduce these runners
           // further; the threading still applies in the meantime.
           suiteHostConfig,
+          ...(toolPolicy ? { toolPolicy } : {}),
           toolSignals: streamToolSignals,
           environment: runtimeEnvironment,
           emit: (event: EvalStreamEvent) => {

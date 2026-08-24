@@ -1082,8 +1082,13 @@ existing cases by declared id and creates new ones. An enabled case that
 overrides `passThreshold` is refused: hosted grading is suite-wide. A
 disabled case with the same override is ignored, matching how repetitions
 are checked. Authored
-`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused —
-the hosted runner cannot enforce them. File `defaults.repetitions` is
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
 execution defaults; omitted fields stay omitted so the platform applies its
