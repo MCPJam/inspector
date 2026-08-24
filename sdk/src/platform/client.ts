@@ -20,6 +20,7 @@ import type {
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunDisclosure,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -1377,6 +1378,47 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
       { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-suites/{id}/run-disclosure` — the pre-run
+   * disclosure for a launch plan: what happens to the run's content, keyed by
+   * the SAME destination-affecting subset `createEvalRun` uses
+   * (`caseIds`/`environmentId`/`environmentIds`). Deliberately NOT the
+   * estimator's full arg set — `iterationOverride`/`planCount` only scale
+   * volume, which is not part of this contract, and the inspector server
+   * rejects them rather than silently ignoring them.
+   *
+   * Throws `PlatformApiError` with code `CONTRACT_UNAVAILABLE` against an
+   * inspector deployment too old to compute this — never treat a missing
+   * disclosure as "nothing to disclose".
+   */
+  getEvalRunDisclosure(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseIds?: string[];
+      environmentId?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDisclosure> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/run-disclosure`,
+      {
+        query: {
+          caseIds: params.caseIds?.length ? params.caseIds.join(",") : undefined,
+          environmentId: params.environmentId,
+          environmentIds: params.environmentIds?.length
+            ? params.environmentIds.join(",")
+            : undefined,
+        },
+      },
       options,
     );
   }

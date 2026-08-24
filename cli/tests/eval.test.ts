@@ -212,6 +212,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   groupBodies: unknown[];
   composeBodies: unknown[];
   attachBodies: unknown[];
+  disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+  }>;
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
@@ -220,6 +225,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   const groupBodies: unknown[] = [];
   const composeBodies: unknown[] = [];
   const attachBodies: unknown[] = [];
+  const disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+  }> = [];
   const server: Server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) {
@@ -476,6 +486,88 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           schedule: {},
           createdAt: 1,
           updatedAt: 2,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-1/run-disclosure" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      disclosureRequests.push({
+        caseIds: url.searchParams.get("caseIds"),
+        environmentId: url.searchParams.get("environmentId"),
+        environmentIds: url.searchParams.get("environmentIds"),
+      });
+      res.end(
+        JSON.stringify({
+          contractVersion: 1,
+          computedAt: 1_700_000_000_000,
+          digest: "deadbeef",
+          execution: {
+            engine: "emulated",
+            sandbox: { engaged: false, because: "no sandbox needed" },
+            locus: { known: true, hosted: false },
+            models: [
+              {
+                modelId: "openai/gpt-5.4-mini",
+                provider: "openai",
+                tenantEgress: "mcpjam-hosted",
+                rail: {
+                  managed: true,
+                  possibleDestinations: ["gateway", "openrouter"],
+                  outcomeIfRunNow: {
+                    destination: "gateway",
+                    observedAt: 1_700_000_000_000,
+                    volatile: true,
+                  },
+                  inputs: {
+                    mode: "auto",
+                    gatewayEligible: true,
+                    hasOpenRouterFallback: null,
+                  },
+                  ruleLocation: "convex/lib/chatProvider.ts#resolveChatProvider",
+                  authoritativePerRequestRecord: "llmUsageRecord",
+                },
+              },
+            ],
+          },
+          analysis: [],
+          capture: {
+            captureLevel: "full",
+            reportingMode: "standard",
+            tiersImplemented: false,
+            redaction: {
+              kind: "credential-shaped",
+              module: "convex/lib/evalIngestRedaction.ts",
+              isDlp: false,
+              limitation: "not DLP",
+              appliesTo: [],
+            },
+            exportDefaults: {
+              includeContent: false,
+              ruleLocation: "convex/traceExport.ts",
+              note: "redacted by default",
+            },
+          },
+          retention: {
+            planName: "free",
+            policyDays: 30,
+            source: "plan entitlements",
+            enforced: true,
+            enforcementBlockers: [],
+            effectiveToday: "swept-after-policy-days",
+            evidentiaryClasses: [],
+            backupStatement: {
+              vendor: "Convex",
+              capturedAt: "2026-08-23",
+              sourceUrl: "https://docs.convex.dev/database/backup-restore",
+              statements: [],
+            },
+          },
+          region: { stated: false, reason: "no deployment region is derivable" },
+          subprocessors: [],
         }),
       );
       return;
@@ -838,6 +930,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     groupBodies,
     composeBodies,
     attachBodies,
+    disclosureRequests,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -1776,6 +1869,71 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --format json emits exactly one document, containing disclosure", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(run.stdout.trimEnd().split("\n").length, 1);
+    const parsed = JSON.parse(run.stdout);
+    assert.equal(parsed.disclosure.contractVersion, 1);
+    assert.equal(parsed.disclosure.execution.engine, "emulated");
+    assert.equal(fixture.disclosureRequests.length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints the disclosure block in human mode, before the run link", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const disclosureIndex = run.stdout.indexOf("Pre-run disclosure:");
+    const viewIndex = run.stdout.indexOf("View:");
+    assert.notEqual(disclosureIndex, -1);
+    assert.notEqual(viewIndex, -1);
+    assert.ok(disclosureIndex < viewIndex);
+    assert.match(run.stdout, /Execution: emulated/);
   } finally {
     await fixture.close();
   }

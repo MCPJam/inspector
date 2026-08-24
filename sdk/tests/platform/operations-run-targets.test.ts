@@ -96,7 +96,59 @@ interface Fixture {
   noRunGroupEndpoint?: boolean;
   /** Model the LIVE route answering 404 for a real reason (suite deleted). */
   groupSuiteMissing?: boolean;
+  /** Model a backend that predates the disclosure contract (G4b). */
+  disclosureUnavailable?: boolean;
+  /** Calls observed, in order, across every route this fixture serves. */
+  callOrder?: string[];
 }
+
+const DISCLOSURE_FIXTURE: Record<string, unknown> = {
+  contractVersion: 1,
+  computedAt: 1_700_000_000_000,
+  digest: "deadbeef",
+  execution: {
+    engine: "emulated",
+    sandbox: { engaged: false, because: "no sandbox needed" },
+    locus: { known: true, hosted: false },
+    models: [],
+    modelsUnresolved: { reason: "not derivable in this fixture" },
+  },
+  analysis: [],
+  capture: {
+    captureLevel: "full",
+    reportingMode: "standard",
+    tiersImplemented: false,
+    redaction: {
+      kind: "credential-shaped",
+      module: "convex/lib/evalIngestRedaction.ts",
+      isDlp: false,
+      limitation: "not DLP",
+      appliesTo: [],
+    },
+    exportDefaults: {
+      includeContent: false,
+      ruleLocation: "convex/traceExport.ts",
+      note: "redacted by default",
+    },
+  },
+  retention: {
+    planName: "free",
+    policyDays: 30,
+    source: "plan entitlements",
+    enforced: true,
+    enforcementBlockers: [],
+    effectiveToday: "swept-after-policy-days",
+    evidentiaryClasses: [],
+    backupStatement: {
+      vendor: "Convex",
+      capturedAt: "2026-08-23",
+      sourceUrl: "https://docs.convex.dev/database/backup-restore",
+      statements: [],
+    },
+  },
+  region: { stated: false, reason: "no deployment region is derivable" },
+  subprocessors: [],
+};
 
 function makeClient(fixture: Fixture = {}) {
   const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
@@ -124,7 +176,22 @@ function makeClient(fixture: Fixture = {}) {
       }
       return Response.json(match);
     }
+    if (/\/run-disclosure$/.test(path) && method === "GET") {
+      fixture.callOrder?.push("getEvalRunDisclosure");
+      if (fixture.disclosureUnavailable) {
+        return Response.json(
+          {
+            code: "FEATURE_NOT_SUPPORTED",
+            message: "This deployment predates the disclosure contract",
+            details: { reason: "contract_unavailable" },
+          },
+          { status: 422 },
+        );
+      }
+      return Response.json(DISCLOSURE_FIXTURE);
+    }
     if (/\/eval-runs$/.test(path) && method === "POST") {
+      fixture.callOrder?.push("createEvalRun");
       const body = JSON.parse(String(init?.body)) as {
         environmentId?: string;
       };
@@ -143,6 +210,7 @@ function makeClient(fixture: Fixture = {}) {
       );
     }
     if (/\/eval-run-groups$/.test(path) && method === "POST") {
+      fixture.callOrder?.push("createEvalRunGroup");
       if (fixture.noRunGroupEndpoint) {
         // A REAL route miss: the framework answers before any handler, so
         // there is no v1 error envelope — which is the only thing that
@@ -758,6 +826,72 @@ describe("run_eval_case host selection", () => {
       /\/eval-suites\/suite-1$/.test(new URL(String(target)).pathname),
     );
     expect(detailReads).toHaveLength(0);
+  });
+});
+
+describe("run_eval_suite pre-run disclosure (G4b)", () => {
+  it("fires onDisclosure before createEvalRun, and carries it on the receipt", async () => {
+    const callOrder: string[] = [];
+    const { client } = makeClient({ callOrder });
+    let received: unknown;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      {
+        client,
+        onDisclosure: (disclosure) => {
+          received = disclosure;
+        },
+      },
+    );
+    expect(callOrder).toEqual(["getEvalRunDisclosure", "createEvalRun"]);
+    expect(received).toMatchObject({ contractVersion: 1 });
+    expect(result.disclosure).toMatchObject({ contractVersion: 1 });
+  });
+
+  it("fires onDisclosure before createEvalRunGroup on a multi-target launch", async () => {
+    const callOrder: string[] = [];
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+      callOrder,
+    });
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", allAttached: true },
+      { client },
+    );
+    expect(callOrder[0]).toBe("getEvalRunDisclosure");
+    expect(callOrder).toContain("createEvalRunGroup");
+  });
+
+  it("never blocks or fails the launch when the disclosure fetch is unavailable", async () => {
+    // BEST EFFORT: a backend that predates the contract must not turn a
+    // launch into a failure — this is a planning aid, not a gate.
+    const { client } = makeClient({ disclosureUnavailable: true });
+    let onDisclosureCalled = false;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      { client, onDisclosure: () => (onDisclosureCalled = true) },
+    );
+    expect(result.outcome).toBe("started");
+    expect(result.disclosure).toBeUndefined();
+    expect(onDisclosureCalled).toBe(false);
+  });
+
+  it("keys the disclosure to the SAME frozen target the run launches, not a re-resolution", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", environment: "Staging" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        environmentId: "env-stg",
+      }),
+      expect.anything(),
+    );
   });
 });
 

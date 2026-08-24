@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
+import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
@@ -660,6 +661,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 {...(iterationOverride !== undefined
                   ? { iterationOverride }
                   : {})}
+              />
+              <SuiteRunDisclosureHint
+                suiteId={suite._id}
+                environmentIds={suite.environmentIds}
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
             </span>
           );

@@ -72,6 +72,7 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformEvalRunDisclosure,
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
@@ -130,6 +131,22 @@ import type {
 export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
+  /**
+   * Fired by `runEvalSuiteOperation` with the pre-run disclosure it fetched
+   * for the frozen launch plan, ONE resolution before it calls
+   * `createEvalRun`/`createEvalRunGroup` — so "what was disclosed" is
+   * literally "what will run", not a second, independently-resolved target
+   * that could drift from it. A caller that wants to show or log the
+   * disclosure passes this rather than resolving targets a second time to
+   * fetch it separately.
+   *
+   * Best-effort: a disclosure fetch failure (a backend that predates the
+   * contract, a transient error) never blocks or fails the launch — this
+   * callback simply does not fire, and the receipt's `disclosure` field is
+   * absent. Never called for `runEvalCaseOperation`, which shares no target
+   * resolution with the suite op.
+   */
+  onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
 }
 
 export const getMeOperation: PlatformOperation<
@@ -2877,6 +2894,15 @@ export type RunEvalSuiteResult = {
   /** One entry per target, in launch order. */
   targets: RunEvalTargetResult[];
   /**
+   * The pre-run disclosure fetched for this launch's frozen target plan — the
+   * SAME resolution `onDisclosure` (see `PlatformOperationContext`) already
+   * received, carried on the receipt so a caller that only reads the return
+   * value (rather than passing a callback) still sees it. Absent when the
+   * fetch failed — a backend that predates the contract, a transient error —
+   * which never blocks the launch itself.
+   */
+  disclosure?: PlatformEvalRunDisclosure;
+  /**
    * @deprecated Mirrors of the FIRST started run, kept so callers written
    * against the single-run shape keep working. Read `targets` instead — on a
    * grouped launch these describe one run out of several.
@@ -2903,7 +2929,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onDisclosure }) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3060,6 +3086,46 @@ export const runEvalSuiteOperation: PlatformOperation<
       );
     }
 
+    // THE ONE RESOLUTION. The plan is now frozen — this is the exact target
+    // set `createEvalRun`/`createEvalRunGroup` are about to launch below — so
+    // fetching the disclosure here, keyed off that SAME frozen plan, is what
+    // makes "what was disclosed" identical to "what will run". Deliberately
+    // NOT re-resolved from `input`'s raw selectors a second time: a second
+    // resolution could race an attachment edit and disclose a different plan
+    // than the one that launches a moment later.
+    //
+    // BEST EFFORT. A disclosure fetch failure — a backend that predates the
+    // contract, a transient network error — must never block or fail a
+    // launch: this is a planning aid, not a gate. `onDisclosure` simply does
+    // not fire, and the receipt's `disclosure` field is absent.
+    let disclosure: PlatformEvalRunDisclosure | undefined;
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
+    try {
+      disclosure = await client.getEvalRunDisclosure(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+          ...(disclosureEnvironmentIds.length === 1
+            ? { environmentId: disclosureEnvironmentIds[0]! }
+            : disclosureEnvironmentIds.length > 1
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
+        },
+        { signal },
+      );
+      onDisclosure?.(disclosure);
+    } catch {
+      disclosure = undefined;
+    }
+
     const knobs = runKnobBody(input, caseIds);
     const projectInfo = toSelectedProjectInfo(project);
     const suiteInfo = { id: suite.id, name: suite.name };
@@ -3105,6 +3171,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         outcome: "started",
         startedCount: 1,
         failedCount: 0,
+        ...(disclosure ? { disclosure } : {}),
         ...(composed ? { composed: composed.report } : {}),
         targets: [
           {
@@ -3200,6 +3267,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
+      ...(disclosure ? { disclosure } : {}),
       ...(composed ? { composed: composed.report } : {}),
       targets,
       ...(firstStarted
@@ -3794,6 +3862,93 @@ export const getEvalSuiteOperation: PlatformOperation<
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+  },
+};
+
+const getEvalRunDisclosureInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cases: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow the disclosure to these cases (titles or IDs) instead of the whole suite — the same subset a run selects with `cases`.",
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  environments: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+    ),
+});
+export type GetEvalRunDisclosureInput = z.infer<
+  typeof getEvalRunDisclosureInput
+>;
+
+export const getEvalRunDisclosureOperation: PlatformOperation<
+  GetEvalRunDisclosureInput,
+  PlatformEvalRunDisclosure
+> = {
+  name: "get_eval_run_disclosure",
+  title: "Get eval run pre-run disclosure",
+  description:
+    "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
+  readOnly: true,
+  inputSchema: getEvalRunDisclosureInput,
+  async execute(input, { client, signal }) {
+    assertRunTargetSelectorsCoherent({
+      environment: input.environment,
+      environments: input.environments,
+    });
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
+        )
+      : undefined;
+    const detail = await client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+    const environments = await resolveSuiteEnvironmentTargets(
+      client,
+      project,
+      suite,
+      detail,
+      input.environment ? [input.environment] : (input.environments ?? []),
+      signal,
+    );
+    return client.getEvalRunDisclosure(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+        ...(environments.length === 1
+          ? { environmentId: environments[0]!.id }
+          : environments.length > 1
+            ? { environmentIds: environments.map((environment) => environment.id) }
+            : {}),
+      },
       { signal },
     );
   },
@@ -10765,6 +10920,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   runEvalCaseOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,

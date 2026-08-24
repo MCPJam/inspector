@@ -36,6 +36,7 @@ import {
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   type CreateEvalSuiteInput,
+  type PlatformEvalRunDisclosure,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
@@ -385,6 +386,86 @@ function writeRunGroupSummary(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
   }
+}
+
+/**
+ * Human-format block for the pre-run disclosure `run_eval_suite` fetched for
+ * this launch — the twin of `writeRunGroupSummary`, and printed BEFORE it: a
+ * `--format json` document already carries `disclosure` inside the single
+ * receipt, so appending prose to it would break the one-document rule the
+ * same way a second summary line would. This is the human-only rendering of
+ * exactly that field.
+ *
+ * `execution` vs `executionAbsence` render DIFFERENT copy on purpose — never
+ * collapse them. `'ingested-run'` means MCPJam did not execute this;
+ * `'plan-unresolved'` means a run that WILL execute and WILL call models this
+ * CLI simply cannot name yet. Printing the ingest wording for the second
+ * would tell someone about to launch that nothing leaves, which is the exact
+ * bug g4a fixed on the backend — reintroducing it here at the presentation
+ * layer would be the same bug in a different process.
+ */
+function writeRunDisclosure(
+  format: string,
+  disclosure: PlatformEvalRunDisclosure | undefined
+): void {
+  if (format !== "human" || !disclosure) return;
+  const lines: string[] = ["Pre-run disclosure:"];
+  if (disclosure.execution) {
+    const execution = disclosure.execution;
+    const locus =
+      execution.locus.known === true
+        ? execution.locus.hosted
+          ? "MCPJam-hosted"
+          : "your own machine"
+        : "unknown";
+    lines.push(`  Execution: ${execution.engine} · ${locus}`);
+    if (execution.models.length > 0) {
+      for (const model of execution.models) {
+        lines.push(
+          `  Model: ${model.modelId} — ${model.tenantEgress}` +
+            (model.byok?.baseUrlHost ? ` (${model.byok.baseUrlHost})` : "")
+        );
+      }
+    } else if (execution.modelsUnresolved) {
+      lines.push(`  Models: not derivable — ${execution.modelsUnresolved.reason}`);
+    }
+    if (execution.sandbox.engaged) {
+      lines.push(`  Sandbox: engaged (${execution.sandbox.vendor ?? "?"})`);
+    }
+  } else if (disclosure.executionAbsence) {
+    const { kind, reason } = disclosure.executionAbsence;
+    lines.push(
+      kind === "ingested-run"
+        ? `  Execution: none — this run was ingested, MCPJam did not execute it (${reason})`
+        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
+    );
+  }
+  const firingAnalysis = disclosure.analysis.filter(
+    (touchpoint) => typeof touchpoint.fires === "string"
+  );
+  lines.push(
+    firingAnalysis.length > 0
+      ? `  Analysis: ${firingAnalysis.map((touchpoint) => touchpoint.label).join(", ")} may send evidence to ${firingAnalysis[0]!.destinations[0]}`
+      : "  Analysis: no analyzer/judge touchpoint can fire for this run"
+  );
+  lines.push(
+    `  Retention: ${disclosure.retention.effectiveToday}` +
+      (disclosure.retention.policyDays !== null
+        ? ` (${disclosure.retention.policyDays}d policy)`
+        : "")
+  );
+  lines.push(
+    disclosure.region.stated
+      ? `  Region: ${disclosure.region.value}`
+      : "  Region: not stated"
+  );
+  const engaged = disclosure.subprocessors.filter((entry) => entry.engaged);
+  if (engaged.length > 0) {
+    lines.push(
+      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
+    );
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 /**
@@ -2317,6 +2398,7 @@ export function registerEvalCommands(program: Command): void {
       // stream unparseable for the CI callers that read it.
       if (!options.wait) {
         writeResult(result, globalOptions.format);
+        writeRunDisclosure(globalOptions.format, result.disclosure);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
         // A partial or wholly failed fan-out is not a success. Exiting 0 would
         // let a pipeline treat "1 of 3 runs never started" as a clean launch.
@@ -2447,6 +2529,7 @@ export function registerEvalCommands(program: Command): void {
           { launch: result, runs: completion.runs },
           globalOptions.format
         );
+        writeRunDisclosure(globalOptions.format, result.disclosure);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
       }
 

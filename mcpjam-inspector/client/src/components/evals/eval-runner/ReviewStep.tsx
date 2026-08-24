@@ -6,9 +6,11 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Separator } from "@mcpjam/design-system/separator";
 import { PassCriteriaSelector } from "../pass-criteria-selector";
+import { RunDisclosureHint } from "../run-disclosure-hint";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import type { TestTemplate } from "@/components/evals/eval-runner/types";
+import type { RunDisclosureState } from "@/hooks/use-run-disclosure";
 
 interface ReviewStepProps {
   suiteName: string;
@@ -22,6 +24,15 @@ interface ReviewStepProps {
   onMinimumPassRateChange: (value: number) => void;
   onEditStep: (stepIndex: number) => void;
   showNameError?: boolean;
+  /**
+   * The pre-run disclosure fetch state, threaded in by the parent — this
+   * component never fetches its own data. Absent (rather than a loading
+   * state) means the parent has no target to disclose against yet, which is
+   * the ordinary case here: a suite created by this wizard has no suiteId
+   * until the final confirm, and the disclosure contract is suite-keyed.
+   * Purely informational either way — never gates the confirm control.
+   */
+  runDisclosureState?: RunDisclosureState;
 }
 
 export function ReviewStep({
@@ -36,6 +47,7 @@ export function ReviewStep({
   onMinimumPassRateChange,
   onEditStep,
   showNameError = false,
+  runDisclosureState,
 }: ReviewStepProps) {
   return (
     <div className="space-y-6">
@@ -116,7 +128,15 @@ export function ReviewStep({
         <Separator />
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Models</p>
+            <p className="text-sm font-medium text-muted-foreground">
+              Models
+              {runDisclosureState ? (
+                <RunDisclosureHint
+                  state={runDisclosureState}
+                  className="ml-1 inline-flex align-middle"
+                />
+              ) : null}
+            </p>
             {selectedModels.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {selectedModels.map((model) => (
