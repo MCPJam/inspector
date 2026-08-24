@@ -30,6 +30,13 @@ import {
   type ManagerCallerContext,
 } from "./auth";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
+import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
+import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
+import {
+  buildCrossInstanceHarnessPolicyBlockMessage,
+  publishHarnessPolicyBlock,
+  type HarnessPolicyBlockEvent,
+} from "../../utils/harness/harness-policy-block-channel.js";
 import { rpcLogBus } from "../../services/rpc-log-bus";
 import {
   enqueueHarnessRpcLog,
@@ -99,7 +106,18 @@ async function handle(c: any) {
 
   // Token is REQUIRED here (unlike adapter-http's validate-when-present) — it
   // is the only auth on this route, and carries the delegated identity.
-  const claims = verifyHarnessProxyToken(readProxyToken(c), serverId);
+  //
+  // A policied harness run sends the token SEALED (`mcpjps1.…`): the Convex
+  // token enclosed by the run's resolved tool policy, so the sandbox cannot
+  // strip the policy without losing the credential. Unsealing yields the inner
+  // token, which still goes through the unchanged verifier — identity authority
+  // stays Convex's. A bare token keeps today's path byte-for-byte.
+  const presentedToken = readProxyToken(c);
+  const sealed = unsealHarnessProxyToken(presentedToken, serverId);
+  const claims = verifyHarnessProxyToken(
+    sealed?.token ?? presentedToken,
+    serverId
+  );
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
@@ -262,8 +280,67 @@ async function handle(c: any) {
           },
         }
       ),
-      (manager) =>
-        handleJsonRpc(serverId, body, manager, "adapter", {
+      async (manager) => {
+        // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
+        // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
+        // unfiltered, and a block is a success envelope carrying the marker —
+        // see `harness-proxy-policy-enforcement.ts`.
+        if (sealed) {
+          const block = evaluateHarnessProxyToolPolicy({
+            body,
+            policyServerId: serverId,
+            policy: sealed.policy,
+            hasServer: (id) => manager.hasServer(id),
+          });
+          if (block) {
+            logger.info(
+              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`
+            );
+            // Report the refusal to the RUN, not just to the model: the harness
+            // adapter flattens this result's content blocks to a bare string, so
+            // the `_meta` marker cannot be the accounting mechanism. The proxy
+            // knows it blocked — deliver that on the same channel a
+            // cross-instance scope step-up uses, correlated by the turn id every
+            // generated `.mcp.json` entry already carries.
+            const event: HarnessPolicyBlockEvent = {
+              serverId,
+              toolName: block.marker.toolName,
+              reason: block.marker.reason,
+              classification: block.marker.classification,
+              at: Date.now(),
+            };
+            const correlationId = readScopeStepUpCorrelationId(c);
+            const deliveredLocally = publishHarnessPolicyBlock(
+              correlationId,
+              event
+            );
+            if (
+              !deliveredLocally &&
+              correlationId &&
+              isRpcLogSinkConfigured()
+            ) {
+              const relay = buildCrossInstanceHarnessPolicyBlockMessage(
+                correlationId,
+                event
+              );
+              if (relay) {
+                enqueueHarnessRpcLog({
+                  serverId,
+                  projectId: claims.projectId,
+                  organizationId: claims.orgId,
+                  direction: "receive",
+                  loggedAt: new Date().toISOString(),
+                  message: relay,
+                });
+                // Flush now rather than on the ~1s batch timer: the turn may
+                // finish before a batched frame would ever be written.
+                await flushHarnessRpcLogs();
+              }
+            }
+            return block.response;
+          }
+        }
+        return handleJsonRpc(serverId, body, manager, "adapter", {
           // Bridge failures answer 200 with a JSON-RPC error envelope —
           // invisible to http.request.failed; this is their typed record.
           failureReporter: createRequestStreamFailureReporter(
@@ -317,7 +394,8 @@ async function handle(c: any) {
               )
             );
           },
-        })
+        });
+      }
     );
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);

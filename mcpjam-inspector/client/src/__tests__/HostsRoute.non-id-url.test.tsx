@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
@@ -22,6 +22,8 @@ const {
   mockNavigate,
   mockParams,
   mockHostList,
+  mockCreateHost,
+  mockFeatureFlags,
   mockPreviewed,
   mockSetPreviewedHostId,
   mockSetHostsTabSelectedHostId,
@@ -41,6 +43,11 @@ const {
   mockHostList: {
     hosts: [] as Array<{ hostId: string }>,
     isLoading: false,
+  },
+  mockCreateHost: vi.fn(),
+  mockFeatureFlags: {
+    claudeCode: false,
+    codex: false,
   },
   mockPreviewed: { value: null as string | null },
   mockSetPreviewedHostId: vi.fn(),
@@ -78,13 +85,26 @@ vi.mock("../hooks/useClients", async (importOriginal) => {
     ...actual,
     useHostList: () => mockHostList,
     useHostMutations: () => ({
-      createHost: vi.fn(),
+      createHost: mockCreateHost,
       updateHostServers: vi.fn(),
       deleteHost: vi.fn(),
       duplicateHost: vi.fn(),
     }),
   };
 });
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "claude-code-host-enabled"
+      ? mockFeatureFlags.claudeCode
+      : flag === "codex-host-enabled"
+      ? mockFeatureFlags.codex
+      : false,
+}));
+
+vi.mock("../lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
 
 vi.mock("../lib/app-navigation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/app-navigation")>();
@@ -145,9 +165,13 @@ beforeEach(() => {
   mockRouteContext.setHostsTabSelectedHostId = mockSetHostsTabSelectedHostId;
   mockPreviewed.value = null;
   mockParams.hostId = undefined;
+  window.history.replaceState({}, "", routePaths.hosts);
   // Loaded, and the id this suite opens is a live client of the project.
   mockHostList.hosts = [{ hostId: CONVEX_HOST_ID }];
   mockHostList.isLoading = false;
+  mockCreateHost.mockReset();
+  mockFeatureFlags.claudeCode = false;
+  mockFeatureFlags.codex = false;
 });
 
 afterEach(() => {
@@ -155,6 +179,20 @@ afterEach(() => {
 });
 
 describe("HostsRoute — a URL segment that is not a Convex host id", () => {
+  it("does not create a gated host from a direct verify URL", async () => {
+    mockHostList.hosts = [];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
   it("sends a catalog slug to the clients list instead of opening it", () => {
     mockParams.hostId = "chatgpt";
 
