@@ -187,9 +187,30 @@ Harness evals with `toolPolicy` are refused at launch because their MCP calls
 run out of process and cannot reach this execution gate. Harness enforcement is
 deferred to D4b. Policy blocks remain separate from eval failures.
 
+A policy that cannot be enforced refuses the run rather than running without
+it. Three launch-time refusals, all of them cases where continuing would look
+like a policied run and behave like an unrestricted one:
+
+| Code | Cause |
+| --- | --- |
+| `TOOL_POLICY_UNSUPPORTED` | The run resolves to a harness host (see above), or a hosted CLI launch declares `defaults.toolPolicy`. |
+| `TOOL_POLICY_INVALID` | A `deny` name matches no available tool. Per-iteration injected tools (`computer`, `finish_widget`, the sandbox `bash`) are accepted; skill and progressive-discovery meta-tool names are deferred with a warning, since whether they appear depends on the run. |
+| `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE` | The annotation cache is cold for a selected server. Empty annotations classify every tool `unknown`, and `default` mode permits `unknown` — so the `destructiveHint` deny-by-default would silently become a no-op. |
+
+Replays inherit the policy. A replay is not recorded playback: `buildReplayManager`
+builds a real `MCPClientManager` from the stored `MCPServerReplayConfig` and
+re-dials the original servers with the original credentials, so a replay that
+lost the policy would execute for real the calls the source run blocked. The run
+row has no field to carry a policy yet, so the effective policy is snapshotted on
+each iteration's metadata and recovered from the source run at replay time. A
+source run showing policy activity (`policyBlockCount` / `policyWarnings`) with
+no recoverable snapshot refuses with `REPLAY_TOOL_POLICY_UNRECOVERABLE`:
+inferring "no policy" is the one default that cannot be safe.
+
 Hosted platform-authored suites currently lack the backend field required to
 carry this policy. The hosted CLI therefore continues to refuse authored
-`defaults.toolPolicy` rather than running without enforcement.
+`defaults.toolPolicy` rather than running without enforcement. When that field
+lands, the run-level value supersedes the per-iteration snapshot.
 
 ## Where the code lives
 
