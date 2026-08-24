@@ -45,6 +45,8 @@ import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
+import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
@@ -646,6 +648,21 @@ export interface MCPJamHandlerOptions {
    *  global env. Absent ⇒ harness runs without proxied MCP. See
    *  `harness-proxy-strategy.ts`. */
   harnessMcpProxy?: HarnessMcpProxyStrategy;
+  /**
+   * Resolved `toolPolicy` decisions per selected server id, computed at launch
+   * from the annotation cache. Present ⇒ each policied server's `.mcp.json`
+   * entry carries a SEALED proxy token, and the hosted harness-MCP route
+   * enforces the snapshot on `tools/call` (the in-sandbox calls never pass
+   * through an in-process tool map, so the proxy is the only chokepoint).
+   * Absent ⇒ today's unpoliced bare-token path, byte-identical.
+   */
+  harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * Sink for the calls the proxy refused, reported on THIS replica off the
+   * results the harness streams back. The eval driver hands them to
+   * `finalize-iteration` as the same policy blocks the in-process gate yields.
+   */
+  onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
   requireToolApproval?: boolean;
   /**
    * Per-tool approval policy for the `ui_*` tools this turn advertised,

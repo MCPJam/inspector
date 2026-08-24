@@ -22,6 +22,7 @@ import {
   resolveProject,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
+  updateEvalSuiteOperation,
   type PlatformApiClient,
   type PlatformEvalCase,
   type RunEvalSuiteInput,
@@ -196,7 +197,7 @@ function refusePerCasePassThreshold(loaded: {
 function refuseRepetitions(loaded: {
   resolved: {
     defaults: { repetitions: number };
-    enabledCases: ResolvedEvalSuiteFileCase[];
+    cases: ResolvedEvalSuiteFileCase[];
   };
 }): void {
   const suiteReps = loaded.resolved.defaults.repetitions;
@@ -207,7 +208,10 @@ function refuseRepetitions(loaded: {
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
     );
   }
-  for (const testCase of loaded.resolved.enabledCases) {
+  // Every declared case is persisted, including disabled ones, so the cap
+  // applies to parked rows too — otherwise a later enable would host 11+
+  // iterations the file already named.
+  for (const testCase of loaded.resolved.cases) {
     if (testCase.repetitions > HOSTED_ITERATIONS_CAP) {
       throw cliError(
         "REPETITIONS_CAP",
@@ -249,8 +253,9 @@ export async function syncFileOwnedCases(
      * still declared — the contract calls it "the loader skips this case (it
      * stays in the file)" — so deleting it would destroy the case's hosted
      * history the moment somebody parks a flaky test, and re-enabling it a day
-     * later would not bring the iterations back. Disabled cases are excluded
-     * from the RUN instead, which `enabledCaseIds` already does.
+     * later would not bring the iterations back. Disabled cases are created
+     * and updated with the rest of the file, then excluded from the RUN via
+     * `enabledCaseIds`.
      */
     declaredCaseIds: ReadonlySet<string>;
     signal?: AbortSignal;
@@ -418,6 +423,11 @@ export async function syncFileOwnedCases(
     );
   }
 
+  const enabledDeclaredIds = new Set(
+    params.cases
+      .filter((testCase) => !testCase.disabled)
+      .map((testCase) => testCase.id),
+  );
   const enabledCases = [
     ...toUpdate.map(({ row, file }) => ({
       id: row.id,
@@ -425,7 +435,7 @@ export async function syncFileOwnedCases(
       title: file.title,
     })),
     ...createdCases,
-  ];
+  ].filter((entry) => enabledDeclaredIds.has(entry.declaredId));
   return {
     created: toCreate.length,
     updated: toUpdate.length,
@@ -585,7 +595,7 @@ export async function executeEvalRunFromFile(
 
   const sourceHash = sha256HexOfBuffer(params.source.buffer);
   const authored = loaded.authored;
-  const servers = authored.target.servers;
+  const servers = authored.target.servers ?? [];
   const synced = await context.client.syncFileOwnedEvalSuite(
     {
       projectId: project.id,
@@ -612,8 +622,12 @@ export async function executeEvalRunFromFile(
         },
         defaultConfig: {
           modelId: authored.defaults.model,
-          systemPrompt: "",
-          temperature: 0,
+          ...(authored.defaults.systemPrompt !== undefined
+            ? { systemPrompt: authored.defaults.systemPrompt }
+            : {}),
+          ...(authored.defaults.temperature !== undefined
+            ? { temperature: authored.defaults.temperature }
+            : {}),
         },
         defaultPassCriteria: { minimumPassRate: passPercent },
       },
@@ -624,7 +638,7 @@ export async function executeEvalRunFromFile(
   const syncedCases = await syncFileOwnedCases(context.client, {
     projectId: project.id,
     suiteId: synced.suite.id,
-    cases: loaded.resolved.enabledCases,
+    cases: loaded.resolved.cases,
     declaredCaseIds: new Set(
       loaded.resolved.cases.map((testCase) => testCase.id),
     ),
@@ -643,6 +657,27 @@ export async function executeEvalRunFromFile(
     !hasExplicitTarget && authored.target.environment
       ? authored.target.environment
       : undefined;
+  const fileHosts =
+    !hasExplicitTarget && !fileEnvironment
+      ? authored.target.hosts?.map((host) => host.id ?? host.name)
+      : undefined;
+  if (!hasExplicitTarget && authored.target.hosts) {
+    await updateEvalSuiteOperation.execute(
+      {
+        project: project.id,
+        suite: synced.suite.id,
+        hosts: authored.target.hosts.map((host) => ({
+          host: host.id ?? host.name,
+          ...(host.servers
+            ? {
+                servers: host.servers.map((server) => server.id ?? server.name),
+              }
+            : {}),
+        })),
+      },
+      { client: context.client, signal: context.signal },
+    );
+  }
   if (fileEnvironment) {
     await setEvalSuiteEnvironmentsOperation.execute(
       {
@@ -686,6 +721,10 @@ export async function executeEvalRunFromFile(
         ? { host: knobs.host[0] }
         : knobs.host?.length
           ? { hosts: knobs.host }
+          : fileHosts?.length === 1
+            ? { host: fileHosts[0] }
+            : fileHosts?.length
+              ? { hosts: fileHosts }
           : {}),
       ...(knobs.allTargets ? { allAttached: true } : {}),
       ...(knobs.iterations !== undefined
