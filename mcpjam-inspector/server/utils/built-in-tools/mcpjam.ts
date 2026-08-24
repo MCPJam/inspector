@@ -260,6 +260,24 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
   cancel_wave_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  // Launches a browser and executes the caller's tool. The Apps tab renders
+  // the same widget interactively, with the console and network panes beside
+  // it — a chat tool would hand back a verdict with none of that context.
+  render_server_widget:
+    "The Apps tab renders the widget interactively, with the console and network evidence beside it. Available on REST/CLI/MCP.",
+  // Agent Playground. `send_chat_message` runs an assistant turn, and this
+  // toolset IS an assistant turn — offering it here lets a chat turn spawn
+  // chat turns, which is recursive spend with no natural floor. The two reads
+  // follow it out rather than being split off: their only use in chat is to
+  // read back a session this toolset cannot create, and the Sessions tab
+  // already renders both the transcript and the trace with the context around
+  // them.
+  send_chat_message:
+    "An assistant turn that starts assistant turns — recursive spend with no floor. Available on REST/CLI/MCP, where the caller is not already inside a turn.",
+  get_chat_session:
+    "Reads back a session this toolset cannot create; the Sessions tab renders the transcript with its context.",
+  get_chat_session_trace:
+    "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
