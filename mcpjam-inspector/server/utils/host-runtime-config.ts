@@ -14,6 +14,7 @@
  */
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import { isAbortError } from "@/shared/abort-errors";
 import { logger } from "./logger.js";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
@@ -85,12 +86,29 @@ function getConvexHttpUrl(): string {
 }
 
 function wasAborted(error: unknown, signal: AbortSignal | undefined): boolean {
-  return (
-    signal?.aborted === true ||
-    (typeof error === "object" &&
-      error !== null &&
-      (error as { name?: unknown }).name === "AbortError")
-  );
+  return signal?.aborted === true || isAbortError(error);
+}
+
+/**
+ * Gap before the single retry. Without it the second attempt lands inside the
+ * same DNS/socket blip it is meant to outlive, and only doubles the wait. Kept
+ * short because this runs before the turn opens its stream, and abort-aware so
+ * a Stop during the gap is still immediate.
+ */
+const RETRY_DELAY_MS = 250;
+
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export async function fetchHostRuntimeConfig(args: {
@@ -180,6 +198,14 @@ export async function fetchHostRuntimeConfig(args: {
     logger.warn("[host-runtime-config] transient network error; retrying once", {
       hostId: args.hostId,
     });
+    await delay(RETRY_DELAY_MS, args.signal);
+    if (args.signal?.aborted) {
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
     try {
       response = await fetch(url, requestInit);
     } catch (retryError) {

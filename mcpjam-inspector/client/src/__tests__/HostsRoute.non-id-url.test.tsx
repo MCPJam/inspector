@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
@@ -45,9 +45,11 @@ const {
     isLoading: false,
   },
   mockCreateHost: vi.fn(),
+  // Tri-state, like PostHog: `undefined` is what every first render sees, and
+  // the deep-link guard must WAIT there rather than read it as off.
   mockFeatureFlags: {
-    claudeCode: false,
-    codex: false,
+    claudeCode: undefined as boolean | undefined,
+    codex: undefined as boolean | undefined,
   },
   mockPreviewed: { value: null as string | null },
   mockSetPreviewedHostId: vi.fn(),
@@ -170,8 +172,8 @@ beforeEach(() => {
   mockHostList.hosts = [{ hostId: CONVEX_HOST_ID }];
   mockHostList.isLoading = false;
   mockCreateHost.mockReset();
-  mockFeatureFlags.claudeCode = false;
-  mockFeatureFlags.codex = false;
+  mockFeatureFlags.claudeCode = undefined;
+  mockFeatureFlags.codex = undefined;
 });
 
 afterEach(() => {
@@ -181,6 +183,7 @@ afterEach(() => {
 describe("HostsRoute — a URL segment that is not a Convex host id", () => {
   it("does not create a gated host from a direct verify URL", async () => {
     mockHostList.hosts = [];
+    mockFeatureFlags.codex = false;
     window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
 
     render(<HostsRoute />);
@@ -191,6 +194,64 @@ describe("HostsRoute — a URL segment that is not a Convex host id", () => {
       });
     });
     expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("waits for an unresolved flag instead of bouncing the verify URL", async () => {
+    mockHostList.hosts = [];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    // The whole point of the tri-state: a user who IS in the rollout must not
+    // be bounced during the cold load, before their flag arrives.
+    await Promise.resolve();
+    expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+      replace: true,
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting for a flag that never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      mockHostList.hosts = [];
+      window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+      render(<HostsRoute />);
+      expect(mockNavigate).not.toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+
+      // A blocked PostHog relay leaves the flag `undefined` forever. Past the
+      // deadline the link must fail visibly rather than sit there doing nothing.
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith(routePaths.hosts, {
+        replace: true,
+      });
+      expect(mockCreateHost).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("creates the host exactly once when the flag resolves to on", async () => {
+    mockHostList.hosts = [];
+    mockCreateHost.mockResolvedValue({ hostId: CONVEX_HOST_ID });
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+    expect(mockCreateHost).not.toHaveBeenCalled();
+
+    mockFeatureFlags.codex = true;
+    rerender(<HostsRoute />);
+
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
+    // The flag settling re-runs the effect; the latch must hold across it.
+    rerender(<HostsRoute />);
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
   });
 
   it("sends a catalog slug to the clients list instead of opening it", () => {
