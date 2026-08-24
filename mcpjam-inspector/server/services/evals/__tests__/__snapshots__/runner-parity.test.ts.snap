@@ -371,6 +371,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "metadata": {
         "argumentMismatchCount": 0,
         "failedTurnCount": 0,
+        "failureCategory": "setup",
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -387,27 +388,27 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
         "stageAnalyzerVersion": 3,
         "stageResults": [
           {
-            "reason": "observed",
+            "reason": "setupAborted",
             "stage": "connection",
-            "state": "passed",
+            "state": "notMeasured",
           },
           {
-            "reason": "observed",
+            "reason": "setupAborted",
             "stage": "discovery",
-            "state": "passed",
+            "state": "notMeasured",
           },
           {
-            "reason": "observed",
+            "reason": "setupAborted",
             "stage": "selection",
-            "state": "passed",
+            "state": "notMeasured",
           },
           {
-            "reason": "executorEmitsNoSpans",
+            "reason": "setupAborted",
             "stage": "call",
             "state": "notMeasured",
           },
           {
-            "reason": "executorEmitsNoSpans",
+            "reason": "setupAborted",
             "stage": "response",
             "state": "notMeasured",
           },
@@ -450,7 +451,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       },
       "result": "failed",
       "resultSource": "reported",
-      "status": "failed",
+      "status": "setup_failed",
       "tokensUsed": 0,
     },
     "ref": "testSuites:updateTestIteration",
@@ -1934,6 +1935,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "metadata": {
         "argumentMismatchCount": 0,
         "failedTurnCount": 0,
+        "failureCategory": "setup",
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
@@ -1950,14 +1952,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
         "stageAnalyzerVersion": 3,
         "stageResults": [
           {
-            "reason": "observed",
+            "reason": "setupAborted",
             "stage": "connection",
-            "state": "passed",
+            "state": "notMeasured",
           },
           {
-            "reason": "observed",
+            "reason": "setupAborted",
             "stage": "discovery",
-            "state": "passed",
+            "state": "notMeasured",
           },
           {
             "reason": "notAuthored",
@@ -1965,12 +1967,12 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "state": "notApplicable",
           },
           {
-            "reason": "executorEmitsNoSpans",
+            "reason": "setupAborted",
             "stage": "call",
             "state": "notMeasured",
           },
           {
-            "reason": "executorEmitsNoSpans",
+            "reason": "setupAborted",
             "stage": "response",
             "state": "notMeasured",
           },
@@ -2006,7 +2008,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       },
       "result": "failed",
       "resultSource": "reported",
-      "status": "failed",
+      "status": "setup_failed",
       "tokensUsed": 0,
     },
     "ref": "testSuites:updateTestIteration",

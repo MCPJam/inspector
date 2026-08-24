@@ -1248,7 +1248,11 @@ async function persistSetupFailedIteration(args: {
     toolsCalled: [],
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     messages: [] as ModelMessage[],
-    status: "failed" as const,
+    // The environment never came up, so nothing was asked of the server under
+    // test. `failed` would report this as the server's problem; `setup_failed`
+    // says the harness never got to the question, which is what validity
+    // aggregation needs in order to withhold a verdict instead of inventing one.
+    status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
@@ -1260,7 +1264,7 @@ async function persistSetupFailedIteration(args: {
         // `traceAbsent`. When setupSignals are present it measures the top
         // two stages instead of blanking the whole chain.
         ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
-        status: "failed",
+        status: "setup_failed",
         error: args.errorMessage,
       }),
       ...(args.setupAudit ?? {}),
@@ -3523,9 +3527,10 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // "failed"; everything else completes (a failed verdict is still a
-      // completed run). Mirrors the former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "failed" : "completed",
+      // `setup_failed` — it never reached the question; everything else
+      // completes (a failed verdict is still a completed run). Mirrors the
+      // former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -4418,8 +4423,8 @@ const runHostedIterationWithBrowser = async (
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
   }
-  // Pinned setup failure (server not connected) — drives status:"failed" below,
-  // mirroring the local runner.
+  // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
+  // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
@@ -4525,9 +4530,9 @@ const runHostedIterationWithBrowser = async (
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // "failed"; everything else completes (a failed verdict is still a
-    // completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "failed" : "completed",
+    // `setup_failed` — it never reached the question; everything else completes
+    // (a failed verdict is still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure ? "setup_failed" : "completed",
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),

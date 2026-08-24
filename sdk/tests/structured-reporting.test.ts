@@ -269,6 +269,143 @@ describe("buildEvalRunReport", () => {
     expect(parsed[1].passed).toBe(true);
   });
 
+  it("carries an INCONCLUSIVE backend verdict instead of recomputing one", () => {
+    const report = buildEvalRunReport([
+      {
+        run: {
+          id: "run-1",
+          suiteId: "suite-1",
+          runNumber: 1,
+          status: "completed",
+          result: "inconclusive",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+          source: "api",
+          notes: null,
+          createdAt: 100,
+          completedAt: 300,
+          verdictPolicyVersion: 2,
+          verdictSummary: {
+            policyVersion: 2,
+            verdict: "inconclusive",
+            reasons: ["insufficientCompletion"],
+            validity: {
+              valid: false,
+              coverage: {
+                configuredTrials: 4,
+                attemptedTrials: 1,
+                eligibleTrials: 1,
+                minEligibleTrials: null,
+              },
+              completionRate: {
+                state: "measured",
+                numerator: 1,
+                denominator: 4,
+                rate: 0.25,
+                threshold: 0.8,
+                met: false,
+              },
+              evaluatorErrorRate: {
+                state: "measured",
+                numerator: 0,
+                denominator: 1,
+                rate: 0,
+                threshold: 0.1,
+                met: true,
+              },
+            },
+          },
+        } as unknown as PlatformEvalRun,
+        iterations: [],
+        iterationsComplete: true,
+      },
+    ]);
+
+    // Undecided, not failed: `passed` stays false (nothing was established)
+    // while `verdict` says which of the two it is.
+    expect(report.passed).toBe(false);
+    expect(report.verdict).toBe("inconclusive");
+    // And NO synthetic `run-1:run` failure is invented for it — that case is
+    // what turns an amber run into a red JUnit testcase in CI.
+    expect(report.cases).toEqual([]);
+    // The decision itself travels verbatim, reasons and denominators included,
+    // because the reader cannot reconstruct it from the summary counts.
+    expect(report.metadata.runs?.[0]).toMatchObject({
+      verdictPolicyVersion: 2,
+      verdictSummary: {
+        verdict: "inconclusive",
+        reasons: ["insufficientCompletion"],
+        validity: {
+          completionRate: { numerator: 1, denominator: 4, met: false },
+        },
+      },
+    });
+  });
+
+  it("lets one measured failure outrank an inconclusive sibling run", () => {
+    const base = {
+      suiteId: "suite-1",
+      runNumber: 1,
+      status: "completed",
+      summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
+      source: "api",
+      notes: null,
+      createdAt: 100,
+      completedAt: 200,
+    };
+    const report = buildEvalRunReport([
+      {
+        run: {
+          ...base,
+          id: "run-a",
+          result: "inconclusive",
+        } as unknown as PlatformEvalRun,
+        iterations: [],
+        iterationsComplete: true,
+      },
+      {
+        run: { ...base, id: "run-b", result: "failed" } as PlatformEvalRun,
+        iterations: [],
+        iterationsComplete: true,
+      },
+    ]);
+
+    // One measured regression is a regression whatever else was unmeasurable.
+    expect(report.verdict).toBe("failed");
+    // The failed run still gets its run-level case; the inconclusive one does
+    // not.
+    expect(report.cases.map((entry) => entry.id)).toEqual(["run-b:run"]);
+  });
+
+  it("does not report an inconclusive verdict off an unreadable run", () => {
+    // The iterations page failed, so "the platform declined to decide" is not
+    // something this report knows: it only knows it could not read the run.
+    const report = buildEvalRunReport([
+      {
+        run: {
+          id: "run-1",
+          suiteId: "suite-1",
+          runNumber: 1,
+          status: "completed",
+          result: "inconclusive",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+          source: "api",
+          notes: null,
+          createdAt: 100,
+          completedAt: 300,
+        } as unknown as PlatformEvalRun,
+        iterations: [],
+        iterationsComplete: false,
+        iterationError: "page 2 failed",
+      },
+    ]);
+
+    expect(report.verdict).toBe("failed");
+    expect(report.cases[0]).toMatchObject({
+      id: "run-1:iterations",
+      passed: false,
+    });
+  });
+
   it("adds a failing reporting testcase when iteration pagination is incomplete", () => {
     const report = buildEvalRunReport([
       {

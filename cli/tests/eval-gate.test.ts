@@ -4,6 +4,7 @@ import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
   evalGateExitCode,
+  isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "../src/lib/eval-gate-exit-code.js";
 import {
@@ -229,4 +230,59 @@ test("an integrity-INVALID run is non-gateable even when every iteration passed"
     { noGatingScoreErrors: true },
   );
   assert.equal(evalGateExitCode(tampered), 3);
+});
+
+test("an INCONCLUSIVE run is non-gateable, never a failure", () => {
+  // Verdict policy 2 lets the platform decline to decide: the run finished,
+  // but too little of it was gradeable to claim anything about the server.
+  assert.equal(isNonVerdictRunResult("inconclusive"), true);
+  assert.equal(isNonVerdictRunResult("passed"), false);
+  assert.equal(isNonVerdictRunResult("failed"), false);
+  assert.equal(isNonVerdictRunResult(undefined), false);
+
+  // The fail-either-way trap this closes. The same summary a policy-2 run
+  // declared inconclusive would gate GREEN on the numbers alone …
+  const green = reportForRun(
+    {
+      ...RUN,
+      result: "inconclusive" as const,
+      summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+    } as never,
+    undefined,
+    { minimumPassRate: 1 },
+  );
+  assert.equal(green.outcome, "passed");
+  // … and a differently-shaped one would gate RED, reading as a regression
+  // nobody observed.
+  const red = reportForRun(
+    {
+      ...RUN,
+      result: "inconclusive" as const,
+      summary: { total: 2, passed: 0, failed: 2, passRate: 0 },
+    } as never,
+    undefined,
+    { minimumPassRate: 1 },
+  );
+  assert.equal(evalGateExitCode(red), 1);
+  // Which is why the command never reaches the engine for an inconclusive
+  // result: it reports incomplete, exit 3.
+  assert.equal(
+    evalGateExitCode({
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [],
+    }),
+    3,
+  );
+});
+
+test("the gate keeps exactly four exit codes under verdict policy 2", () => {
+  // `inconclusive` is a third RESULT, not a fifth exit code: CI contracts
+  // written against 0/1/2/3 keep working.
+  const codes = new Set(
+    (["passed", "failed", "usage_error", "incomplete"] as const).map((outcome) =>
+      evalGateExitCode(report(outcome)),
+    ),
+  );
+  assert.deepEqual([...codes].sort(), [0, 1, 2, 3]);
 });

@@ -112,6 +112,7 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   TERMINAL_RUN_STATUSES,
   evalGateExitCode,
+  isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
@@ -1052,9 +1053,14 @@ async function runEvalGate(
           }
         }
 
-        if (isNonVerdictRunStatus(run.status)) {
+        if (
+          isNonVerdictRunStatus(run.status) ||
+          isNonVerdictRunResult(run.result)
+        ) {
           // Cancelled / timed out: the run has not told us the server
-          // regressed, it has told us nothing.
+          // regressed, it has told us nothing. Same for a policy-2
+          // `inconclusive` result, where the platform itself declined to
+          // decide and its summary counts are the evidence it rejected.
           return {
             report: {
               outcome: "incomplete" as const,
@@ -1063,7 +1069,9 @@ async function runEvalGate(
                 {
                   gate: "run",
                   status: "non_gateable" as const,
-                  message: `run is ${run.status}; no verdict was established`,
+                  message: isNonVerdictRunResult(run.result)
+                    ? "run is inconclusive; no verdict was established"
+                    : `run is ${run.status}; no verdict was established`,
                 },
               ],
             },

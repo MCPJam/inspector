@@ -376,13 +376,11 @@ const row = (
 /**
  * Iteration statuses that mean "no verdict was ever produced".
  *
- * NOTE on reachability: both wired callers finalize with `completed` or
- * `failed` only (`buildIterationFinishParams`; the SDK mapper derives its
- * status from the verdict), and a cancelled inspector iteration finalizes on a
- * path that builds no stage metadata at all. So today only `setup_failed`
- * arrives here in production, via `persistSetupFailedIteration`. The other
- * three are kept because they are the contract's own vocabulary and a caller
- * that CAN spell them must not be silently mis-attributed to a server failure.
+ * NOTE on reachability: a cancelled inspector iteration finalizes on a path
+ * that builds no stage metadata at all, and `setup_failed` normally reaches the
+ * setup-abort branch below, which can still name whose side broke. This set is
+ * the floor for everything else: a caller that CAN spell a stopped status must
+ * not have it mis-attributed to a server failure.
  */
 const LIFECYCLE_STOPPED: ReadonlySet<IterationStatus> =
   new Set<IterationStatus>([
@@ -424,9 +422,7 @@ function applicability(
 
 // ── per-stage evaluators ─────────────────────────────────────────────────────
 
-function nonTransportLocalToolSpans(
-  e: StageEvidence
-): StageSpanLike[] {
+function nonTransportLocalToolSpans(e: StageEvidence): StageSpanLike[] {
   return (e.spans ?? []).filter(
     (s) =>
       isToolSpan(s) &&
@@ -438,9 +434,7 @@ function nonTransportLocalToolSpans(
 }
 
 function signalEvidence(signal: StageSetupPhaseSignal): StageEvidenceRefs {
-  return signal.spanIds?.length
-    ? { spanIds: signal.spanIds.slice(0, 5) }
-    : {};
+  return signal.spanIds?.length ? { spanIds: signal.spanIds.slice(0, 5) } : {};
 }
 
 function deriveConnection(e: StageEvidence): StageResultRow {
@@ -515,10 +509,7 @@ function deriveDiscovery(e: StageEvidence): StageResultRow {
     // A completed initialize is the egress evidence; no canary needed.
     // Unknown (unobserved tools/list) stays notMeasured — incomplete
     // observation is not a server failure.
-    if (
-      connectionPositivelyReached(e) &&
-      signal.attribution === "theirs"
-    ) {
+    if (connectionPositivelyReached(e) && signal.attribution === "theirs") {
       return row("discovery", "failed", "toolsListFailed", refs);
     }
     if (signal.attribution === "ours") {
@@ -837,9 +828,26 @@ export function deriveStageResults(
     );
   }
 
+  // A setup abort, whether it wears `setup_failed` or the `failed` the older
+  // writer could spell (`persistSetupFailedIteration` predates the widened
+  // update mutation). Its setup signals are the only thing that can name WHOSE
+  // side broke, so a stopped status must not discard them.
+  const noEvidenceAtAll =
+    (evidence.spans?.length ?? 0) === 0 &&
+    (evidence.prompts?.length ?? 0) === 0 &&
+    (evidence.predicateResults?.length ?? 0) === 0;
+  const hasSetupSignals =
+    evidence.setupSignals?.connection !== undefined ||
+    evidence.setupSignals?.discovery !== undefined;
+  const isSetupAbort =
+    (iteration.status === "failed" || iteration.status === "setup_failed") &&
+    evidence.traceAbsent &&
+    noEvidenceAtAll;
+
   // Precedence 2: the run never produced a verdict. Harness noise must not
-  // inflate any server failure rate, so nothing here is ever `failed`.
-  if (LIFECYCLE_STOPPED.has(iteration.status)) {
+  // inflate any server failure rate, so nothing here is ever `failed` unless
+  // setup signals measured the other side's server saying no.
+  if (LIFECYCLE_STOPPED.has(iteration.status) && !isSetupAbort) {
     const reason: StageReason =
       iteration.status === "setup_failed" ? "setupAborted" : "lifecycleStopped";
     return finalize(
@@ -851,21 +859,7 @@ export function deriveStageResults(
     );
   }
 
-  // A `failed` row with no trace at all is a setup abort wearing the only
-  // status the current writer can spell (`persistSetupFailedIteration` writes
-  // `status: "failed"` because the update mutation rejects `setup_failed`).
-  const noEvidenceAtAll =
-    (evidence.spans?.length ?? 0) === 0 &&
-    (evidence.prompts?.length ?? 0) === 0 &&
-    (evidence.predicateResults?.length ?? 0) === 0;
-  if (
-    iteration.status === "failed" &&
-    evidence.traceAbsent &&
-    noEvidenceAtAll
-  ) {
-    const hasSetupSignals =
-      evidence.setupSignals?.connection !== undefined ||
-      evidence.setupSignals?.discovery !== undefined;
+  if (isSetupAbort) {
     // No signals ⇒ byte-identical to the v1 chain (modulo analyzer version).
     if (!hasSetupSignals) {
       return finalize(

@@ -10972,6 +10972,17 @@
             "minimum": 1,
             "maximum": 10
           },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Trials this case runs under verdict policy 2, overriding the suite default. Absent means the case inherits it. NOT a second spelling of `iterations`: that one is the legacy count, which the legacy resolver reads as a FLOOR (`max(iterations, suite.minimumIterations)`) and which a policy-2 case still reports for compatibility. This one is exact."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction of this case's trials that must pass, overriding the suite default. Absent means the case inherits it. Never derived from the suite's `minimumAccuracy`, which is a PERCENT under a different resolver."
+          },
           "isNegative": {
             "type": "boolean",
             "description": "When true, the case passes if NO tools are called."
@@ -12591,6 +12602,54 @@
                     "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
                   }
                 }
+              },
+              "verdictPolicyVersion": {
+                "type": "integer",
+                "enum": [
+                  2
+                ],
+                "description": "The verdict policy this suite's runs are decided under. `2` grades each case against a `passThreshold` FRACTION over its own `repetitions` and decides validity first (an unmeasurable run is `inconclusive`, not failed). ABSENT means legacy: `minimumAccuracy` (a PERCENT) over `max(case.iterations, minimumIterations)`. The two are not convertible, which is why absence is reported rather than defaulted."
+              },
+              "verdictPolicyDefaults": {
+                "type": "object",
+                "description": "Suite defaults a case inherits under policy 2. Present only with `verdictPolicyVersion: 2`, and only as a whole — `repetitions` without `passThreshold` cannot answer what a case is graded against.",
+                "required": [
+                  "repetitions",
+                  "passThreshold"
+                ],
+                "properties": {
+                  "repetitions": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Trials per case unless the case overrides `repetitions`."
+                  },
+                  "passThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Fraction of a case's trials that must pass. Never a percent."
+                  },
+                  "validity": {
+                    "type": "object",
+                    "description": "When a run counts as measured well enough to decide. DECLARED, not resolved: an omitted field is not \"no minimum\" but the contract default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1, and an omitted `minEligibleTrials` requiring every configured trial attempted plus at least one gradeable trial. The policy a run was actually decided under is on the run's `verdictSummary.validity`.",
+                    "properties": {
+                      "minEligibleTrials": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "minCompletionRate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "maxEvaluatorErrorRate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -13229,10 +13288,11 @@
               "string",
               "null"
             ],
-            "description": "Pass/fail verdict once terminal.",
+            "description": "Verdict once terminal. `inconclusive` exists only under `verdictPolicyVersion: 2` and is NOT a failure: the run did not measure the server well enough to say (too few gradeable trials, too many evaluator errors), so a gate that folds it into `failed` reports a defect the run never observed. Read `verdictSummary.reasons` for the check that withheld the verdict.",
             "enum": [
               "passed",
               "failed",
+              "inconclusive",
               null
             ]
           },
@@ -13293,6 +13353,21 @@
               "invalid",
               null
             ]
+          },
+          "verdictPolicyVersion": {
+            "type": "integer",
+            "enum": [
+              2
+            ],
+            "description": "The verdict policy this run was decided under, frozen at run start. ABSENT means legacy percent-threshold grading — `result` cannot then be `inconclusive` and there is no `verdictSummary`. A caller gating on fractions or on validity must read this FIRST rather than assume a missing summary means a clean run."
+          },
+          "verdictSummary": {
+            "type": "object",
+            "description": "How a policy-2 verdict was reached: the resolved validity policy, the measured completion and evaluator-error rates with their denominators and exclusions, the per-case and per-execution-variant aggregates, and the exact reasons. Absent when the run is legacy, or when the stored summary failed contract validation at the boundary — a partially-valid decision is never published, because a gate cannot tell a missing field from a satisfied check."
+          },
+          "verdictPolicyIntegrityError": {
+            "type": "string",
+            "description": "Why a policy-2 run could not be decided from its own evidence (a missing or malformed policy snapshot, mixed evaluator configs). Accompanies an `inconclusive` result; it is never a task failure."
           },
           "environment": {
             "description": "The environment revision this run is pinned to. `null` on a legacy run that recorded none — always present, so a caller never has to distinguish absent from unpinned.",
@@ -14260,12 +14335,16 @@
           },
           "status": {
             "type": "string",
+            "description": "LIFECYCLE, not verdict: how far the trial got, never how it graded. A trial that ran normally and graded badly is `completed` with `result: \"failed\"`, so reading `status === \"failed\"` as \"the case failed\" counts harness noise as server defects. `failed` is an execution failure, `setup_failed` means the environment never came up, `timed_out` means the budget expired, `skipped` means it was deliberately not run, `cancelled` means it was withdrawn mid-flight (and is excluded from validity denominators). Treat an unrecognised value as non-terminal-unknown rather than as a failure.",
             "enum": [
               "pending",
               "running",
               "completed",
               "failed",
-              "cancelled"
+              "cancelled",
+              "timed_out",
+              "setup_failed",
+              "skipped"
             ]
           },
           "result": {
@@ -14273,6 +14352,7 @@
               "string",
               "null"
             ],
+            "description": "Task verdict for the trial, independent of `status`. `null` until the trial is graded — including on a terminal trial that never produced a gradeable outcome (`setup_failed`, `skipped`).",
             "enum": [
               "passed",
               "failed",

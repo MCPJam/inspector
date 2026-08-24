@@ -14,6 +14,7 @@ import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
+import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
@@ -23,7 +24,12 @@ import {
   isEnvironmentLaunchConflict,
 } from "../environments/resolve.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary — `setup_failed` and `skipped` included.
+ * The recorder is a pass-through to {@link finalizeEvalIteration}, so a
+ * narrower union here would silently reject the classification a runner made.
+ */
+type IterationStatus = ContractIterationStatus;
 // Run-level (not per-iteration) terminal stop reason, threaded into the
 // suite-run finalize so the dashboard can show why a run stopped.
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";

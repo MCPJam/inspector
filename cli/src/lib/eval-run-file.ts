@@ -170,7 +170,7 @@ function refuseUnsupportedHostedSemantics(loaded: {
   ) {
     throw cliError(
       "VALIDITY_UNSUPPORTED",
-      "defaults.validity sets a gate the hosted runner does not enforce (minEligibleTrials, minCompletionRate, or maxEvaluatorErrorRate). A run could be reported as a pass or fail when the file would call it INVALID. Leave validity as {} — or run the suite locally.",
+      "defaults.validity sets a gate the hosted runner cannot be told about: the hosted suite-authoring API has no verdict-policy-2 defaults field to write minEligibleTrials, minCompletionRate, or maxEvaluatorErrorRate into, so a run would be reported as a pass or fail when the file would call it INVALID. Leave validity as {} — or run the suite locally.",
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
     );
   }
@@ -187,7 +187,7 @@ function refusePerCasePassThreshold(loaded: {
     if (testCase.passThreshold !== suiteThreshold) {
       throw cliError(
         "CASE_PASS_THRESHOLD",
-        `Hosted runs grade every case against the suite's defaults.passThreshold (${suiteThreshold}); case "${testCase.id}" overrides passThreshold to ${testCase.passThreshold}. The platform has no per-case pass threshold, so this file is refused rather than graded against a different bar than it declares.`,
+        `Hosted runs grade every case against the suite's defaults.passThreshold (${suiteThreshold}); case "${testCase.id}" overrides passThreshold to ${testCase.passThreshold}. The hosted case-authoring API has no per-case passThreshold field to write it into, so this file is refused rather than graded against a different bar than it declares.`,
         SUITE_FILE_RUN_INVALID_EXIT_CODE,
       );
     }

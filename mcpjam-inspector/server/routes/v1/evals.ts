@@ -24,6 +24,10 @@ import {
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
 import {
+  toRunVerdictProjection,
+  toSuiteVerdictPolicyDto,
+} from "./eval-verdict-projection.js";
+import {
   toRunCompareDto,
   type RunCompareBaseline,
 } from "./eval-compare-projection.js";
@@ -42,7 +46,10 @@ import {
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
-import { TERMINAL_RUN_STATUSES } from "../../services/evals/run-status.js";
+import {
+  TERMINAL_ITERATION_STATUSES,
+  TERMINAL_RUN_STATUSES,
+} from "../../services/evals/run-status.js";
 import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
@@ -1310,6 +1317,16 @@ function toRunDto(run: RunDoc) {
     // evidence is not valid evidence. Omitted rather than nulled so the DTO is
     // unchanged for every run predating integrity checking.
     ...toRunScoreIntegrity(run.scoreIntegrity),
+    // The v2 verdict policy evidence: which policy decided this run, the
+    // decision itself (validity first, then the task verdict, with the
+    // denominators and reasons it was taken on), and the integrity error when
+    // the run's own evidence could not be decided under it. ALL THREE ARE
+    // ABSENT for a legacy percent-threshold run — see `toRunVerdictProjection`.
+    //
+    // A caller gating on `result` must read `verdictPolicyVersion` first: only
+    // under v2 can `result` be `"inconclusive"`, and only then does
+    // `verdictSummary` explain the decision.
+    ...toRunVerdictProjection(run),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -1319,11 +1336,12 @@ function toIterationDto(iteration: IterationDoc) {
   const snapshot = iteration.testCaseSnapshot ?? {};
   const startedAt =
     typeof iteration.startedAt === "number" ? iteration.startedAt : null;
-  const isTerminal =
-    iteration.status === "completed" ||
-    iteration.status === "failed" ||
-    iteration.status === "cancelled" ||
-    iteration.status === "timed_out";
+  // Every lifecycle status that ENDS an iteration. `setup_failed` and
+  // `skipped` are terminal exactly like the other four: the harness is done
+  // with the trial, so its duration is measurable (a setup failure has a real
+  // elapsed time) and withholding it would report `durationMs: null` for the
+  // one class of failure an operator is trying to time.
+  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -1516,6 +1534,21 @@ function toCaseDto(testCase: CaseDoc) {
       ? { expectedOutput: testCase.expectedOutput }
       : {}),
     iterations: typeof testCase.runs === "number" ? testCase.runs : 1,
+    // The v2 per-case OVERRIDES, projected under their canonical names and
+    // omitted when the case inherits the suite default.
+    //
+    // `repetitions` is not a second spelling of `iterations` above: that field
+    // is the legacy `runs` count, which a v2 case keeps as its
+    // legacy-compatible projection, and the legacy resolver reads it as a floor
+    // (`max(runs, minimumIterations)`). This one is "the case's value, else the
+    // suite's". `passThreshold` is a FRACTION in [0,1] and is never derived
+    // from `settings.minimumAccuracy`, which is a suite-wide percent.
+    ...(typeof testCase.repetitions === "number"
+      ? { repetitions: testCase.repetitions }
+      : {}),
+    ...(typeof testCase.passThreshold === "number"
+      ? { passThreshold: testCase.passThreshold }
+      : {}),
     isNegative: testCase.isNegativeTest === true,
     ...(testCase.scenario !== undefined ? { scenario: testCase.scenario } : {}),
     models: Array.isArray(testCase.models)
@@ -1625,6 +1658,12 @@ function toSuiteDetailDto(
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
       },
+      // The v2 verdict policy this suite's runs are decided under, with the
+      // defaults a case inherits. ABSENT for a legacy suite — its runs are
+      // decided by `minimumAccuracy` (a suite-wide percent) against
+      // `max(case.iterations, minimumIterations)`, which is a different
+      // resolver and not expressible here.
+      ...toSuiteVerdictPolicyDto(suite),
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
