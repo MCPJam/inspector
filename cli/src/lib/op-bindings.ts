@@ -150,6 +150,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suites: { command: "cloud eval list" },
   create_eval_suite: { command: "cloud eval create" },
   get_eval_suite: { command: "cloud eval get" },
+  get_eval_run_disclosure: {
+    excluded:
+      "Not a standalone command: `cloud eval run` already fetches this for its frozen launch plan and prints it (writeRunDisclosure) before the run link in human mode, and carries it on the JSON receipt's `disclosure` field. A separate command would only invite checking by hand what the launch already discloses.",
+  },
   update_eval_suite: { command: "cloud eval update" },
   delete_eval_suite: { command: "cloud eval delete" },
   set_eval_suite_schedule: { command: "cloud eval schedule" },

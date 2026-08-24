@@ -149,6 +149,41 @@ export interface PlatformOperationContext {
   onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
 }
 
+/**
+ * Ceiling on the pre-run disclosure fetch, independent of whatever deadline
+ * the caller's own signal carries. Generous for a single GET — this exists to
+ * cap a STALL, not to compete with a legitimately slow network.
+ */
+const DISCLOSURE_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * A signal for the best-effort disclosure fetch that is bounded by ITS OWN
+ * short timeout, so a stalled request cannot silently consume the caller's
+ * launch deadline — see the `onDisclosure` doc above. Still aborts when the
+ * caller signal does (a genuine cancellation should stop this fetch too); it
+ * just never runs the other direction, and its own timer never touches the
+ * caller's signal.
+ */
+function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    DISCLOSURE_FETCH_TIMEOUT_MS,
+  );
+  const onCallerAbort = () => controller.abort();
+  callerSignal?.addEventListener("abort", onCallerAbort);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
 export const getMeOperation: PlatformOperation<
   Record<string, never>,
   PlatformMe
@@ -3107,6 +3142,15 @@ export const runEvalSuiteOperation: PlatformOperation<
         : plan.targets
             .filter((target) => target.kind === "environment")
             .map((target) => target.id);
+    // BOUNDED INDEPENDENTLY of the caller's own signal/deadline. This request
+    // is awaited BEFORE the launch, so sharing the caller's signal would let a
+    // stalled disclosure fetch burn through the launch's own timeout budget —
+    // and once that deadline fires, the shared signal is already aborted for
+    // the createEvalRun(Group) call a moment later, turning a best-effort read
+    // into a failed launch. `boundedDisclosureSignal` still aborts on a
+    // genuine caller cancellation; it just cannot itself abort anything but
+    // this one fetch.
+    const disclosureBound = boundedDisclosureSignal(signal);
     try {
       disclosure = await client.getEvalRunDisclosure(
         {
@@ -3119,11 +3163,13 @@ export const runEvalSuiteOperation: PlatformOperation<
               ? { environmentIds: disclosureEnvironmentIds }
               : {}),
         },
-        { signal },
+        { signal: disclosureBound.signal },
       );
       onDisclosure?.(disclosure);
     } catch {
       disclosure = undefined;
+    } finally {
+      disclosureBound.dispose();
     }
 
     const knobs = runKnobBody(input, caseIds);

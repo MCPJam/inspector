@@ -98,6 +98,8 @@ interface Fixture {
   groupSuiteMissing?: boolean;
   /** Model a backend that predates the disclosure contract (G4b). */
   disclosureUnavailable?: boolean;
+  /** Model a disclosure fetch that hangs — never resolves until aborted. */
+  disclosureStalls?: boolean;
   /** Calls observed, in order, across every route this fixture serves. */
   callOrder?: string[];
 }
@@ -178,6 +180,19 @@ function makeClient(fixture: Fixture = {}) {
     }
     if (/\/run-disclosure$/.test(path) && method === "GET") {
       fixture.callOrder?.push("getEvalRunDisclosure");
+      if (fixture.disclosureStalls) {
+        // Never resolves on its own — a real fetch, matching how native fetch
+        // behaves under an AbortSignal: it settles only when the signal
+        // aborts.
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = (init as RequestInit | undefined)?.signal;
+          signal?.addEventListener("abort", () => {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        });
+      }
       if (fixture.disclosureUnavailable) {
         return Response.json(
           {
@@ -874,6 +889,30 @@ describe("run_eval_suite pre-run disclosure (G4b)", () => {
     expect(result.outcome).toBe("started");
     expect(result.disclosure).toBeUndefined();
     expect(onDisclosureCalled).toBe(false);
+  });
+
+  it("times out a STALLED disclosure fetch on its own budget, without aborting the launch", async () => {
+    // The bug this guards: if the disclosure fetch shared the launch's own
+    // signal/deadline, a stalled disclosure request would burn through that
+    // budget and leave the shared signal aborted by the time createEvalRun
+    // ran a moment later — turning a best-effort read into a failed launch.
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient({ disclosureStalls: true });
+      const resultPromise = runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        { client },
+      );
+      // Past the disclosure fetch's own bound, comfortably under the
+      // client's default request timeout — only the disclosure-specific
+      // timer should have anything to fire.
+      await vi.advanceTimersByTimeAsync(11_000);
+      const result = await resultPromise;
+      expect(result.outcome).toBe("started");
+      expect(result.disclosure).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keys the disclosure to the SAME frozen target the run launches, not a re-resolution", async () => {
