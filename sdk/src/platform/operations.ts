@@ -146,7 +146,9 @@ export interface PlatformOperationContext {
    * absent. Never called for `runEvalCaseOperation`, which shares no target
    * resolution with the suite op.
    */
-  onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+  onDisclosure?: (
+    disclosure: PlatformEvalRunDisclosure,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -3187,10 +3189,18 @@ export const runEvalSuiteOperation: PlatformOperation<
     // failure may leave `disclosure` unset.
     if (disclosure) {
       try {
-        onDisclosure?.(disclosure);
+        // `onDisclosure` may be async — TypeScript accepts an async function
+        // for a `void`-returning parameter, so a caller that awaits inside it
+        // can hand back a rejecting Promise here. Not awaiting it keeps this
+        // from delaying the launch; `.catch` keeps a rejection from surfacing
+        // as an unhandled rejection.
+        void Promise.resolve(onDisclosure?.(disclosure)).catch(() => {
+          // The callback's own async failure is the caller's concern, not a
+          // reason to drop the disclosure from the receipt.
+        });
       } catch {
-        // The callback's own failure is the caller's concern, not a reason to
-        // drop the disclosure from the receipt.
+        // The callback's own synchronous failure is likewise the caller's
+        // concern, not a reason to drop the disclosure from the receipt.
       }
     }
 
@@ -4019,6 +4029,16 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       detail.environmentIds ?? [],
       signal,
     );
+    // The HOST axis is left OUT of this plan on purpose: the backend contract
+    // (testSuites:getRunDisclosure) takes only caseIds/environmentId(s), and
+    // this operation's own input schema has no host selector, so there is no
+    // way for a caller to satisfy a host-axis `target-required` refusal here
+    // the way `run_eval_suite` lets one satisfy it with `--host`. Including
+    // `attachedHosts` would make a suite with two or more attached hosts (and
+    // no environments) unconditionally unrunnable through this operation.
+    // Every host-only suite therefore falls back to the same suite-base
+    // derivation a plan with nothing attached uses — a backend-side limit,
+    // not something resolvable from here.
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
         id,
@@ -4026,21 +4046,13 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
           ? { name: attachedEnvironmentNames.get(id)! }
           : {}),
       })),
-      attachedHosts: (detail.hosts ?? []).map((host) => ({
-        id: host.id,
-        name: host.name,
-      })),
+      attachedHosts: [],
       selectedEnvironments,
       selectedHosts: [],
     });
     if (plan.kind === "target-required") {
       throw operationInputError(targetRequiredMessage(plan));
     }
-    // A HOST target has no disclosure selector at all — the backend contract
-    // (testSuites:getRunDisclosure) takes only caseIds/environmentId(s), so a
-    // host-only suite's disclosure falls back to the same suite-base
-    // derivation a plan with nothing attached uses. That is a backend-side
-    // limit, not something resolvable from here.
     const disclosureEnvironmentIds =
       plan.kind === "single"
         ? plan.target?.kind === "environment"

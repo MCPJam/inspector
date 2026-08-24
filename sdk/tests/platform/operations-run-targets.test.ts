@@ -892,6 +892,36 @@ describe("run_eval_suite pre-run disclosure (G4b)", () => {
     expect(onDisclosureCalled).toBe(false);
   });
 
+  it("does not surface an unhandled rejection when an async onDisclosure callback rejects", async () => {
+    // TypeScript accepts an async function for a `void`-returning callback
+    // param, so a caller awaiting inside `onDisclosure` can hand back a
+    // rejecting Promise here. That must not become an unhandled rejection,
+    // delay the launch, or erase the disclosure already fetched successfully.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const { client } = makeClient();
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosure: async () => {
+            await Promise.resolve();
+            throw new Error("async callback rejection");
+          },
+        },
+      );
+      expect(result.outcome).toBe("started");
+      expect(result.disclosure).toMatchObject({ contractVersion: 1 });
+      // Let the callback's own microtask queue flush before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
   it("times out a STALLED disclosure fetch on its own budget, without aborting the launch", async () => {
     // The bug this guards: if the disclosure fetch shared the launch's own
     // signal/deadline, a stalled disclosure request would burn through that
@@ -981,6 +1011,54 @@ describe("get_eval_run_disclosure target resolution parity with run_eval_suite",
     );
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ suiteId: "suite-1", environmentId: "env-prod" }),
+      expect.anything(),
+    );
+  });
+
+  it("never refuses a host-only suite — this operation has no host selector to satisfy TARGET_REQUIRED with", async () => {
+    // Unlike `run_eval_suite`, this operation's input schema has no host
+    // selector at all, and the backend disclosure contract has no host
+    // parameter either. Counting attached hosts toward the ambiguity check
+    // would make a suite with two or more attached hosts (and no
+    // environments) unconditionally unrunnable through this operation — it
+    // must fall back to the suite-base derivation instead, the same as a
+    // suite with nothing attached.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [
+          { id: "host-claude", name: "Claude" },
+          { id: "host-chatgpt", name: "ChatGPT" },
+        ],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1" }),
+      expect.anything(),
+    );
+    const [callArgs] = spy.mock.calls[0]!;
+    expect(callArgs).not.toHaveProperty("environmentId");
+    expect(callArgs).not.toHaveProperty("environmentIds");
+  });
+
+  it("still auto-selects the sole attached environment when hosts are ALSO attached", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({
+        environmentIds: ["env-stg"],
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-stg" }),
       expect.anything(),
     );
   });

@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 
 const { useRunDisclosureMock } = vi.hoisted(() => ({
   useRunDisclosureMock: vi.fn(),
@@ -26,6 +27,7 @@ import {
   describeRunDisclosureDetail,
   formatRunDisclosureSummary,
 } from "../run-disclosure-hint";
+import { ReviewStep } from "../eval-runner/ReviewStep";
 import type { RunDisclosureState } from "@/hooks/use-run-disclosure";
 import type { PlatformEvalRunDisclosure } from "@mcpjam/sdk/platform";
 
@@ -212,6 +214,22 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
                 authoritativePerRequestRecord: "llmUsageRecord",
               },
             },
+            {
+              modelId: "anthropic/claude-opus-5",
+              provider: "anthropic",
+              tenantEgress: "byok-cloud",
+              byok: {
+                providerKey: "anthropic",
+                runtimeLocation: "cloud",
+                baseUrlHost: "byok.example.com",
+              },
+              rail: {
+                managed: false,
+                notApplicable: true,
+                reason: "BYOK model, not on the managed rail",
+                authoritativePerRequestRecord: "llmUsageRecord",
+              },
+            },
           ],
         },
         analysis: [
@@ -249,9 +267,38 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       }),
     });
     const detail = describeRunDisclosureDetail(state);
+    // Each model's own line names ITS destination — a regression that
+    // rendered the wrong model's destination (or dropped it) must fail here,
+    // not just a check that the model id appears somewhere.
     expect(
-      detail.some((line) => line.includes("openai/gpt-5.4-mini")),
+      detail.some(
+        (line) =>
+          line.includes("openai/gpt-5.4-mini") &&
+          (line.includes("gateway") || line.includes("openrouter")),
+      ),
     ).toBe(true);
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("anthropic/claude-opus-5") &&
+          line.includes("byok.example.com"),
+      ),
+    ).toBe(true);
+    // Never pooled onto one line under the other model's destination.
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("openai/gpt-5.4-mini") &&
+          line.includes("byok.example.com"),
+      ),
+    ).toBe(false);
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("anthropic/claude-opus-5") &&
+          (line.includes("gateway") || line.includes("openrouter")),
+      ),
+    ).toBe(false);
     expect(
       detail.some(
         (line) =>
@@ -374,7 +421,7 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     );
   });
 
-  it("reflects a ready disclosure's summary in the tooltip trigger's label", () => {
+  it("reflects a contract_unavailable disclosure's summary in the tooltip trigger's label", () => {
     useRunDisclosureMock.mockReturnValue(
       stateOf({
         status: "error",
@@ -386,5 +433,57 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     expect(
       screen.getByLabelText("What running this suite discloses"),
     ).toBeInTheDocument();
+  });
+
+  it("mounts and labels the trigger for a loading fetch", () => {
+    useRunDisclosureMock.mockReturnValue(
+      stateOf({ status: "loading", disclosure: null }),
+    );
+    render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+    expect(
+      screen.getByLabelText("What running this suite discloses"),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts and labels the trigger for a ready disclosure", () => {
+    useRunDisclosureMock.mockReturnValue(stateOf({ status: "ready" }));
+    render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+    expect(
+      screen.getByLabelText("What running this suite discloses"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("ReviewStep — the runDisclosureState slot is props-only and optional", () => {
+  function reviewStepProps(
+    overrides: Partial<ComponentProps<typeof ReviewStep>> = {},
+  ): ComponentProps<typeof ReviewStep> {
+    return {
+      suiteName: "My suite",
+      suiteDescription: "",
+      minimumPassRate: 100,
+      selectedServers: [],
+      selectedModels: [],
+      validTestTemplates: [],
+      onSuiteNameChange: () => {},
+      onSuiteDescriptionChange: () => {},
+      onMinimumPassRateChange: () => {},
+      onEditStep: () => {},
+      ...overrides,
+    };
+  }
+
+  it("renders no disclosure hint when the parent has no runDisclosureState yet", () => {
+    render(<ReviewStep {...reviewStepProps()} />);
+    expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
+  });
+
+  it("renders the disclosure hint beside Models when the parent threads a runDisclosureState", () => {
+    render(
+      <ReviewStep
+        {...reviewStepProps({ runDisclosureState: stateOf() })}
+      />,
+    );
+    expect(screen.getByTestId("run-disclosure-hint")).toBeInTheDocument();
   });
 });
