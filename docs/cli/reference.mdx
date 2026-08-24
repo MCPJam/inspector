@@ -135,7 +135,7 @@ When `--host` is set, the output includes a `host` field and a `toolsDroppedVisi
 
 Plus shared connection flags.
 
-Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders are emitted as a stable root `warning` plus `inspectorRender.warning`, both with the shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Skipped renders keep the tool-call exit code unless `--require-render` is set; tool failures, validation failures, non-skippable render command errors, and `--require-render` skipped renders all exit nonzero. `--attach-only` is an exception to the skipped-render rule for `no_active_client`: by default a missing browser client yields `inspectorRender.status = "skipped"` with `inspectorRender.remediation = "open_browser"`, but when `--attach-only` is set, `no_active_client` is treated as non-skippable, surfaces as a root `error` (not a downgraded `warning`), and exits nonzero like other non-skippable render failures. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. When `--open` is in effect (default in TTYs, opt-in elsewhere), the App Builder URL and the initial browser-client wait progress are emitted to stderr unless `--quiet` is set, regardless of whether stderr is a TTY; only the elapsed-seconds heartbeat is gated on stderr being a TTY. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+Without `--ui`, `tools call` returns the raw tool result. When that result is a JSON object (the usual MCP `CallToolResult`), the default JSON output also includes `_durationMs` — wall-clock milliseconds spent in the tool call itself, excluding connection setup and the `--host` visibility probe, so it measures the same window as the `durationMs` returned by `POST /v1/projects/{projectId}/servers/{serverId}/tools/call`. Arrays and non-objects are left unchanged so a list-shaped payload is not rewritten. `--reporter` keeps its own `durationMs`, which is end-to-end (connection setup plus the call, stopped before validation, Inspector render, and debug I/O), and does not get `_durationMs`. With `--ui`, it opens Inspector by default in a TTY and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. Object-shaped `result` values carry `_durationMs`; the envelope root does not. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders are emitted as a stable root `warning` plus `inspectorRender.warning`, both with the shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Skipped renders keep the tool-call exit code unless `--require-render` is set; tool failures, validation failures, non-skippable render command errors, and `--require-render` skipped renders all exit nonzero. `--attach-only` is an exception to the skipped-render rule for `no_active_client`: by default a missing browser client yields `inspectorRender.status = "skipped"` with `inspectorRender.remediation = "open_browser"`, but when `--attach-only` is set, `no_active_client` is treated as non-skippable, surfaces as a root `error` (not a downgraded `warning`), and exits nonzero like other non-skippable render failures. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. When `--open` is in effect (default in TTYs, opt-in elsewhere), the App Builder URL and the initial browser-client wait progress are emitted to stderr unless `--quiet` is set, regardless of whether stderr is a TTY; only the elapsed-seconds heartbeat is gated on stderr being a TTY. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
 
 ### Reading `tools call --ui` output as an agent
 
@@ -148,7 +148,8 @@ Treat the tool result and the Inspector render as separate outcomes. An exit cod
   "inspectorUi": true,
   "inspectorBrowserUrl": "http://127.0.0.1:6274/#app-builder",
   "result": {
-    "content": [{ "type": "text", "text": "view created" }]
+    "content": [{ "type": "text", "text": "view created" }],
+    "_durationMs": 42
   },
   "inspectorRender": {
     "status": "skipped",
@@ -954,9 +955,11 @@ List the eval suites saved in a project.
 
 ### `cloud eval run`
 
-Start an eval run of an existing suite, or upload a versioned suite file and run it (asynchronous). Provide **either** `--suite` **or** `--file`, not both.
+Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
 
-There is **no `--wait`**. The command prints a launch receipt and exits 0 when the run started. Poll `eval status` for a verdict. Exit 1 is reserved for a real verdict (and for a partial fan-out). An invalid suite file on this command exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+
+`--wait` does **not** introduce verdict-based exit codes. A run that completes having failed its cases still **exits 0** — read `passed` in the report, or use [`cloud eval gate`](#cloud-eval-gate), which is the command that turns a verdict into an exit code. On this command `1` still means a launch or completion problem (a partial fan-out, a wait that timed out, a report that could not be assembled), never "the evals failed". An invalid suite file exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -975,6 +978,10 @@ There is **no `--wait`**. The command prints a launch receipt and exits 0 when t
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--wait` | No | Wait for every launched run to reach a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
+| `--reporter <json-summary\|junit-xml>` | No | Write the completed structured report to stdout; requires `--wait` |
+| `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
@@ -1037,6 +1044,11 @@ the CLI prints a `View:` link per started run, a `Started N/M runs (group …)`
 summary when several launched, and a `Failed: <target> — <code>: <message>`
 line per failure.
 
+With `--wait`, the default output contains the launch receipt and completed
+runs. `--reporter` replaces that output with the canonical structured report.
+`--out` writes the same report atomically, including on failed-run and
+post-completion reporting-error paths, before the command sets its exit code.
+
 A partial or wholly failed fan-out **exits 1**. A per-target failure does not
 abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
 started" as a clean launch.
@@ -1057,11 +1069,13 @@ File `passThreshold` is a fraction; the hosted suite grades on a percent. The
 conversion refuses rather than approximates. File `repetitions` above **10**
 are refused by name (`REPETITIONS_CAP`) and are not clamped.
 
-Cases are synced in batches of at most 100 (`create_eval_cases`). A case the
-file **no longer declares** is deleted from the hosted suite before launch. A
-case the file still declares but marks `disabled: true` is **kept, with its
-history** — it is simply left out of the launch, so parking a flaky test does
-not destroy its past results and re-enabling it later resumes the same case.
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
 The run is scoped to the enabled cases either way. A file with no enabled
 cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
 persisted suite. `--case` may only name an enabled case. A later run updates
@@ -1069,10 +1083,24 @@ existing cases by declared id and creates new ones. An enabled case that
 overrides `passThreshold` is refused: hosted grading is suite-wide. A
 disabled case with the same override is ignored, matching how repetitions
 are checked. Authored
-`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused —
-the hosted runner cannot enforce them. File `defaults.repetitions` is
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
-`target.environment` is attached to the suite before launch.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both. When an explicit CLI
+target is provided (for example `--host`), the file's `target.hosts` are
+**not** synchronized to the suite's persisted host attachments — the suite
+keeps whatever hosts it already has. Host attachment synchronization only
+runs when no explicit CLI target overrides the file. Environment attachment
+synchronization is unaffected and always runs.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
@@ -1143,6 +1171,44 @@ List per-iteration results for an eval run (pass/fail, tool calls, tokens, laten
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--cursor <cursor>` | No | Pagination cursor from a previous response |
 | `--limit <n>` | No | Max iterations per page (1–200) |
+
+### `cloud eval gate`
+
+Apply a pass/fail policy to an eval run. Add `--wait` to poll an in-progress
+run before evaluating it.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--min-pass-rate-percent <0-100>` | No | Minimum share of iterations that must pass |
+| `--no-gating-score-errors` | No | Fail if any gating scorer errored |
+| `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
+| `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
+| `--wait` | No | Poll until the run reaches a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
+| `--reporter <json-summary\|junit-xml>` | No | Write the structured eval and gate report to stdout |
+| `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
+
+Report files are flushed before gate exit codes are set, including failed and
+incomplete gate outcomes.
+
+**Exit codes.** `eval gate` is the command that fails a build, so it is the one
+that maps a verdict onto an exit code. It keeps four:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every requested gate passed |
+| `1` | An eval **verdict** failed. Reserved for exactly that |
+| `2` | Usage error — an unknown scorer, or a threshold out of range |
+| `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable (its score evidence did not verify) |
+
+No infrastructure condition ever maps to `1`. A job that fails a release because
+a network call flaked, and reports it as a regression, teaches people to ignore
+the gate — so retry on `3`, and treat `1` as a real finding about the server.
+
+These four are deliberately **not** the same set `eval run --wait` uses; see
+that command above.
 
 ### `cloud eval trace`
 
@@ -1252,21 +1318,19 @@ not a partial one, not one with a warning comment. Every finding names the field
 it is about, so the command's output is the authoritative list; the constructs
 that refuse today include:
 
-- host attachments, and attached project environments (a suite file names an
-  environment, and resolving an id to a name would need a second fetch this
-  command does not make);
-- a pinned sandbox image, an execution system prompt, or an execution
-  temperature — each changes what runs and has no field in the file;
-- LLM-as-judge grading, non-default match options, and an iterations floor that
-  raises a case above its own count;
+- several attached project environments, or legacy servers combined with an
+  attached environment (the suite file can name one environment);
+- a pinned sandbox image;
+- automatic LLM-as-judge grading, non-default match options, and an iterations
+  floor that raises a case above its own count;
 - a compare-across-models case, a scenario-bound case, and cases that name
   **different model providers** (a suite file carries one suite-level provider);
 - `replace`/`extend` check overrides, a case that inherits the suite's checks
   while also carrying its own, and any suite check the predicate contract does
   not recognise;
-- a suite with no execution model, no minimum accuracy, no name, no selected
-  servers, or no cases; a case with no steps; and a suite or case id that is not
-  an opaque id;
+- a suite with no execution model, no minimum accuracy, no name, no runnable
+  server or environment target, or no cases; a case with no steps; and a suite
+  or case id that is not an opaque id;
 - a suite that serializes past the 1 MiB suite-file limit — the size is a
   property of the suite, and this never truncates.
 
@@ -1588,6 +1652,63 @@ List Playground chat sessions in the selected project. Same project-selection ru
 | `--all-projects` | List across every accessible project. Conflicts with `--project`. |
 | `--status <status>` | Filter by session status |
 | `--limit <n>` | Maximum sessions to return (1–200) |
+
+### `cloud sessions send`
+
+Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage — the telemetry a participant in the conversation cannot see.
+
+**This spends model credits on every call.**
+
+`--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
+
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+
+| Flag | Description |
+|------|-------------|
+| `--message <text>` | The message to send, as the user (required) |
+| `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
+| `--session <sessionId>` | Continue this session instead of starting one |
+| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required to start a session. A bare id is rejected rather than guessed — unprefixed ids are indistinguishable from local Ollama models. |
+| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
+| `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
+| `--system-prompt <text>` | System prompt for the session |
+| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
+| `--max-steps <n>` | Maximum engine steps this turn (1–16) |
+| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
+| `--temperature <n>` | Sampling temperature (0–2) |
+| `--project <id-or-name>` | Project name or ID (required to start a session) |
+
+`read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+### `cloud sessions show`
+
+Print a session's metadata and a window of its raw messages. Message `index` values are **absolute transcript positions** — the same indices `cloud sessions trace` spans reference, so the two outputs join on that number.
+
+A transcript that could not be read reports `transcriptUnavailable: true` and a `null` `messageCount` — never `0`, which would claim the conversation is empty.
+
+| Flag | Description |
+|------|-------------|
+| `--session <sessionId>` | The session to read (required) |
+| `--after-message <index>` | Start the window at this absolute transcript index |
+| `--limit <n>` | Messages to return (1–200) |
+| `--project <id-or-name>` | Optional project scope; a session in another project answers not-found |
+
+### `cloud sessions trace`
+
+Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript.
+
+Returns the **latest turn** by default rather than the whole session — a session's spans are the largest thing the API emits, and the turn you just took is the one you are debugging.
+
+A turn whose spans could not be read reports `spansUnavailable: true` rather than an empty `spans` array: "made no calls" and "could not fetch" are opposite conclusions.
+
+| Flag | Description |
+|------|-------------|
+| `--session <sessionId>` | The session to trace (required) |
+| `--turn <turnId>` | Return exactly this turn. Conflicts with `--after-turn`. |
+| `--after-turn <promptIndex>` | Page forward from this turn index |
+| `--limit <n>` | Turns to return (1–20). Defaults to 1. |
+| `--no-spans` | Per-turn summaries without span payloads |
+| `--project <id-or-name>` | Optional project scope |
 
 ---
 
