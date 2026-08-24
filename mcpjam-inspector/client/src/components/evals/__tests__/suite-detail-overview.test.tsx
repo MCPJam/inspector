@@ -151,7 +151,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
     expect(screen.getByTestId("suite-detail-run-aggregates")).toHaveTextContent(
-      "Runs",
+      "runs",
     );
     expect(screen.getByText("card declined")).toBeTruthy();
     expect(screen.getByText("GitHub #4188")).toBeTruthy();
@@ -316,9 +316,9 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByText("view all 9 runs")).toBeTruthy();
+    expect(screen.getByText("view all 9 runs →")).toBeTruthy();
     expect(screen.queryByTestId("suite-run-row-run-0")).toBeNull();
-    await user.click(screen.getByText("view all 9 runs"));
+    await user.click(screen.getByText("view all 9 runs →"));
     expect(screen.getByTestId("suite-run-row-run-0")).toBeTruthy();
   });
 

@@ -6,7 +6,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@mcpjam/design-system/select";
 import {
   Table,
@@ -71,34 +70,18 @@ const EMPTY_CASE_ACTIONS = [
   },
 ] as const;
 
-const VERDICT_TONE: Record<RunHistoryVerdict, string> = {
-  ship: "bg-success/15 text-success",
-  passed: "bg-success/15 text-success",
-  hold: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  failed: "bg-destructive/15 text-destructive",
-  running: "bg-muted text-muted-foreground",
-  pending: "bg-muted text-muted-foreground",
-  cancelled: "bg-muted text-muted-foreground",
+const VERDICT_TEXT_TONE: Record<RunHistoryVerdict, string> = {
+  ship: "text-success",
+  passed: "text-success",
+  hold: "text-amber-700 dark:text-amber-400",
+  failed: "text-destructive",
+  running: "text-muted-foreground",
+  pending: "text-muted-foreground",
+  cancelled: "text-muted-foreground",
 };
 
-function VerdictBadge({
-  verdict,
-  label,
-}: {
-  verdict: RunHistoryVerdict;
-  label: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        VERDICT_TONE[verdict],
-      )}
-    >
-      {label}
-    </span>
-  );
-}
+const runHistoryHeadClass =
+  "h-9 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 export function SuiteDetailOverview({
   suite,
@@ -269,16 +252,21 @@ export function SuiteDetailOverview({
 
       {showRunHistory ? (
       <section
-        className={evalSurfaceCardClass}
+        className={cn(
+          evalSurfaceCardClass,
+          "overflow-hidden bg-muted/35 dark:bg-muted/20",
+        )}
         data-testid="suite-detail-run-history"
       >
         <div
           className={cn(
             evalSurfaceHeaderClass,
-            "flex flex-wrap items-center justify-between gap-3 px-4 py-3",
+            "flex flex-wrap items-center justify-between gap-3 border-border/30 bg-transparent px-5 py-3.5",
           )}
         >
-          <h3 className="text-sm font-semibold text-foreground">Run History</h3>
+          <h3 className="text-[15px] font-semibold tracking-tight text-foreground">
+            Run History
+          </h3>
           {historyRows.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
               {filterOptions.verdicts.length > 0 ? (
@@ -338,50 +326,60 @@ export function SuiteDetailOverview({
 
         {runs.length > 0 ? (
           <div
-            className="grid gap-3 border-b border-border/40 px-4 py-3 sm:grid-cols-3 lg:grid-cols-6"
+            className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-border/30 px-5 py-4 sm:grid-cols-3 lg:grid-cols-6"
             data-testid="suite-detail-run-aggregates"
           >
-            <AggregateStat label="Runs" value={String(aggregates.runCount)} />
+            <AggregateStat label="runs" value={String(aggregates.runCount)} />
             <AggregateStat
-              label="Tokens"
+              label="tokens"
               value={formatRunHistoryMetric(aggregates.totalTokens, "number")}
             />
             <AggregateStat
-              label="Latency p50"
+              label="P50 latency"
               value={formatRunHistoryMetric(aggregates.latencyP50, "duration")}
             />
             <AggregateStat
-              label="Latency p95"
+              label="P95 latency"
               value={formatRunHistoryMetric(aggregates.latencyP95, "duration")}
             />
             <AggregateStat
-              label="Tokens / run"
+              label="tokens per run"
               value={formatRunHistoryMetric(aggregates.tokensPerRun, "number")}
             />
             <AggregateStat
-              label="Tool calls / run"
+              label="tool calls per run"
               value={formatRunHistoryMetric(aggregates.toolCallsPerRun, "number")}
             />
           </div>
         ) : null}
 
         {filteredRows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+          <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
             No runs match these filters.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto bg-card">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Date</TableHead>
-                  <TableHead>Verdict</TableHead>
-                  <TableHead className="text-right">Rate</TableHead>
-                  <TableHead>Top failure signature</TableHead>
-                  <TableHead>Platform</TableHead>
-                  <TableHead className="text-right">Latency</TableHead>
-                  <TableHead className="text-right">Tokens/run</TableHead>
-                  <TableHead className="text-right">Tool calls/run</TableHead>
+                <TableRow className="hover:bg-transparent border-border/30">
+                  <TableHead className={runHistoryHeadClass}>Date</TableHead>
+                  <TableHead className={runHistoryHeadClass}>Verdict</TableHead>
+                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
+                    Rate
+                  </TableHead>
+                  <TableHead className={runHistoryHeadClass}>
+                    Top failure signature
+                  </TableHead>
+                  <TableHead className={runHistoryHeadClass}>Platform</TableHead>
+                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
+                    Latency
+                  </TableHead>
+                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
+                    Tokens/run
+                  </TableHead>
+                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
+                    Tool calls/run
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -389,34 +387,48 @@ export function SuiteDetailOverview({
                   <TableRow
                     key={row.runId}
                     data-testid={`suite-run-row-${row.runId}`}
-                    className={cn("cursor-pointer", evalSurfaceRowHoverClass)}
+                    className={cn(
+                      "cursor-pointer border-border/25",
+                      evalSurfaceRowHoverClass,
+                    )}
                     onClick={() => onRunClick(row.runId)}
                   >
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {row.dateLabel}
                     </TableCell>
                     <TableCell>
-                      <VerdictBadge
-                        verdict={row.verdict}
-                        label={row.verdictLabel}
-                      />
+                      <span
+                        className={cn(
+                          "text-xs font-medium uppercase tracking-wide",
+                          VERDICT_TEXT_TONE[row.verdict],
+                        )}
+                      >
+                        {row.verdictLabel}
+                      </span>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs tabular-nums">
+                    <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
                     </TableCell>
                     <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground">
                       {row.topFailureSignature ?? "—"}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">
+                    <TableCell
+                      className={cn(
+                        "whitespace-nowrap text-xs",
+                        row.source === "github_check"
+                          ? "font-medium text-sky-600 dark:text-sky-400"
+                          : "text-foreground",
+                      )}
+                    >
                       {row.platform}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                       {formatRunHistoryMetric(row.latencyMs, "duration")}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                       {formatRunHistoryMetric(row.tokens, "number")}
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                       {formatRunHistoryMetric(row.toolCalls, "number")}
                     </TableCell>
                   </TableRow>
@@ -426,17 +438,24 @@ export function SuiteDetailOverview({
           </div>
         )}
 
-        {hiddenRunCount > 0 ? (
-          <div className="border-t border-border/40 px-4 py-2.5">
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setShowAllRuns(true)}
-            >
-              view all {filteredRows.length} runs
-            </button>
-          </div>
-        ) : null}
+        <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
+          {hiddenRunCount > 0 ? (
+            <>
+              <button
+                type="button"
+                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setShowAllRuns(true)}
+              >
+                view all {filteredRows.length.toLocaleString()} runs →
+              </button>
+              <span aria-hidden> · </span>
+            </>
+          ) : null}
+          <span>
+            quick runs appear tagged &apos;quick · nx&apos;, grayed, excluded
+            from stability
+          </span>
+        </div>
       </section>
       ) : null}
 
@@ -659,38 +678,39 @@ function FilterSelect({
   onChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
 }) {
+  const isActive = value !== "all";
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[11px] font-medium text-muted-foreground">
-        {label}
-      </span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger
-          aria-label={`Filter by ${label.toLowerCase()}`}
-          className="h-7 w-[8.5rem] text-xs"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger
+        size="sm"
+        aria-label={`Filter by ${label.toLowerCase()}`}
+        className={cn(
+          "h-7 gap-1 rounded-full border-border/60 bg-background px-3 text-xs font-medium shadow-none",
+          "hover:bg-background dark:bg-background dark:hover:bg-background",
+          isActive && "border-foreground/25 text-foreground",
+        )}
+      >
+        <span className="truncate">{label}</span>
+      </SelectTrigger>
+      <SelectContent align="end">
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
 function AggregateStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+      <div className="text-[17px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
         {value}
+      </div>
+      <div className="mt-1.5 text-[11px] leading-none text-muted-foreground">
+        {label}
       </div>
     </div>
   );
