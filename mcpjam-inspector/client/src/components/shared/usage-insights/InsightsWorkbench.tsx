@@ -123,18 +123,20 @@ interface InsightsWorkbenchProps {
  */
 function InsightsFindings({
   testId,
-  maxHeightClass,
+  fillBody,
   children,
 }: {
   testId: string;
   /**
-   * The rail's height cap. In the fill layout it is a share of the viewport
-   * (`max-h-[42%]`); in the scroll layout the viewport is not the bound, so it
-   * is a fixed height the rail scrolls within while the page scrolls past it.
+   * Whether the workbench body fills the viewport. The height cap lives here,
+   * next to the rail it constrains: a share of the viewport in the fill layout
+   * (`max-h-[42%]`), and a fixed height the rail scrolls within while the page
+   * scrolls past it in the scroll layout.
    */
-  maxHeightClass: string;
+  fillBody: boolean;
   children: ReactNode;
 }) {
+  const maxHeightClass = fillBody ? "max-h-[42%]" : "max-h-[26rem]";
   const [open, setOpen] = useState(true);
 
   return (
@@ -350,7 +352,15 @@ export function InsightsWorkbench({
   if (showingEmpty) {
     return (
       <div
-        className={cn("flex h-full min-h-0 flex-col", className)}
+        className={cn(
+          "flex flex-col",
+          // Fill layout clips to the viewport. In the scroll layout the owning
+          // container has auto height, so `h-full` would collapse and the
+          // empty message would ride the top instead of centering — take a
+          // full-height floor and grow into the flex column instead.
+          fillBody ? "h-full min-h-0" : "min-h-full flex-1",
+          className,
+        )}
         data-testid={`${testIdPrefix}-panel`}
       >
         {emptyState}
@@ -457,9 +467,12 @@ export function InsightsWorkbench({
       {chipRow}
       {/* The topic map is a canvas that measures its container: it needs a
           definite height. `flex-1` supplies one in the fill layout; in the
-          scroll layout the column has no bounded height, so pin a tall,
-          comfortable viewport for it and let the page scroll to the map. */}
-      <div className={fillBody ? "min-h-0 flex-1" : "h-[36rem]"}>
+          scroll layout the column has no bounded height, so give it 36rem —
+          but cap it at 70vh so a short window keeps both the map and the
+          Findings rail on screen instead of pushing the map past the fold. */}
+      <div className={fillBody ? "min-h-0 flex-1" : "h-[min(36rem,70vh)]"}>
+        {/* In the scroll layout the map sits mid-page, so let a bare wheel
+            scroll past it and reserve zoom for Ctrl/Cmd+wheel or pinch. */}
         <TopicMapPanel
           scope={scope}
           {...(journeyRunIds ? { journeyRunIds } : {})}
@@ -470,6 +483,7 @@ export function InsightsWorkbench({
           rebuildBusy={rebuildBusy}
           onOpenSession={handleOpenSessionFromMap}
           headerActions={viewChrome}
+          cooperativeWheelZoom={!fillBody}
         />
       </div>
     </div>
@@ -495,10 +509,7 @@ export function InsightsWorkbench({
         </div>
       ) : null}
       {hasScorecard || recommendationsSlot ? (
-        <InsightsFindings
-          testId={`${testIdPrefix}-findings`}
-          maxHeightClass={fillBody ? "max-h-[42%]" : "max-h-[26rem]"}
-        >
+        <InsightsFindings testId={`${testIdPrefix}-findings`} fillBody={fillBody}>
           {hasScorecard ? (
             <div
               data-testid={`${testIdPrefix}-scorecard`}
@@ -518,7 +529,7 @@ export function InsightsWorkbench({
       <div
         className={cn(
           "relative flex",
-          fillBody ? "min-h-0 flex-1 overflow-hidden" : "min-h-0",
+          fillBody && "min-h-0 flex-1 overflow-hidden",
         )}
       >
         <div

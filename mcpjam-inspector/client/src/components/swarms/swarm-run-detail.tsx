@@ -421,7 +421,10 @@ export function SwarmRunDetail({
           // workbench renders its body at natural height (bodyLayout="scroll")
           // and this container owns the one scrollbar.
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-4">
-            <div className="min-h-full">
+            {/* Flex column at least as tall as the scroll viewport, so the
+                workbench grows past it (page scrolls) while its empty state can
+                still take a full-height floor and center. */}
+            <div className="flex min-h-full flex-col">
               {projectId && wave.runs[0]?.swarmRunGroupId ? (
                 <RunInsightsProvider
                   surface={{

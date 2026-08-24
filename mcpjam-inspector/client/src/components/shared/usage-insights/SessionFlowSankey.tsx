@@ -259,7 +259,7 @@ export function SessionFlowSankey({
       <div
         className={cn(
           "flex items-center justify-between gap-3 text-xs text-muted-foreground",
-          fillHeight ? "h-full px-0 py-6" : "px-5 py-10",
+          fillHeight ? "h-full px-0 py-6" : "px-0 py-10",
         )}
       >
         <span className="flex-1 text-center">Loading session flow…</span>
@@ -276,7 +276,7 @@ export function SessionFlowSankey({
       <div
         className={cn(
           "flex flex-col items-center gap-2 text-center",
-          fillHeight ? "h-full justify-center px-0 py-6" : "px-5 py-10",
+          fillHeight ? "h-full justify-center px-0 py-6" : "px-0 py-10",
         )}
       >
         <Target className="h-6 w-6 text-muted-foreground/60" />
@@ -322,12 +322,22 @@ export function SessionFlowSankey({
         "flex flex-col gap-2",
         fillHeight
           ? "h-full min-h-0 overflow-hidden px-0 py-1"
-          : "border-b px-5 py-4",
+          : // Scroll layout: the map/diagram bleeds to its already-padded
+            // owning container (no extra px-5) and drops the card border-b,
+            // which belonged to the old locked-viewport chrome.
+            "px-0 py-1",
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
     >
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+      <div
+        className={cn(
+          "flex shrink-0 flex-wrap items-center justify-between gap-2",
+          // Keep the freshness chip + Session-flow/Clusters toggle + tuning
+          // control reachable while the tall diagram scrolls past beneath it.
+          !fillHeight && "sticky top-0 z-10 bg-background pb-2",
+        )}
+      >
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium">Session flow</h3>
           <Tooltip delayDuration={200}>

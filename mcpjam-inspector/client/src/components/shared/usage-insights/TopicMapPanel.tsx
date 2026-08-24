@@ -184,6 +184,16 @@ interface TopicMapPanelProps {
    * toggle on swarms), rendered above the Color-by control.
    */
   headerActions?: ReactNode;
+  /**
+   * When the map lives inside a page that scrolls (the swarm Insights tab in
+   * `bodyLayout="scroll"`), a plain wheel over the canvas must scroll the page
+   * rather than be swallowed by d3-zoom, which `preventDefault`s every wheel.
+   * With this set, a bare wheel passes through to the page and zoom happens on
+   * Ctrl/Cmd+wheel or a trackpad pinch (browsers deliver pinch as a ctrlKey
+   * wheel). Default `false` keeps the locked-viewport behavior where wheel
+   * zooms, since that pane does not scroll.
+   */
+  cooperativeWheelZoom?: boolean;
 }
 
 function rebuildButtonLabel(
@@ -609,6 +619,7 @@ export function TopicMapPanel({
   rebuildBusy,
   onOpenSession,
   headerActions,
+  cooperativeWheelZoom = false,
 }: TopicMapPanelProps) {
   const topicMapScope = useMemo<TopicMapScope | null>(() => {
     if (!scopeProp) return null;
@@ -637,7 +648,23 @@ export function TopicMapPanel({
   const autoFitKeyRef = useRef<string | null>(null);
   const topicMapSelectionRunIdRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const graphWrapRef = useRef<HTMLDivElement>(null);
   const topicMapPalette = useTopicMapCanvasPalette(panelRef);
+
+  // Cooperative wheel gestures (see `cooperativeWheelZoom`): block a bare wheel
+  // in the capture phase before it reaches the canvas's own d3-zoom listener,
+  // so the event stays undefaulted and scrolls the page. A modifier (Ctrl/Cmd)
+  // or a trackpad pinch (delivered as a ctrlKey wheel) is let through to zoom.
+  useEffect(() => {
+    if (!cooperativeWheelZoom) return;
+    const el = graphWrapRef.current;
+    if (!el) return;
+    const onWheelCapture = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) event.stopPropagation();
+    };
+    el.addEventListener("wheel", onWheelCapture, true);
+    return () => el.removeEventListener("wheel", onWheelCapture, true);
+  }, [cooperativeWheelZoom]);
   const canvasPalette = useMemo(
     () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,
     [topicMapPalette],
@@ -1589,6 +1616,7 @@ export function TopicMapPanel({
         </div>
 
         <div
+          ref={graphWrapRef}
           className="h-full min-h-0 w-full"
           data-selected-session={selectedNodeId ?? ""}
         >
