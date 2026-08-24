@@ -364,6 +364,7 @@ When you are signed in as a project member, the Playground gives the model a set
 | `diagnose_server` | Probe a server's URL, connect, initialize, and report its capabilities and any connection errors. Use this when a server won't connect or you want to check its health. |
 | `list_server_tools` | List the tools a server exposes — names, descriptions, and input schemas. Paginated; pass `nextCursor` back as `cursor` for the next page. |
 | `call_server_tool` | Execute a tool on a server and return its result. Runs with your own authorization and may have side effects. Get the tool name and parameter schema from `list_server_tools` first. |
+| `render_server_widget` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. Executes the tool. Requires approval. |
 | `list_server_prompts` | List the prompts a server exposes — names, descriptions, and arguments. Paginated. |
 | `get_server_prompt` | Render a prompt from a server with the given arguments and return its messages. |
 | `list_server_resources` | List the resources a server exposes — URIs, names, and MIME types. Paginated. |
