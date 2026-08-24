@@ -104,6 +104,35 @@ describe("HostConfigComparisonMatrix", () => {
     );
   });
 
+  it("does not link public reference-only gated hosts to host creation", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("preset:claude-code", "Claude Code"),
+          makeSubject("preset:codex", "Codex"),
+          makeSubject("preset:claude", "Claude"),
+        ]}
+        verifyBaseUrl="https://app.mcpjam.com"
+        disabledVerifyTemplateIds={new Set(["claude-code", "codex"])}
+      />
+    );
+
+    expect(
+      screen.queryByRole("link", {
+        name: "Verify Claude Code against your server",
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Verify Codex against your server" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Verify Claude against your server" })
+    ).toHaveAttribute(
+      "href",
+      "https://app.mcpjam.com/hosts?template=claude&hostTab=agent"
+    );
+  });
+
   it("shows per-host verified dates only in public caniuse mode", () => {
     const subject = makeSubject(
       "preset:claude",
