@@ -154,10 +154,15 @@ export function describeRunDisclosureDetail(
         : "unknown";
     lines.push(`Execution: ${disclosure.execution.engine} · ${locus}`);
     for (const model of disclosure.execution.models) {
+      // A managed rail's `possibleDestinations` is the SET it could pick
+      // from; `outcomeIfRunNow.destination` is the concrete one selected at
+      // disclosure time. Showing only the set (as this used to) told a
+      // browser user strictly less than the CLI's own "(currently: …)"
+      // phrasing — matched here so both surfaces disclose the same facts.
       const destination =
         model.byok?.baseUrlHost ??
         (model.rail.managed
-          ? model.rail.possibleDestinations.join(" or ")
+          ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
           : model.tenantEgress);
       lines.push(`Model: ${model.modelId} — ${destination}`);
     }

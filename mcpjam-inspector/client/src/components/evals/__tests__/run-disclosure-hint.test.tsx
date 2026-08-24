@@ -291,6 +291,18 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
           (line.includes("gateway") || line.includes("openrouter")),
       ),
     ).toBe(true);
+    // `possibleDestinations` is the SET a managed rail could pick from;
+    // `outcomeIfRunNow.destination` is the concrete one selected at
+    // disclosure time. Both must be visible — the set alone tells a browser
+    // user strictly less than the CLI's own "(currently: …)" phrasing.
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("openai/gpt-5.4-mini") &&
+          line.includes("gateway or openrouter") &&
+          line.includes("(currently: gateway)"),
+      ),
+    ).toBe(true);
     // Matched with a regex rather than `.includes("byok.example.com")` —
     // CodeQL's incomplete-URL-substring-sanitization query pattern-matches
     // that idiom regardless of context, and flags it as if this were a host
