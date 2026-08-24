@@ -266,6 +266,8 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@mcpjam/sdk/host-config/templates";
+import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import {
   HOST_VERIFY_TAB_PARAM,
   HOST_VERIFY_TEMPLATE_PARAM,
@@ -956,6 +958,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const claudeCodeEnabled = useClaudeCodeHostEnabledState();
+  const codexEnabled = useCodexHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -982,15 +986,35 @@ function useTemplateVerifyDeepLink({
     if (hostsLoading || !shouldQueryProjectId(projectId)) return;
     const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
     if (!template) return;
-    handledRef.current = true;
 
     const existing = hosts.find((h) => h.name === template.label);
     if (existing) {
+      handledRef.current = true;
       navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
         replace: true,
       });
       return;
     }
+
+    const templateEnabled =
+      requestedTemplateId === "claude-code"
+        ? claudeCodeEnabled
+        : requestedTemplateId === "codex"
+        ? codexEnabled
+        : true;
+    // These templates remain visible on caniuse.dev as reference profiles,
+    // but they are not available for new-host creation until their rollout
+    // flags are enabled. Wait for PostHog before deciding so flagged users do
+    // not get bounced during a cold load.
+    if (templateEnabled === undefined) return;
+    if (!templateEnabled) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(`${template.label} is not available yet.`);
+      return;
+    }
+
+    handledRef.current = true;
 
     void (async () => {
       try {
@@ -1021,6 +1045,8 @@ function useTemplateVerifyDeepLink({
     hosts,
     projectId,
     requestedFocusTab,
+    claudeCodeEnabled,
+    codexEnabled,
     themeMode,
     createHost,
     navigate,
