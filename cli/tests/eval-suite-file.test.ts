@@ -2558,7 +2558,14 @@ describe("eval run --file", () => {
         assert.deepEqual(synced.verdictPolicyDefaults, {
           repetitions: 5,
           passThreshold: 0.8,
-          validity: {},
+          validity: {
+            coverage: {
+              kind: "allConfiguredTrialsAttempted",
+              minGradeableTrials: 1,
+            },
+            minCompletionRate: 0.8,
+            maxEvaluatorErrorRate: 0.1,
+          },
         });
         const batch = fixture.batchBodies[0] as {
           cases: Array<{ iterations: number; repetitions: number; passThreshold: number }>;
@@ -2618,7 +2625,12 @@ describe("eval run --file", () => {
         assert.equal(validity.result.exitCode, 0, validity.stderr);
         const synced = fixture.fromFileBodies.at(-1) as Record<string, any>;
         assert.deepEqual(synced.verdictPolicyDefaults.validity, {
-          minEligibleTrials: 3,
+          coverage: {
+            kind: "minEligibleTrials",
+            minEligibleTrials: 3,
+          },
+          minCompletionRate: 0.8,
+          maxEvaluatorErrorRate: 0.1,
         });
         assert.equal(fixture.runBodies.length, 1);
       });
