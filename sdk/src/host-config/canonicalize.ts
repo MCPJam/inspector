@@ -1026,16 +1026,18 @@ function canonicalizeMcpProfile(
         sandboxOut.permissions = sortedPerms;
       }
 
-      if ((sandboxIn as { storage?: unknown }).storage !== undefined) {
-        const storage = canonicalBooleanCapabilityRecord(
-          "mcpProfile.apps.sandbox.storage",
-          (sandboxIn as { storage?: unknown }).storage,
+      if (
+        (sandboxIn as { browserStorage?: unknown }).browserStorage !== undefined
+      ) {
+        const browserStorage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.browserStorage",
+          (sandboxIn as { browserStorage?: unknown }).browserStorage,
           ["localStorage", "sessionStorage", "indexedDB"]
         );
-        if (Object.keys(storage).length > 0) {
+        if (Object.keys(browserStorage).length > 0) {
           (
-            sandboxOut as { storage?: Record<string, boolean> }
-          ).storage = storage;
+            sandboxOut as { browserStorage?: Record<string, boolean> }
+          ).browserStorage = browserStorage;
         }
       }
 

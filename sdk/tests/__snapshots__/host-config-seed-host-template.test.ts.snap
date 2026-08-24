@@ -173,6 +173,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "cspDirectives": {
               "connect-src": [
@@ -219,11 +224,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow-popups",
             "allow-popups-to-escape-sandbox",
           ],
-          "storage": {
-            "indexedDB": true,
-            "localStorage": true,
-            "sessionStorage": true,
-          },
         },
         "uiInitialize": {
           "hostInfo": {
@@ -351,6 +351,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "cspDirectives": {
               "connect-src": [
@@ -397,11 +402,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow-popups",
             "allow-popups-to-escape-sandbox",
           ],
-          "storage": {
-            "indexedDB": true,
-            "localStorage": true,
-            "sessionStorage": true,
-          },
         },
         "uiInitialize": {
           "hostInfo": {

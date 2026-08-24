@@ -983,11 +983,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // the production iframe grants.
               allow: { microphone: true, clipboardWrite: true },
             },
-            // The 2026-08-24 capture read and wrote all three web-storage
-            // APIs from inside the widget sandbox — every one available,
-            // no error. A browser-sandbox fact, not an MCP-protocol one,
-            // which is why it sits beside `csp` and `permissions`.
-            storage: {
+            // The 2026-08-24 capture read and wrote all three browser
+            // storage APIs from inside the widget sandbox — every one
+            // available, no error. A browser fact, not an MCP one: the MCP
+            // Apps spec never mentions storage.
+            browserStorage: {
               localStorage: true,
               sessionStorage: true,
               indexedDB: true,

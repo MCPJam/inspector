@@ -329,14 +329,22 @@ export type HostConfigMcpProfileV1 = {
         allow?: Record<string, boolean>;
         extensions?: Record<string, unknown>;
       };
-      // Whether web storage works inside the widget iframe (probe-measured).
-      // Not an MCP-protocol fact - a browser-sandbox one, which is why it
-      // sits beside `csp` and `permissions` rather than on the profile root.
-      // A widget that persists state breaks silently on a host that blocks
-      // these. Each API is measured separately because a host can block one
-      // and not the others (Safari private mode exposes `localStorage` and
-      // throws only on write). Absent -> available.
-      storage?: {
+      // Whether the browser storage APIs work inside the widget iframe
+      // (probe-measured).
+      //
+      // NOT AN MCP CONCEPT. The MCP Apps spec (2026-01-26) says nothing about
+      // storage — its `sandbox` object defines only `permissions` and `csp`.
+      // This is an observed consequence of the sandboxed iframe the spec does
+      // mandate ("MCP App HTML runs in a sandboxed iframe with no same-origin
+      // server"), recorded because widgets that persist state break silently
+      // on a host that blocks it. Named `browserStorage`, with the literal
+      // browser API identifiers as keys, so nobody reads it as a capability
+      // MCP negotiates.
+      //
+      // Each API is measured separately because a host can block one and not
+      // the others (Safari private mode exposes `localStorage` and throws only
+      // on write). Absent -> available.
+      browserStorage?: {
         localStorage?: boolean;
         sessionStorage?: boolean;
         indexedDB?: boolean;

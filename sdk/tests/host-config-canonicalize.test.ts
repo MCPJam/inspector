@@ -717,7 +717,7 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
     expect(absent.mcpProfile).toBeUndefined();
   });
 
-  it("round-trips toolResult.content and sandbox.storage", () => {
+  it("round-trips toolResult.content and sandbox.browserStorage", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: {
@@ -736,7 +736,7 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
               },
             },
             sandbox: {
-              storage: {
+              browserStorage: {
                 localStorage: true,
                 sessionStorage: false,
                 indexedDB: true,
@@ -756,7 +756,7 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
       },
       structuredContent: true,
     });
-    expect(c.mcpProfile?.apps?.sandbox?.storage).toEqual({
+    expect(c.mcpProfile?.apps?.sandbox?.browserStorage).toEqual({
       localStorage: true,
       sessionStorage: false,
       indexedDB: true,
@@ -771,7 +771,7 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
           toolListChanged: {},
           apps: {
             mcpAppsOverrides: { toolResult: { content: {} } },
-            sandbox: { storage: {} },
+            sandbox: { browserStorage: {} },
           },
         },
       })
@@ -824,11 +824,13 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
         base({
           mcpProfile: {
             profileVersion: 1,
-            apps: { sandbox: { storage: { cookies: true } } as never },
+            apps: {
+              sandbox: { browserStorage: { cookies: true } } as never,
+            },
           },
         })
       )
-    ).toThrow(/sandbox\.storage has unknown key "cookies"/);
+    ).toThrow(/sandbox\.browserStorage has unknown key "cookies"/);
   });
 });
 
