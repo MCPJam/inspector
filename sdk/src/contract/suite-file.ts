@@ -221,7 +221,19 @@ export const evalSuiteFileValiditySchema = z
 export type EvalSuiteFileValidity = z.infer<typeof evalSuiteFileValiditySchema>;
 
 /**
- * Which tools the agent may call.
+ * Which tools the agent is RESTRAINED from calling.
+ *
+ * `mode` does the restraining: `readOnly` permits only tools an annotation
+ * classifies read-only, `default` permits everything except tools annotated
+ * `destructiveHint`. `deny` removes a tool by name under either mode.
+ *
+ * `allow` is an OVERRIDE, not a whitelist — it exempts a named tool from the
+ * mode-derived rules (including `default` mode's destructive deny-by-default),
+ * and it never restricts anything on its own. `{ mode: "default", allow:
+ * ["read_file"] }` therefore restrains NOTHING; the tools an author wants
+ * stopped belong in `deny`, or the suite belongs in `readOnly` mode. Stated
+ * here because reading `allow` as "the only tools the agent may call" is the
+ * one misreading that silently produces an unrestricted run.
  *
  * `allow`/`deny` entries are non-empty tool names; the empty string is rejected
  * structurally (rather than in a refinement) so the generated JSON Schema

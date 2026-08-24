@@ -181,6 +181,29 @@ describe("buildIterationFinishParams — stage derivation", () => {
     );
   });
 
+  test("the effective tool policy is snapshotted so a replay can recover it", () => {
+    // The run row cannot carry the policy yet (backend field is Lane B), and a
+    // replay re-dials the ORIGINAL servers with the ORIGINAL credentials — so
+    // this snapshot is the only thing standing between a replay and executing
+    // for real the calls the source run blocked.
+    const params = build({
+      stageCase: authoredCase,
+      toolPolicy: { mode: "readOnly", deny: ["write_file"] },
+    });
+    const metadata = params.metadata as Record<string, any>;
+    expect(metadata.toolPolicy).toEqual({
+      mode: "readOnly",
+      deny: ["write_file"],
+    });
+  });
+
+  test("no policy means no snapshot key at all", () => {
+    const params = build({ stageCase: authoredCase });
+    expect(
+      Object.hasOwn(params.metadata as Record<string, unknown>, "toolPolicy")
+    ).toBe(false);
+  });
+
   test("an independent stage tool error retains ordinary failure attribution", () => {
     const params = build({
       stageCase: authoredCase,

@@ -28,6 +28,7 @@ import {
 import {
   deriveStageResults,
   stageDerivationToMetadata,
+  type EvalSuiteFileToolPolicy,
   type StageAuthoredCase,
   type StageSetupSignals,
 } from "@mcpjam/sdk/contract";
@@ -234,6 +235,16 @@ export function buildIterationFinishParams(args: {
   policyBlocks?: PolicyBlockRecord[];
   /** Non-fatal policy configuration warnings, persisted for run consumers. */
   policyWarnings?: string[];
+  /**
+   * The effective tool policy this iteration executed under, snapshotted the
+   * same way `hostPolicy` evidence is: the run row has no field to carry it
+   * (a backend `toolPolicy` column is Lane B), so without this snapshot a
+   * REPLAY of a policied run cannot reconstruct the policy — and a replay
+   * re-dials the ORIGINAL servers with the original credentials
+   * (`MCPServerReplayConfig`), so an unreconstructed policy means the calls we
+   * blocked run for real the second time.
+   */
+  toolPolicy?: EvalSuiteFileToolPolicy;
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -277,6 +288,7 @@ export function buildIterationFinishParams(args: {
     stageToolErrors,
     policyBlocks,
     policyWarnings,
+    toolPolicy,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
@@ -343,6 +355,7 @@ export function buildIterationFinishParams(args: {
           }
         : {}),
       ...(policyWarnings?.length ? { policyWarnings } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
