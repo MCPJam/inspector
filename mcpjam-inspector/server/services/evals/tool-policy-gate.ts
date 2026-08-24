@@ -1,8 +1,10 @@
 import type { ToolSet } from "ai";
 import {
+  buildToolPolicySnapshot,
   decideToolPolicy,
   type EvalSuiteFileToolPolicy,
   type ToolPolicyDecision,
+  type ToolPolicySnapshot,
   type ToolSafetyClassification,
 } from "@mcpjam/sdk/contract";
 
@@ -46,6 +48,42 @@ export class UnmatchedToolPolicyNameError extends Error {
 
 export function toolAnnotationsKey(serverId: string, toolName: string): string {
   return `${serverId}:${toolName}`;
+}
+
+/**
+ * Resolve the policy for every launch-known tool of every selected server, so
+ * the decision can travel to the MCP proxy sealed and be applied there by
+ * lookup. Uses the SAME `decideToolPolicy` the in-process gate uses — the proxy
+ * never classifies anything, and annotations never leave this process.
+ *
+ * Requires the annotation lookup D4 already populates before launch
+ * (`TOOL_POLICY_ANNOTATIONS_UNAVAILABLE` otherwise), so "known at launch" here
+ * is exactly the set the in-process gate would have wrapped.
+ */
+export function buildHarnessToolPolicySnapshots(args: {
+  policy: EvalSuiteFileToolPolicy;
+  serverIds: ReadonlyArray<string>;
+  annotations: ToolAnnotationsLookup;
+}): Record<string, ToolPolicySnapshot> {
+  const snapshots: Record<string, ToolPolicySnapshot> = {};
+  for (const serverId of args.serverIds) {
+    const prefix = toolAnnotationsKey(serverId, "");
+    const tools: Array<{
+      name: string;
+      annotations?: Record<string, unknown>;
+    }> = [];
+    for (const [key, annotations] of args.annotations) {
+      if (!key.startsWith(prefix)) continue;
+      const name = key.slice(prefix.length);
+      if (!name) continue;
+      tools.push({ name, ...(annotations ? { annotations } : {}) });
+    }
+    snapshots[serverId] = buildToolPolicySnapshot({
+      policy: args.policy,
+      tools,
+    });
+  }
+  return snapshots;
 }
 
 export function validateToolPolicyNames(args: {

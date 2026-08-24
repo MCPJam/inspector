@@ -7,6 +7,7 @@ import type {
   PlatformChatSessionTrace,
   PlatformChatTurn,
   PlatformToolMode,
+  PlatformWidgetRender,
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
@@ -2183,6 +2184,34 @@ export class PlatformApiClient {
     options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "tools/call", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/widgets/render` — render an MCP App
+   * widget headlessly and describe what it produced.
+   *
+   * Defaults return the widget as an ACCESSIBILITY TREE and omit the
+   * screenshot. That is the reverse of the local Inspector route, and
+   * deliberate: the caller here is usually a model, for which a base64 image
+   * it may not be able to see is the most expensive possible way to say
+   * nothing.
+   */
+  renderServerWidget(
+    params: ServerScope & {
+      body: {
+        toolName: string;
+        parameters?: Record<string, unknown>;
+        includeSnapshot?: boolean;
+        includeScreenshot?: boolean;
+        injectOpenAiCompat?: boolean;
+        viewport?: { width: number; height: number };
+      };
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformWidgetRender> {
+    return this.serverOp(params, "widgets/render", options) as Promise<
+      PlatformWidgetRender
+    >;
   }
 
   /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */

@@ -337,6 +337,7 @@ export type {
 export {
   MAX_SUITE_FILE_BYTES,
   SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
   formatSuiteFileFindings,
@@ -1229,6 +1230,47 @@ export type {
   ScorerErrorPolicy,
   ScorerIdSource,
   ScorerRole,
+} from "./contract/index.js";
+
+// The v2 run verdict policy (browser-safe; exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
+// contract above: a code-first author reading a decision should not need a
+// second import path to name its parts.
+//
+// CONTRACT ONLY in this wave — there is no producer behind these types yet, so
+// nothing in the SDK emits an `EvalVerdictDecision`. Anything that reads one
+// must check `verdictPolicyVersion === EVAL_VERDICT_POLICY_VERSION` first: a
+// row without the field is a legacy percent-threshold row, NOT a v2 row.
+export {
+  EVAL_RATE_MEASUREMENT_STATES,
+  EVAL_RUN_VERDICTS,
+  EVAL_TRIAL_EXCLUSION_REASONS,
+  EVAL_VERDICT_DECISION_REASONS,
+  EVAL_VERDICT_POLICY_SCHEMA_ID,
+  EVAL_VERDICT_POLICY_VERSION,
+  evalCaseVerdictAggregationSchema,
+  evalRateMeasurementSchema,
+  evalRunVerdictSchema,
+  evalVerdictDecisionSchema,
+  isEvalRunVerdict,
+  isEvalTrialExclusionReason,
+  isEvalVerdictDecisionReason,
+  isEvalVerdictPolicyV2,
+  resolvedEvalValidityPolicySchema,
+} from "./contract/index.js";
+export type {
+  EvalCaseVerdictAggregation,
+  EvalRateMeasurement,
+  EvalRateMeasurementState,
+  EvalRunVerdict,
+  EvalTrialExclusionReason,
+  EvalTrialExclusions,
+  EvalValidityCoverage,
+  EvalVerdictDecision,
+  EvalVerdictDecisionReason,
+  EvalVerdictPolicyVersion,
+  EvalVerdictValidity,
+  ResolvedEvalValidityPolicy,
 } from "./contract/index.js";
 
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model

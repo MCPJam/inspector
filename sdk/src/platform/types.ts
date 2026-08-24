@@ -369,6 +369,49 @@ export interface PlatformChatSessionTrace {
   latestPromptIndex?: number;
 }
 
+/** One interactive element in a widget snapshot, ready to use as a step target. */
+export interface PlatformSnapshotElement {
+  role?: { role: string; name?: string };
+  testId?: string;
+  text?: string;
+  /** More than one element matched — pass `nth` on a step target to pick one. */
+  ambiguous?: true;
+}
+
+/**
+ * A rendered MCP App widget as TEXT.
+ *
+ * The point is that it is ACTIONABLE, not merely descriptive: the elements come
+ * back in the same role/name/testId vocabulary the interaction steps accept, so
+ * a caller reads a control here and addresses it directly.
+ */
+export interface PlatformWidgetSnapshot {
+  mode: "a11y";
+  tree: string;
+  elements: PlatformSnapshotElement[];
+  truncated?: true;
+  capturedAt: number;
+  note?: string;
+}
+
+/** The verdict and evidence from one headless widget render. */
+export interface PlatformWidgetRender {
+  status: string;
+  resourceUri?: string;
+  bridgeInitialized?: boolean;
+  /**
+   * What the widget logged, and what it was blocked from reaching. Both matter
+   * more than they look: a widget that "renders" while every fetch is blocked
+   * photographs perfectly and is broken.
+   */
+  consoleErrors?: string[];
+  blockedRequests?: string[];
+  snapshot?: PlatformWidgetSnapshot;
+  /** Present only when `includeScreenshot` was explicitly requested. */
+  screenshot?: { mimeType: string; base64: string };
+  timings?: { renderMs?: number; totalMs?: number };
+}
+
 /**
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.

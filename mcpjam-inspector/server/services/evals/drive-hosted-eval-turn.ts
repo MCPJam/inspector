@@ -160,6 +160,14 @@ export interface DriveHostedEvalTurnParams {
    */
   harnessMcpProxy?: RunAssistantTurnOptions["harnessMcpProxy"];
   /**
+   * D4b: resolved `toolPolicy` decisions per selected server, sealed into the
+   * harness's proxy token so its out-of-process `tools/call`s are enforced at
+   * the MCP proxy, plus the sink that accounts the refusals back onto this
+   * iteration. Absent on the emulated path, which is gated in process.
+   */
+  harnessToolPolicy?: RunAssistantTurnOptions["harnessToolPolicy"];
+  onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
+  /**
    * The run's PINNED skills, delivered to the harness verbatim.
    *
    * Present (even empty) ⇒ the harness turn delivers exactly these and skips
@@ -434,6 +442,14 @@ export async function driveHostedEvalTurn(
             // has servers, so its absence is a thrown turn, not a degraded one.
             ...(params.harnessMcpProxy
               ? { harnessMcpProxy: params.harnessMcpProxy }
+              : {}),
+            // Policied harness run: the sealed snapshot rides the `.mcp.json`
+            // proxy token, and refusals come back through this sink.
+            ...(params.harnessToolPolicy
+              ? { harnessToolPolicy: params.harnessToolPolicy }
+              : {}),
+            ...(params.onHarnessPolicyBlocks
+              ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
               : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
             // this checks for undefined rather than truthiness. Absent would
