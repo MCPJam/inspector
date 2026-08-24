@@ -4201,16 +4201,18 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       detail.environmentIds ?? [],
       signal,
     );
-    // The HOST axis is left OUT of this plan on purpose: the backend contract
-    // (testSuites:getRunDisclosure) takes only caseIds/environmentId(s), and
-    // this operation's own input schema has no host selector, so there is no
-    // way for a caller to satisfy a host-axis `target-required` refusal here
-    // the way `run_eval_suite` lets one satisfy it with `--host`. Including
-    // `attachedHosts` would make a suite with two or more attached hosts (and
-    // no environments) unconditionally unrunnable through this operation.
-    // Every host-only suite therefore falls back to the same suite-base
-    // derivation a plan with nothing attached uses — a backend-side limit,
-    // not something resolvable from here.
+    // `attachedHosts` IS included in this plan — unlike an earlier version
+    // of this operation, which left it out and let a host-only suite fall
+    // through to the misleading selector-less suite-base derivation (the
+    // same failure mode `run_eval_suite`'s `isHostAxisLaunch` refuses). This
+    // operation's own input schema still has no host selector, so a caller
+    // cannot satisfy a host-axis `target-required` refusal the way
+    // `run_eval_suite` lets one satisfy it with `--host` — but that is
+    // handled below by refusing the host-axis case outright, not by hiding
+    // it from `computeRunTargets` and hoping it resolves to something else.
+    const attachedHostNames = new Map(
+      (detail.hosts ?? []).map((host) => [host.id, host.name]),
+    );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
         id,
@@ -4218,12 +4220,44 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
           ? { name: attachedEnvironmentNames.get(id)! }
           : {}),
       })),
-      attachedHosts: [],
+      attachedHosts: (detail.hosts ?? []).map((host) => ({
+        id: host.id,
+        name: host.name,
+      })),
       selectedEnvironments,
       selectedHosts: [],
     });
+    const hostAxisUnavailableMessage = (hostName?: string) =>
+      `Disclosure is not derivable for this suite — it resolves to a HOST-targeted launch${
+        hostName ? ` ("${hostName}")` : ""
+      }, and the pre-run disclosure contract has no host selector yet. A host config can pin its own model and harness, so the suite-base disclosure would not reliably describe what this launch actually does.`;
     if (plan.kind === "target-required") {
-      throw operationInputError(disclosureTargetRequiredMessage(plan));
+      // An ambiguity the caller CAN resolve — this operation's `environment`/
+      // `environments` selector names one of the attached environments — gets
+      // the ordinary refusal. An ambiguity that is PURELY among attached
+      // hosts (zero attached environments) has no selector to resolve it
+      // with at all: `disclosureTargetRequiredMessage` would otherwise say
+      // "name one with environment" against an empty environment list, which
+      // names nothing the caller could actually do.
+      if (plan.attachedEnvironments.length > 0) {
+        throw operationInputError(disclosureTargetRequiredMessage(plan));
+      }
+      throw operationInputError(hostAxisUnavailableMessage());
+    }
+    // A HOST-axis resolution (a bare-launch auto-select of the suite's sole
+    // attached host, same rule `run_eval_suite` uses) has no query this
+    // operation could send: the backend contract (testSuites:getRunDisclosure)
+    // takes only caseIds/environmentId(s), never a host selector. Unlike
+    // `run_eval_suite`, there is no launch to fall back to here — this
+    // operation's entire job is the disclosure — so it refuses outright
+    // rather than silently returning the suite-base derivation as if it
+    // described the host that will actually run.
+    if (plan.kind === "single" && plan.target?.kind === "host") {
+      throw operationInputError(
+        hostAxisUnavailableMessage(
+          attachedHostNames.get(plan.target.id) ?? plan.target.id,
+        ),
+      );
     }
     const disclosureEnvironmentIds =
       plan.kind === "single"

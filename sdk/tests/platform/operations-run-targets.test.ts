@@ -1142,14 +1142,36 @@ describe("get_eval_run_disclosure target resolution parity with run_eval_suite",
     );
   });
 
-  it("never refuses a host-only suite — this operation has no host selector to satisfy TARGET_REQUIRED with", async () => {
-    // Unlike `run_eval_suite`, this operation's input schema has no host
-    // selector at all, and the backend disclosure contract has no host
-    // parameter either. Counting attached hosts toward the ambiguity check
-    // would make a suite with two or more attached hosts (and no
-    // environments) unconditionally unrunnable through this operation — it
-    // must fall back to the suite-base derivation instead, the same as a
-    // suite with nothing attached.
+  it("refuses a host-only suite with a single attached host, rather than the misleading suite-base derivation", async () => {
+    // This operation's input schema has no host selector at all, and the
+    // backend disclosure contract has no host parameter either — so unlike
+    // `run_eval_suite` (which still launches the auto-selected host, just
+    // without a disclosure), this operation has nothing to fall back to.
+    // Silently fetching with no selector would return the suite-base
+    // derivation and present it as if it described that host's launch,
+    // which a host config can override (its own model, its own harness).
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(/HOST-targeted/);
+    expect((error as PlatformApiError).message).toMatch(/"Claude"/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a suite with SEVERAL attached hosts and no environments — never the suite-base derivation", async () => {
+    // `computeRunTargets` reports this as `target-required` (ambiguous, same
+    // as `run_eval_suite` would refuse a bare launch here too) — but with
+    // zero attached environments, the ordinary TARGET_REQUIRED message (which
+    // only ever names environments) would tell the caller to "name one with
+    // environment" against an empty list. Must fall through to the same
+    // host-axis-unavailable refusal as the single-host case instead.
     const { client } = makeClient({
       detail: suiteDetail({
         hosts: [
@@ -1159,20 +1181,42 @@ describe("get_eval_run_disclosure target resolution parity with run_eval_suite",
       }),
     });
     const spy = vi.spyOn(client, "getEvalRunDisclosure");
-    await getEvalRunDisclosureOperation.execute(
-      { suite: "Smoke" },
-      { client },
-    );
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ suiteId: "suite-1" }),
-      expect.anything(),
-    );
-    const [callArgs] = spy.mock.calls[0]!;
-    expect(callArgs).not.toHaveProperty("environmentId");
-    expect(callArgs).not.toHaveProperty("environmentIds");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(/HOST-targeted/);
+    expect((error as PlatformApiError).message).not.toMatch(/TARGET_REQUIRED/);
+    expect(spy).not.toHaveBeenCalled();
   });
 
-  it("still auto-selects the sole attached environment when hosts are ALSO attached", async () => {
+  it("refuses — not auto-selects the environment — when exactly one environment AND one host are both attached", async () => {
+    // `computeRunTargets` itself treats this as `target-required` (two total
+    // attachments across axes, see the "refuses to choose when several are
+    // attached" case in the `computeRunTargets` suite below) — a bare
+    // `run_eval_suite` launch on this exact suite would refuse the same way,
+    // so disclosure refusing too is the parity this operation exists to keep.
+    // The environment IS nameable here, so this gets the ordinary
+    // TARGET_REQUIRED message, not the host-axis-unavailable one.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        environmentIds: ["env-stg"],
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(/TARGET_REQUIRED/);
+    expect((error as PlatformApiError).message).not.toMatch(/HOST-targeted/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("still discloses the named environment when one environment AND one host are both attached", async () => {
+    // The same mixed suite as above, but the caller names the environment —
+    // satisfiable, since there is exactly one to name.
     const { client } = makeClient({
       detail: suiteDetail({
         environmentIds: ["env-stg"],
@@ -1181,7 +1225,7 @@ describe("get_eval_run_disclosure target resolution parity with run_eval_suite",
     });
     const spy = vi.spyOn(client, "getEvalRunDisclosure");
     await getEvalRunDisclosureOperation.execute(
-      { suite: "Smoke" },
+      { suite: "Smoke", environment: "env-stg" },
       { client },
     );
     expect(spy).toHaveBeenCalledWith(

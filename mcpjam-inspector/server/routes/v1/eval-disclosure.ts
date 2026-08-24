@@ -277,15 +277,20 @@ evalDisclosure.get(
           );
         }
         // The caller CAN see the suite — so `getRunDisclosure`'s redacted
-        // failure was not a visibility refusal. The only other plain-`Error`
-        // throw on that query is a missing-function failure, so this is the
-        // "not deployed yet" case after all, arriving redacted.
-        throw new WebRouteError(
-          422,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          "This deployment predates the pre-run disclosure contract — upgrade the MCPJam backend to see what a run would disclose.",
-          { reason: "contract_unavailable" }
-        );
+        // failure was not a visibility refusal. That is ALL this preflight
+        // proves. It does NOT prove the failure was a missing-function
+        // one: a genuine bug in the query's own handler (a malformed suite,
+        // an unrelated crash) is ALSO a plain `Error` upstream, redacted to
+        // the identical "Server Error" string — and this route has no
+        // independent way to tell "not deployed yet" apart from "deployed
+        // and broken" once membership is ruled out. Claiming
+        // `contract_unavailable` here would be a real diagnosis this route
+        // cannot actually make; it would also hide a genuine incident from
+        // upstream-error reporting and tell a caller to "upgrade" when the
+        // deployment may already have the contract. Falls through to the
+        // ordinary incident path instead — an over-eager 502 during the
+        // narrow pre-promotion window costs a Sentry page; a silent 422 for
+        // a real bug could hide one indefinitely.
       }
       throw translateConvexReadError(error, {
         scope: "v1.evalDisclosure",

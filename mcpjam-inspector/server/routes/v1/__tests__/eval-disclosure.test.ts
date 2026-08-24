@@ -261,16 +261,19 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.details?.reason).toBe("contract_unavailable");
   });
 
-  it("also answers contract_unavailable when a missing-function failure arrives production-redacted and the caller can see the suite", async () => {
-    // Production Convex redacts a plain server-side Error to "Server
-    // Error" — including a missing-function failure, which is exactly that
-    // shape. `isMissingConvexFunctionError`'s message match cannot see it
-    // once redacted, so this route disambiguates with a preflight against
-    // `testSuites:getTestSuite`: if the caller CAN see the suite, the
-    // redacted `getRunDisclosure` failure cannot have been a visibility
-    // refusal (both queries share the same 'view' permission tier), so it
-    // must be the missing-function case arriving redacted — exactly the
-    // state production is in right now, before g4a's promote.
+  it("falls through to the ordinary incident path when a redacted failure survives the preflight", async () => {
+    // The caller CAN see the suite (the preflight succeeds), so the redacted
+    // `getRunDisclosure` failure was not a visibility refusal — but that is
+    // ALL the preflight proves. It does NOT prove the failure was a
+    // missing-function one: a genuine bug in `getRunDisclosure`'s own
+    // handler (a malformed suite, an unrelated crash) is ALSO a plain `Error`
+    // upstream, redacted to the identical "Server Error" string, and this
+    // route has no independent way to tell the two apart once membership is
+    // ruled out. Answering 422 `contract_unavailable` here would be a
+    // diagnosis this route cannot actually make, and would hide a genuine
+    // incident from upstream-error reporting — so it must fall through to
+    // the ordinary 502 incident path instead, exactly like any other
+    // unclassified failure.
     queryMock.mockImplementation((fn: string) => {
       if (fn === "testSuites:getRunDisclosure") {
         return Promise.reject(new Error("Server Error"));
@@ -278,10 +281,9 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
       return Promise.resolve({ _id: SUITE });
     });
     const res = await get();
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(502);
     const body = (await res.json()) as any;
-    expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
-    expect(body.details?.reason).toBe("contract_unavailable");
+    expect(body.code).toBe("SERVER_UNREACHABLE");
     expect(queryMock).toHaveBeenCalledWith(
       "testSuites:getTestSuite",
       expect.objectContaining({ suiteId: SUITE })
