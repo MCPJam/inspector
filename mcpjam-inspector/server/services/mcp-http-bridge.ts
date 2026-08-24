@@ -2,6 +2,7 @@ import { MCPClientManager, describeError } from "@mcpjam/sdk";
 import type { NormalizedError } from "@mcpjam/sdk";
 import { z } from "zod";
 import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
+import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -331,16 +332,16 @@ export async function handleJsonRpc(
         let observedToolName: string | undefined;
         const observedToolInput = params?.arguments ?? {};
         try {
-          let toolName = params?.name as string | undefined;
-          if (toolName?.includes(":")) {
-            const [prefix, actualName] = toolName.split(":", 2);
-            if (actualName) {
-              if (clientManager.hasServer(prefix)) {
-                targetServerId = prefix;
-              }
-              toolName = actualName;
-            }
-          }
+          // Shared with the harness proxy's policy gate so a prefixed name
+          // cannot resolve to one `(server, tool)` for the policy and another
+          // for execution.
+          const resolved = resolveBridgeToolCallTarget({
+            serverId,
+            toolName: params?.name as string | undefined,
+            hasServer: (id) => clientManager.hasServer(id),
+          });
+          targetServerId = resolved.targetServerId;
+          const toolName = resolved.toolName;
           if (!toolName) {
             throw new Error("Tool name is required");
           }
