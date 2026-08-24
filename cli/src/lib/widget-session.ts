@@ -13,6 +13,11 @@ import {
  * `mcpjam apps session start|action|close`. Like widget-render.ts, the wire
  * contract is mirrored here (the CLI doesn't depend on `@mcpjam/inspector`); the
  * session is held server-side and the external agent steps through it.
+ *
+ * TWO WAYS TO DRIVE, and the second is why a text-only agent can use this at
+ * all: `action` is COORDINATE-based, which assumes the caller can see pixels.
+ * `snapshot` + `scripted-step` close that — the snapshot returns controls by
+ * role/name/testId and the step accepts the same vocabulary back.
  */
 
 /** A Computer-Use action the harness can apply (mirror of the server spec). */
@@ -164,6 +169,178 @@ export async function runWidgetSessionAction(
   );
 
   return normalizeActionResponse(response, options.action);
+}
+
+/** One addressable control from a snapshot. */
+export interface SnapshotElement {
+  role?: { role: string; name?: string };
+  testId?: string;
+  text?: string;
+  ambiguous?: true;
+}
+
+export interface WidgetSnapshotResponse {
+  snapshot: {
+    mode: string;
+    tree: string;
+    elements: SnapshotElement[];
+    truncated?: true;
+    capturedAt: number;
+    note?: string;
+  };
+  expiresAt?: number;
+}
+
+export interface WidgetScriptedStepResponse {
+  step: unknown;
+  ok: boolean;
+  reason?: string;
+  screenshotBase64?: string;
+  widgetToolCalls: WidgetToolCall[];
+  followUps: string[];
+  note?: string;
+  elapsedMs?: number;
+  expiresAt?: number;
+}
+
+export interface RunWidgetSessionSnapshotOptions {
+  baseUrl?: string;
+  sessionId: string;
+  timeoutMs: number;
+}
+
+/**
+ * Read the mounted widget as an accessibility tree plus addressable controls.
+ *
+ * A READ: it refreshes the session's idle TTL but does not spend the widget's
+ * interaction budget, so an agent can look before every step without trading
+ * away the steps it came to make.
+ */
+export async function runWidgetSessionSnapshot(
+  options: RunWidgetSessionSnapshotOptions,
+  deps: { client?: WidgetRenderClient } = {},
+): Promise<WidgetSnapshotResponse> {
+  const client =
+    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+  await client.ensureBackend({
+    startIfNeeded: false,
+    timeoutMs: options.timeoutMs,
+  });
+  const response = (await client.request(
+    `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}/snapshot`,
+    { method: "GET", timeoutMs: options.timeoutMs },
+  )) as WidgetSnapshotResponse;
+  if (!response?.snapshot) {
+    throw operationalError("The Inspector returned no snapshot.");
+  }
+  return response;
+}
+
+export interface RunWidgetSessionScriptedStepOptions {
+  baseUrl?: string;
+  sessionId: string;
+  step: unknown;
+  priorWidgetToolCalls?: WidgetToolCall[];
+  timeoutMs: number;
+}
+
+/**
+ * Drive one SEMANTIC step — click/type/key/scroll/wait/assert — addressed by
+ * role, name or test id rather than by pixel coordinate.
+ */
+export async function runWidgetSessionScriptedStep(
+  options: RunWidgetSessionScriptedStepOptions,
+  deps: { client?: WidgetRenderClient } = {},
+): Promise<WidgetScriptedStepResponse> {
+  const client =
+    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+  await client.ensureBackend({
+    startIfNeeded: false,
+    timeoutMs: options.timeoutMs,
+  });
+  return (await client.request(
+    `/api/mcp/widget-session/${encodeURIComponent(
+      options.sessionId,
+    )}/scripted-step`,
+    {
+      method: "POST",
+      body: {
+        step: options.step,
+        ...(options.priorWidgetToolCalls
+          ? { priorWidgetToolCalls: options.priorWidgetToolCalls }
+          : {}),
+      },
+      timeoutMs: options.timeoutMs,
+    },
+  )) as WidgetScriptedStepResponse;
+}
+
+/**
+ * Parse `--step` as JSON and reject anything that is not an object.
+ *
+ * Deliberately NOT validated field-by-field here: the server owns the step
+ * schema, and a second copy in the CLI would drift into rejecting steps the
+ * server accepts. This only guarantees the server receives a shape it can
+ * parse and report on.
+ */
+/**
+ * Parse `--prior-tool-calls` — the widget tool calls earlier steps produced.
+ *
+ * The server DRAINS its buffer after every step, so it cannot see history: a
+ * `widgetToolCalled` assertion is only answerable against what the caller has
+ * accumulated. Without this the assertion always saw an empty list and could
+ * never pass, even when the previous step's own output showed the call.
+ */
+export function parsePriorWidgetToolCalls(
+  raw: string | undefined,
+): WidgetToolCall[] | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw usageError(
+      `--prior-tool-calls is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        typeof (entry as { name?: unknown }).name === "string",
+    )
+  ) {
+    throw usageError(
+      "--prior-tool-calls must be a JSON array of the `widgetToolCalls` entries earlier steps returned.",
+    );
+  }
+  return parsed as WidgetToolCall[];
+}
+
+export function parseScriptedStepInput(raw: string | undefined): unknown {
+  const text = raw?.trim();
+  if (!text) {
+    throw usageError("--step needs a JSON object, e.g. --step '{\"kind\":\"click\",\"target\":{\"role\":{\"role\":\"button\",\"name\":\"Submit\"}}}'.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw usageError(
+      `--step is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw usageError("--step must be a JSON object.");
+  }
+  return parsed;
 }
 
 export interface RunWidgetSessionCloseOptions {
