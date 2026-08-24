@@ -138,9 +138,14 @@ import {
   sealHarnessProxyToken,
 } from "./harness-proxy-policy-seal.js";
 import {
-  readHarnessPolicyBlockMarker,
+  readHarnessPolicyBlockFromResult,
   type HarnessPolicyBlockRecord,
 } from "./harness-proxy-policy-enforcement.js";
+import {
+  startCrossInstanceHarnessPolicyBlockPoll,
+  subscribeHarnessPolicyBlocks,
+  type HarnessPolicyBlockEvent,
+} from "./harness-policy-block-channel.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
   harnessScopeStepUpServerMatches,
@@ -640,13 +645,65 @@ export async function runHarnessTurn(
   const capturedSpans: EvalTraceSpan[] = [];
   // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
   // block happens on whichever replica served the call; it is accounted for
-  // HERE, off the result the harness reports back, and handed to the caller
-  // (`onHarnessPolicyBlocks`) as the same records the in-process gate produces.
+  // HERE — from the proxy's own correlated report, and from the result the
+  // harness reports back — and handed to the caller (`onHarnessPolicyBlocks`)
+  // as the same records the in-process gate produces.
   const harnessPolicyBlocks: HarnessPolicyBlockRecord[] = [];
   const flushHarnessPolicyBlocks = () => {
     if (harnessPolicyBlocks.length === 0) return;
     onHarnessPolicyBlocks?.([...harnessPolicyBlocks]);
     harnessPolicyBlocks.length = 0;
+  };
+  const hasHarnessToolPolicy =
+    !!harnessToolPolicy && Object.keys(harnessToolPolicy).length > 0;
+  // Blocks the proxy reported over the authoritative channel, and the count of
+  // blocks this turn already accounted off a result. A channel event is claimed
+  // by the matching result when one arrives; whatever is left at turn end is
+  // still reported (the harness may never surface the refusal as a result), and
+  // an already-accounted key absorbs its late channel event so one refusal
+  // cannot be counted twice.
+  const channelPolicyBlocks: Array<
+    HarnessPolicyBlockEvent & { claimed?: boolean }
+  > = [];
+  const accountedPolicyBlocks = new Map<string, number>();
+  const policyBlockKey = (serverId: string, toolName: string) =>
+    `${serverId}\u0000${toolName}`;
+  const claimChannelPolicyBlock = (
+    serverId: string,
+    toolName: string
+  ): HarnessPolicyBlockEvent | undefined => {
+    const event = channelPolicyBlocks.find(
+      (candidate) =>
+        !candidate.claimed &&
+        candidate.serverId === serverId &&
+        candidate.toolName === toolName
+    );
+    if (event) event.claimed = true;
+    return event;
+  };
+  const noteAccountedPolicyBlock = (serverId: string, toolName: string) => {
+    const key = policyBlockKey(serverId, toolName);
+    accountedPolicyBlocks.set(key, (accountedPolicyBlocks.get(key) ?? 0) + 1);
+  };
+  /** Report channel blocks no result ever accounted for. */
+  const drainUnclaimedChannelPolicyBlocks = () => {
+    for (const event of channelPolicyBlocks) {
+      if (event.claimed) continue;
+      event.claimed = true;
+      const key = policyBlockKey(event.serverId, event.toolName);
+      const accounted = accountedPolicyBlocks.get(key) ?? 0;
+      if (accounted > 0) {
+        accountedPolicyBlocks.set(key, accounted - 1);
+        continue;
+      }
+      harnessPolicyBlocks.push({
+        toolName: event.toolName,
+        reason: event.reason,
+        classification: event.classification,
+        at: event.at,
+        serverId: event.serverId,
+      });
+    }
   };
   // ── Live trace emission (parity with runChatEngineLoop's writeTraceEvent) ──
   // The Trace tab is built entirely from `data-trace-event` SSE parts; the
@@ -756,6 +813,27 @@ export async function runHarnessTurn(
           selectedServers
         )
       : () => {};
+
+    // The proxy's own report of every call it refused on this run's sealed
+    // policy. Authoritative (the proxy knows it blocked) and independent of what
+    // the harness does to the result it hands back — which for Claude Code is to
+    // flatten it to a bare string, dropping the `_meta` marker. Same shape as
+    // the scope step-up bridge: correlate on this turn's opaque id, plus a poll
+    // of the shared sink for the replica that served the call being another one.
+    const stopPolicyBlockBridge =
+      harnessMcpProxy && hasHarnessToolPolicy
+        ? subscribeHarnessPolicyBlocks(
+            turnId,
+            (event) => {
+              channelPolicyBlocks.push({ ...event });
+            },
+            selectedServers
+          )
+        : () => {};
+    const stopPolicyBlockPoll =
+      harnessMcpProxy && hasHarnessToolPolicy
+        ? startCrossInstanceHarnessPolicyBlockPoll(selectedServers ?? [])
+        : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
@@ -2059,21 +2137,47 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
-            // A tool call the MCP proxy blocked on policy. Trusted only when
-            // THIS run sealed a policy for that server: the marker rides a
-            // result the upstream server also writes into, and an unpoliced run
-            // that honoured it would let a server hide its own call from the
-            // matcher.
+            // A tool call the MCP proxy blocked on policy, recognised only when
+            // THIS run sealed a policy for that server, and only ever with the
+            // verdict that snapshot already holds — a server echoing the block
+            // text cannot invent one for a tool the policy allows.
+            //
+            // Two sources, because neither alone is enough: the proxy's own
+            // channel report is authoritative but may arrive after this result
+            // (cross-replica), and the result itself is synchronous but reaches
+            // us as whatever the harness made of it (Claude Code flattens it to
+            // a bare string, dropping `_meta`). Either one blocks the call.
+            const policySnapshot = meta.serverId
+              ? harnessToolPolicy?.[meta.serverId]
+              : undefined;
+            const channelBlock = policySnapshot
+              ? claimChannelPolicyBlock(meta.serverId ?? "", meta.toolName)
+              : undefined;
+            const resultBlock = policySnapshot
+              ? readHarnessPolicyBlockFromResult({
+                  output,
+                  snapshot: policySnapshot,
+                  toolName: meta.toolName,
+                })
+              : null;
             const policyBlock =
-              meta.serverId && harnessToolPolicy?.[meta.serverId]
-                ? readHarnessPolicyBlockMarker(output)
-                : null;
+              resultBlock ??
+              (channelBlock
+                ? {
+                    toolName: channelBlock.toolName,
+                    reason: channelBlock.reason,
+                    classification: channelBlock.classification,
+                  }
+                : null);
             if (policyBlock) {
+              if (!channelBlock && meta.serverId) {
+                noteAccountedPolicyBlock(meta.serverId, meta.toolName);
+              }
               harnessPolicyBlocks.push({
                 toolName: policyBlock.toolName,
                 reason: policyBlock.reason,
                 classification: policyBlock.classification,
-                at: Date.now(),
+                at: channelBlock?.at ?? Date.now(),
                 toolCallId,
                 ...(meta.serverId ? { serverId: meta.serverId } : {}),
               });
@@ -2565,6 +2669,13 @@ export async function runHarnessTurn(
       });
     } finally {
       stopScopeStepUpBridge();
+      stopPolicyBlockBridge();
+      stopPolicyBlockPoll();
+      // Refusals the harness never surfaced as a result still have to reach the
+      // iteration, or the calls the policy prevented look like they never
+      // happened.
+      drainUnclaimedChannelPolicyBlocks();
+      flushHarnessPolicyBlocks();
     }
   };
 

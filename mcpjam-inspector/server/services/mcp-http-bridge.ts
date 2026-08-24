@@ -2,7 +2,7 @@ import { MCPClientManager, describeError } from "@mcpjam/sdk";
 import type { NormalizedError } from "@mcpjam/sdk";
 import { z } from "zod";
 import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
-import { resolveBridgeToolCallTarget } from "../utils/harness/harness-proxy-policy-enforcement.js";
+import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.

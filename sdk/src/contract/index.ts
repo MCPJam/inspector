@@ -227,10 +227,12 @@ export type {
   ToolSafetyClassification,
 } from "./tool-policy.js";
 export {
+  TOOL_POLICY_DECISION_REASONS,
   buildToolPolicySnapshot,
   classifyToolSafety,
   decideToolPolicy,
   decideToolPolicyFromSnapshot,
+  isToolPolicyDecisionReason,
 } from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,

@@ -40,6 +40,12 @@ import { harnessMcp } from "../harness-mcp.js";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
 import { sealHarnessProxyToken } from "../../../utils/harness/harness-proxy-policy-seal.js";
 import { HARNESS_POLICY_BLOCK_META_KEY } from "../../../utils/harness/harness-proxy-policy-enforcement.js";
+import {
+  __resetHarnessPolicyBlockChannelForTests,
+  subscribeHarnessPolicyBlocks,
+  type HarnessPolicyBlockEvent,
+} from "../../../utils/harness/harness-policy-block-channel.js";
+import { HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER } from "../../../utils/harness/harness-scope-step-up.js";
 
 beforeAll(() => {
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET =
@@ -90,12 +96,29 @@ const rpc = async (
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, ...body }),
   });
 
-const call = (token: string, name: string, serverId = "srv-a") =>
-  rpc(
-    token,
-    { method: "tools/call", params: { name, arguments: {} } },
-    serverId
-  );
+const call = (
+  token: string,
+  name: string,
+  serverId = "srv-a",
+  correlationId?: string
+): Promise<Response> =>
+  app.request(`/api/web/harness-mcp/${serverId}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-MCPJam-Proxy-Token": token,
+      // The same correlation header every generated `.mcp.json` entry carries.
+      ...(correlationId
+        ? { [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]: correlationId }
+        : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: {} },
+    }),
+  });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -124,6 +147,31 @@ describe("harness MCP proxy tool policy", () => {
     });
     expect(data.result.content[0].text).toContain("blocked by tool policy");
     expect(mockManager.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("reports the block to the turn that generated the .mcp.json entry", async () => {
+    // The result payload cannot be the accounting mechanism: the real Claude
+    // Code adapter flattens it to a bare string and the `_meta` marker is lost.
+    // The proxy therefore reports what it refused on the turn's own correlation
+    // id, exactly as a cross-instance scope step-up does.
+    __resetHarnessPolicyBlockChannelForTests();
+    const turnId = "33333333-3333-4333-8333-333333333333";
+    const seen: HarnessPolicyBlockEvent[] = [];
+    const stop = subscribeHarnessPolicyBlocks(turnId, (e) => seen.push(e), [
+      "srv-a",
+    ]);
+    try {
+      await call(sealedToken("srv-a"), "delete_repo", "srv-a", turnId);
+    } finally {
+      stop();
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      serverId: "srv-a",
+      toolName: "delete_repo",
+      reason: "denyList",
+      classification: "destructive",
+    });
   });
 
   it("still executes an allowed tool", async () => {

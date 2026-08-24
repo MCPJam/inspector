@@ -32,6 +32,11 @@ import {
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
+import {
+  buildCrossInstanceHarnessPolicyBlockMessage,
+  publishHarnessPolicyBlock,
+  type HarnessPolicyBlockEvent,
+} from "../../utils/harness/harness-policy-block-channel.js";
 import { rpcLogBus } from "../../services/rpc-log-bus";
 import {
   enqueueHarnessRpcLog,
@@ -291,6 +296,47 @@ async function handle(c: any) {
             logger.info(
               `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`
             );
+            // Report the refusal to the RUN, not just to the model: the harness
+            // adapter flattens this result's content blocks to a bare string, so
+            // the `_meta` marker cannot be the accounting mechanism. The proxy
+            // knows it blocked — deliver that on the same channel a
+            // cross-instance scope step-up uses, correlated by the turn id every
+            // generated `.mcp.json` entry already carries.
+            const event: HarnessPolicyBlockEvent = {
+              serverId,
+              toolName: block.marker.toolName,
+              reason: block.marker.reason,
+              classification: block.marker.classification,
+              at: Date.now(),
+            };
+            const correlationId = readScopeStepUpCorrelationId(c);
+            const deliveredLocally = publishHarnessPolicyBlock(
+              correlationId,
+              event
+            );
+            if (
+              !deliveredLocally &&
+              correlationId &&
+              isRpcLogSinkConfigured()
+            ) {
+              const relay = buildCrossInstanceHarnessPolicyBlockMessage(
+                correlationId,
+                event
+              );
+              if (relay) {
+                enqueueHarnessRpcLog({
+                  serverId,
+                  projectId: claims.projectId,
+                  organizationId: claims.orgId,
+                  direction: "receive",
+                  loggedAt: new Date().toISOString(),
+                  message: relay,
+                });
+                // Flush now rather than on the ~1s batch timer: the turn may
+                // finish before a batched frame would ever be written.
+                await flushHarnessRpcLogs();
+              }
+            }
             return block.response;
           }
         }

@@ -18,11 +18,15 @@
  */
 import {
   decideToolPolicyFromSnapshot,
+  isToolPolicyDecisionReason,
   type ToolPolicyDecisionReason,
   type ToolPolicySnapshot,
   type ToolSafetyClassification,
 } from "@mcpjam/sdk/contract";
+import { resolveBridgeToolCallTarget } from "../../services/mcp-tool-call-target.js";
 import { isHarnessProxyPolicySealAvailable } from "./harness-proxy-policy-seal.js";
+
+export { resolveBridgeToolCallTarget };
 
 /** `_meta` key the harness turn recognises on a tool result to account the
  *  block back onto the iteration (the block happens on whichever replica served
@@ -49,33 +53,6 @@ export interface HarnessPolicyBlockMarker {
   toolName: string;
   reason: ToolPolicyDecisionReason;
   classification: ToolSafetyClassification;
-}
-
-/**
- * Resolve the `(serverId, toolName)` a `tools/call` will actually execute.
- *
- * MUST mirror `mcp-http-bridge`'s `tools/call` resolution: it strips a
- * `prefix:tool` form and reroutes to `prefix` when that server exists on the
- * manager. Deciding the policy on the unresolved name would make a prefixed
- * name a bypass.
- */
-export function resolveBridgeToolCallTarget(args: {
-  serverId: string;
-  toolName: string | undefined;
-  hasServer: (serverId: string) => boolean;
-}): { targetServerId: string; toolName?: string } {
-  let targetServerId = args.serverId;
-  let toolName = args.toolName;
-  if (toolName?.includes(":")) {
-    const [prefix, actualName] = toolName.split(":", 2);
-    if (actualName) {
-      if (prefix && args.hasServer(prefix)) {
-        targetServerId = prefix;
-      }
-      toolName = actualName;
-    }
-  }
-  return { targetServerId, ...(toolName ? { toolName } : {}) };
 }
 
 export interface HarnessProxyPolicyBlock {
@@ -149,7 +126,7 @@ export function evaluateHarnessProxyToolPolicy(args: {
         content: [
           {
             type: "text",
-            text: `Call blocked by tool policy: ${decision.reason}`,
+            text: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decision.reason}`,
           },
         ],
         _meta: { [HARNESS_POLICY_BLOCK_META_KEY]: marker },
@@ -179,6 +156,86 @@ export function harnessToolPolicyLaunchRefusal(args: {
   return isHarnessProxyPolicySealAvailable()
     ? null
     : HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON;
+}
+
+/**
+ * Leading text of a block's user-visible content. The model reads it, and the
+ * harness turn matches on it as the SECONDARY detector — see
+ * `readHarnessPolicyBlockFromResult`.
+ */
+export const HARNESS_POLICY_BLOCK_TEXT_PREFIX = "Call blocked by tool policy: ";
+
+/** Collect the text a harness reports for a tool result, across the shapes the
+ *  adapters use: a bare string (Claude Code flattens content blocks), a content
+ *  array, or an MCP result object. */
+function collectResultText(output: unknown, depth = 0): string[] {
+  if (typeof output === "string") return [output];
+  if (depth > 3 || !output || typeof output !== "object") return [];
+  if (Array.isArray(output)) {
+    return output.flatMap((entry) => collectResultText(entry, depth + 1));
+  }
+  const record = output as Record<string, unknown>;
+  const texts: string[] = [];
+  for (const key of [
+    "text",
+    "content",
+    "result",
+    "output",
+    "value",
+    "stdout",
+  ]) {
+    const nested = record[key];
+    if (nested !== undefined) {
+      texts.push(...collectResultText(nested, depth + 1));
+    }
+  }
+  return texts;
+}
+
+/**
+ * Recognise a policy block in the result the harness reports back, for the run's
+ * OWN sealed snapshot.
+ *
+ * Two detectors, in order:
+ *  1. the structured `_meta` marker, when the harness preserves it;
+ *  2. the block's TEXT, because the real Claude Code adapter does not: it
+ *     flattens an MCP result's content blocks to a bare string
+ *     (`stringifyContent` in `@ai-sdk/harness-claude-code`'s bridge), dropping
+ *     `_meta` before `run-harness-turn` ever sees the part. This detector
+ *     depends on our own block wording surviving the adapter, so it is a
+ *     FALLBACK to the authoritative channel (`harness-policy-block-channel.ts`),
+ *     not the mechanism — but it is the only one that is synchronous with the
+ *     result, and reporting a blocked call as a successful one is the failure
+ *     this lane ranks worst.
+ *
+ * Neither detector trusts the payload for the VERDICT: the record is always the
+ * decision this run's snapshot already made for that tool, so a server echoing
+ * the block text cannot invent a block for a tool the policy allows.
+ */
+export function readHarnessPolicyBlockFromResult(args: {
+  output: unknown;
+  snapshot: ToolPolicySnapshot;
+  toolName: string;
+}): HarnessPolicyBlockMarker | null {
+  const decision = decideToolPolicyFromSnapshot({
+    snapshot: args.snapshot,
+    toolName: args.toolName,
+  });
+  const marker = readHarnessPolicyBlockMarker(args.output);
+  const blockedByText = collectResultText(args.output).some((text) => {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith(HARNESS_POLICY_BLOCK_TEXT_PREFIX)) return false;
+    return isToolPolicyDecisionReason(
+      trimmed.slice(HARNESS_POLICY_BLOCK_TEXT_PREFIX.length).trim()
+    );
+  });
+  if (!marker && !blockedByText) return null;
+  if (decision.allowed) return null;
+  return {
+    toolName: args.toolName,
+    reason: decision.reason,
+    classification: decision.classification,
+  };
 }
 
 /** Read the marker off a harness tool result (any nesting the harness reports:

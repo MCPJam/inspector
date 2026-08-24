@@ -5,11 +5,17 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ModelMessage } from "ai";
-import type { StageAuthoredCase, StageResultRow } from "@mcpjam/sdk/contract";
+import type {
+  StageAuthoredCase,
+  StageResultRow,
+  ToolPolicySnapshot,
+} from "@mcpjam/sdk/contract";
 import {
   HARNESS_POLICY_BLOCK_META_KEY,
+  HARNESS_POLICY_BLOCK_TEXT_PREFIX as prefix,
   HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON,
   harnessToolPolicyLaunchRefusal,
+  readHarnessPolicyBlockFromResult,
   readHarnessPolicyBlockMarker,
   resolveBridgeToolCallTarget,
 } from "../harness-proxy-policy-enforcement.js";
@@ -91,6 +97,81 @@ describe("readHarnessPolicyBlockMarker", () => {
     expect(
       readHarnessPolicyBlockMarker({
         _meta: { [HARNESS_POLICY_BLOCK_META_KEY]: { toolName: "x" } },
+      })
+    ).toBeNull();
+  });
+});
+
+describe("readHarnessPolicyBlockFromResult", () => {
+  const snapshot: ToolPolicySnapshot = {
+    mode: "default",
+    denied: { delete_repo: { reason: "denyList", classification: "unknown" } },
+    known: ["delete_repo", "read_file"],
+    unknownTool: "deny",
+  };
+
+  it("recognises the block in the REAL adapter's result shape: a bare string", () => {
+    // `@ai-sdk/harness-claude-code` flattens an MCP result's content blocks with
+    // `stringifyContent`, so `_meta` is gone by the time the turn sees the part.
+    // This is the shape that made the marker-only reader miscount a refusal as a
+    // successful call.
+    expect(
+      readHarnessPolicyBlockFromResult({
+        output: "Call blocked by tool policy: denyList",
+        snapshot,
+        toolName: "delete_repo",
+      })
+    ).toEqual({
+      toolName: "delete_repo",
+      reason: "denyList",
+      classification: "unknown",
+    });
+  });
+
+  it("still reads the structured marker when a harness preserves it", () => {
+    expect(
+      readHarnessPolicyBlockFromResult({
+        output: {
+          content: [],
+          _meta: {
+            [HARNESS_POLICY_BLOCK_META_KEY]: {
+              toolName: "delete_repo",
+              reason: "denyList",
+              classification: "unknown",
+            },
+          },
+        },
+        snapshot,
+        toolName: "delete_repo",
+      })
+    ).toMatchObject({ reason: "denyList" });
+  });
+
+  it("takes the verdict from the snapshot, so a server cannot fake a block", () => {
+    // `read_file` is allowed here; echoing our wording must not remove the call
+    // from the matcher.
+    expect(
+      readHarnessPolicyBlockFromResult({
+        output: { content: [{ type: "text", text: `${prefix}denyList` }] },
+        snapshot,
+        toolName: "read_file",
+      })
+    ).toBeNull();
+  });
+
+  it("ignores ordinary text and text with a bogus reason", () => {
+    expect(
+      readHarnessPolicyBlockFromResult({
+        output: "deleted the repo",
+        snapshot,
+        toolName: "delete_repo",
+      })
+    ).toBeNull();
+    expect(
+      readHarnessPolicyBlockFromResult({
+        output: `${prefix}because I said so`,
+        snapshot,
+        toolName: "delete_repo",
       })
     ).toBeNull();
   });

@@ -58,6 +58,27 @@ describe("harness proxy policy seal", () => {
     });
   });
 
+  it("rejects a snapshot that parsed but is shaped wrong, rather than passing it on", () => {
+    // The route hands the opened snapshot straight to
+    // `decideToolPolicyFromSnapshot`, which reads `known` as an array and each
+    // denied entry's `reason`. A wrong shape must die here, not as a 500 inside
+    // the very `tools/call` the policy exists to guard.
+    for (const broken of [
+      { ...snapshot, known: undefined },
+      { ...snapshot, known: ["ok", 7] },
+      {
+        ...snapshot,
+        denied: { t: { reason: "nope", classification: "safe" } },
+      },
+      { ...snapshot, denied: { t: null } },
+    ]) {
+      const sealed = seal({
+        policy: broken as unknown as ToolPolicySnapshot,
+      });
+      expect(unsealHarnessProxyToken(sealed, "srv-a")).toBeNull();
+    }
+  });
+
   it("fails closed on a tampered byte, the wrong server, and expiry", () => {
     const sealed = seal({});
     const parts = sealed.split(".");

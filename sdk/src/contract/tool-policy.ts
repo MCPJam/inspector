@@ -2,13 +2,17 @@ import type { EvalSuiteFileToolPolicy } from "./suite-file.js";
 
 export type ToolSafetyClassification = "readOnly" | "destructive" | "unknown";
 
-export type ToolPolicyDecisionReason =
-  | "denyList"
-  | "allowList"
-  | "destructiveDefaultDeny"
-  | "readOnlyModeClassified"
-  | "readOnlyModeUnclassified"
-  | "modeDefault"
+/**
+ * The reason vocabulary as VALUES, so an out-of-process consumer can validate a
+ * reason it read back off the wire instead of trusting the string.
+ */
+export const TOOL_POLICY_DECISION_REASONS = [
+  "denyList",
+  "allowList",
+  "destructiveDefaultDeny",
+  "readOnlyModeClassified",
+  "readOnlyModeUnclassified",
+  "modeDefault",
   /**
    * A tool that did not exist when the policy decision snapshot was built
    * (`tools/list_changed` after launch). Out-of-process enforcement can see
@@ -16,7 +20,20 @@ export type ToolPolicyDecisionReason =
    * wrapped map. Denied whenever a policy is in force — allowing it would be a
    * fail-open the in-process path does not have.
    */
-  | "unknownAtLaunch";
+  "unknownAtLaunch",
+] as const;
+
+export type ToolPolicyDecisionReason =
+  (typeof TOOL_POLICY_DECISION_REASONS)[number];
+
+export function isToolPolicyDecisionReason(
+  value: unknown
+): value is ToolPolicyDecisionReason {
+  return (
+    typeof value === "string" &&
+    (TOOL_POLICY_DECISION_REASONS as readonly string[]).includes(value)
+  );
+}
 
 export type ToolPolicyDecision = {
   allowed: boolean;

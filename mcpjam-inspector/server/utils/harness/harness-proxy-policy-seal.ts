@@ -34,7 +34,10 @@ import {
   hkdfSync,
   randomBytes,
 } from "node:crypto";
-import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
+  isToolPolicyDecisionReason,
+  type ToolPolicySnapshot,
+} from "@mcpjam/sdk/contract";
 
 /** Versioned prefix: an envelope shape change must be a new prefix, never a
  *  reinterpretation of these bytes. */
@@ -218,6 +221,22 @@ export function unsealHarnessProxyToken(
     return null;
   }
   if (!policy.denied || typeof policy.denied !== "object") return null;
+  if (Object.keys(policy.denied).length > MAX_SEALED_DENIED_TOOL_NAMES) {
+    return null;
+  }
+  // Validate the WHOLE snapshot, not the fields the happy path reads first: the
+  // route hands this straight to `decideToolPolicyFromSnapshot`, which does a
+  // `known.includes(...)` and reads each denied entry's reason. A snapshot that
+  // parsed but is shaped wrong would throw there — inside the request the
+  // policy is meant to guard — and a 500 on `tools/call` is a worse outcome
+  // than refusing this credential.
+  if (!Array.isArray(policy.known)) return null;
+  if (policy.known.some((name) => typeof name !== "string")) return null;
+  for (const entry of Object.values(policy.denied)) {
+    if (!entry || typeof entry !== "object") return null;
+    if (!isToolPolicyDecisionReason(entry.reason)) return null;
+    if (typeof entry.classification !== "string") return null;
+  }
 
   return { token: envelope.t, serverId: envelope.s, policy };
 }
