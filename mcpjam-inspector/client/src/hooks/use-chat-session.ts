@@ -79,7 +79,6 @@ import type { SerializedModelRequestTool } from "@/shared/model-request-payload"
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import {
   authFetch,
-  getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
   classifyScenarioAccessResponse,
@@ -2520,6 +2519,10 @@ export function useChatSession(
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
     hasLocalOnlySelectedServer;
+  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
+  const shouldUseOrgAwareChatApi =
+    isHostedTransport ||
+    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -2540,13 +2543,10 @@ export function useChatSession(
       // belonging to a different request.
       lastChatResponseRef.current = null;
 
-      // authFetch owns auth resolution (WorkOS bearer / guest bearer via
-      // the scenario-installed apiContext) wherever the web engine is in
-      // play — hosted builds, and scenario runtime sessions on any platform.
-      const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
-      let response = useAuthedFetch
-        ? await authFetch(input, init)
-        : await fetch(input, init);
+      // Resolve the WorkOS / guest bearer at request time for every chat
+      // route. authFetch attaches it only to allowlisted Convex-backed paths,
+      // including both /api/web/chat-v2 and local /api/mcp/chat-v2.
+      let response = await authFetch(input, init);
 
       // Scenario access recovery. A scenario turn re-resolves its authoritative
       // config server-side on every send, so an open tab can lose access
@@ -2562,7 +2562,7 @@ export function useChatSession(
       // send — the replay's own verdict is final.
       if (
         !response.ok &&
-        useAuthedFetch &&
+        isHostedTransport &&
         hostedScenarioId &&
         typeof init?.body === "string" &&
         hostedRefreshAccessSession
@@ -2609,7 +2609,7 @@ export function useChatSession(
 
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
-        if (useAuthedFetch) {
+        if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
@@ -2617,6 +2617,7 @@ export function useChatSession(
     },
     [
       hostedRequiresWebChatApi,
+      isHostedTransport,
       hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
@@ -2672,10 +2673,6 @@ export function useChatSession(
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi =
-      HOSTED_MODE ||
-      hostedRequiresWebChatApi ||
-      (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
     const shouldSendClientApiKey =
       !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
     let apiKey: string;
@@ -2690,12 +2687,16 @@ export function useChatSession(
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
 
-    // Merge session auth headers with workos auth headers
-    const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
-      string,
-      string
-    >;
+    // NEITHER credential is snapshotted here. authFetch calls the very same
+    // `getAuthHeaders()` at request time, and `buildAuthFetchInit` merges
+    // `init.headers` LAST — so a copy taken when this memo ran would override
+    // the fresh one. That is not theoretical: the local dev server mints a new
+    // session token on every restart, and this memo (which no longer depends
+    // on `authHeaders`) can outlive several of them, so the stale copy won the
+    // merge and the route answered 401 "Invalid session token". authFetch's
+    // own 401 session-recovery could not rescue it either — its retry rebuilds
+    // from the same `init`, re-applying the same stale header.
+    const mergedHeaders = {} as Record<string, string>;
     // Consent capability for the local computer engine — a header, never the
     // body, so it can't land in a persisted transcript. Only on a direct
     // (non-scenario) turn whose resolved engine is local; the server re-checks
@@ -2717,14 +2718,10 @@ export function useChatSession(
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // When authFetch carries the request (hosted builds, scenario runtime
-    // sessions), it owns the Authorization header — don't double-attach.
+    // Only the local-computer consent capability rides the transport, because
+    // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
-      HOSTED_MODE || hostedRequiresWebChatApi
-        ? undefined
-        : Object.keys(mergedHeaders).length > 0
-        ? mergedHeaders
-        : undefined;
+      Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
     const chatApi = shouldUseOrgAwareChatApi
       ? "/api/web/chat-v2"
@@ -2975,10 +2972,10 @@ export function useChatSession(
     getToken,
     getCustomProviderByName,
     customProviders,
-    authHeaders,
     selectedModelUsesOrgRuntime,
     localMcpRuntimeRequired,
     hostedRequiresWebChatApi,
+    shouldUseOrgAwareChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -3739,10 +3736,7 @@ export function useChatSession(
         // name. Only on the web-engine path, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
-        const usesWebEngine =
-          HOSTED_MODE ||
-          selectedModelUsesOrgRuntime ||
-          hostedRequiresWebChatApi;
+        const usesWebEngine = shouldUseOrgAwareChatApi;
         // Snapshot the selection ONCE: the resolved ids must ride with the
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
@@ -3831,8 +3825,7 @@ export function useChatSession(
       hostedEnsureServerIds,
       hostedEnvironmentId,
       selectedServers,
-      selectedModelUsesOrgRuntime,
-      hostedRequiresWebChatApi,
+      shouldUseOrgAwareChatApi,
     ]
   );
 

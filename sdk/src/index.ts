@@ -415,11 +415,28 @@ export type {
   AuthMethod,
 } from "./registration.js";
 export {
+  buildEvalRunReport,
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
 } from "./structured-reporting.js";
+export {
+  buildEvalDecisionSummary,
+  buildEvalDecisionSummaryFromIterations,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  formatEvalDecisionSummary,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+} from "./eval-decision-summary.js";
 export type {
+  EvalDecisionSummary,
+  EvalDecisionSummaryCase,
+  EvalDecisionSummaryInput,
+  EvalDecisionVerdict,
+  NormalizedEvalDecisionCase,
+  StageChainStatus,
+} from "./eval-decision-summary.js";
+export type {
+  StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
   StructuredSummaryBucket,

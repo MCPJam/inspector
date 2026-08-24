@@ -308,6 +308,9 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Local chat re-calls Convex for host/scenario runtime config and
+  // persistence, so resolve its bearer at request time as well.
+  "/api/mcp/chat-v2",
   // Local XAA proxy paths whose server-target / registration runs resolve a
   // Convex-stored secret on the user's behalf (the hosted `/api/web/xaa/*`
   // equivalents are already covered by the `/api/web/` prefix above).

@@ -22,6 +22,7 @@ import {
   resolveProject,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
+  updateEvalSuiteOperation,
   type PlatformApiClient,
   type PlatformEvalCase,
   type RunEvalSuiteInput,
@@ -594,7 +595,7 @@ export async function executeEvalRunFromFile(
 
   const sourceHash = sha256HexOfBuffer(params.source.buffer);
   const authored = loaded.authored;
-  const servers = authored.target.servers;
+  const servers = authored.target.servers ?? [];
   const synced = await context.client.syncFileOwnedEvalSuite(
     {
       projectId: project.id,
@@ -621,8 +622,12 @@ export async function executeEvalRunFromFile(
         },
         defaultConfig: {
           modelId: authored.defaults.model,
-          systemPrompt: "",
-          temperature: 0,
+          ...(authored.defaults.systemPrompt !== undefined
+            ? { systemPrompt: authored.defaults.systemPrompt }
+            : {}),
+          ...(authored.defaults.temperature !== undefined
+            ? { temperature: authored.defaults.temperature }
+            : {}),
         },
         defaultPassCriteria: { minimumPassRate: passPercent },
       },
@@ -652,6 +657,27 @@ export async function executeEvalRunFromFile(
     !hasExplicitTarget && authored.target.environment
       ? authored.target.environment
       : undefined;
+  const fileHosts =
+    !hasExplicitTarget && !fileEnvironment
+      ? authored.target.hosts?.map((host) => host.id ?? host.name)
+      : undefined;
+  if (!hasExplicitTarget && authored.target.hosts) {
+    await updateEvalSuiteOperation.execute(
+      {
+        project: project.id,
+        suite: synced.suite.id,
+        hosts: authored.target.hosts.map((host) => ({
+          host: host.id ?? host.name,
+          ...(host.servers
+            ? {
+                servers: host.servers.map((server) => server.id ?? server.name),
+              }
+            : {}),
+        })),
+      },
+      { client: context.client, signal: context.signal },
+    );
+  }
   if (fileEnvironment) {
     await setEvalSuiteEnvironmentsOperation.execute(
       {
@@ -695,6 +721,10 @@ export async function executeEvalRunFromFile(
         ? { host: knobs.host[0] }
         : knobs.host?.length
           ? { hosts: knobs.host }
+          : fileHosts?.length === 1
+            ? { host: fileHosts[0] }
+            : fileHosts?.length
+              ? { hosts: fileHosts }
           : {}),
       ...(knobs.allTargets ? { allAttached: true } : {}),
       ...(knobs.iterations !== undefined

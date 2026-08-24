@@ -228,6 +228,50 @@ async function startSuiteFixture(state: {
       );
       return;
     }
+    if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
+      const environmentIds =
+        (state.detail.environmentIds as string[] | undefined) ?? [];
+      res.end(
+        JSON.stringify({
+          items: environmentIds.map((id, index) => ({
+            id,
+            name: index === 0 ? "Production" : `Environment ${index + 1}`,
+            projectId: "proj-alpha",
+            hostId: "h1",
+            standaloneServerIds: [],
+            selectedServerIds: [],
+            pluginPins: [],
+            modelId: null,
+            revision: 1,
+            archived: false,
+            createdAt: 1,
+            updatedAt: 2,
+          })),
+        })
+      );
+      return;
+    }
+    const environmentResolve =
+      /^\/api\/v1\/projects\/proj-alpha\/environments\/([^/]+)\/resolve$/.exec(
+        url.pathname
+      );
+    if (environmentResolve) {
+      res.end(
+        JSON.stringify({
+          environment: {
+            id: environmentResolve[1],
+            name: "Production",
+            revision: 1,
+          },
+          host: { id: "h1", name: "Claude Desktop" },
+          servers: [],
+          selectedServerIds: [],
+          plugins: [],
+          model: null,
+        })
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/eval-suites") {
       res.end(
         JSON.stringify({
@@ -832,6 +876,60 @@ describe("eval export", () => {
     });
   });
 
+  test("exports execution config, hosts, and one resolved environment", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        {
+          detail: {
+            environment: { servers: [], computerEnvironment: null },
+            environmentIds: ["env-a"],
+            executionConfig: {
+              model: "anthropic/claude-sonnet-4-6",
+              systemPrompt: "Be terse.",
+              temperature: 0.2,
+            },
+            hosts: [
+              {
+                id: "h1",
+                name: "Claude Desktop",
+                servers: ["billing"],
+              },
+            ],
+            settings: {
+              minimumAccuracy: 80,
+              matchOptions: null,
+              checks: [],
+              judge: {
+                enabled: true,
+                autoRun: false,
+                model: "anthropic/claude-sonnet-4-6",
+              },
+            },
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.target.environment, "Production");
+      assert.deepEqual(reloaded.authored.target.servers, undefined);
+      assert.deepEqual(reloaded.authored.target.hosts, [
+        {
+          id: "h1",
+          name: "Claude Desktop",
+          servers: [{ name: "billing" }],
+        },
+      ]);
+      assert.equal(reloaded.authored.defaults.systemPrompt, "Be terse.");
+      assert.equal(reloaded.authored.defaults.temperature, 0.2);
+    });
+  });
+
   test("writes the same case id every time for a legacy case", async () => {
     await withTempDir(async () => {
       // No `declaredId`: the case predates declared identity, so its id comes
@@ -887,19 +985,12 @@ describe("eval export", () => {
       pointer: string;
     }> = [
       {
-        label: "host attachments have no field",
-        state: { detail: { hosts: [{ id: "h1", name: "Claude Desktop" }] } },
-        pointer: "hosts",
-      },
-      {
         label: "several attached environments",
-        state: { detail: { environmentIds: ["env-a", "env-b"] } },
-        pointer: "environmentIds",
-      },
-      {
-        label: "one attached environment, whose name needs a second fetch",
         state: {
-          detail: { environment: { servers: [] }, environmentIds: ["env-a"] },
+          detail: {
+            environment: { servers: [] },
+            environmentIds: ["env-a", "env-b"],
+          },
         },
         pointer: "environmentIds",
       },
@@ -912,22 +1003,6 @@ describe("eval export", () => {
         label: "no execution model to write as defaults.model",
         state: { detail: { executionConfig: null } },
         pointer: "executionConfig",
-      },
-      {
-        label: "an execution system prompt",
-        state: {
-          detail: {
-            executionConfig: { model: "m", systemPrompt: "Be terse." },
-          },
-        },
-        pointer: "executionConfig.systemPrompt",
-      },
-      {
-        label: "an execution temperature",
-        state: {
-          detail: { executionConfig: { model: "m", temperature: 0.2 } },
-        },
-        pointer: "executionConfig.temperature",
       },
       {
         label: "a pinned sandbox image",
@@ -944,7 +1019,7 @@ describe("eval export", () => {
       {
         label: "no server selection at all",
         state: { detail: { environment: { servers: [] } } },
-        pointer: "environment.servers",
+        pointer: "environment",
       },
       {
         label: "no minimum accuracy to become passThreshold",
@@ -1001,7 +1076,11 @@ describe("eval export", () => {
               minimumAccuracy: 80,
               matchOptions: null,
               checks: [],
-              judge: { enabled: true, model: "anthropic/claude-sonnet-4-6" },
+              judge: {
+                enabled: true,
+                autoRun: true,
+                model: "anthropic/claude-sonnet-4-6",
+              },
             },
           },
         },
@@ -1130,7 +1209,10 @@ describe("eval export", () => {
   test("--format human names every reason it refused", async () => {
     await withTempDir(async (dir) => {
       const fixture = await startSuiteFixture({
-        detail: suiteDetail({ hosts: [{ id: "h1", name: "Claude Desktop" }] }),
+        detail: suiteDetail({
+          environment: { servers: [] },
+          environmentIds: ["env-a", "env-b"],
+        }),
         cases: [evalCase()],
       });
       try {
@@ -1156,7 +1238,10 @@ describe("eval export", () => {
         );
         assert.equal(run.result.exitCode, 1);
         assert.match(run.stdout, /Nothing was written/);
-        assert.match(run.stdout, /UNSUPPORTED_SUITE_EXPORT hosts: /);
+        assert.match(
+          run.stdout,
+          /UNSUPPORTED_SUITE_EXPORT environmentIds: /
+        );
         assert.deepEqual(await readdir(dir), []);
       } finally {
         await fixture.close();
@@ -1392,6 +1477,12 @@ ${cases}
 
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  existingHosts?: Array<{
+    id: string;
+    name: string;
+    servers?: string[];
+  }>;
+  environmentName?: string;
   /**
    * Batch-create indexes to put in `failed` instead of `created`. Used to
    * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
@@ -1417,6 +1508,9 @@ async function startFileRunFixture(options?: {
   const suitePatches: unknown[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
+  let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
+    ...(options?.existingHosts ?? []),
+  ];
   const casesByDeclaredId = new Map<
     string,
     { id: string; declaredId: string; title: string }
@@ -1475,7 +1569,7 @@ async function startFileRunFixture(options?: {
             projectId: "proj-alpha",
             environment: { servers: ["billing"], computerEnvironment: null },
             executionConfig: { model: body.defaultConfig?.modelId ?? "m" },
-            hosts: [],
+            hosts,
             environmentIds: [],
             settings: {},
             schedule: {},
@@ -1620,7 +1714,7 @@ async function startFileRunFixture(options?: {
           projectId: "proj-alpha",
           environment: { servers: ["billing"] },
           executionConfig: { model: "anthropic/claude-sonnet-4-6" },
-          hosts: [],
+          hosts,
           environmentIds,
           settings: {},
           schedule: {},
@@ -1640,7 +1734,7 @@ async function startFileRunFixture(options?: {
           items: [
             {
               id: "env-prod",
-              name: "prod",
+              name: options?.environmentName ?? "prod",
               archived: false,
             },
           ],
@@ -1658,6 +1752,15 @@ async function startFileRunFixture(options?: {
       if (Array.isArray(body.environmentIds)) {
         environmentIds = body.environmentIds;
       }
+      if (Array.isArray(body.hosts)) {
+        hosts = body.hosts.map(
+          (host: { host: string; servers?: string[] }, index: number) => ({
+            id: host.host,
+            name: index === 0 ? "Claude Desktop" : host.host,
+            ...(host.servers ? { servers: host.servers } : {}),
+          })
+        );
+      }
       res.end(
         JSON.stringify({
           id: "suite-file-1",
@@ -1667,7 +1770,7 @@ async function startFileRunFixture(options?: {
           projectId: "proj-alpha",
           environment: { servers: ["billing"] },
           executionConfig: { model: "anthropic/claude-sonnet-4-6" },
-          hosts: [],
+          hosts,
           environmentIds,
           settings: {},
           schedule: {},
@@ -1775,6 +1878,9 @@ describe("eval run --file", () => {
         const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
         assert.equal(synced.declaredSuiteId, "s_billing");
         assert.equal(synced.sourceHash, expectedHash);
+        assert.deepEqual(synced.defaultConfig, {
+          modelId: "anthropic/claude-sonnet-4-6",
+        });
         assert.equal(fixture.batchBodies.length, 1);
         const batch = fixture.batchBodies[0] as { cases: Array<{ id: string }> };
         assert.equal(batch.cases[0].id, "c_refund");
@@ -1787,6 +1893,98 @@ describe("eval run --file", () => {
         const payload = JSON.parse(run.stdout);
         assert.equal(payload.outcome, "started");
         assert.equal(payload.runId, "run-file-1");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("sends authored execution config and launches attached hosts", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        const configured = VALID_SUITE_FILE.replace(
+          "target:\n  servers:\n    - name: billing\n",
+          "target:\n  servers:\n    - name: billing\n  hosts:\n    - id: h1\n      name: Claude Desktop\n      servers:\n        - id: srv_billing\n          name: billing\n"
+        ).replace(
+          "  model: anthropic/claude-sonnet-4-6\n",
+          "  model: anthropic/claude-sonnet-4-6\n  systemPrompt: Be terse.\n  temperature: 0.2\n"
+        );
+        await writeFile(file, configured, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const synced = fixture.fromFileBodies[0] as {
+          defaultConfig: Record<string, unknown>;
+        };
+        assert.deepEqual(synced.defaultConfig, {
+          modelId: "anthropic/claude-sonnet-4-6",
+          systemPrompt: "Be terse.",
+          temperature: 0.2,
+        });
+        assert.deepEqual(fixture.suitePatches, [
+          {
+            hosts: [
+              {
+                host: "h1",
+                servers: ["srv_billing"],
+              },
+            ],
+          },
+        ]);
+        assert.equal(
+          (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
+          "h1"
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an explicit host target does not replace the file's host attachments", async () => {
+    const fixture = await startFileRunFixture({
+      existingHosts: [{ id: "h-existing", name: "Existing Host" }],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        const configured = VALID_SUITE_FILE.replace(
+          "target:\n  servers:\n    - name: billing\n",
+          "target:\n  servers:\n    - name: billing\n  hosts:\n    - id: h-file\n      name: File Host\n"
+        );
+        await writeFile(file, configured, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--host",
+              "h-existing"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.deepEqual(fixture.suitePatches, []);
+        assert.equal(
+          (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
+          "h-existing"
+        );
       });
     } finally {
       await fixture.close();
@@ -2417,23 +2615,34 @@ describe("eval run --file", () => {
     }
   });
 
-  test("target.environment is attached before the run starts", async () => {
-    const fixture = await startFileRunFixture();
-    try {
-      await withTempDir(async (dir) => {
-        const file = path.join(dir, "suite.yaml");
-        await writeFile(
-          file,
-          VALID_SUITE_FILE.replace(
-            "target:\n  servers:\n    - name: billing\n",
-            "target:\n  environment: prod\n  servers:\n    - name: billing\n"
-          ),
-          "utf8"
-        );
+  test("an exported environment-only file runs with zero legacy servers", async () => {
+    await withTempDir(async () => {
+      const exported = await runExport(
+        {
+          detail: {
+            environment: { servers: [], computerEnvironment: null },
+            environmentIds: ["env-a"],
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(exported.exitCode, 0, exported.stderr);
+      const fixture = await startFileRunFixture({
+        environmentName: "Production",
+      });
+      try {
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              JSON.parse(exported.stdout).path,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.suitePatches.length, 1);
@@ -2442,12 +2651,20 @@ describe("eval run --file", () => {
             .environmentIds,
           ["env-prod"]
         );
+        assert.deepEqual(
+          (
+            fixture.fromFileBodies[0] as {
+              environment: { servers: string[] };
+            }
+          ).environment.servers,
+          []
+        );
         const launched = fixture.runBodies[0] as { environmentId?: string };
         assert.equal(launched.environmentId, "env-prod");
-      });
-    } finally {
-      await fixture.close();
-    }
+      } finally {
+        await fixture.close();
+      }
+    });
   });
 });
 

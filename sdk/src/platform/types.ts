@@ -12,6 +12,11 @@ import type {
   EvaluationConfigSnapshot,
   ScoreResult,
 } from "../contract/types.js";
+import type {
+  FailureCategory,
+  StageResultRow,
+  UserValueStage,
+} from "../contract/index.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -1486,6 +1491,16 @@ export interface PlatformEvalIteration {
   evaluationConfig?: EvaluationConfigSnapshot | null;
   /** Set when the backend downgraded this iteration's verdict at ingest. */
   scoreIntegrity?: "score_integrity_invalid" | null;
+  /** Verified D1 user-value chain rows, in chain order. */
+  stageResults?: StageResultRow[];
+  /** The first failed stage, when the verified derivation has one. */
+  firstFailedStage?: UserValueStage;
+  /** Coarse failure bucket; it may exist without a failed stage row. */
+  failureCategory?: FailureCategory;
+  /** Analyzer version that produced the stage rows. */
+  stageAnalyzerVersion?: number;
+  /** The server returned stage rows that failed D1 validation. */
+  stageResultsUnverified?: true;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -1496,6 +1511,8 @@ export interface PlatformEvalStepEvidence {
     args: unknown;
     ok: boolean;
     error?: string;
+    /** Wall-clock ms for this widget→host call, when the harness recorded it. */
+    elapsedMs?: number;
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
