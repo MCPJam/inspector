@@ -10,7 +10,13 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 // Pure JSON-RPC parser + logging transport are shared, framework-free runtime
 // helpers in the SDK.
-import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
+import type { CallToolResult } from "@modelcontextprotocol/client";
+import {
+  applyToolResultPolicy,
+  extractMethod,
+  LoggingTransport,
+  type ToolResultPolicy,
+} from "@mcpjam/sdk/widget-runtime";
 // The `CspMode` type comes from the package's `WidgetHost` contract.
 import { type CspMode, type CspSubtypePolicy } from "./widget-host";
 // The package owns lifecycle + bridge; the inspector injects modal CHROME
@@ -54,6 +60,13 @@ export interface McpAppsModalProps {
   widgetAllowFeatures: Record<string, string> | undefined;
   widgetCspDirectives: Record<string, string[]> | undefined;
   widgetCspSubtypePolicy: CspSubtypePolicy | undefined;
+  /**
+   * Host policy for the tool result the modal widget is born with. The
+   * modal's `oncalltool` path already inherits this via the renderer's
+   * `registerBridgeHandlers`; this prop covers the ONE result the modal
+   * pushes itself, below.
+   */
+  widgetToolResult: ToolResultPolicy | undefined;
   widgetBrowserStorage:
     | { localStorage?: boolean; sessionStorage?: boolean; indexedDB?: boolean }
     | undefined;
@@ -129,6 +142,7 @@ export function McpAppsModal({
   widgetAllowFeatures,
   widgetCspDirectives,
   widgetCspSubtypePolicy,
+  widgetToolResult,
   widgetBrowserStorage,
   hostContextRef,
   serverId,
@@ -295,7 +309,10 @@ export function McpAppsModal({
         // identical but nominally distinct CallToolResult; cast to exactly what
         // the bridge accepts at this Apps-compat seam (§1D).
         bridge.sendToolResult(
-          toolOutputRef.current as Parameters<typeof bridge.sendToolResult>[0]
+          applyToolResultPolicy(
+            toolOutputRef.current as Partial<CallToolResult>,
+            widgetToolResult
+          ) as Parameters<typeof bridge.sendToolResult>[0]
         );
       }
 

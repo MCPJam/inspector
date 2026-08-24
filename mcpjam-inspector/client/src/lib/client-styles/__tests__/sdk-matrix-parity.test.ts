@@ -70,9 +70,17 @@ describe("SDK-sourced MCP Apps matrices are complete resolved surfaces", () => {
       xhr: true,
       websocket: true,
     });
-    // Unknown, not false: ChatGPT's own baseline allowlist covers the probe's
-    // declared resource origin, so no result separates honored from ignored.
-    expect(MCP_APPS_CHATGPT_SURFACE.cspResourceDomains).toBeUndefined();
+    // Measured true since the 2026-08-23 paired probe: it declared
+    // `fastly.jsdelivr.net`, an origin OUTSIDE ChatGPT's baseline allowlist,
+    // and every declared resource subtype loaded — which is what separates
+    // honored from ignored, and is why this is no longer "unknown".
+    expect(MCP_APPS_CHATGPT_SURFACE.cspResourceDomains).toEqual({
+      script: true,
+      stylesheet: true,
+      image: true,
+      font: true,
+      media: true,
+    });
     expect(MCP_APPS_CURSOR_SURFACE.cspResourceDomains?.media).toBe(true);
     expect(MCP_APPS_GOOSE_SURFACE.cspConnectDomains).toEqual({
       fetch: false,

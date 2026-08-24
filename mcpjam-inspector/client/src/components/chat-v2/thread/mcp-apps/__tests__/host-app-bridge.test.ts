@@ -264,6 +264,59 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
     expect((updates[0] as { id: string }).id).toBe("parent-1:app-tool:7");
   });
 
+  it("shapes the returned result by the host's toolResult policy", async () => {
+    const bridge = makeStubBridge();
+    const updates: Array<{ status: string; output?: unknown }> = [];
+    const raw = {
+      content: [
+        { type: "text", text: "keep" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+      ],
+      structuredContent: { dropped: true },
+    };
+    register(bridge, {
+      getMatrix: () => ({
+        toolResult: {
+          structuredContent: false,
+          content: { image: false },
+        },
+      }),
+      callbacks: {
+        onCallTool: vi.fn().mockResolvedValue(raw),
+        onAppToolInvocation: (u) => updates.push(u),
+      },
+    });
+
+    const returned = await (
+      bridge.oncalltool as (p: unknown, e: unknown) => Promise<{
+        content: Array<{ type: string }>;
+        structuredContent?: unknown;
+      }>
+    )({ name: "go", arguments: {} }, {});
+
+    // What the widget receives.
+    expect("structuredContent" in returned).toBe(false);
+    expect(returned.content.map((b) => b.type)).toEqual(["text"]);
+    // ...and what the inspector's panel records is the SAME shaped value, so
+    // a widget author debugging a Cursor-style host sees what the widget saw.
+    expect(updates[1].output).toEqual(returned);
+    // The upstream result object is never mutated.
+    expect(raw.structuredContent).toEqual({ dropped: true });
+  });
+
+  it("passes the result through untouched when no policy is configured", async () => {
+    const bridge = makeStubBridge();
+    const raw = { content: [{ type: "text", text: "x" }], structuredContent: {} };
+    register(bridge, {
+      callbacks: { onCallTool: vi.fn().mockResolvedValue(raw) },
+    });
+
+    const returned = await (
+      bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>
+    )({ name: "go", arguments: {} }, {});
+    expect(returned).toBe(raw);
+  });
+
   it("emits running → error and cancels when the dispatch throws", async () => {
     const bridge = makeStubBridge();
     const updates: Array<{ status: string; errorText?: string }> = [];

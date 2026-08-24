@@ -4372,6 +4372,7 @@ export function MCPAppsRendererSurface({
         widgetCspDirectives={effectiveSandbox.cspDirectives}
         widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
         widgetBrowserStorage={effectiveSandbox.browserStorage}
+        widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}
