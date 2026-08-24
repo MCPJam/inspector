@@ -220,6 +220,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_scenario: { command: "cloud scenarios get" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
+  send_chat_message: { command: "cloud sessions send" },
+  get_chat_session: { command: "cloud sessions show" },
+  get_chat_session_trace: { command: "cloud sessions trace" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "cloud tunnel" },
@@ -242,6 +245,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   call_server_tool: {
     excluded:
       "`tools call` connects to the server directly, so it works without a project or an API key.",
+  },
+  render_server_widget: {
+    excluded:
+      "`apps render` connects to the server directly and mounts the widget in the developer's OWN Chromium, so it works without a project or an API key — and spends no hosted browser to answer a question the local command already answers.",
   },
   list_server_prompts: {
     excluded:
