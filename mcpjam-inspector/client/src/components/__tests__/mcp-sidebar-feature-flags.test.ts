@@ -116,8 +116,8 @@ describe("filterByFeatureFlags", () => {
 
   it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
     // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
-    // now live under one Evaluate entry, so the sidebar carries no eval
-    // sub-items and no eval flag.
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
     const evalsItems = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => item.url.startsWith("/evals"));
@@ -259,21 +259,6 @@ describe("declared nav flags are actually resolved", () => {
       .flatMap((s) => s.items)
       .map((i) => i.title);
     expect(on).toContain("Sessions");
-  });
-
-  it("Sessions lives in Measure, after Evaluate", () => {
-    const measure = navigationSections.find((section) => section.id === "measure");
-    const titles = measure?.items.map((item) => item.title) ?? [];
-
-    expect(titles).toContain("Evaluate");
-    expect(titles).toContain("Sessions");
-    expect(titles.indexOf("Sessions")).toBeGreaterThan(titles.indexOf("Evaluate"));
-    expect(
-      navigationSections
-        .filter((section) => section.id !== "measure")
-        .flatMap((section) => section.items)
-        .map((item) => item.title),
-    ).not.toContain("Sessions");
   });
 });
 

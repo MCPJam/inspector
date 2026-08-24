@@ -49,7 +49,6 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
-import { SuiteDetailOverview } from "./suite-detail-overview";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
@@ -848,14 +847,8 @@ export function SuiteIterationsView({
     runsViewMode,
   ]);
 
-  // Evaluate suite overview uses the checkout-flow identity + run history +
-  // cases layout. Run detail still folds into SuiteDashboard.
-  const showEvaluateSuiteDetail =
-    hideRunActions && !caseListInSidebar && viewMode === "overview";
-
   const showSuiteHeader =
-    !showEvaluateSuiteDetail &&
-    (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
+    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
@@ -1034,10 +1027,11 @@ export function SuiteIterationsView({
   // split (rail included), which felt like a page transition on every click.
   const showFoldedUnifiedDashboard =
     foldRunDetail &&
-    viewMode === "run-detail" &&
-    selectedRunDetails &&
-    !selectedCompareBaseRunId &&
-    !selectedRunTestCaseId;
+    (viewMode === "overview" ||
+      (viewMode === "run-detail" &&
+        selectedRunDetails &&
+        !selectedCompareBaseRunId &&
+        !selectedRunTestCaseId));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1181,44 +1175,6 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
-            ) : showEvaluateSuiteDetail ? (
-              <motion.div
-                key={contentKey}
-                initial={shouldReduceMotion ? false : { opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
-                transition={
-                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
-                }
-                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
-              >
-                <SuiteDetailOverview
-                  suite={suite}
-                  cases={cases}
-                  runs={runs}
-                  runsLoading={runsLoading}
-                  allIterations={allIterations}
-                  hostNamesById={hostNamesById}
-                  onRerun={onRerunWithOverride}
-                  onEditSuite={() => navigation.toSuiteEdit(suite._id)}
-                  onEditCases={onCreateTestCase}
-                  onGenerateTestCases={onGenerateTestCases}
-                  canGenerateTestCases={canGenerateTestCases}
-                  generateTestCasesDisabledReason={
-                    generateTestCasesDisabledReason
-                  }
-                  isGeneratingTestCases={isGeneratingTestCases}
-                  onRunClick={handleRunClick}
-                  onTestCaseClick={(testCaseId) =>
-                    navigation.toTestEdit(suite._id, testCaseId)
-                  }
-                  rerunningSuiteId={rerunningSuiteId}
-                  replayingRunId={replayingRunId}
-                  runningTestCaseId={runningTestCaseId}
-                  evalRunsDisabledReason={evalRunsDisabledReason}
-                  readOnlyConfig={readOnlyConfig}
-                />
-              </motion.div>
             ) : showFoldedUnifiedDashboard ? (
               <div
                 key="unified-results-split"
@@ -1235,7 +1191,20 @@ export function SuiteIterationsView({
                 )}
               </div>
             ) : viewMode === "overview" ? (
-              runsViewMode === "runs" ? (
+              hideRunActions && !caseListInSidebar ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+                >
+                  {renderUnifiedDashboard()}
+                </motion.div>
+              ) : runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}
