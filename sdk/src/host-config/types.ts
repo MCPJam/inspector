@@ -285,6 +285,21 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // How the client handles `notifications/tools/list_changed` (probe-measured;
+  // MCP spec "List Changed Notification" under server/tools, every revision
+  // since 2024-11-05). Two independently-measured facts, not one flag:
+  //
+  //   listens   — the client opens the server->client notification channel at
+  //               all (legacy: the standalone GET SSE stream; 2026-07-28:
+  //               `subscriptions/listen`).
+  //   refetches — after receiving the notification, the client re-issues
+  //               `tools/list`. Only measurable when `listens` is true.
+  //
+  // Absent -> spec-conforming (listens and refetches), like every knob above.
+  toolListChanged?: {
+    listens?: boolean;
+    refetches?: boolean;
+  };
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -403,6 +418,15 @@ export type McpAppsCapabilities = {
     media?: boolean;
   };
   resourceCacheTtl?: boolean;
+  // Whether the host forwards the `structuredContent` half of a tool result
+  // to the widget when the widget itself calls a tool (probe-measured; MCP
+  // spec "Tool Result" -> "Structured Content" under server/tools). A tool
+  // result has two halves - `content` blocks and `structuredContent` - and
+  // some hosts strip the JSON half on the way back (Cursor 3.4 does), so a
+  // widget reading it silently breaks. Absent -> forwarded (spec-conforming).
+  toolResult?: {
+    structuredContent?: boolean;
+  };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;

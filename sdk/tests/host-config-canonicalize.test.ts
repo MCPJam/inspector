@@ -695,6 +695,70 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields", () => {
+  it("round-trips both fields and omits them when absent", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false },
+          apps: {
+            mcpAppsOverrides: { toolResult: { structuredContent: false } },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      toolListChanged: { listens: false },
+      apps: { mcpAppsOverrides: { toolResult: { structuredContent: false } } },
+    });
+
+    const absent = canonicalizeHostConfigV2(base());
+    expect(absent.mcpProfile).toBeUndefined();
+  });
+
+  it("hashes an empty record the same as absent, so pre-feature configs keep their hash", async () => {
+    const emptyHash = await hash(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: {},
+          apps: { mcpAppsOverrides: { toolResult: {} } },
+        },
+      })
+    );
+    const absentHash = await hash(
+      base({ mcpProfile: { profileVersion: 1 } })
+    );
+    expect(emptyHash).toBe(absentHash);
+  });
+
+  it("throws on an unknown key rather than storing it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            toolListChanged: { subscribes: true } as never,
+          },
+        })
+      )
+    ).toThrow(/toolListChanged has unknown key "subscribes"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: { toolResult: { content: true } as never },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult has unknown key "content"/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
   // Item 5: fail-fast on missing required record fields. The previous
   // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}

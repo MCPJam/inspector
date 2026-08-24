@@ -105,6 +105,7 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "cspConnectDomains",
   "cspResourceDomains",
   "resourceCacheTtl",
+  "toolResult",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -846,6 +847,21 @@ function canonicalizeMcpProfile(
     }
   }
 
+  // Sibling to the enum-typed conformance knobs above, but a nested boolean
+  // record (two independently-measured facts) rather than a mode string.
+  // Same omit-when-absent discipline: absent -> spec-conforming, hashes
+  // stable.
+  if (input.toolListChanged !== undefined) {
+    const listChanged = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolListChanged",
+      input.toolListChanged,
+      ["listens", "refetches"]
+    );
+    if (Object.keys(listChanged).length > 0) {
+      out.toolListChanged = listChanged;
+    }
+  }
+
   // A legacy pin must be one of the versions accepted by initialize. Derive a
   // missing list because initialize needs one. Modern pins use server/discover
   // and are deliberately separate from the legacy initialize accept-list.
@@ -1235,6 +1251,15 @@ function canonicalizeMcpProfile(
           );
           if (Object.keys(domains).length > 0) {
             mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
+        } else if (key === "toolResult") {
+          const toolResult = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.toolResult",
+            value,
+            ["structuredContent"]
+          );
+          if (Object.keys(toolResult).length > 0) {
+            mcpAppsOverridesOut.toolResult = toolResult;
           }
         } else if (key === "widgetDisplayModeRequests") {
           if (
