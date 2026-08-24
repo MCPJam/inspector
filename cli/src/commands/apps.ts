@@ -55,6 +55,7 @@ import {
   runWidgetSessionSnapshot,
   runWidgetSessionScriptedStep,
   parseScriptedStepInput,
+  parsePriorWidgetToolCalls,
 } from "../lib/widget-session.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
@@ -551,6 +552,10 @@ export function registerAppsCommands(program: Command): void {
     .requiredOption("--session <id>", "Session id from `apps session start`")
     .requiredOption("--step <json>", "The step, as a JSON object")
     .option(
+      "--prior-tool-calls <json>",
+      "The `widgetToolCalls` earlier steps returned, as a JSON array. Required for a `widgetToolCalled` assertion: the server drains its buffer after every step, so history is the caller's to carry.",
+    )
+    .option(
       "--screenshot-out <path>",
       "Write the post-step screenshot to a file",
     )
@@ -564,6 +569,7 @@ export function registerAppsCommands(program: Command): void {
         options: {
           session?: string;
           step?: string;
+          priorToolCalls?: string;
           screenshotOut?: string;
           screenshotBase64?: boolean;
           inspectorUrl?: string;
@@ -576,11 +582,15 @@ export function registerAppsCommands(program: Command): void {
           throw usageError("--session is required.");
         }
         const step = parseScriptedStepInput(options.step);
+        const priorWidgetToolCalls = parsePriorWidgetToolCalls(
+          options.priorToolCalls,
+        );
 
         const response = await runWidgetSessionScriptedStep({
           baseUrl: options.inspectorUrl,
           sessionId,
           step,
+          ...(priorWidgetToolCalls ? { priorWidgetToolCalls } : {}),
           timeoutMs: globalOptions.timeout,
         });
 

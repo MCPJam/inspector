@@ -901,7 +901,12 @@ export const renderServerWidgetOperation: PlatformOperation<
     );
     return {
       project: toSelectedProjectInfo(project),
-      server,
+      // NARROWED, like every other live-server operation in this file.
+      // Assigning the raw row would ship a whole `PlatformProjectServer` —
+      // including its config — through a field the type says is `{id, name}`,
+      // so consumers would see fields the contract does not promise and the
+      // published shape would disagree with the declared one.
+      server: toServerInfo(server),
       render,
     };
   },

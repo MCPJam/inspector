@@ -97,13 +97,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   validateGuestTokenMock.mockResolvedValue({ valid: false });
   disposeMock.mockResolvedValue(undefined);
+  // Faithful to the real `runEphemeralConnection`: it PARSES the body against
+  // the route's schema before calling the core. A mock that skipped that would
+  // make every validation test here a test of the mock — the route's own
+  // rejections would never run.
   runEphemeralConnectionMock.mockImplementation(
     async (
       _c: unknown,
       rawBody: Record<string, unknown>,
-      _schema: unknown,
+      schema: { parse: (value: unknown) => unknown },
       coreFn: (m: unknown, b: unknown) => Promise<unknown>,
-    ) => coreFn({}, rawBody),
+    ) => {
+      const { parseWithSchema } = await import("../../web/errors.js");
+      return coreFn({}, parseWithSchema(schema as never, rawBody));
+    },
   );
 });
 
@@ -204,6 +211,27 @@ describe("POST /v1/projects/:projectId/servers/:serverId/widgets/render", () => 
       await post({ toolName: "show_map", includeScreenshot: true })
     ).json();
     expect(body.screenshot.mimeType).toBe("image/jpeg");
+  });
+
+  it("rejects a malformed body without touching the renderer", async () => {
+    for (const body of [
+      { toolName: "" },
+      { toolName: "show_map", parameters: null },
+      { toolName: "show_map", viewport: { width: 0, height: 100 } },
+      { toolName: "show_map", viewport: { width: 99_999, height: 100 } },
+      {},
+    ]) {
+      const response = await post(body as Record<string, unknown>);
+      expect(response.status).toBe(400);
+    }
+    // Nothing invalid should ever reach a browser launch.
+    expect(renderWidgetMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a renderer failure as a 5xx rather than a partial 200", async () => {
+    renderWidgetMock.mockRejectedValue(new Error("listTools exploded"));
+    const response = await post();
+    expect(response.status).toBeGreaterThanOrEqual(500);
   });
 
   it("gives up on a render that outruns the wall clock", async () => {

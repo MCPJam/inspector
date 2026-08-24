@@ -195,11 +195,26 @@ export interface ScriptedStepResult {
  * harness would accept.
  */
 export interface SnapshotElement {
-  role?: { role: string; name?: string };
+  /**
+   * `exact` is always TRUE on a generated target, and that is load-bearing:
+   * Playwright's `getByRole` name matching is substring and case-insensitive
+   * by default, so a widget with `Save` and `Save as` buttons would emit two
+   * unambiguous-looking targets, and posting `{ name: "Save" }` back would
+   * match both and fail the step with a strict-mode violation. The names here
+   * come from the ARIA tree and are already complete, so exact matching is
+   * both correct and what makes them usable.
+   */
+  role?: { role: string; name?: string; exact?: boolean };
   testId?: string;
   /** Visible text, when neither an accessible name nor a test id is available. */
   text?: string;
-  /** True when more than one element matched — pass `nth` to disambiguate. */
+  /**
+   * Which occurrence this is, when a `(role, name)` pair repeats. Present
+   * exactly when `ambiguous` is — a target the caller must disambiguate is
+   * given the means to do it in the same object.
+   */
+  nth?: number;
+  /** True when more than one element matched — use `nth` to disambiguate. */
   ambiguous?: true;
 }
 
@@ -286,12 +301,20 @@ export function parseSnapshotElements(tree: string): SnapshotElement[] {
       ? match[2].replace(/\\(["\\])/g, "$1")
       : undefined;
     const key = `${role}\u0000${name ?? ""}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-    elements.push({ role: { role, ...(name ? { name } : {}) } });
+    const occurrence = counts.get(key) ?? 0;
+    counts.set(key, occurrence + 1);
+    elements.push({
+      role: { role, ...(name ? { name, exact: true } : {}) },
+      // Carried on every element and only KEPT below for the ambiguous ones —
+      // an unambiguous target reads cleaner without it, and `nth` on a unique
+      // match adds nothing.
+      nth: occurrence,
+    });
   }
   for (const element of elements) {
     const key = `${element.role!.role}\u0000${element.role!.name ?? ""}`;
     if ((counts.get(key) ?? 0) > 1) element.ambiguous = true;
+    else delete element.nth;
   }
   return elements;
 }
@@ -1314,16 +1337,29 @@ export class McpAppBrowserHarness {
     // only the eval runner drove it, with its own bounded step list.
     const stepBudgetExceeded =
       widget.actionCount >= this.budgets.maxBrowserStepsPerWidget;
+    // The screenshot budget is per-ITERATION and shared across widgets, so a
+    // scripted step can exhaust it even on a widget with steps to spare —
+    // every successful step captures a frame. Checked with the same split
+    // `executeAction` uses: the step cap DISMISSES the widget (terminal, per
+    // its contract), the screenshot cap only refuses further steps on it.
+    const screenshotBudgetExceeded =
+      this.screenshotCount >= this.budgets.totalScreenshotsPerIteration;
     if (stepBudgetExceeded) {
       await this.unmount(input.toolCallId);
+    }
+    if (stepBudgetExceeded || screenshotBudgetExceeded) {
       return {
         step,
         ok: false,
-        reason: "per-widget step budget exhausted",
+        reason: stepBudgetExceeded
+          ? "per-widget step budget exhausted"
+          : "per-iteration screenshot budget exhausted",
         widgetToolCalls: [],
         followUps: [],
         elapsedMs: Date.now() - started,
-        note: "step_budget_exceeded",
+        note: stepBudgetExceeded
+          ? "step_budget_exceeded"
+          : "screenshot_budget_exceeded",
       };
     }
     widget.actionCount += 1;
@@ -1647,17 +1683,23 @@ export class McpAppBrowserHarness {
     for (const element of elements) {
       if (!element.role?.name) continue;
       try {
-        const testId = await frame
-          .getByRole(
-            element.role.role as Parameters<FrameLocator["getByRole"]>[0],
-            { name: element.role.name, exact: true },
-          )
-          .first()
-          .getAttribute("data-testid", { timeout: SNAPSHOT_ATTRIBUTE_TIMEOUT_MS });
+        const matches = frame.getByRole(
+          element.role.role as Parameters<FrameLocator["getByRole"]>[0],
+          { name: element.role.name, exact: true },
+        );
+        // THIS occurrence, not `.first()`. Reading the first match for every
+        // sibling of an ambiguous pair labelled them all with the first one's
+        // test id — actively misleading precisely when the caller is reaching
+        // for a test id to tell them apart.
+        const testId = await matches
+          .nth(element.nth ?? 0)
+          .getAttribute("data-testid", {
+            timeout: SNAPSHOT_ATTRIBUTE_TIMEOUT_MS,
+          });
         if (testId) element.testId = testId;
       } catch {
-        // A detached or ambiguous element simply has no test id listed. It is
-        // still addressable by role and name.
+        // A detached element simply has no test id listed. It is still
+        // addressable by role, name and nth.
       }
     }
 

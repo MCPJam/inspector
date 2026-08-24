@@ -22,10 +22,22 @@ describe("parseSnapshotElements", () => {
       '- link "Docs" [ref=e3]',
     ].join("\n");
     expect(parseSnapshotElements(tree)).toEqual([
-      { role: { role: "button", name: "Submit" } },
-      { role: { role: "textbox", name: "Email address" } },
-      { role: { role: "link", name: "Docs" } },
+      { role: { role: "button", name: "Submit", exact: true } },
+      { role: { role: "textbox", name: "Email address", exact: true } },
+      { role: { role: "link", name: "Docs", exact: true } },
     ]);
+  });
+
+  it("emits EXACT targets so a name is not a substring match", () => {
+    // Playwright's getByRole name matching is substring and case-insensitive
+    // by default. Without `exact`, these two are unambiguous by name yet
+    // `{ name: "Save" }` matches both, and posting it back fails the step with
+    // a strict-mode violation — the target the snapshot handed you.
+    const parsed = parseSnapshotElements(
+      ['- button "Save"', '- button "Save as"'].join("\n"),
+    );
+    expect(parsed.every((entry) => entry.role?.exact === true)).toBe(true);
+    expect(parsed.every((entry) => entry.ambiguous)).toBeFalsy();
   });
 
   it("lists only roles a step can act on", () => {
@@ -36,18 +48,26 @@ describe("parseSnapshotElements", () => {
       '- button "Pay"',
     ].join("\n");
     expect(parseSnapshotElements(tree)).toEqual([
-      { role: { role: "button", name: "Pay" } },
+      { role: { role: "button", name: "Pay", exact: true } },
     ]);
   });
 
-  it("flags EVERY occurrence of a duplicated (role, name), including the first", () => {
+  it("flags EVERY occurrence of a duplicated (role, name) and numbers them", () => {
     // Only the second sighting proves the collision, but the caller needs to
     // know before using either one — otherwise they discover it when the step
-    // fails on a strict-mode violation.
+    // fails on a strict-mode violation. `nth` ships with the flag so the
+    // target is disambiguable in the same object.
     const tree = ['- button "Delete"', '- button "Delete"'].join("\n");
     const parsed = parseSnapshotElements(tree);
     expect(parsed).toHaveLength(2);
     expect(parsed.every((entry) => entry.ambiguous === true)).toBe(true);
+    expect(parsed.map((entry) => entry.nth)).toEqual([0, 1]);
+  });
+
+  it("omits nth on a unique target", () => {
+    // `nth` on a unique match adds nothing and reads like a warning.
+    const parsed = parseSnapshotElements('- button "Only"');
+    expect(parsed[0]).not.toHaveProperty("nth");
   });
 
   it("keeps an unnamed control addressable by role alone", () => {
@@ -58,7 +78,7 @@ describe("parseSnapshotElements", () => {
 
   it("unescapes a quoted name", () => {
     expect(parseSnapshotElements(String.raw`- button "Say \"hi\""`)).toEqual([
-      { role: { role: "button", name: 'Say "hi"' } },
+      { role: { role: "button", name: 'Say "hi"', exact: true } },
     ]);
   });
 });

@@ -31,7 +31,7 @@ const harnessState = vi.hoisted(() => ({
   } as Record<string, unknown>,
   snapshot: {
     mode: "a11y",
-    tree: "- button \"Reserve\"",
+    tree: '- button "Reserve"',
     elements: [{ role: { role: "button", name: "Reserve" } }],
     capturedAt: 1,
   } as Record<string, unknown>,
@@ -61,7 +61,7 @@ const harnessState = vi.hoisted(() => ({
     };
     this.snapshot = {
       mode: "a11y",
-      tree: "- button \"Reserve\"",
+      tree: '- button "Reserve"',
       elements: [{ role: { role: "button", name: "Reserve" } }],
       capturedAt: 1,
     };
@@ -401,6 +401,53 @@ describe("widget-session route", () => {
       expect((await response.json()).error).toMatch(/step is invalid/);
     });
 
+    it("400s a malformed priorWidgetToolCalls instead of failing inside the harness", async () => {
+      // A `widgetToolCalled` assertion reads `.name` off each entry, so
+      // `[null]` used to reach the harness as a TypeError and come back as a
+      // 200 with a failed step and an internal message — a malformed request
+      // reported as a widget problem. The caller can only fix what we name.
+      const sessionId = await openSession();
+      for (const prior of [[null], ["reserve"], {}, [{ ok: true }]]) {
+        const response = await app.request(
+          `/api/mcp/widget-session/${sessionId}/scripted-step`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              step: {
+                kind: "assert",
+                assertion: { type: "widgetToolCalled", toolName: "reserve" },
+              },
+              priorWidgetToolCalls: prior,
+            }),
+          },
+        );
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toMatch(/priorWidgetToolCalls/);
+      }
+    });
+
+    it("accepts a well-formed tool-call history", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "assert",
+              assertion: { type: "widgetToolCalled", toolName: "reserve" },
+            },
+            priorWidgetToolCalls: [
+              { name: "reserve", args: {}, ok: true, elapsedMs: 1 },
+            ],
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+    });
+
     it("404s both new routes on an unknown session", async () => {
       expect(
         (await app.request("/api/mcp/widget-session/nope/snapshot")).status,
@@ -498,10 +545,9 @@ describe("widget-session route", () => {
     });
 
     it("reports closed:false for an unknown session", async () => {
-      const res = await app.request(
-        "/api/mcp/widget-session/does-not-exist",
-        { method: "DELETE" },
-      );
+      const res = await app.request("/api/mcp/widget-session/does-not-exist", {
+        method: "DELETE",
+      });
       expect(res.status).toBe(200);
       expect((await res.json()).closed).toBe(false);
     });

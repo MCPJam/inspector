@@ -41,6 +41,7 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { renderWidgetForRequest } from "../../utils/widget-render-core.js";
 import { CHROMIUM_INSTALL_HINT } from "../../utils/widget-render-core.js";
 import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { runV1ServerOp } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
 
@@ -173,35 +174,69 @@ widgets.post(
         activeRenders += 1;
         const startedAt = Date.now();
 
-        let result:
-          | Awaited<ReturnType<typeof renderWidgetForRequest>>
-          | undefined;
+        // TEARDOWN IS CHAINED TO THE RENDER, NOT TO THE RACE, and that is the
+        // whole point of this shape.
+        //
+        // The previous revision assigned `result` only after `raceDeadline`
+        // resolved, so on a timeout `result` stayed `undefined` and the
+        // cleanup's `result?.harness?.dispose()` was a no-op — while the
+        // orphaned render kept its Chromium alive and the slot was freed
+        // anyway. Repeated timeouts would then exhaust the replica: exactly
+        // the stuck-widget case the deadline exists to bound, made worse by
+        // the deadline.
+        //
+        // So the render promise is held separately and disposal hangs off IT.
+        // A render that loses the race keeps running (the core takes no abort
+        // signal), and whenever it eventually settles its harness is disposed
+        // and only then is the slot released.
+        const renderPromise = renderWidgetForRequest({
+          mcpClientManager: manager,
+          serverId: body.serverId,
+          toolName: body.toolName,
+          parameters: body.parameters ?? {},
+          injectOpenAiCompat: body.injectOpenAiCompat === true,
+          ...(body.viewport ? { viewport: body.viewport } : {}),
+          keepMounted: false,
+          // D12: snapshot by default, screenshot on request.
+          ...(body.includeSnapshot === false ? {} : { captureSnapshot: true }),
+        });
+
+        const teardown = renderPromise
+          .then(
+            (rendered) => rendered.harness?.dispose(),
+            // A render that REJECTED never produced a harness to dispose.
+            // Swallowed here because the awaiting caller below reports it;
+            // rethrowing would surface an unhandled rejection on the timeout
+            // path, where nobody is awaiting this chain.
+            () => undefined,
+          )
+          .catch((error: unknown) => {
+            // A leaked Chromium is the failure that takes a replica out, so
+            // this pages rather than only landing in Axiom: `logger.warn` is
+            // deliberately Sentry-free, and per AGENTS.md a route catch-site
+            // reports through `reportRouteFailure` so the origin policy makes
+            // the capture decision.
+            reportRouteFailure(
+              "[v1.widgets] headless browser disposal failed",
+              error,
+              {
+                source: "v1.widgets.render.dispose",
+                hop: "mcpjam_internal",
+                context: { toolName: body.toolName },
+              },
+            );
+          })
+          .finally(() => {
+            // Released only once the browser is actually gone. Decrementing
+            // any earlier would let the next request launch a browser while
+            // this one still existed, which is not a ceiling.
+            activeRenders -= 1;
+          });
+
+        let result: Awaited<ReturnType<typeof renderWidgetForRequest>>;
         try {
-          // A REAL deadline, not a log line. The first cut set a timer that
-          // only warned, and `runV1ServerOp`'s `timeoutMs` configures the
-          // ephemeral MCP manager rather than the Playwright render that
-          // follows it — so a widget stuck loading from a slow CDN held its
-          // request, its Chromium, and its concurrency slot indefinitely,
-          // past the wall clock the module advertises.
-          //
-          // The loser of this race is not cancelled (the render core takes no
-          // abort signal), but the `finally` disposes the harness, which is
-          // what actually kills the browser and frees the slot. So the
-          // resources are bounded even though the promise may dangle.
           result = await raceDeadline(
-            renderWidgetForRequest({
-              mcpClientManager: manager,
-              serverId: body.serverId,
-              toolName: body.toolName,
-              parameters: body.parameters ?? {},
-              injectOpenAiCompat: body.injectOpenAiCompat === true,
-              ...(body.viewport ? { viewport: body.viewport } : {}),
-              keepMounted: false,
-              // D12: snapshot by default, screenshot on request.
-              ...(body.includeSnapshot === false
-                ? {}
-                : { captureSnapshot: true }),
-            }),
+            renderPromise,
             RENDER_WALL_CLOCK_MS,
             body.toolName,
           );
@@ -271,27 +306,11 @@ widgets.post(
             },
           };
         } finally {
-          // THE SLOT IS HELD UNTIL THE BROWSER IS ACTUALLY GONE. Decrementing
-          // before a detached `dispose()` settles would let the next request
-          // launch a browser while every previous context still existed —
-          // which defeats the per-replica ceiling this counter exists to be,
-          // and accumulates Chromium processes until the replica dies.
-          //
-          // Still detached from the RESPONSE: the caller is not made to wait
-          // for teardown, only the next render is.
-          void (async () => {
-            try {
-              await result?.harness?.dispose();
-            } catch (error) {
-              // A leaked Chromium is the failure mode that takes a replica
-              // out; it must never be silent.
-              logger.warn("[v1/widgets] harness disposal failed", {
-                error: error instanceof Error ? error.message : String(error),
-              });
-            } finally {
-              activeRenders -= 1;
-            }
-          })();
+          // Nothing to do here: `teardown` was scheduled the moment the render
+          // started and runs on every path, including the one where this
+          // function threw before `result` existed. Referenced so the chain is
+          // visibly intentional rather than looking like a floating promise.
+          void teardown;
         }
       },
       (ctx, result) => v1Resource(ctx, result),

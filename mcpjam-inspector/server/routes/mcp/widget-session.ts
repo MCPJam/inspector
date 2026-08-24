@@ -115,7 +115,10 @@ function parseBrowserAction(
   }
   if (a.scrollAmount !== undefined && a.scrollAmount !== null) {
     if (!isFiniteNumber(a.scrollAmount) || a.scrollAmount <= 0) {
-      return { ok: false, error: "scrollAmount must be a number greater than 0" };
+      return {
+        ok: false,
+        error: "scrollAmount must be a number greater than 0",
+      };
     }
     spec.scrollAmount = a.scrollAmount;
   }
@@ -256,8 +259,9 @@ widgetSession.post("/", async (c) => {
 widgetSession.get("/:id/snapshot", async (c) => {
   const sessionId = c.req.param("id");
   try {
-    const { snapshot, expiresAt } =
-      await widgetRenderSessions.captureSnapshot(sessionId);
+    const { snapshot, expiresAt } = await widgetRenderSessions.captureSnapshot(
+      sessionId,
+    );
     return c.json({ snapshot, expiresAt }, 200);
   } catch (error) {
     return widgetSessionErrorResponse(c, error, "Snapshot failed");
@@ -276,19 +280,49 @@ widgetSession.post("/:id/scripted-step", async (c) => {
   } catch {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
-  const parsed = scriptedStepSchema.safeParse((body as { step?: unknown })?.step);
+  const parsed = scriptedStepSchema.safeParse(
+    (body as { step?: unknown })?.step,
+  );
   if (!parsed.success) {
     return c.json(
       {
         error: `step is invalid: ${parsed.error.issues
-          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+          .map(
+            (issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`,
+          )
           .join("; ")}`,
       },
       400,
     );
   }
-  const prior = (body as { priorWidgetToolCalls?: unknown })
+  const priorInput = (body as { priorWidgetToolCalls?: unknown })
     ?.priorWidgetToolCalls;
+  // VALIDATED, not forwarded. A `widgetToolCalled` assertion reads `.name` off
+  // each entry, so `[null]` reached the harness as a TypeError and came back
+  // as a 200 with a failed step and an internal error message — a malformed
+  // request reported as a widget problem. The caller can only fix what we
+  // name, so this is a 400.
+  let prior: Array<{ name: string }> | undefined;
+  if (priorInput !== undefined) {
+    if (
+      !Array.isArray(priorInput) ||
+      !priorInput.every(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          typeof (entry as { name?: unknown }).name === "string",
+      )
+    ) {
+      return c.json(
+        {
+          error:
+            "priorWidgetToolCalls must be an array of objects with a string `name` — pass the widgetToolCalls from earlier steps.",
+        },
+        400,
+      );
+    }
+    prior = priorInput as Array<{ name: string }>;
+  }
 
   try {
     const { result, expiresAt } = await widgetRenderSessions.runScriptedStep(
@@ -297,7 +331,7 @@ widgetSession.post("/:id/scripted-step", async (c) => {
       // An `assert` step can check "the widget called tool X", which is only
       // answerable against the calls the CALLER has accumulated across steps —
       // the harness drains its buffer each step and cannot see the history.
-      Array.isArray(prior) ? (prior as never[]) : undefined,
+      prior as never[] | undefined,
     );
     return c.json(
       {

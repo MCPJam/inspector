@@ -283,6 +283,45 @@ export async function runWidgetSessionScriptedStep(
  * server accepts. This only guarantees the server receives a shape it can
  * parse and report on.
  */
+/**
+ * Parse `--prior-tool-calls` — the widget tool calls earlier steps produced.
+ *
+ * The server DRAINS its buffer after every step, so it cannot see history: a
+ * `widgetToolCalled` assertion is only answerable against what the caller has
+ * accumulated. Without this the assertion always saw an empty list and could
+ * never pass, even when the previous step's own output showed the call.
+ */
+export function parsePriorWidgetToolCalls(
+  raw: string | undefined,
+): WidgetToolCall[] | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw usageError(
+      `--prior-tool-calls is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        typeof (entry as { name?: unknown }).name === "string",
+    )
+  ) {
+    throw usageError(
+      "--prior-tool-calls must be a JSON array of the `widgetToolCalls` entries earlier steps returned.",
+    );
+  }
+  return parsed as WidgetToolCall[];
+}
+
 export function parseScriptedStepInput(raw: string | undefined): unknown {
   const text = raw?.trim();
   if (!text) {
