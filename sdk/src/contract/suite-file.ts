@@ -203,13 +203,23 @@ export type EvalSuiteFileTarget = z.infer<typeof evalSuiteFileTargetSchema>;
  * semantics are pinned so a loader is accountable to this file rather than to
  * memory:
  *
- *   - `minEligibleTrials`     — no default; absent means "no minimum".
+ *   - `minEligibleTrials`     — no numeric default, but ABSENT IS NOT "no
+ *     minimum". Omission selects the default coverage floor: every configured
+ *     trial must have been attempted, and the suite must have at least one
+ *     gradeable trial. An explicit `N` REPLACES that floor with
+ *     `eligibleTrials >= N`, which deliberately tolerates unattempted trials.
  *   - `minCompletionRate`     — defaults to **0.8**.
  *   - `maxEvaluatorErrorRate` — defaults to **0.1**.
  *
+ * The three are INDEPENDENT checks; the loader resolves the coverage rule into
+ * `ResolvedEvalSuiteFileValidity.coverage`, and
+ * `contract/verdict-policy.ts` is where a verdict is decided against it.
+ *
  * A run that misses any of these is INVALID, which is not the same as failed: a
  * suite whose judge errored on half its iterations has not measured the server,
- * and reporting that as a failure blames the server for the grader.
+ * and reporting that as a failure blames the server for the grader. Reading
+ * omission as "no minimum" is the same bug in a quieter form: it lets a suite
+ * that ran one trial out of thirty report a confident pass.
  */
 export const evalSuiteFileValiditySchema = z
   .object({

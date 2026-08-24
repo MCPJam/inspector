@@ -20,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_VALIDITY_DEFAULTS,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,
@@ -200,13 +201,34 @@ describe("defaults are resolved in memory and never written back", () => {
     const { authored, resolved } = loadOrThrow(asText(MINIMAL));
     expect(authored.defaults.validity).toEqual({});
     expect(resolved.defaults.validity).toEqual({
+      coverage: SUITE_FILE_DEFAULT_COVERAGE,
       minCompletionRate: SUITE_FILE_VALIDITY_DEFAULTS.minCompletionRate,
       maxEvaluatorErrorRate: SUITE_FILE_VALIDITY_DEFAULTS.maxEvaluatorErrorRate,
     });
-    // `minEligibleTrials` has NO default: absent means "no minimum", and a
-    // number here would be one nobody wrote.
-    expect(resolved.defaults.validity.minEligibleTrials).toBeUndefined();
+    // An omitted `minEligibleTrials` is not "no minimum": it selects the
+    // coverage RULE — every configured trial attempted, at least one gradeable
+    // — and the resolved value says so rather than leaving a reader to invent
+    // `?? 0`.
+    expect(resolved.defaults.validity.coverage).toEqual({
+      kind: "allConfiguredTrialsAttempted",
+      minGradeableTrials: 1,
+    });
     expect(resolved.defaults.captureLevel).toBe("full");
+  });
+
+  it("an explicit minEligibleTrials REPLACES the default coverage rule", () => {
+    const authored = {
+      ...MINIMAL,
+      defaults: { ...MINIMAL.defaults, validity: { minEligibleTrials: 3 } },
+    } as EvalSuiteFile;
+    const { resolved } = loadOrThrow(asText(authored));
+    expect(resolved.defaults.validity.coverage).toEqual({
+      kind: "minEligibleTrials",
+      minEligibleTrials: 3,
+    });
+    // The other two remain independent checks, still at their own defaults.
+    expect(resolved.defaults.validity.minCompletionRate).toBe(0.8);
+    expect(resolved.defaults.validity.maxEvaluatorErrorRate).toBe(0.1);
   });
 
   it("resolves suite defaults onto every case", () => {

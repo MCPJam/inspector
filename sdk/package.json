@@ -108,6 +108,8 @@
     "bundle:runtimes": "npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime",
     "generate:eval-suite-schema": "tsx scripts/generate-eval-suite-schema.ts",
     "check:eval-suite-schema": "tsx scripts/generate-eval-suite-schema.ts --check",
+    "generate:eval-verdict-policy-schema": "tsx scripts/generate-eval-verdict-policy-schema.ts",
+    "check:eval-verdict-policy-schema": "tsx scripts/generate-eval-verdict-policy-schema.ts --check",
     "generate:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts",
     "check:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts --check",
     "check:host-catalog-fallback:remote": "node --import tsx scripts/check-host-catalog-fallback-remote.ts",
