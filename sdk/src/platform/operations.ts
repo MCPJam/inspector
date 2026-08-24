@@ -5458,7 +5458,12 @@ const sendChatMessageInput = z.object({
       "Run against these project servers. Mutually exclusive with environmentId. First turn only.",
     ),
   systemPrompt: z.string().max(8000).optional().describe("First turn only."),
-  temperature: z.number().min(0).max(2).optional(),
+  temperature: z
+    .number()
+    .min(0)
+    .max(2)
+    .optional()
+    .describe("First turn only — pinned to the session and reused thereafter."),
   maxSteps: z
     .number()
     .int()
@@ -5476,19 +5481,25 @@ const sendChatMessageInput = z.object({
     .array(z.string().trim().min(1))
     .max(20)
     .optional()
-    .describe("Narrow the target to this subset of its servers."),
+    .describe(
+      "Narrow THIS TURN to a subset of the target's servers. Per-turn, not pinned: re-send it on every turn you want narrowed. The response reports advertisedToolCount/excludedToolCount so the effective surface is never a guess.",
+    ),
   allowedTools: z
     .array(z.string().trim().min(1))
     .max(100)
     .optional()
-    .describe("Advertise only these tool names."),
+    .describe(
+      "Advertise only these tool names, for THIS TURN. Per-turn, not pinned: re-send it on every turn you want narrowed.",
+    ),
   maxToolCalls: z
     .number()
     .int()
     .min(0)
     .max(16)
     .optional()
-    .describe("Cap the tool calls this turn may make. 0 answers without tools."),
+    .describe(
+      "Cap the tool calls this turn may make, enforced at dispatch. 0 advertises no tools at all. Per-turn.",
+    ),
 });
 
 export type SendChatMessageInput = z.infer<typeof sendChatMessageInput>;

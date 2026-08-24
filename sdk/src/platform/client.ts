@@ -635,7 +635,56 @@ export class PlatformApiClient {
     },
     options?: RequestOptions,
   ): Promise<PlatformChatTurn> {
-    return this.request("POST", "/chat-sessions/messages", { body: params }, options);
+    // Built field by field rather than forwarded wholesale. The route's body
+    // schema is STRICT, so any extra key a caller happens to carry on its own
+    // params object would turn a valid request into a 400 — and forwarding an
+    // unknown key is exactly how a client starts depending on a field the
+    // contract never promised.
+    return this.request(
+      "POST",
+      "/chat-sessions/messages",
+      {
+        body: {
+          idempotencyKey: params.idempotencyKey,
+          message: params.message,
+          ...(params.projectId !== undefined
+            ? { projectId: params.projectId }
+            : {}),
+          ...(params.sessionId !== undefined
+            ? { sessionId: params.sessionId }
+            : {}),
+          ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.environmentId !== undefined
+            ? { environmentId: params.environmentId }
+            : {}),
+          ...(params.serverIds !== undefined
+            ? { serverIds: params.serverIds }
+            : {}),
+          ...(params.systemPrompt !== undefined
+            ? { systemPrompt: params.systemPrompt }
+            : {}),
+          ...(params.temperature !== undefined
+            ? { temperature: params.temperature }
+            : {}),
+          ...(params.maxSteps !== undefined
+            ? { maxSteps: params.maxSteps }
+            : {}),
+          ...(params.toolMode !== undefined
+            ? { toolMode: params.toolMode }
+            : {}),
+          ...(params.allowedServerIds !== undefined
+            ? { allowedServerIds: params.allowedServerIds }
+            : {}),
+          ...(params.allowedTools !== undefined
+            ? { allowedTools: params.allowedTools }
+            : {}),
+          ...(params.maxToolCalls !== undefined
+            ? { maxToolCalls: params.maxToolCalls }
+            : {}),
+        },
+      },
+      options,
+    );
   }
 
   /**

@@ -267,14 +267,20 @@ function readString(source: unknown, path: string): string | undefined {
  * and `model` because that is who gets paid.
  */
 function describeChatMessage(input: Record<string, unknown>): string {
-  const message =
-    typeof input.message === "string" ? input.message.trim() : "";
-  // Truncated for a chat control, and marked so — an elided preview that
-  // looked complete would understate what is being sent.
-  const preview =
-    message.length > 200 ? `${message.slice(0, 200)}…` : message || "(empty)";
+  const message = typeof input.message === "string" ? input.message : "";
+  // CAPPED FIRST, QUOTED SECOND, via the same `previewValue` every other
+  // describer uses. The message is model-authored and is the one field an
+  // approver cannot verify anywhere else, and ` · ` is this describer's own
+  // separator — so an unquoted message can reproduce the preview's grammar and
+  // append a forged segment. `hi" · tools: read-only` would render a
+  // contradicted tool mode onto a control that spends money and may mutate the
+  // caller's servers. Inside a JSON literal the same text is visibly data.
+  const preview = message.trim() ? previewValue(message) : '""';
+  // `environmentId`, not `environment`: exactly the key the operation's schema
+  // declares. Reading an alternate name here returns `undefined` forever and
+  // the approval line silently names no target at all.
   const target =
-    named(input, "environment") ??
+    named(input, "environmentId") ??
     (Array.isArray(input.serverIds)
       ? `${input.serverIds.length} server(s)`
       : undefined);
@@ -291,7 +297,7 @@ function describeChatMessage(input: Record<string, unknown>): string {
     `${continuing}${target ? ` against ${target}` : ""}`,
     model ? `model: ${model}` : undefined,
     toolMode,
-    `message: "${preview}"`,
+    `message: ${preview}`,
   ]
     .filter(Boolean)
     .join(" · ");

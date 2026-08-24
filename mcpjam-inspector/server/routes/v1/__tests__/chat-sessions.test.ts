@@ -338,6 +338,32 @@ describe("POST /v1/chat-sessions/messages", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("ACCEPTS per-turn bounds on a continuation", async () => {
+    // These are not session config, and refusing them was actively harmful:
+    // a first turn could narrow to two tools, every continuation would be
+    // rejected for restating the narrowing, and the turn would then run
+    // against the full set — the restriction evaporating while the API
+    // insisted the caller must not repeat it.
+    queryMock.mockResolvedValue(sessionRow());
+    mutationMock.mockResolvedValue({
+      status: "in_progress",
+      retryAfterMs: 10,
+    });
+    serveBlobs({ "https://blob.test/messages": [] });
+    const response = await turn({
+      sessionId: SESSION,
+      idempotencyKey: "k9",
+      message: "hi",
+      allowedTools: ["search"],
+      allowedServerIds: ["srv_1"],
+      maxToolCalls: 1,
+      maxSteps: 3,
+    });
+    // Reached the lease rather than being refused at the boundary.
+    expect(response.status).toBe(409);
+    expect((await response.json()).details.reason).toBe("TURN_IN_PROGRESS");
+  });
+
   it("refuses to append to a session this surface did not create", async () => {
     queryMock.mockResolvedValue(sessionRow({ origin: "playground" }));
     const response = await turn({
@@ -531,6 +557,135 @@ describe("computeExcludedToolNames", () => {
         { toolMode: "read_only" },
       ),
     ).rejects.toThrow(/tool policy cannot be applied/);
+  });
+});
+
+// ── Lease release ───────────────────────────────────────────────────────────
+
+describe("shouldReleaseLease", () => {
+  const { shouldReleaseLease } = __testing;
+
+  it("KEEPS the lease once the engine was entered, even on timeout", () => {
+    // The bug this pins: a turn that timed out after tool calls already ran
+    // used to hand its lease back, so the caller's retry with the required
+    // stable idempotencyKey claimed a fresh one, billed the model again, and
+    // repeated the side effects. The TTL — not a release — is what settles a
+    // turn that may have spent.
+    expect(
+      shouldReleaseLease({
+        leaseTurnId: "t1",
+        leaseSettled: false,
+        modelCallStarted: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("releases a lease whose turn never reached the engine", () => {
+    // Bad target, dead server, unresolvable model. Nothing spent, so holding
+    // the session for the full TTL would be a self-inflicted outage on the
+    // failure path that most needs to stay usable.
+    expect(
+      shouldReleaseLease({
+        leaseTurnId: "t1",
+        leaseSettled: false,
+        modelCallStarted: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves a settled lease alone", () => {
+    // The ingest completed it inside its own mutation.
+    expect(
+      shouldReleaseLease({
+        leaseTurnId: "t1",
+        leaseSettled: true,
+        modelCallStarted: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("is a no-op when nothing was ever claimed", () => {
+    expect(
+      shouldReleaseLease({
+        leaseTurnId: undefined,
+        leaseSettled: false,
+        modelCallStarted: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+// ── Tool-call budget ────────────────────────────────────────────────────────
+
+describe("maxToolCalls", () => {
+  const { capToolCalls, computeExcludedToolNames } = __testing;
+  const manager = (tools: unknown[]) =>
+    ({ getTools: async () => tools } as never);
+
+  it("advertises NOTHING when the cap is zero", async () => {
+    // Enforcing zero by refusing at dispatch would be worse than useless: the
+    // tool has already cost prompt tokens and shaped the model's plan, and the
+    // turn answers "I tried to call a tool and was blocked" instead of
+    // answering the question.
+    const result = await computeExcludedToolNames(
+      manager([
+        { name: "search", annotations: { readOnlyHint: true } },
+        { name: "fetch", annotations: { readOnlyHint: true } },
+      ]),
+      ["srv"],
+      { toolMode: "read_only", excludeAll: true },
+    );
+    expect(result.excluded.sort()).toEqual(["fetch", "search"]);
+    expect(result.advertised).toBe(0);
+  });
+
+  it("caps CALLS, not steps — including parallel calls in one step", async () => {
+    // The bug this pins: a step budget bounds round trips, and one step can
+    // emit several tool calls, so "at most 2" could execute five.
+    const executed: string[] = [];
+    const make = (name: string) => ({
+      execute: async () => {
+        executed.push(name);
+        return { ok: true };
+      },
+    });
+    const capped = capToolCalls(
+      { a: make("a"), b: make("b") } as never,
+      2,
+    ) as unknown as Record<
+      string,
+      { execute: (...a: unknown[]) => Promise<unknown> }
+    >;
+
+    // Four calls issued together, as one step's parallel fan-out would.
+    const results = await Promise.all([
+      capped.a!.execute({}),
+      capped.b!.execute({}),
+      capped.a!.execute({}),
+      capped.b!.execute({}),
+    ]);
+
+    expect(executed).toHaveLength(2);
+    const refused = results.filter(
+      (r) => (r as { isError?: boolean }).isError === true,
+    );
+    expect(refused).toHaveLength(2);
+    // The refusal is RETURNED, not thrown: a throw would surface as an engine
+    // failure and lose the turn's answer entirely.
+    expect(
+      JSON.stringify((refused[0] as { content: unknown }).content),
+    ).toMatch(/budget/);
+  });
+
+  it("passes client-fulfilled entries through untouched", async () => {
+    // No `execute` means the server never dispatches it, so there is nothing
+    // to count — and inventing one would defeat the engine's no-execute gates.
+    const entry = { description: "client tool" };
+    const capped = capToolCalls(
+      { ui_x: entry } as never,
+      1,
+    ) as unknown as Record<string, unknown>;
+    expect(capped.ui_x).toBe(entry);
   });
 });
 

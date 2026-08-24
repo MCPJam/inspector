@@ -380,6 +380,12 @@ type TraceOptions = PlatformOptions & {
 /** Parse a float option, refusing a non-numeric value rather than dropping it. */
 function parseFloatOption(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
+  // Rejected BEFORE `Number`, which maps "" and "   " to 0 — so an empty flag
+  // would silently pin the session to a temperature of zero rather than
+  // telling the caller their value was missing.
+  if (value.trim() === "") {
+    throw usageError("--temperature needs a number.");
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     throw usageError("--temperature must be a number.");

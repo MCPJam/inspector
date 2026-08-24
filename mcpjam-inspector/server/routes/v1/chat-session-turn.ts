@@ -52,7 +52,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { MODEL_ID_PREFIX_TO_PROVIDER } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -106,16 +106,36 @@ const CONNECT_TIMEOUT_MS = 30_000;
  * `CONFIG_ON_CONTINUATION` refusal can NAME what the caller sent — an error
  * that says "you may not send config" without saying which key it saw is an
  * error the caller has to bisect.
+ *
+ * WHAT IS *NOT* HERE IS THE INTERESTING PART. `allowedServerIds`,
+ * `allowedTools`, `maxToolCalls` and `maxSteps` are PER-TURN bounds, accepted
+ * on every turn and applied to that turn only.
+ *
+ * They started out on this list and had to come off, because being here made
+ * them worse than useless: a first turn could narrow to two tools, every
+ * continuation would be REFUSED for re-sending the narrowing, and the turn
+ * would then run against the full set. The restriction silently evaporated on
+ * turn two while the API insisted the caller must not restate it.
+ *
+ * Persisting them instead is not available: the backend's ingest boundary
+ * projects `resumeConfig` through an allowlist, and only `modelId`,
+ * `toolMode`, `environmentId` and `serverIds` are agent pins. A field added
+ * here that the boundary does not carry validates, returns 200, and is
+ * dropped — so the honest option is the explicit one. `toolMode` remains the
+ * pinned CEILING; these narrow within it, per turn, and the response reports
+ * `advertisedToolCount`/`excludedToolCount` so the effective surface is never
+ * a guess.
  */
 const CONFIG_FIELDS = [
   "modelId",
   "environmentId",
   "serverIds",
   "systemPrompt",
+  // Pinned, and it genuinely persists: `temperature` is carried by the ingest
+  // boundary's `resumeConfig` projection, so a continuation reloads the
+  // session's own value instead of silently reverting to the model default.
   "temperature",
   "toolMode",
-  "allowedServerIds",
-  "allowedTools",
 ] as const;
 
 const turnSchema = z
@@ -363,7 +383,12 @@ async function resolveTarget(
 async function computeExcludedToolNames(
   manager: MCPClientManager,
   serverIds: string[],
-  policy: { toolMode: AgentTurnToolMode; allowedTools?: string[] },
+  policy: {
+    toolMode: AgentTurnToolMode;
+    allowedTools?: string[];
+    /** `maxToolCalls: 0` — advertise nothing at all. */
+    excludeAll?: true;
+  },
 ): Promise<{ excluded: string[]; advertised: number }> {
   let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
   try {
@@ -390,6 +415,10 @@ async function computeExcludedToolNames(
   for (const tool of tools) {
     const name = typeof tool?.name === "string" ? tool.name : undefined;
     if (!name) continue;
+    if (policy.excludeAll) {
+      excluded.push(name);
+      continue;
+    }
     const readOnly = tool.annotations?.readOnlyHint === true;
     // An UNANNOTATED tool is excluded under `read_only`. The MCP default for
     // an absent `readOnlyHint` is "assume it mutates", and treating silence as
@@ -401,6 +430,88 @@ async function computeExcludedToolNames(
     else advertised += 1;
   }
   return { excluded, advertised };
+}
+
+/**
+ * Should a claimed lease be handed back when this turn ends?
+ *
+ * The three-way distinction IS the idempotency guarantee, so it is stated
+ * once, here, rather than inlined in a `finally` where the reasoning would be
+ * invisible:
+ *
+ *   - SETTLED — the ingest completed the lease inside its own mutation. There
+ *     is nothing to release.
+ *   - SPENT (`modelCallStarted`) — the engine was entered, so money may be
+ *     gone and tools may have run against the caller's servers. Releasing here
+ *     would free the required-and-stable idempotencyKey to claim a fresh lease
+ *     and re-run all of it, which is precisely what the lease exists to
+ *     prevent. These keep the lease and let the TTL expire it, so a retry
+ *     inside the window is refused rather than re-charged.
+ *   - NEITHER — the turn died before any model call (bad target, dead server,
+ *     unresolvable model). Release: the caller's retry should run, and holding
+ *     the session locked for the full TTL would be a self-inflicted outage on
+ *     the failure path that most needs to stay usable.
+ */
+function shouldReleaseLease(state: {
+  leaseTurnId: string | undefined;
+  leaseSettled: boolean;
+  modelCallStarted: boolean;
+}): boolean {
+  return Boolean(
+    state.leaseTurnId && !state.leaseSettled && !state.modelCallStarted,
+  );
+}
+
+/**
+ * Wrap every executable tool so the turn cannot exceed `maxToolCalls`.
+ *
+ * ENFORCED AT DISPATCH, not by bounding steps. The engine may emit several
+ * tool calls in ONE step, so a step budget is an upper bound on round trips
+ * and not on calls — a caller who asked for at most two could get five. The
+ * counter here is shared across every tool in the set, so the cap is on the
+ * TURN's calls rather than per tool.
+ *
+ * Over the cap the tool RETURNS an error rather than throwing. A throw would
+ * surface as an engine failure and lose the turn's answer; a returned error
+ * tells the model, in the place it already reads tool failures, that it has
+ * spent its budget and should answer with what it has.
+ *
+ * Entries with no `execute` are passed through untouched: those are
+ * client-fulfilled tools the server never dispatches, so there is nothing here
+ * to count, and wrapping one would invent an `execute` the engine's
+ * no-execute gates depend on being absent.
+ */
+function capToolCalls(tools: ToolSet, maxToolCalls: number): ToolSet {
+  let used = 0;
+  const capped: ToolSet = {};
+  for (const [name, entry] of Object.entries(tools)) {
+    const execute = (entry as { execute?: unknown }).execute;
+    if (typeof execute !== "function") {
+      capped[name] = entry;
+      continue;
+    }
+    capped[name] = {
+      ...entry,
+      execute: async (...args: unknown[]) => {
+        if (used >= maxToolCalls) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `This turn's tool-call budget (maxToolCalls: ${maxToolCalls}) is exhausted. Answer with what you already have; do not call more tools.`,
+              },
+            ],
+          };
+        }
+        // Counted BEFORE awaiting, so concurrent parallel calls in one step
+        // cannot all observe the pre-call count and slip past together.
+        used += 1;
+        return (execute as (...a: unknown[]) => unknown)(...args);
+      },
+    } as ToolSet[string];
+  }
+  return capped;
 }
 
 // ── The route ───────────────────────────────────────────────────────────────
@@ -435,6 +546,7 @@ async function handleTurn(c: Context): Promise<Response> {
     modelId: string;
     toolMode: AgentTurnToolMode;
     systemPrompt?: string;
+    temperature?: number;
     environmentId?: string;
     serverIds?: string[];
   };
@@ -496,6 +608,9 @@ async function handleTurn(c: Context): Promise<Response> {
       modelId: resume.modelId,
       toolMode: resume.toolMode ?? "read_only",
       ...(resume.systemPrompt ? { systemPrompt: resume.systemPrompt } : {}),
+      ...(typeof resume.temperature === "number"
+        ? { temperature: resume.temperature }
+        : {}),
       ...(resume.environmentId ? { environmentId: resume.environmentId } : {}),
       ...(resume.serverIds ? { serverIds: resume.serverIds } : {}),
     };
@@ -522,6 +637,9 @@ async function handleTurn(c: Context): Promise<Response> {
       modelId: body.modelId,
       toolMode: body.toolMode ?? "read_only",
       ...(body.systemPrompt ? { systemPrompt: body.systemPrompt } : {}),
+      ...(body.temperature !== undefined
+        ? { temperature: body.temperature }
+        : {}),
       ...(body.environmentId ? { environmentId: body.environmentId } : {}),
       ...(body.serverIds ? { serverIds: body.serverIds } : {}),
     };
@@ -544,6 +662,24 @@ async function handleTurn(c: Context): Promise<Response> {
   let manager: MCPClientManager | undefined;
   let leaseTurnId: string | undefined;
   let leaseSettled = false;
+  /**
+   * Set the instant before the engine is invoked, and never cleared.
+   *
+   * It gates the lease RELEASE in the `finally`, and the distinction it draws
+   * is the whole idempotency guarantee. Releasing a lease frees its
+   * idempotencyKey to claim a fresh one — which is exactly right for a turn
+   * that died BEFORE any model call (bad target, dead server, unresolvable
+   * model): the caller's retry should run, and holding the session locked for
+   * the full TTL would be a self-inflicted outage on the failure path.
+   *
+   * It is exactly WRONG once the engine has been entered. A turn that timed
+   * out or hit an engine error after tool calls already executed has spent
+   * money and may have caused side effects on the caller's servers; releasing
+   * there would let the required-and-stable idempotencyKey re-run all of it,
+   * which is the precise scenario the lease exists to prevent. Those turns
+   * keep the lease and let the TTL expire it.
+   */
+  let modelCallStarted = false;
   const abortController = new AbortController();
   const wallClock = setTimeout(
     () => abortController.abort(),
@@ -643,6 +779,12 @@ async function handleTurn(c: Context): Promise<Response> {
       {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
+        // `maxToolCalls: 0` means "answer without tools". Enforced by not
+        // ADVERTISING any, not by letting the model call one and refusing at
+        // dispatch: an advertised tool has already cost prompt tokens and
+        // shaped the model's plan, and a turn that answers "I tried to call a
+        // tool and was blocked" is not the turn the caller asked for.
+        ...(body.maxToolCalls === 0 ? { excludeAll: true as const } : {}),
       },
     );
 
@@ -651,14 +793,27 @@ async function handleTurn(c: Context): Promise<Response> {
       selectedServers: selectedServerIds,
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
-      ...(body.temperature !== undefined
-        ? { temperature: body.temperature }
+      ...(pins.temperature !== undefined
+        ? { temperature: pins.temperature }
         : {}),
       ...(excluded.length > 0 ? { excludeMcpToolNames: excluded } : {}),
       // No progressive discovery: the caller chose this target deliberately
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
+
+    // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
+    // than folded into the step budget. One step can emit several parallel
+    // tool calls, so a step bound limits round trips and would let a caller
+    // who asked for "at most 2 calls" get five.
+    //
+    // Computed BEFORE `resolveTurnRuntime`, which inspects the advertised set:
+    // handing it the uncapped one would let it decide on a tool surface the
+    // turn is not going to run with.
+    const tools =
+      body.maxToolCalls !== undefined && body.maxToolCalls > 0
+        ? capToolCalls(prepared.allTools, body.maxToolCalls)
+        : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -667,19 +822,12 @@ async function handleTurn(c: Context): Promise<Response> {
       sourceType: "direct",
       chatSessionId: runtimeChatSessionId,
       serverIds: selectedServerIds,
-      tools: prepared.allTools,
+      tools,
     });
 
-    // `maxToolCalls: 0` is a legitimate "answer without tools" request, so the
-    // step budget floors at 1 — a turn with zero steps produces nothing at all.
     const maxSteps = Math.max(
       1,
-      Math.min(
-        body.maxSteps ?? DEFAULT_MAX_STEPS,
-        body.maxToolCalls !== undefined
-          ? body.maxToolCalls + 1
-          : MAX_STEPS_CEILING,
-      ),
+      Math.min(body.maxSteps ?? DEFAULT_MAX_STEPS, MAX_STEPS_CEILING),
     );
 
     const userMessage: ModelMessage = { role: "user", content: body.message };
@@ -689,6 +837,8 @@ async function handleTurn(c: Context): Promise<Response> {
       | { message: string; code?: string; httpStatus?: number }
       | undefined;
 
+    // Past this line the turn may have spent. See `modelCallStarted`.
+    modelCallStarted = true;
     const result = await runUnifiedAssistantTurn({
       runtime: runtime.runtime as never,
       streamSink: "none",
@@ -697,7 +847,7 @@ async function handleTurn(c: Context): Promise<Response> {
       messages: inputMessages,
       modelDefinition,
       systemPrompt: prepared.enhancedSystemPrompt,
-      tools: prepared.allTools,
+      tools,
       mcpClientManager: manager,
       authContext: { kind: "user_bearer", token: authHeader },
       sourceType: "direct",
@@ -771,6 +921,9 @@ async function handleTurn(c: Context): Promise<Response> {
     // --- Persist ----------------------------------------------------------
     const resumeConfig: ResumeConfig = {
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
+      ...(pins.temperature !== undefined
+        ? { temperature: pins.temperature }
+        : {}),
       selectedServers: selectedServerIds,
       // The four agent pins. First-write-wins is enforced at the ingest
       // boundary, so resending them on a continuation is harmless — and
@@ -887,12 +1040,10 @@ async function handleTurn(c: Context): Promise<Response> {
   } finally {
     clearTimeout(wallClock);
     requestSignal.removeEventListener("abort", onRequestAbort);
-    // A claimed-but-unsettled lease is released here so a failed turn does not
-    // lock its session for the whole TTL. Detached rather than awaited: the
-    // response is already computed, and a slow Convex round-trip must not
-    // delay it.
-    if (leaseTurnId && !leaseSettled) {
-      void releaseTurnLease(client, leaseTurnId);
+    // Detached rather than awaited: the response is already computed, and a
+    // slow Convex round-trip must not delay it.
+    if (shouldReleaseLease({ leaseTurnId, leaseSettled, modelCallStarted })) {
+      void releaseTurnLease(client, leaseTurnId!);
     }
     releaseTurnSlot(orgKey);
     try {
@@ -968,6 +1119,8 @@ function captureTurnEvent(
 
 export const __testing = {
   assertUnambiguousModelId,
+  capToolCalls,
+  shouldReleaseLease,
   computeExcludedToolNames,
   CONFIG_FIELDS,
   turnSchema,

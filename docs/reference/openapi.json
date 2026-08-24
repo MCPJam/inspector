@@ -22133,8 +22133,10 @@
         ],
         "properties": {
           "sessionId": {
-            "type": "string",
-            "nullable": true,
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "The one public session id. Pass it back to continue, and to the trace/detail reads. NULL only when the turn ran but its transcript did not persist — which `persisted.outcome` reports, and which must not be read as \"nothing happened\": the turn already spent."
           },
           "turnId": {
@@ -22145,8 +22147,10 @@
             "type": "string"
           },
           "finishReason": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "toolCalls": {
             "type": "array",
@@ -22254,6 +22258,15 @@
         "type": "object",
         "required": [
           "sessionId",
+          "projectId",
+          "origin",
+          "modelId",
+          "version",
+          "startedAt",
+          "lastActivityAt",
+          "toolMode",
+          "environmentId",
+          "messageCount",
           "messages"
         ],
         "properties": {
@@ -22261,32 +22274,46 @@
             "type": "string"
           },
           "projectId": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "origin": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "modelId": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "version": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "startedAt": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "lastActivityAt": {
-            "type": "integer",
-            "nullable": true
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "toolMode": {
-            "type": "string",
-            "nullable": true,
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "read_only",
               "auto",
@@ -22294,12 +22321,16 @@
             ]
           },
           "environmentId": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "messageCount": {
-            "type": "integer",
-            "nullable": true,
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "NULL — never 0 — when the transcript could not be read. Zero would claim the conversation is empty."
           },
           "transcriptUnavailable": {
@@ -22371,7 +22402,9 @@
         "type": "object",
         "required": [
           "sessionId",
+          "origin",
           "traceVersion",
+          "turnCount",
           "turns"
         ],
         "properties": {
@@ -22379,8 +22412,10 @@
             "type": "string"
           },
           "origin": {
-            "type": "string",
-            "nullable": true
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "traceVersion": {
             "type": "integer",

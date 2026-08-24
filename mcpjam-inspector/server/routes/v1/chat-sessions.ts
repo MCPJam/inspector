@@ -100,6 +100,7 @@ type SessionRow = {
     environmentId?: string;
     serverIds?: string[];
     systemPrompt?: string;
+    temperature?: number;
   };
 };
 
