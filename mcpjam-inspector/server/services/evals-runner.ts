@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
   buildLocalStepHandlers,
@@ -37,6 +38,7 @@ import {
 } from "../utils/chat-helpers";
 import { resolveExecutionContext } from "../utils/host-execution-context";
 import { resolveHostTools } from "../utils/built-in-tools/registry.js";
+import { resolveWebAuthorizedHarnessStrategy } from "../utils/harness/harness-proxy-strategy.js";
 import {
   buildEvalBashTool,
   EVAL_BASH_TOOL_NAME,
@@ -69,10 +71,12 @@ import {
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
+  SKILL_TOOL_NAMES,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import type { PinnableSkill } from "@/shared/skill-types";
+import { META_TOOL_NAMES } from "@/shared/progressive-tool-discovery";
+import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -115,11 +119,30 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
+import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
-  emitPinnedTurnSse,
-  type PinnedTurnSsePayload,
-} from "./evals/pinned-turn-sse.js";
-import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
+  buildIterationFinishParams,
+  buildStageMetadata,
+} from "./evals/finalize-iteration.js";
+import type {
+  StageAuthoredCase,
+  StageSetupSignals,
+  EvalSuiteFileToolPolicy,
+} from "@mcpjam/sdk/contract";
+import {
+  buildHarnessToolPolicySnapshots,
+  createToolPolicyGate,
+  toolAnnotationsKey,
+  UnmatchedToolPolicyNameError,
+  validateToolPolicyNames,
+  type ToolAnnotationsLookup,
+} from "./evals/tool-policy-gate.js";
+import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import {
+  createRunSetupObserver,
+  type RunSetupObserver,
+  type SetupPhase,
+} from "./evals/run-setup-signals.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -268,6 +291,62 @@ export type EvalPinnedSkillSource =
       capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
     };
 
+/**
+ * How a run's FROZEN skills reach one case — both channels, together.
+ *
+ * There are two, and they are not interchangeable:
+ *   - `pinnedSkillSource` feeds the EMULATED path, where skills become
+ *     in-memory tool definitions.
+ *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
+ *     as SKILL.md files on the box.
+ *
+ * They are bundled here because forwarding one without the other is a silent
+ * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
+ * does not error, it falls through to the harness's LIVE project-wide fetch —
+ * so a frozen run quietly stops being frozen, and the
+ * `skillsOverride: "exclude"` arm quietly runs with the whole project pool.
+ * That is exactly the bug this helper exists to make structurally impossible:
+ * one place decides, and both channels leave together or not at all.
+ *
+ * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
+ * the "this run delivers no skills" answer and must survive.
+ */
+export function runFrozenSkillOptions(run: {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+}): {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+} {
+  // Presence selects the pinned source at every hop below, so a non-array that
+  // is not `undefined` would sail through all of them and only fail inside
+  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
+  // a sandbox has been provisioned and paid for. The type forbids it, but the
+  // value crosses a route boundary and a persisted-data conversion on the way
+  // here, so it is worth one loud check at the seam rather than a confusing
+  // crash later. `undefined` stays legal: it means "this run pinned nothing".
+  if (
+    run.pinnedHarnessSkills !== undefined &&
+    !Array.isArray(run.pinnedHarnessSkills)
+  ) {
+    throw new Error(
+      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
+        run.pinnedHarnessSkills === null
+          ? "null"
+          : typeof run.pinnedHarnessSkills
+      })`
+    );
+  }
+  return {
+    ...(run.pinnedSkillSource
+      ? { pinnedSkillSource: run.pinnedSkillSource }
+      : {}),
+    ...(run.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
+      : {}),
+  };
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
@@ -331,12 +410,30 @@ export type RunEvalSuiteOptions = {
    * not a per-iteration choice — see {@link EvalPinnedSkillSource}.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /**
+   * The run's frozen skills in HARNESS shape, materialized ON BOX.
+   *
+   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
+   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
+   * become in-memory tool definitions; a harness turn writes SKILL.md files
+   * into the runtime's skills root instead, so it needs complete artifacts
+   * (identity, complete-envelope hash, preserved frontmatter, inline file
+   * bodies) rather than the body-only projection that path takes.
+   *
+   * Presence, not length, is what selects the pinned source in the harness. An
+   * empty list says "this run delivers no skills"; ABSENT falls through to a
+   * live project-wide fetch, which would unfreeze the run. So the boundary sets
+   * this for every runId-bearing run, empty included.
+   */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
+  policyBlockCount?: number;
 };
 
 /**
@@ -444,6 +541,58 @@ function isMissingRuntimeServerError(error: unknown): boolean {
   );
 }
 
+class EvalSetupPhaseError extends WebRouteError {
+  readonly serverId: string;
+  readonly phase: SetupPhase;
+
+  constructor(args: {
+    status: number;
+    code: ErrorCode;
+    message: string;
+    serverId: string;
+    phase: SetupPhase;
+    details?: Record<string, unknown>;
+  }) {
+    super(args.status, args.code, args.message, {
+      ...args.details,
+      serverId: args.serverId,
+      phase: args.phase,
+    });
+    this.name = "EvalSetupPhaseError";
+    this.serverId = args.serverId;
+    this.phase = args.phase;
+  }
+}
+
+function throwSetupPhaseError(args: {
+  serverId: string;
+  phase: SetupPhase;
+  error: unknown;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): never {
+  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
+    throw new EvalSetupPhaseError({
+      status: 409,
+      code: ErrorCode.SERVER_UNREACHABLE,
+      message: `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+      serverId: args.serverId,
+      phase: args.phase,
+      details: { serverId: args.serverId, serverName: serverLabel },
+    });
+  }
+  const cause =
+    args.error instanceof Error ? args.error.message : String(args.error);
+  throw new EvalSetupPhaseError({
+    status: 502,
+    code: ErrorCode.SERVER_UNREACHABLE,
+    message: `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+    serverId: args.serverId,
+    phase: args.phase,
+    details: { serverId: args.serverId, serverName: serverLabel, cause },
+  });
+}
+
 async function getEvalToolsForAiSdkOrThrow(args: {
   mcpClientManager: MCPClientManager;
   serverIds: string[];
@@ -456,6 +605,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
    */
   tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  setupObserver?: RunSetupObserver;
 }): Promise<ToolSet> {
   const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
   const toolOptions =
@@ -469,42 +619,107 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         }
       : undefined;
 
-  const perServerTools = await Promise.all(
+  const now = () => Date.now();
+  const observer = args.setupObserver;
+  const firstError: { error: unknown; serverId: string; phase: SetupPhase }[] =
+    [];
+
+  // ONE round trip per server. `getToolsForAiSdk` already ensures the
+  // session before it lists, so probing connect separately would make every
+  // lazily-connected run hit the customer's server twice for no new
+  // information. `Promise.allSettled` does not abort in-flight siblings, so
+  // this single barrier is what keeps folding race-free: every expected
+  // target has settled before `buildSignals` runs, and a discovery failure
+  // can never be folded while another server's connect is still open.
+  const perServerTools = await Promise.allSettled(
     args.serverIds.map(async (serverId) => {
+      const startedAt = now();
+      const alreadyConnected =
+        args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+      // One call cannot time the two phases apart. An already-connected
+      // server spent the whole call listing; a lazily-connected one is
+      // credited to connect, with the list window closing at the same
+      // instant. Neither phase ever claims more than the call took.
+      const splitAt = (endedAt: number) =>
+        alreadyConnected ? startedAt : endedAt;
       try {
-        return toolOptions
+        const tools = toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
               [serverId],
               toolOptions
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
+        const endedAt = now();
+        observer?.recordConnect(serverId, {
+          outcome: "ok",
+          startedAt,
+          endedAt: splitAt(endedAt),
+        });
+        observer?.recordToolsList(serverId, {
+          outcome: "ok",
+          startedAt: splitAt(endedAt),
+          endedAt,
+        });
+        return tools;
       } catch (error) {
-        const serverLabel = getServerLabelForEvalError(
-          serverId,
-          args.environment
-        );
-        if (isMissingRuntimeServerError(error)) {
-          throw new WebRouteError(
-            409,
-            ErrorCode.SERVER_UNREACHABLE,
-            `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
-            { serverId, serverName: serverLabel }
-          );
+        const endedAt = now();
+        const connected =
+          args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+        if (!connected || isMissingRuntimeServerError(error)) {
+          // A connect miss: tools/list never ran for this server, so it
+          // gets NO discovery observation. `foldPhase` reads that absence
+          // as "the phase never executed" rather than as a failed list.
+          observer?.recordConnect(serverId, {
+            outcome: "failed",
+            error,
+            startedAt,
+            endedAt,
+          });
+          firstError.push({ error, serverId, phase: "connection" });
+          return null;
         }
-        const cause = error instanceof Error ? error.message : String(error);
-        throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
-          { serverId, serverName: serverLabel, cause }
-        );
+        observer?.recordConnect(serverId, {
+          outcome: "ok",
+          startedAt,
+          endedAt: splitAt(endedAt),
+        });
+        observer?.recordToolsList(serverId, {
+          outcome: "failed",
+          error,
+          startedAt: splitAt(endedAt),
+          endedAt,
+        });
+        firstError.push({ error, serverId, phase: "discovery" });
+        return null;
       }
     })
   );
 
+  if (observer) {
+    const signals = observer.buildSignals();
+    if (signals?.connection?.attribution === "theirs") {
+      await observer.ensureEgressCanary();
+    }
+  }
+
+  if (firstError.length > 0) {
+    // Connection failures dominate: a mixed bag must never earn
+    // `connection: failed` from a later discovery throw.
+    const connectFail = firstError.find((row) => row.phase === "connection");
+    const chosen = connectFail ?? firstError[0]!;
+    throwSetupPhaseError({
+      serverId: chosen.serverId,
+      phase: chosen.phase,
+      error: chosen.error,
+      environment: args.environment,
+    });
+  }
+
   const flattened: ToolSet = {};
-  for (const toolset of perServerTools) {
-    Object.assign(flattened, toolset);
+  for (const result of perServerTools) {
+    if (result.status === "fulfilled" && result.value) {
+      Object.assign(flattened, result.value);
+    }
   }
   return flattened;
 }
@@ -750,7 +965,10 @@ function extractToolCallsFromConversation(params: {
           toolsCalled.push({
             toolName: call.toolName ?? call.name,
             arguments: call.args ?? call.input ?? {},
-          });
+            ...(typeof call.toolCallId === "string"
+              ? { toolCallId: call.toolCallId }
+              : {}),
+          } as ToolCall);
         }
       }
     }
@@ -774,7 +992,10 @@ function extractToolCallsFromConversation(params: {
               toolsCalled.push({
                 toolName: name,
                 arguments: argumentsValue,
-              });
+                ...(typeof item.toolCallId === "string"
+                  ? { toolCallId: item.toolCallId }
+                  : {}),
+              } as ToolCall);
             }
           }
         }
@@ -796,7 +1017,10 @@ function extractToolCallsFromConversation(params: {
             toolsCalled.push({
               toolName,
               arguments: argumentsValue,
-            });
+              ...(typeof call.toolCallId === "string"
+                ? { toolCallId: call.toolCallId }
+                : {}),
+            } as ToolCall);
           }
         }
       }
@@ -804,6 +1028,22 @@ function extractToolCallsFromConversation(params: {
   }
 
   return toolsCalled;
+}
+
+function extractToolCallsExcludingPolicyBlocks(
+  params: {
+    steps?: ReadonlyArray<any>;
+    messages: ModelMessage[];
+  },
+  blockedToolCallIds: ReadonlySet<string>
+): ToolCall[] {
+  return extractToolCallsFromConversation(params).filter((toolCall) => {
+    const toolCallId = (toolCall as ToolCall & { toolCallId?: unknown })
+      .toolCallId;
+    return (
+      typeof toolCallId !== "string" || !blockedToolCallIds.has(toolCallId)
+    );
+  });
 }
 
 function toolCallIdentity(toolCall: ToolCall): string {
@@ -986,6 +1226,19 @@ async function persistSetupFailedIteration(args: {
   runStartedAt: number;
   errorMessage: string;
   iterationMetadataBase: Record<string, string | number | boolean>;
+  /**
+   * The authored case's stage inputs (`buildStageAuthoredCase`).
+   *
+   * A setup abort is the one iteration shape that finalizes without ever
+   * entering the prompt loop, and the chain has a dedicated verdict for it:
+   * every applicable stage `notMeasured` for `setupAborted`, with
+   * `failureCategory: "setup"`. Omitted ⇒ no stage keys, which is how a caller
+   * that cannot say what the case authored stays honest.
+   */
+  stageCase?: StageAuthoredCase;
+  setupSignals?: StageSetupSignals;
+  setupSpans?: EvalTraceSpan[];
+  setupAudit?: Record<string, unknown>;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
 }): Promise<void> {
@@ -999,13 +1252,147 @@ async function persistSetupFailedIteration(args: {
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
-    metadata: { ...args.iterationMetadataBase },
+    metadata: {
+      ...args.iterationMetadataBase,
+      ...buildStageMetadata({
+        ...(args.stageCase ? { stageCase: args.stageCase } : {}),
+        // No real spans/prompts/messages: the analyzer reads that as
+        // `traceAbsent`. When setupSignals are present it measures the top
+        // two stages instead of blanking the whole chain.
+        ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
+        status: "failed",
+        error: args.errorMessage,
+      }),
+      ...(args.setupAudit ?? {}),
+    },
+    ...(args.setupSpans?.length ? { spans: args.setupSpans } : {}),
   };
   await dispatchEvalIterationFinalize({
     recorder: args.recorder,
     convexClient: args.convexClient,
     finishParams: failParams,
   });
+}
+
+/**
+ * Un-strand a run that died at run-level connect / tools-list.
+ *
+ * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
+ * soft-block the terminal transition. Each evidence-carrying write is
+ * acknowledged: we re-read the run details after the batch and retry any
+ * residual still-pending rows once before the `markSetupPendingIterationsFailed`
+ * sweep, so the sweep can never silently strip stage metadata from a row
+ * whose write failed.
+ */
+async function persistRunSetupFailure(args: {
+  runId: string;
+  convexClient: ConvexHttpClient;
+  recorder: SuiteRunRecorder | null;
+  observer: RunSetupObserver;
+  errorMessage: string;
+  tests: EvalTestCase[];
+  runStartedAt: number;
+}): Promise<void> {
+  const setupSignals = args.observer.buildSignals();
+  const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
+  const setupAudit = args.observer.buildAuditMetadata();
+
+  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+    try {
+      const details = (await args.convexClient.query(
+        "testSuites:getTestSuiteRunDetails" as any,
+        { runId: args.runId }
+      )) as { iterations?: Array<Record<string, unknown>> } | null;
+      return (details?.iterations ?? []).filter(
+        (row) => row.status === "pending"
+      );
+    } catch (readError) {
+      logger.warn("[evals] Failed to read pending setup iterations", {
+        runId: args.runId,
+        error:
+          readError instanceof Error ? readError.message : String(readError),
+      });
+      return null;
+    }
+  };
+
+  const persistPending = async (
+    pending: Array<Record<string, unknown>>
+  ) => {
+    await Promise.allSettled(
+      pending.map(async (row) => {
+        const iterationId =
+          typeof row._id === "string"
+            ? row._id
+            : typeof row.iterationId === "string"
+              ? row.iterationId
+              : undefined;
+        const test = args.tests.find(
+          (candidate) =>
+            candidate.testCaseId && candidate.testCaseId === row.testCaseId
+        );
+        const snapshot = row.testCaseSnapshot as
+          | { query?: string; expectedToolCalls?: unknown[] }
+          | undefined;
+        await persistSetupFailedIteration({
+          iterationId,
+          runStartedAt: args.runStartedAt,
+          errorMessage: args.errorMessage,
+          iterationMetadataBase: {},
+          ...(test
+            ? {
+                stageCase: buildStageAuthoredCase({
+                  test,
+                  turns: test.promptTurns,
+                  caseNeedsModel: true,
+                }),
+              }
+            : snapshot
+              ? {
+                  stageCase: buildStageAuthoredCase({
+                    test: {
+                      query: snapshot.query,
+                      expectedToolCalls: snapshot.expectedToolCalls,
+                    } as EvalTestCase,
+                    caseNeedsModel: true,
+                  }),
+                }
+              : {}),
+          ...(setupSignals ? { setupSignals } : {}),
+          ...(setupSpans.length ? { setupSpans } : {}),
+          ...(setupAudit ? { setupAudit } : {}),
+          recorder: args.recorder,
+          convexClient: args.convexClient,
+        });
+      })
+    );
+  };
+
+  const first = await listPending();
+  if (first) {
+    await persistPending(first);
+  }
+  const afterFirst = await listPending();
+  if (afterFirst && afterFirst.length > 0) {
+    await persistPending(afterFirst);
+  }
+  const residual = await listPending();
+  if (residual === null || residual.length > 0) {
+    try {
+      await args.convexClient.mutation(
+        "testSuites:markSetupPendingIterationsFailed" as any,
+        { runId: args.runId, error: args.errorMessage }
+      );
+    } catch (cleanupError) {
+      logger.warn("[evals] Failed to mark residual setup iterations failed", {
+        runId: args.runId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+  }
 }
 
 /**
@@ -1076,6 +1463,15 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
+  /** Folded run-level connect / tools-list evidence (D6). */
+  setupSignals?: StageSetupSignals;
+  /** Synthetic connection/discovery spans (timeline only). */
+  setupSpans?: EvalTraceSpan[];
+  /** Bounded producer-owned setup audit record. */
+  setupAudit?: Record<string, unknown>;
   /**
    * Raw suite hostConfig record — the same one the route layer feeds
    * to `extractHostExecutionPolicy` for the `hostPolicy` field above.
@@ -1109,6 +1505,9 @@ type RunIterationBaseParams = {
    * skills (decision 10) — the runner passes this or `skillsSource: none`.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1457,6 +1856,9 @@ const executeTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  setupSpans?: EvalTraceSpan[];
+  setupAudit?: Record<string, unknown>;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
   /**
@@ -1468,6 +1870,12 @@ const executeTestCase = async (params: {
   environment?: RunEvalSuiteOptions["config"]["environment"];
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
 }) => {
   const {
     test,
@@ -1491,9 +1899,16 @@ const executeTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     suiteHostConfig,
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1573,9 +1988,16 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -1696,9 +2118,16 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1744,9 +2173,16 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1786,12 +2222,19 @@ const executeTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      setupSignals,
+      setupSpans,
+      setupAudit,
       suiteHostConfig,
       // `environment` resolves a pinned turn's server (local hybrids); harmless
       // for prompt-only cases.
       environment,
       convexAuthToken,
       pinnedSkillSource,
+      pinnedHarnessSkills,
+      ...(toolPolicy
+        ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+        : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -1833,6 +2276,8 @@ export const runEvalSuiteWithAiSdk = async ({
   hostExecutionPolicy,
   suiteHostConfig,
   pinnedSkillSource,
+  pinnedHarnessSkills,
+  toolPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -1843,6 +2288,18 @@ export const runEvalSuiteWithAiSdk = async ({
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
+  }
+
+  if (
+    toolPolicy?.mode === "readOnly" &&
+    typeof (
+      config.environment as { computerEnvironmentId?: unknown } | undefined
+    )?.computerEnvironmentId === "string"
+  ) {
+    logger.warn(
+      "[evals] readOnly tool policy does not restrict the sandbox bash tool",
+      { suiteId }
+    );
   }
 
   // For quick runs (runId === null), we don't need a recorder
@@ -1860,6 +2317,7 @@ export const runEvalSuiteWithAiSdk = async ({
     total: 0,
     passed: 0,
     failed: 0,
+    policyBlockedIterations: 0,
   };
 
   // Create AbortController to cancel in-flight requests. Created BEFORE the
@@ -1886,6 +2344,13 @@ export const runEvalSuiteWithAiSdk = async ({
     await: { signal: abortController.signal },
   });
 
+  const runSetupStartedAt = Date.now();
+  const setupObserver = createRunSetupObserver({
+    expectedServerIds: serverIds,
+    convexHttpUrl,
+  });
+  let resolvedToolPolicyWarnings: string[] | undefined;
+
   try {
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -1904,7 +2369,60 @@ export const runEvalSuiteWithAiSdk = async ({
       // be able to switch tasks on for a suite whose host said off.
       ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
+      setupObserver,
     });
+    const toolAnnotations: ToolAnnotationsLookup = new Map();
+    if (toolPolicy) {
+      const uncachedServerIds = serverIds.filter(
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
+      );
+      if (uncachedServerIds.length > 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
+            ", "
+          )}.`,
+          {
+            reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
+            serverIds: uncachedServerIds,
+          }
+        );
+      }
+      try {
+        const availableToolNames = new Set([
+          ...Object.keys(tools),
+          "computer",
+          "finish_widget",
+          EVAL_BASH_TOOL_NAME,
+        ]);
+        resolvedToolPolicyWarnings = validateToolPolicyNames({
+          policy: toolPolicy,
+          availableToolNames,
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
+        });
+      } catch (error) {
+        if (error instanceof UnmatchedToolPolicyNameError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message,
+            { reason: "TOOL_POLICY_INVALID" }
+          );
+        }
+        throw error;
+      }
+      for (const serverId of serverIds) {
+        for (const [toolName, annotations] of Object.entries(
+          mcpClientManager.getAllToolAnnotations(serverId)
+        )) {
+          toolAnnotations.set(
+            toolAnnotationsKey(serverId, toolName),
+            annotations
+          );
+        }
+      }
+    }
 
     // Apply visibility filtering when a host policy is present. The filter
     // mutates `tools` in place (same as prepareChatV2) so downstream iteration
@@ -1916,6 +2434,10 @@ export const runEvalSuiteWithAiSdk = async ({
           hostExecutionPolicy
         )
       : undefined;
+    const resolvedSetupSignals = setupObserver.buildSignals();
+    const resolvedSetupSpans =
+      setupObserver.buildSyntheticSpans(runSetupStartedAt);
+    const resolvedSetupAudit = setupObserver.buildAuditMetadata();
 
     // Note: Iterations are now pre-created in startSuiteRunWithRecorder
     // This code is no longer needed as precreateIterationsForRun is called there
@@ -1973,9 +2495,24 @@ export const runEvalSuiteWithAiSdk = async ({
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
+        ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
+        ...(resolvedSetupSpans.length
+          ? { setupSpans: resolvedSetupSpans }
+          : {}),
+        ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
-        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+        ...(toolPolicy
+          ? {
+              toolPolicy,
+              toolAnnotations,
+              toolPolicyWarnings: resolvedToolPolicyWarnings,
+            }
+          : {}),
+        // BOTH frozen-skill channels, from one place — see
+        // `runFrozenSkillOptions`. Forwarding only the emulated one used to
+        // leave the harness path falling through to a live project-wide fetch.
+        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2138,6 +2675,9 @@ export const runEvalSuiteWithAiSdk = async ({
             summary.failed += 1;
           }
         }
+        summary.policyBlockedIterations += outcomes.filter(
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0
+        ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
         }
@@ -2161,6 +2701,9 @@ export const runEvalSuiteWithAiSdk = async ({
           passed: summary.passed,
           failed: summary.failed,
           passRate,
+          ...(summary.policyBlockedIterations > 0
+            ? { policyBlockedIterations: summary.policyBlockedIterations }
+            : {}),
         },
       });
     }
@@ -2171,6 +2714,32 @@ export const runEvalSuiteWithAiSdk = async ({
     return undefined;
   } catch (error) {
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Persist evidence onto every still-pending row BEFORE finalize so
+    // `blockTerminal` cannot strand the run, and so the sweep cannot strip
+    // stage metadata from a row whose write failed.
+    if (runId !== null) {
+      try {
+        await persistRunSetupFailure({
+          runId,
+          convexClient,
+          recorder,
+          observer: setupObserver,
+          errorMessage,
+          tests,
+          runStartedAt: runSetupStartedAt,
+        });
+      } catch (setupPersistError) {
+        logger.warn("[evals] Failed to persist run-setup failure evidence", {
+          runId,
+          error:
+            setupPersistError instanceof Error
+              ? setupPersistError.message
+              : String(setupPersistError),
+        });
+      }
+    }
 
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
@@ -2256,16 +2825,29 @@ const runLocalIteration = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  setupSignals,
+  setupSpans,
+  setupAudit,
   suiteHostConfig,
   environment,
   convexAuthToken,
   pinnedSkillSource,
+  toolPolicy,
+  toolAnnotations,
+  toolPolicyWarnings,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -2779,7 +3361,12 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
-      extractToolCalls: extractToolCallsFromConversation,
+      toolPolicyGate,
+      extractToolCalls: (params) =>
+        extractToolCallsExcludingPolicyBlocks(
+          params,
+          toolPolicyGate?.blockedToolCallIds() ?? new Set()
+        ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
@@ -2915,6 +3502,8 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // Keys shadow-mismatch telemetry only; never read for the verdict.
+      ...(runId !== null ? { runId: String(runId) } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -2947,11 +3536,33 @@ const runLocalIteration = async ({
         ? { errorDetails: acc.iterationErrorDetails }
         : {}),
       predicateResults,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
     });
 
@@ -2965,6 +3576,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -3083,6 +3697,7 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      ...(runId !== null ? { runId: String(runId) } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -3107,11 +3722,33 @@ const runLocalIteration = async ({
       browserInteractionSteps: browser.browserInteractionSteps,
       status: "failed",
       startedAt: runStartedAt,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
     });
 
@@ -3124,6 +3761,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -3174,6 +3814,9 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     suiteHostConfig,
     orgModelConfigTarget,
     // Pinned reproducible-env id lives on the run environment; drives per-
@@ -3181,6 +3824,10 @@ const runHostedIterationWithBrowser = async (
     // the local runner).
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
+    toolPolicyWarnings,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3189,6 +3836,13 @@ const runHostedIterationWithBrowser = async (
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3360,6 +4014,52 @@ const runHostedIterationWithBrowser = async (
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
       : null
   );
+  // ── Harness execution inputs, resolved once per iteration.
+  //
+  // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
+  // only makes a deploy-topology decision, and the pinned-skill projection is a
+  // map over an already-fetched list. Resolving them here (rather than inside
+  // the turn) keeps the decision with the run's other frozen inputs.
+  //
+  // An eval run builds an ephemeral authorized manager exactly as the hosted
+  // chat routes do, so it is a WEB-authorized plane request and resolves the
+  // same strategy they do. Deriving a different one here is how a sandbox ends
+  // up pointed at the wrong manager.
+  const harnessMcpProxy = resolvedExecution.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
+  // D4b: a harness runs its MCP calls itself, in a sandbox, against the
+  // generated `.mcp.json` — no in-process tool map exists to wrap, so the
+  // decision travels to the MCP proxy sealed inside the proxy token and is
+  // applied there. Harness-gated: the emulated path stays on the in-process
+  // gate alone.
+  const harnessToolPolicy =
+    resolvedExecution.harness && toolPolicy
+      ? buildHarnessToolPolicySnapshots({
+          policy: toolPolicy,
+          serverIds: selectedServers,
+          annotations: toolAnnotations ?? new Map(),
+        })
+      : undefined;
+  // The run's PINNED skills, in the shape the harness materializes on box.
+  //
+  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
+  // where the full pin rows and their signed file URLs are in hand, so the
+  // supporting-file download happens before any model call rather than N times
+  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
+  // preserved frontmatter and file bodies all come off the pin.
+  //
+  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
+  // `runtimeSkillsOverride`, which is the live-environment channel one rank
+  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
+  // an eval run must deliver exactly what it pinned, and must not consult
+  // anything live.
+  //
+  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
+  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
+  // dropping it would fall through to the live project-wide fetch and hand the
+  // without-skills arm every skill in the project.
+
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -3413,10 +4113,18 @@ const runHostedIterationWithBrowser = async (
     const pinnedEnvironmentId = (
       environment as { computerEnvironmentId?: string } | undefined
     )?.computerEnvironmentId;
-    if (pinnedEnvironmentId && runId !== null) {
+    if (
+      needsEphemeralEvalSandbox({
+        pinnedEnvironmentId,
+        harness: resolvedExecution.harness,
+        runId,
+      })
+    ) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
-          "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+          pinnedEnvironmentId
+            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({
@@ -3455,6 +4163,19 @@ const runHostedIterationWithBrowser = async (
       runStartedAt,
       errorMessage,
       iterationMetadataBase,
+      // Same authored-case inputs the success path builds further down; this
+      // runner is never reached by a model-free case.
+      stageCase: buildStageAuthoredCase({
+        test,
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel: true,
+      }),
+      // Classify the error but never guess a culprit span: prepareChatV2's
+      // getToolsForAiSdk rethrow does not identify the failing server.
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       recorder,
       convexClient,
     });
@@ -3481,6 +4202,9 @@ const runHostedIterationWithBrowser = async (
     return {
       evaluation: failedEvaluation,
       iterationId,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   }
 
@@ -3538,7 +4262,10 @@ const runHostedIterationWithBrowser = async (
         accumulatedUsage,
         withSystemPrefix,
         extractToolCalls: (messages) =>
-          extractToolCallsFromConversation({ messages }),
+          extractToolCallsExcludingPolicyBlocks(
+            { messages },
+            toolPolicyGate?.blockedToolCallIds() ?? new Set()
+          ),
         buildTraceSnapshotEvent,
       })
     : undefined;
@@ -3565,18 +4292,73 @@ const runHostedIterationWithBrowser = async (
     endpointPath,
     extraBodyFields,
     toolChoice,
+    toolPolicyGate,
     abortSignal,
     maxSteps: MAX_STEPS,
     runStartedAt,
     isAborted,
     harness: resolvedExecution.harness,
     requireToolApproval: resolvedExecution.requireToolApproval,
+    // ── Harness execution (harness hosts only; every field below is inert on
+    // the emulated path, which is why they are all conditional).
+    //
+    // THE SAME BOX the tool resolver already exposes as `bash`, handed to the
+    // harness as well: one box per iteration, never two. It rides the handler
+    // options rather than the host config because the run's config snapshot is
+    // member-readable, so a binding writable there would be forgeable.
+    ...(resolvedExecution.harness && evalSandbox?.ok
+      ? {
+          harnessSandboxBinding: {
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            sandboxId: evalSandbox.value.sandboxId,
+          },
+        }
+      : {}),
+    // How the sandbox reaches this inspector's MCP proxy. An eval run builds
+    // an ephemeral authorized manager exactly as the hosted chat routes do, so
+    // it resolves the SAME strategy rather than re-deriving the plane — and
+    // `runHarnessTurn` throws without one whenever servers are selected, which
+    // for an eval suite is always.
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The sealed policy + the sink that accounts its refusals. Blocks land on
+    // the SAME gate the in-process path records into, so `policyBlocks` and the
+    // matcher exclusion below cover both origins with no second code path.
+    ...(harnessToolPolicy
+      ? {
+          harnessToolPolicy,
+          onHarnessPolicyBlocks: (blocks) => {
+            for (const block of blocks) {
+              toolPolicyGate?.recordBlock({
+                toolName: block.toolName,
+                reason: block.reason,
+                classification: block.classification,
+                ...(block.toolCallId
+                  ? { toolCallId: block.toolCallId }
+                  : {}),
+              });
+            }
+          },
+        }
+      : {}),
+    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
+    // not when truthy: `[]` says "this run delivers no skills" (the
+    // `skillsOverride: "exclude"` arm), while absent falls through to the
+    // harness's live project-wide fetch — which would let a project skill
+    // edited mid-run change what a running iteration sees.
+    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // Passed EXPLICITLY: `runHarnessTurn` reads built-ins off this field and
+    // nowhere else, so supplying only `tools` would hand the runtime a turn
+    // with no built-ins and no way to notice.
+    ...(builtInTools ? { builtInTools } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
-      extractToolCallsFromConversation({ messages }),
+      extractToolCallsExcludingPolicyBlocks(
+        { messages },
+        toolPolicyGate?.blockedToolCallIds() ?? new Set()
+      ),
     acc: {
       messageHistory,
       capturedSpans,
@@ -3722,6 +4504,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    ...(runId !== null ? { runId: String(runId) } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,
@@ -3749,13 +4532,32 @@ const runHostedIterationWithBrowser = async (
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
     predicateResults,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlocks: toolPolicyGate.blocks }
+      : {}),
+    ...(toolPolicyGate?.warnings.length
+      ? { policyWarnings: toolPolicyGate.warnings }
+      : {}),
+    ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
     ...(hostedStepResults.length ? { stepResults: hostedStepResults } : {}),
+    // This runner is never reached by a model-free case (those dispatch to the
+    // local runner), so the case always has a model turn that could select.
+    stageCase: buildStageAuthoredCase({
+      test,
+      ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+      turns: resolvedTest.promptTurns,
+      caseNeedsModel: true,
+    }),
+    stageToolErrors: pinnedToolErrors,
     iterationMetadataBase,
     ...(hostPolicy ? { hostPolicy } : {}),
     ...(toolSignals ? { toolSignals } : {}),
+    ...(setupSignals ? { setupSignals } : {}),
+    ...(setupSpans?.length ? { setupSpans } : {}),
+    ...(setupAudit ? { setupAudit } : {}),
     injectOpenAiCompat,
   });
 
@@ -3769,6 +4571,9 @@ const runHostedIterationWithBrowser = async (
   return {
     evaluation,
     iterationId: iterationId ?? undefined,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlockCount: toolPolicyGate.blocks.length }
+      : {}),
   };
 };
 

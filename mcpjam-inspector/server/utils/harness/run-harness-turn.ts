@@ -46,6 +46,9 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  reserveHarnessBox,
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
@@ -83,7 +86,10 @@ import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
 } from "../mcpjam-stream-handler.js";
-import type { PersistedTurnTrace } from "../chat-ingestion.js";
+import {
+  writePersistReceipt,
+  type PersistedTurnTrace,
+} from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
@@ -128,6 +134,20 @@ import {
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
 import {
+  isSealedHarnessProxyToken,
+  sealHarnessProxyToken,
+} from "./harness-proxy-policy-seal.js";
+import {
+  readHarnessPolicyBlockFromResult,
+  type HarnessPolicyBlockRecord,
+} from "./harness-proxy-policy-enforcement.js";
+import {
+  startCrossInstanceHarnessPolicyBlockPoll,
+  subscribeHarnessPolicyBlocks,
+  type HarnessPolicyBlockEvent,
+} from "./harness-policy-block-channel.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
   harnessScopeStepUpServerMatches,
   subscribeHarnessScopeStepUp,
   type HarnessScopeStepUpEvent,
@@ -153,7 +173,7 @@ export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
  * tunnel + adapter-http (local) or direct `/api/web/harness-mcp` (hosted). A
  * selected id with no live config is skipped.
  */
-async function buildHarnessProxyMcpJsonFromManager(args: {
+export async function buildHarnessProxyMcpJsonFromManager(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
   authHeader: string;
@@ -163,6 +183,15 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   /** Plugin origin per server id (INS-7). A plugin-contributed server that
    *  can't be delivered fails the turn instead of being skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
+  /**
+   * Per-server resolved `toolPolicy` decisions for this run. A server with a
+   * snapshot gets a SEALED token (policy + credential in one opaque value) so
+   * the out-of-process MCP calls are enforced at the proxy; a server without
+   * one keeps today's bare token.
+   */
+  toolPolicy?: Record<string, ToolPolicySnapshot>;
+  /** Seal expiry for the sealed envelope (unix ms). */
+  toolPolicySealExpiresAtMs?: number;
 }) {
   const {
     manager,
@@ -172,6 +201,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     strategy,
     pluginOrigins,
     scopeStepUpCorrelationId,
+    toolPolicy,
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
@@ -216,10 +246,27 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
+      const policy = toolPolicy?.[id];
       inputs.push({
         name: id,
         proxyUrl: url,
-        proxyToken: token,
+        // A policied server carries the SEALED token INSTEAD of the bare one:
+        // the sandbox must not hold a working unpoliced credential, or removing
+        // the policy from `.mcp.json` would restore unpoliced access. Sealing
+        // throws when the deployment can't seal — refusing the run rather than
+        // running it unenforced.
+        ...(policy
+          ? {
+              sealedProxyToken: sealHarnessProxyToken({
+                token,
+                serverId: id,
+                policy,
+                expiresAtMs:
+                  args.toolPolicySealExpiresAtMs ??
+                  Date.now() + DEFAULT_POLICY_SEAL_TTL_MS,
+              }),
+            }
+          : { proxyToken: token }),
         scopeStepUpCorrelationId,
       });
     }
@@ -228,6 +275,14 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     // names with no Convex row), reached through the per-server adapter tunnel.
     // The tunnel's `?k=` secret is the auth (adapter-http validate-when-present)
     // — no Convex identity token to mint.
+    // The local plane's route (`adapter-http`) is validate-when-present: a
+    // dropped token still works, so a sealed policy would not be enforceable
+    // there. A policied run must never reach it.
+    if (toolPolicy) {
+      throw new Error(
+        "TOOL_POLICY_UNSUPPORTED: a tool policy cannot be enforced on the local-mcp harness plane (adapter-http accepts an absent proxy token), so the run is refused rather than run unenforced"
+      );
+    }
     for (const id of configured) {
       const url = await resolveHarnessProxyUrl({
         strategy,
@@ -237,8 +292,25 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
       inputs.push({ name: id, proxyUrl: url, scopeStepUpCorrelationId });
     }
   }
+  // DERIVE, don't declare: verify the assembled config actually carries a
+  // sealed token for every policied server. A policied entry that ended up with
+  // a bare token would be an unenforced run.
+  const mcpJson = buildHarnessProxyMcpJson(inputs);
+  if (toolPolicy) {
+    const keyToName = harnessServerKeyToName(inputs);
+    for (const [key, entry] of Object.entries(mcpJson.mcpServers)) {
+      const serverId = keyToName[key];
+      if (!serverId || !toolPolicy[serverId]) continue;
+      const header = entry.headers?.["X-MCPJam-Proxy-Token"];
+      if (!isSealedHarnessProxyToken(header)) {
+        throw new Error(
+          `TOOL_POLICY_UNSEALED: harness .mcp.json entry for serverId=${serverId} carries an unsealed proxy token while a tool policy is in force — refusing to run unenforced`
+        );
+      }
+    }
+  }
   return {
-    mcpJson: buildHarnessProxyMcpJson(inputs),
+    mcpJson,
     // Sanitized .mcp.json key → serverId, so Claude Code's mcp__<key>__<tool>
     // tool names map back to a serverId for eval matching / spans / MCP App
     // rendering (which all key off serverId + the un-namespaced tool name).
@@ -324,6 +396,10 @@ const HARNESS_INSTANCE_ID = crypto.randomUUID();
  *  run bound (we heartbeat well within it). */
 const HARNESS_LEASE_TTL_MS = 5 * 60_000;
 const HARNESS_HEARTBEAT_MS = 90_000;
+// The backend reservation TTL is deliberately much longer than this interval.
+// A missed renewal aborts preparation immediately; the longer server-side TTL
+// is the crash-recovery backstop for a worker that disappears altogether.
+const HARNESS_RESERVATION_HEARTBEAT_MS = 60_000;
 // v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
 // resumed sessions reconnect to a bridge process holding the OLD env, so force
 // fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
@@ -400,6 +476,12 @@ export function harnessRuntimeFingerprint(parts: {
  */
 const HARNESS_TEARDOWN_TIMEOUT_MS = 15_000;
 
+/** Sealed-policy envelope lifetime when the caller doesn't set one. Long enough
+ *  for a real harness turn, short enough to bound a leaked seal (§3's
+ *  out-of-scope replay is bounded by exactly this and the inner token's own
+ *  expiry). */
+const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
+
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none"
@@ -431,6 +513,8 @@ export async function runHarnessTurn(
     hostId,
     harness,
     harnessMcpProxy,
+    harnessToolPolicy,
+    onHarnessPolicyBlocks,
     builtInTools,
     computerWorkdir,
     harnessSandboxBinding,
@@ -443,7 +527,7 @@ export async function runHarnessTurn(
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
-    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn"),
+    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn")
   );
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -534,6 +618,22 @@ export async function runHarnessTurn(
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
   let brokerRevoked = false;
+  // This turn's claim on the box, held across the preparation window (step 3a)
+  // and given up the moment the lease is recorded — recording it consumes the
+  // claim, and from then on the lease's own per-box fence is what excludes other
+  // turns. True only while the claim is ours to hand back, so onFinishEngine can
+  // free the box on any exit before that point instead of leaving the next turn
+  // to wait out the reservation TTL.
+  let reservationHeld = false;
+  let releaseBoxReservation: (() => Promise<void>) | undefined;
+  let reservationHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let reservationRenewalInFlight = false;
+  const clearReservationHeartbeat = () => {
+    if (reservationHeartbeatTimer !== undefined) {
+      clearInterval(reservationHeartbeatTimer);
+      reservationHeartbeatTimer = undefined;
+    }
+  };
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
   // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
@@ -543,6 +643,68 @@ export async function runHarnessTurn(
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const capturedSpans: EvalTraceSpan[] = [];
+  // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
+  // block happens on whichever replica served the call; it is accounted for
+  // HERE — from the proxy's own correlated report, and from the result the
+  // harness reports back — and handed to the caller (`onHarnessPolicyBlocks`)
+  // as the same records the in-process gate produces.
+  const harnessPolicyBlocks: HarnessPolicyBlockRecord[] = [];
+  const flushHarnessPolicyBlocks = () => {
+    if (harnessPolicyBlocks.length === 0) return;
+    onHarnessPolicyBlocks?.([...harnessPolicyBlocks]);
+    harnessPolicyBlocks.length = 0;
+  };
+  const hasHarnessToolPolicy =
+    !!harnessToolPolicy && Object.keys(harnessToolPolicy).length > 0;
+  // Blocks the proxy reported over the authoritative channel, and the count of
+  // blocks this turn already accounted off a result. A channel event is claimed
+  // by the matching result when one arrives; whatever is left at turn end is
+  // still reported (the harness may never surface the refusal as a result), and
+  // an already-accounted key absorbs its late channel event so one refusal
+  // cannot be counted twice.
+  const channelPolicyBlocks: Array<
+    HarnessPolicyBlockEvent & { claimed?: boolean }
+  > = [];
+  const accountedPolicyBlocks = new Map<string, number>();
+  const policyBlockKey = (serverId: string, toolName: string) =>
+    `${serverId}\u0000${toolName}`;
+  const claimChannelPolicyBlock = (
+    serverId: string,
+    toolName: string
+  ): HarnessPolicyBlockEvent | undefined => {
+    const event = channelPolicyBlocks.find(
+      (candidate) =>
+        !candidate.claimed &&
+        candidate.serverId === serverId &&
+        candidate.toolName === toolName
+    );
+    if (event) event.claimed = true;
+    return event;
+  };
+  const noteAccountedPolicyBlock = (serverId: string, toolName: string) => {
+    const key = policyBlockKey(serverId, toolName);
+    accountedPolicyBlocks.set(key, (accountedPolicyBlocks.get(key) ?? 0) + 1);
+  };
+  /** Report channel blocks no result ever accounted for. */
+  const drainUnclaimedChannelPolicyBlocks = () => {
+    for (const event of channelPolicyBlocks) {
+      if (event.claimed) continue;
+      event.claimed = true;
+      const key = policyBlockKey(event.serverId, event.toolName);
+      const accounted = accountedPolicyBlocks.get(key) ?? 0;
+      if (accounted > 0) {
+        accountedPolicyBlocks.set(key, accounted - 1);
+        continue;
+      }
+      harnessPolicyBlocks.push({
+        toolName: event.toolName,
+        reason: event.reason,
+        classification: event.classification,
+        at: event.at,
+        serverId: event.serverId,
+      });
+    }
+  };
   // ── Live trace emission (parity with runChatEngineLoop's writeTraceEvent) ──
   // The Trace tab is built entirely from `data-trace-event` SSE parts; the
   // harness path must emit turn_start / trace_snapshot / turn_finish or the tab
@@ -651,6 +813,27 @@ export async function runHarnessTurn(
           selectedServers
         )
       : () => {};
+
+    // The proxy's own report of every call it refused on this run's sealed
+    // policy. Authoritative (the proxy knows it blocked) and independent of what
+    // the harness does to the result it hands back — which for Claude Code is to
+    // flatten it to a bare string, dropping the `_meta` marker. Same shape as
+    // the scope step-up bridge: correlate on this turn's opaque id, plus a poll
+    // of the shared sink for the replica that served the call being another one.
+    const stopPolicyBlockBridge =
+      harnessMcpProxy && hasHarnessToolPolicy
+        ? subscribeHarnessPolicyBlocks(
+            turnId,
+            (event) => {
+              channelPolicyBlocks.push({ ...event });
+            },
+            selectedServers
+          )
+        : () => {};
+    const stopPolicyBlockPoll =
+      harnessMcpProxy && hasHarnessToolPolicy
+        ? startCrossInstanceHarnessPolicyBlockPoll(selectedServers ?? [])
+        : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
@@ -797,6 +980,9 @@ export async function runHarnessTurn(
               projectId,
               strategy: harnessMcpProxy ?? { plane: "local-mcp" },
               scopeStepUpCorrelationId: turnId,
+              // Policied servers get a SEALED token instead of a bare one, so
+              // the sandbox's own MCP calls are enforced at the proxy.
+              ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
               // INS-7: plugin-contributed servers ride this SAME proxy path as
               // ordinary server ids (they are ordinary server ids) — the origin
               // map only decides how a delivery failure is reported.
@@ -1073,16 +1259,126 @@ export async function runHarnessTurn(
         box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
+      // 3a. RESERVE the box, then start the baseline-preserving broker lease.
+      //
+      // The harness runtime is installed into the sandbox by a bootstrap recipe
+      // that shells `pnpm install` for the agent CLI. The lease keeps the box's
+      // own egress baseline (public internet for members; web-only for guests)
+      // and only adds a header transform on the model-proxy host, so the
+      // in-stream bootstrap can reach the package registry on its own. The
+      // reservation is a concurrency/liveness control — it is NOT an egress
+      // lock — and is kept on its own merits pending an independent removal
+      // gate.
+      //
+      // ONE id for the whole turn: it names this turn's claim on the box, and
+      // the lease consumes that claim by matching it. Deliberately NOT assigned
+      // to `brokerRunId` yet — that variable means "a lease may exist under this
+      // id", and teardown reads it to decide whether to revoke. Setting it here
+      // would make every failed preparation issue a pointless revoke for a lease
+      // that was never minted.
+      const turnRunId = crypto.randomUUID();
+
+      // Claim the box for the whole preparation window. The lease's own per-box
+      // fence starts only once a lease exists, so without this two turns could
+      // interleave wake / bootstrap / broker-start. A refusal here is the same
+      // condition a caller would otherwise meet at broker start, just detected
+      // before we do any work.
+      const reservation = await reserveHarnessBox({
+        box,
+        harnessId: harnessAdapter.id,
+        modelId,
+        runId: turnRunId,
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!reservation.ok) {
+        throw new Error(reservation.error);
+      }
+      // From here until the lease is minted, ANY exit must hand the box back —
+      // otherwise the next turn waits out the reservation's TTL for nothing.
+      // Cleared once the broker start succeeds, because recording the lease
+      // consumes the claim and the lease's own fence takes over.
+      reservationHeld = true;
+      releaseBoxReservation = async () => {
+        await releaseHarnessBoxReservation({
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+        }).catch(() => {});
+      };
+      reservationHeartbeatTimer = setInterval(() => {
+        if (!reservationHeld || reservationRenewalInFlight) return;
+        reservationRenewalInFlight = true;
+        void renewHarnessBoxReservation({
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+        })
+          .then((renewed) => {
+            if (!renewed.ok && reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation was lost; aborting the turn"
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .catch((err) => {
+            if (reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation renewal failed; aborting the turn",
+                err
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .finally(() => {
+            reservationRenewalInFlight = false;
+          });
+      }, HARNESS_RESERVATION_HEARTBEAT_MS);
+
+      // Root the Shell at the host-configured working directory (COMP-16) — the
+      // same `computer.workdir` the chat bash tool honors — confined under
+      // /home/user, defaulting to the box home. The harness framework nests a
+      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
+      // planes share one configured root even though the Shell gets its own
+      // session subdir. An escaping value falls back to the default rather than
+      // failing the turn (the UI + bash path already reject escapes loudly).
+      // On the ephemeral path the workdir comes back WITH the box: the control
+      // plane resolved it from the same pinned target spec when it reserved the
+      // row, so it is the authoritative value for THIS box. Falling through to
+      // `computerWorkdir` keeps the personal path identical. Both still go
+      // through `resolveWorkingDirectory`, so neither can escape /home/user.
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(
+        harnessSandboxBinding?.workdir ?? computerWorkdir
+      );
+      const defaultWorkingDirectory =
+        "error" in resolvedHarnessWorkdir
+          ? HOME_ROOT
+          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
+      // ONE provider for the turn: the streaming session below attaches to the
+      // box through it. One provider per turn is still the right shape even
+      // without a separate prewarm pass.
+      const sandbox = createE2BHarnessSandboxProvider({
+        sandboxId,
+        defaultWorkingDirectory,
+      });
+
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
-      // known, so have Convex mint the lease, lock the sandbox's egress to the
-      // proxy, and install the lease into E2B's egress transform — the
-      // inspector never sees the lease. Run the CLI with dummy creds pointed
-      // at the returned proxy. Fail-fast on install error (the box is awake
-      // but no real credential exists anywhere).
-      // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-      // If the backend installs the E2B rule but the response is lost/aborted,
-      // teardown can still revoke by this id (backend keys revoke on runId).
-      brokerRunId = crypto.randomUUID();
+      // known, so have Convex mint the lease, keep the sandbox on its own
+      // egress baseline, and install the lease into E2B's egress transform on
+      // the model-proxy host — the inspector never sees the lease. Run the CLI
+      // with dummy creds pointed at the returned proxy. Fail-fast on install
+      // error (the box is awake but no real credential exists anywhere).
+      // RECORD the run id before the POST: if the backend installs the E2B rule
+      // but the response is lost or aborted, teardown can still revoke by this
+      // id (the backend keys revoke on runId). From here on a lease may exist.
+      brokerRunId = turnRunId;
       const broker = await startHarnessModelBroker({
         // The project and the execution scope are fields of `box`'s COMPUTER
         // arm (set where `box` is built, above), so the ephemeral path has no
@@ -1101,33 +1397,17 @@ export async function runHarnessTurn(
         // lease (brokerRunId set) if the backend installed before a lost response.
         throw new Error(broker.error);
       }
+      // The lease is recorded, which consumed this turn's claim on the box; the
+      // lease's own per-box fence covers the rest of the turn. Releasing now
+      // would free a box that is very much still in use.
+      clearReservationHeartbeat();
+      reservationHeld = false;
       const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
 
-      // 4. Assemble the harness over the host's E2B computer. Root the Shell at
-      // the host-configured working directory (COMP-16) — the same
-      // `computer.workdir` the chat bash tool honors — confined under
-      // /home/user, defaulting to the box home. The harness framework nests a
-      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
-      // planes share one configured root even though the Shell gets its own
-      // session subdir. An escaping value falls back to the default rather than
-      // failing the turn (the UI + bash path already reject escapes loudly).
-      // On the ephemeral path the workdir comes back WITH the box: the control
-      // plane resolved it from the same pinned target spec when it reserved the
-      // row, so it is the authoritative value for THIS box. Falling through to
-      // `computerWorkdir` keeps the personal path identical. Both still go
-      // through `resolveWorkingDirectory`, so neither can escape /home/user.
-      const resolvedHarnessWorkdir = resolveWorkingDirectory(
-        harnessSandboxBinding?.workdir ?? computerWorkdir
-      );
-      const defaultWorkingDirectory =
-        "error" in resolvedHarnessWorkdir
-          ? HOME_ROOT
-          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
-      const sandbox = createE2BHarnessSandboxProvider({
-        sandboxId,
-        defaultWorkingDirectory,
-      });
+      // 4. Assemble the harness over the host's E2B computer (the provider and
+      // its working directory were resolved in step 3a, so the streaming session
+      // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
       // The adapter maps the host modelId to the harness's native model and
@@ -1857,6 +2137,55 @@ export async function runHarnessTurn(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
                 keyToServerId
               );
+            // A tool call the MCP proxy blocked on policy, recognised only when
+            // THIS run sealed a policy for that server, and only ever with the
+            // verdict that snapshot already holds — a server echoing the block
+            // text cannot invent one for a tool the policy allows.
+            //
+            // Two sources, because neither alone is enough: the proxy's own
+            // channel report is authoritative but may arrive after this result
+            // (cross-replica), and the result itself is synchronous but reaches
+            // us as whatever the harness made of it (Claude Code flattens it to
+            // a bare string, dropping `_meta`). Either one blocks the call.
+            const policySnapshot = meta.serverId
+              ? harnessToolPolicy?.[meta.serverId]
+              : undefined;
+            const channelBlock = policySnapshot
+              ? claimChannelPolicyBlock(meta.serverId ?? "", meta.toolName)
+              : undefined;
+            const resultBlock = policySnapshot
+              ? readHarnessPolicyBlockFromResult({
+                  output,
+                  snapshot: policySnapshot,
+                  toolName: meta.toolName,
+                })
+              : null;
+            const policyBlock =
+              resultBlock ??
+              (channelBlock
+                ? {
+                    toolName: channelBlock.toolName,
+                    reason: channelBlock.reason,
+                    classification: channelBlock.classification,
+                  }
+                : null);
+            if (policyBlock) {
+              if (!channelBlock && meta.serverId) {
+                noteAccountedPolicyBlock(meta.serverId, meta.toolName);
+              }
+              harnessPolicyBlocks.push({
+                toolName: policyBlock.toolName,
+                reason: policyBlock.reason,
+                classification: policyBlock.classification,
+                at: channelBlock?.at ?? Date.now(),
+                toolCallId,
+                ...(meta.serverId ? { serverId: meta.serverId } : {}),
+              });
+              // Reported as it happens, not at finish: the caller excludes
+              // blocked `toolCallId`s from the matcher off the returned
+              // transcript, which it reads as soon as the turn resolves.
+              flushHarnessPolicyBlocks();
+            }
             if (
               scopeStepUpCreation &&
               toolCallId === suspendedHarnessToolCallId
@@ -1875,34 +2204,41 @@ export async function runHarnessTurn(
               output,
               providerExecuted: true,
             });
-            await onToolResult?.({
-              toolCallId,
-              toolName: meta.toolName,
-              output,
-              isError,
-              stepIndex,
-              promptIndex,
-              serverId: meta.serverId,
-            });
-            // Record a tool span for the turn trace (cumulative; snapshotted into
-            // each onStepFinish and the final PersistedTurnTrace.spans).
-            capturedSpans.push({
-              id: crypto.randomUUID(),
-              name: meta.toolName,
-              category: "tool",
-              // Turn-relative offsets (see the llm span above).
-              ...createOffsetInterval(
-                traceBaseMs,
-                toolStartMs.get(toolCallId) ?? Date.now(),
-                Date.now()
-              ),
-              promptIndex,
-              stepIndex,
-              status: isError ? "error" : "ok",
-              toolCallId,
-              toolName: meta.toolName,
-              ...(meta.serverId ? { serverId: meta.serverId } : {}),
-            });
+            // A policy block is neither a tool result nor a tool span: it never
+            // reached the server, so counting it as either would attribute a
+            // MCPJam refusal to the customer's tool (a `notMeasured` +
+            // `blockedByPolicy` outcome, never `failed`). It stays in the
+            // transcript below, because the model did see the refusal.
+            if (!policyBlock) {
+              await onToolResult?.({
+                toolCallId,
+                toolName: meta.toolName,
+                output,
+                isError,
+                stepIndex,
+                promptIndex,
+                serverId: meta.serverId,
+              });
+              // Record a tool span for the turn trace (cumulative; snapshotted
+              // into each onStepFinish and the final PersistedTurnTrace.spans).
+              capturedSpans.push({
+                id: crypto.randomUUID(),
+                name: meta.toolName,
+                category: "tool",
+                // Turn-relative offsets (see the llm span above).
+                ...createOffsetInterval(
+                  traceBaseMs,
+                  toolStartMs.get(toolCallId) ?? Date.now(),
+                  Date.now()
+                ),
+                promptIndex,
+                stepIndex,
+                status: isError ? "error" : "ok",
+                toolCallId,
+                toolName: meta.toolName,
+                ...(meta.serverId ? { serverId: meta.serverId } : {}),
+              });
+            }
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,
@@ -2159,7 +2495,9 @@ export async function runHarnessTurn(
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
-          }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
+          }ms brokerStart=${
+            tBroker - tSandbox
+          }ms sessionConnect=${
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
@@ -2331,10 +2669,24 @@ export async function runHarnessTurn(
       });
     } finally {
       stopScopeStepUpBridge();
+      stopPolicyBlockBridge();
+      stopPolicyBlockPoll();
+      // Refusals the harness never surfaced as a result still have to reach the
+      // iteration, or the calls the policy prevented look like they never
+      // happened.
+      drainUnclaimedChannelPolicyBlocks();
+      flushHarnessPolicyBlocks();
     }
   };
 
-  const onFinishEngine = async () => {
+  // `receiptWriter` is the raw stream writer, passed in only on the ui-sink
+  // path. See the `createUIMessageStream` call below for why this now runs from
+  // `execute`'s finally rather than the SDK's `onFinish`.
+  const onFinishEngine = async (receiptWriter?: ChunkWriter) => {
+    clearReservationHeartbeat();
+    // Anything not already reported at detection (a turn that ended between a
+    // block and its flush) still has to be accounted for.
+    flushHarnessPolicyBlocks();
     // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
     // + clear the E2B egress rule before the persistence/cleanup callbacks below,
     // which could hang and would otherwise keep the credential live until TTL/cron.
@@ -2359,6 +2711,15 @@ export async function runHarnessTurn(
         signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
     }
+    // The box was claimed but never leased — preparation failed, or the turn was
+    // aborted during it. Hand the box back now; the reservation's TTL would
+    // otherwise make the next turn wait minutes for a box nobody is using.
+    // Reaching here with the claim still held means no lease exists, so there is
+    // no egress rule to clear and nothing else to undo.
+    if (reservationHeld && releaseBoxReservation) {
+      reservationHeld = false;
+      await releaseBoxReservation();
+    }
     if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
       // with the live ones — see traceBaseMs.
@@ -2370,12 +2731,28 @@ export async function runHarnessTurn(
       // sidecar did NOT advance — release the lane best-effort.
       let persistOk = false;
       try {
-        await onConversationComplete?.(
+        const persistOutcome = await onConversationComplete?.(
           [...messageHistory],
           trace,
           runSucceeded ? capturedHarnessCommit : undefined
         );
-        persistOk = true;
+        // The callback RESOLVING is not the same as the turn being saved. Now
+        // that it reports an outcome, a `failed`/`skipped`/`conflict` result
+        // resolves normally — treating that as success would leave the harness
+        // lease held against a sidecar commit that never landed. Only an actual
+        // commit (or a recognized duplicate of one) counts; everything else
+        // takes the same release path a thrown persist does.
+        persistOk =
+          !onConversationComplete ||
+          persistOutcome === undefined ||
+          persistOutcome.outcome === "saved" ||
+          persistOutcome.outcome === "duplicate";
+        if (persistOutcome && chatSessionId) {
+          writePersistReceipt(receiptWriter, persistOutcome, {
+            chatSessionId,
+            turnId: trace.turnId,
+          });
+        }
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
@@ -2412,8 +2789,21 @@ export async function runHarnessTurn(
 
   if (streamSink === "ui") {
     const stream = createUIMessageStream({
-      execute: executeEngine,
-      onFinish: onFinishEngine,
+      // Run finalization from `execute`'s finally rather than the SDK's
+      // `onFinish`, mirroring the emulated engine (mcpjam-stream-handler.ts).
+      // Two reasons: `onFinish` runs with no writer, so the persist receipt
+      // could never be emitted from there; and passing the callback at all
+      // enables the SDK's own message-state reducer, which the emulated engine
+      // had to abandon because it throws on cross-response tool parts.
+      // `onFinishEngine` never consumed the reducer's argument, so this is a
+      // strict reduction in exposure.
+      execute: async (context) => {
+        try {
+          await executeEngine(context);
+        } finally {
+          await onFinishEngine(context.writer);
+        }
+      },
     });
     const response = createUIMessageStreamResponse({ stream });
     return { response, messageHistory, aborted: false };

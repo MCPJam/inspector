@@ -183,7 +183,7 @@ vi.mock("@/shared/types", async () => {
   );
   return {
     ...actual,
-    isGPT5Model: vi.fn().mockReturnValue(false),
+    modelSupportsTemperature: vi.fn().mockReturnValue(true),
   };
 });
 
@@ -1618,8 +1618,8 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("attaches a numeric hostConfig.temperature for GPT-5 (resolvedTemperature: undefined)", async () => {
-      const { isGPT5Model } = await import("@/shared/types");
-      vi.mocked(isGPT5Model).mockReturnValueOnce(true);
+      const { modelSupportsTemperature } = await import("@/shared/types");
+      vi.mocked(modelSupportsTemperature).mockReturnValueOnce(false);
 
       const originalFetch = global.fetch;
       global.fetch = vi

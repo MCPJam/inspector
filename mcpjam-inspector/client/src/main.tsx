@@ -34,10 +34,13 @@ import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
 import {
   callbackMatchesPending,
+  HANDOFF_SIGN_IN_STATE_KEY,
   matchHandoffRoute,
   readCallbackParams,
   readPendingAuthorization,
+  takeHandoffSignInReturn,
 } from "./lib/server-connection-handoff";
+import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -232,6 +235,24 @@ if (isInIframe) {
       </AuthKitProvider>
     </StrictMode>
   );
+} else if (
+  import.meta.env.DEV &&
+  window.location.pathname.startsWith("/__preview/plan-limit")
+) {
+  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
+  // of AuthKit and Convex, because the states worth reviewing (member who
+  // can't upgrade, org already at its Team ceiling) can't be produced on
+  // demand against a real backend. Renders the real component and the real
+  // stylesheet with dummy data. The DEV guard keeps it out of production
+  // bundles entirely.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <PlanLimitDialogPreview />
+    </StrictMode>
+  );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
   // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
   // WorkOS refresh that logs the opener window out. See isDebugOAuthCallbackPath.
@@ -342,6 +363,34 @@ if (isInIframe) {
       devMode={WORKOS_DEV_MODE}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+      }}
+      /**
+       * Send a returning sign-in back where it started, when something asked
+       * to come back.
+       *
+       * Only the handoff page does today: it lives on `/connect/server/…`, its
+       * sign-in redirect lands HERE on `/callback`, and without this the user
+       * arrives at the app shell having lost the link they were trying to use.
+       *
+       * The nonce is all that crossed the network — the path itself was kept
+       * in same-origin storage, and `takeHandoffSignInReturn` re-validates it
+       * as same-origin on the way out before anything navigates. AuthKit's
+       * default for this hook is a no-op, so nothing else changes by
+       * supplying it.
+       *
+       * It runs AFTER the session is persisted (authkit-js sets session data,
+       * then calls this), so navigating away here does not race the login.
+       */
+      onRedirectCallback={({ state }) => {
+        const returnTo = takeHandoffSignInReturn(
+          (state as Record<string, unknown> | null)?.[
+            HANDOFF_SIGN_IN_STATE_KEY
+          ],
+          window.location.origin
+        );
+        // `replace`, not `assign`: `/callback` is not somewhere the back
+        // button should return to.
+        if (returnTo) window.location.replace(returnTo);
       }}
       {...workosClientOptions}
     >

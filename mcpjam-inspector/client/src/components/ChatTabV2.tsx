@@ -80,7 +80,15 @@ import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
-import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
+import {
+  DETACH_FORK_FAILED_MESSAGE,
+  type ChatSessionResetReason,
+} from "@/hooks/use-chat-session";
+import {
+  RESUMED_THREAD_CONFLICT_MESSAGE,
+  RESUMED_THREAD_UNSAVED_MESSAGE,
+  useResumedThreadPersistence,
+} from "@/hooks/use-resumed-thread-persistence";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
@@ -187,7 +195,6 @@ interface ChatTabProps {
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
-const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
@@ -431,6 +438,9 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    detachToLocalFork,
+    consumePersistReceipt,
+    consumeTurnAborted,
     loadChatSession,
     rewindToMessage,
     syncResumedVersion,
@@ -700,19 +710,40 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (hasConversationMessages) {
-        startChatWithMessages(cloneUiMessages(messages), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
+
+      if (!hasConversationMessages) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        toast.error(toastMessage);
+        return;
       }
-      toast.error(toastMessage);
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messages), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      })
+        .then((fork) => {
+          toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. The guard teardown
+          // above has already run, so swallowing this would leave the user on a
+          // thread they must not write to with no notice at all.
+          console.error(
+            "[ChatTabV2] Failed to fork the detached thread",
+            error
+          );
+          toast.error(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       hasConversationMessages,
       messages,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
       cancelPendingHistorySelection,
     ]
@@ -833,47 +864,6 @@ export function ChatTabV2({
       showHistoryRail,
       syncResumedVersion,
     ]
-  );
-
-  const refreshHistorySessionAfterStream = useCallback(
-    async (
-      resumedThreadSendBaseline: {
-        sessionId: string;
-        version: number;
-      } | null
-    ) => {
-      const maxAttempts = resumedThreadSendBaseline
-        ? RESUMED_THREAD_REFRESH_RETRIES + 1
-        : 2;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const detail = await refreshCurrentHistorySession({
-            markRead: true,
-          });
-
-          if (
-            !resumedThreadSendBaseline ||
-            (detail &&
-              detail._id === resumedThreadSendBaseline.sessionId &&
-              detail.version > resumedThreadSendBaseline.version)
-          ) {
-            return detail;
-          }
-        } catch (error) {
-          if (attempt >= maxAttempts - 1) {
-            throw error;
-          }
-        }
-
-        if (attempt < maxAttempts - 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }
-      }
-
-      return null;
-    },
-    [refreshCurrentHistorySession]
   );
 
   useEffect(() => {
@@ -1174,78 +1164,31 @@ export function ChatTabV2({
     }
   }, [selectedServerNames]);
 
-  const previousStatusRef = useRef(status);
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = status;
-    const wasStreaming =
-      previousStatus === "submitted" || previousStatus === "streaming";
-    const isNowStreaming = status === "submitted" || status === "streaming";
-    const hasStartedStream = !wasStreaming && isNowStreaming;
-
-    if (hasStartedStream) {
-      resumedThreadSendBaselineRef.current =
-        showHistoryRail && activeHistorySessionId && resumedVersion !== null
-          ? {
-              sessionId: activeHistorySessionId,
-              version: resumedVersion,
-            }
-          : null;
-      return;
-    }
-
-    if (!wasStreaming) {
-      return;
-    }
-
-    if (status === "error") {
-      resumedThreadSendBaselineRef.current = null;
-      return;
-    }
-
-    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
-    resumedThreadSendBaselineRef.current = null;
-    const hasCompletedStream = status === "ready";
-
-    if (!hasCompletedStream || !showHistoryRail) {
-      return;
-    }
-
-    if (activeHistorySessionId) {
-      void markHistorySessionRead(activeHistorySessionId);
-    }
-
-    const timerId = window.setTimeout(() => {
-      void (async () => {
-        const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
-        );
-
-        if (
-          resumedThreadSendBaseline &&
-          (!detail ||
-            detail._id !== resumedThreadSendBaseline.sessionId ||
-            detail.version <= resumedThreadSendBaseline.version)
-        ) {
-          detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
-          );
-        }
-      })().catch((error) => {
+  useResumedThreadPersistence({
+    sendBaselineRef: resumedThreadSendBaselineRef,
+    enabled: showHistoryRail,
+    status,
+    activeHistorySessionId,
+    resumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
+    reactiveSessionVersion: reactiveHistorySession?.version,
+    syncResumedVersion,
+    markHistorySessionRead: (sessionId) => {
+      void markHistorySessionRead(sessionId);
+    },
+    refreshAfterStream: () => {
+      void refreshCurrentHistorySession({ markRead: true }).catch((error) => {
         console.error("[ChatTabV2] Failed to refresh chat history", error);
       });
-    }, 250);
-
-    return () => window.clearTimeout(timerId);
-  }, [
-    activeHistorySessionId,
-    detachHistorySession,
-    markHistorySessionRead,
-    refreshHistorySessionAfterStream,
-    resumedVersion,
-    showHistoryRail,
-    status,
-  ]);
+    },
+    onConflict: () => {
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE);
+    },
+    onUnsaved: () => {
+      toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
+    },
+  });
 
   // Check if thread is empty
   const isThreadEmpty = !hasConversationMessages;
@@ -2473,7 +2416,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2740,7 +2685,9 @@ export function ChatTabV2({
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
                               onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                              onChangeProtocolVersion={
+                                changeProtocolVersionHandler
+                              }
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2885,7 +2832,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={baseResetChat}
                           />
                         </div>

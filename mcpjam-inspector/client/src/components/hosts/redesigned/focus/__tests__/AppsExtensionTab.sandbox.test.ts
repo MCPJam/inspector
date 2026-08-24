@@ -580,3 +580,78 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
     });
   });
 });
+
+describe("AppsExtensionTab — CSP subtype override round-trip", () => {
+  it("keeps cspConnectDomains / cspResourceDomains through an apply", () => {
+    // Seeded Claude, ChatGPT, Cursor and Goose rows carry these objects.
+    // They are not in the boolean allowlist, so without explicit handling any
+    // apply silently dropped them and the row lost its subtype policy.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+          cspResourceDomains: {
+            script: false,
+            stylesheet: false,
+            image: false,
+            font: false,
+            media: false,
+          },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+    });
+  });
+
+  it("keeps a partial map partial (an omitted subtype stays unknown)", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: { cspConnectDomains: { fetch: false } },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains,
+    ).toEqual({ fetch: false });
+  });
+
+  it("drops unknown leaves and non-boolean values (soft validation)", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          cspConnectDomains: { fetch: false, grpc: true, xhr: "nope" },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains,
+    ).toEqual({ fetch: false });
+  });
+
+  it("collapses an all-invalid map to no override at all", () => {
+    // An empty object would canonicalize away anyway; not emitting the key
+    // keeps the draft sparse so the resolver falls back to the preset.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: { cspConnectDomains: { grpc: true } },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+  });
+});
