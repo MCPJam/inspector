@@ -466,6 +466,17 @@ export interface WidgetHostProfileSandbox {
   permissions?: SandboxPermissionsPolicy;
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
+  /**
+   * Probe-measured browser-storage availability inside the widget iframe.
+   * Absent or `true` = available; `false` makes the sandbox proxy throw
+   * `SecurityError` on access. This projection is minimal by design, so a
+   * field missing here silently disappears before reaching the renderer.
+   */
+  browserStorage?: {
+    localStorage?: boolean;
+    sessionStorage?: boolean;
+    indexedDB?: boolean;
+  };
 }
 
 /**

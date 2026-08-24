@@ -54,6 +54,9 @@ export interface McpAppsModalProps {
   widgetAllowFeatures: Record<string, string> | undefined;
   widgetCspDirectives: Record<string, string[]> | undefined;
   widgetCspSubtypePolicy: CspSubtypePolicy | undefined;
+  widgetBrowserStorage:
+    | { localStorage?: boolean; sessionStorage?: boolean; indexedDB?: boolean }
+    | undefined;
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
@@ -126,6 +129,7 @@ export function McpAppsModal({
   widgetAllowFeatures,
   widgetCspDirectives,
   widgetCspSubtypePolicy,
+  widgetBrowserStorage,
   hostContextRef,
   serverId,
   resourceUri,
@@ -443,6 +447,7 @@ export function McpAppsModal({
             allowFeatures={widgetAllowFeatures}
             cspDirectives={widgetCspDirectives}
             cspSubtypePolicy={widgetCspSubtypePolicy}
+            browserStorage={widgetBrowserStorage}
             colorScheme={modalColorScheme}
             onMessage={handleModalMessage}
             title={`MCP App Modal: ${title}`}
