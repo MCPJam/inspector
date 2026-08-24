@@ -107,6 +107,10 @@ const PLAIN_TOOLS = [
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
+  // The render verdict is structured evidence (tree, console errors, blocked
+  // requests). A widget PANEL here would be a second, drifting copy of the
+  // Apps tab.
+  "render_server_widget",
   "list_server_prompts",
   "get_server_prompt",
   "list_server_resources",
@@ -162,6 +166,11 @@ const PLAIN_TOOLS = [
   "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
+  // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
+  // a trace panel would be a second, drifting copy of the eval trace viewer.
+  "send_chat_message",
+  "get_chat_session",
+  "get_chat_session_trace",
   // Swarms + user testing. No widget views yet: these are agent-oriented
   // payloads, and a half-designed panel is worse than the structured JSON.
   "get_capabilities",
@@ -342,6 +351,7 @@ describe("platform tool registration", () => {
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
+      "render_server_widget",
       "list_server_prompts",
       "get_server_prompt",
       "list_server_resources",
@@ -395,6 +405,9 @@ describe("platform tool registration", () => {
       "get_scenario",
       "list_chat_sessions",
       "search_sessions",
+      "send_chat_message",
+      "get_chat_session",
+      "get_chat_session_trace",
       "get_capabilities",
       "list_personas",
       "get_persona",
@@ -575,6 +588,9 @@ describe("platform tool registration", () => {
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
     const NON_IDEMPOTENT_DESTRUCTIVE = new Set([
+      // Executes the caller's tool before rendering, and nobody can promise
+      // that running a third party's tool twice is safe.
+      "render_server_widget",
       "delete_persona",
       "archive_journey",
       "archive_swarm",
@@ -582,6 +598,11 @@ describe("platform tool registration", () => {
       "rotate_user_testing_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
+      // `risk: "destructive"` is the CONSERVATIVE reading of an unknowable
+      // effect, not a claim that this removes a specific record. Overclaiming
+      // destructiveness is the safe direction, and it matches what the spec
+      // tells a client to assume when the hints are absent anyway.
+      "render_server_widget",
       "delete_eval_suite",
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
@@ -619,7 +640,13 @@ describe("platform tool registration", () => {
           destructiveHint: true,
           idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
-      } else if (registration.name === "call_server_tool") {
+      } else if (
+        registration.name === "call_server_tool" ||
+        // A turn under `toolMode: "auto"` executes arbitrary third-party
+        // tools with the MODEL choosing the arguments, so its effects are no
+        // more knowable than a direct call's. Same absent hints, same reason.
+        registration.name === "send_chat_message"
+      ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
         // default).

@@ -43,6 +43,8 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import chatSessions from "./chat-sessions.js";
+import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
@@ -171,6 +173,20 @@ v1.route("/", agent);
 // GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
+// Agent Playground — the conversational turn plus the trace/detail reads.
+// MOUNTED BEFORE `catalog`, and the order is load-bearing rather than
+// stylistic: `catalog` owns the `GET /chat-sessions` LISTING, and these are
+// its subpaths. Registering the listing first would not shadow them today
+// (Hono matches the full path), but the proxy is the module that grows
+// catch-alls, and a `/chat-sessions/*` forward added there would silently
+// turn the turn route into a Convex 404. Guest-DENIED by default: the
+// allowlist entry is the exact-match `/^\/chat-sessions$/`, so no subpath
+// here matches it, and a turn spends hosted-model credits.
+v1.route("/", chatSessions);
+// Headless MCP App widget render. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — it launches a browser and executes the
+// caller's tool. Its own per-replica Chromium cap lives in the module.
+v1.route("/", widgets);
 v1.route("/", catalog);
 // Registry — directory search/detail/sources (guest-allowed reads) plus
 // project-scoped card/connection reads and install/uninstall writes. Mounted
