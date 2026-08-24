@@ -26,6 +26,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  EVAL_CASE_AGGREGATION_KEY_SEPARATOR,
   EVAL_RATE_MEASUREMENT_STATES,
   EVAL_RUN_VERDICTS,
   EVAL_TRIAL_EXCLUSION_REASONS,
@@ -33,6 +34,8 @@ import {
   EVAL_VERDICT_DECISION_REASONS,
   EVAL_VERDICT_POLICY_SCHEMA_ID,
   EVAL_VERDICT_POLICY_VERSION,
+  MAX_EVAL_CASE_AGGREGATIONS,
+  evalCaseAggregationKey,
   evalCaseVerdictAggregationSchema,
   evalFractionSchema,
   evalRateMeasurementSchema,
@@ -49,7 +52,10 @@ import {
   type EvalVerdictDecision,
 } from "../src/contract/verdict-policy.js";
 import { ITERATION_STATUSES } from "../src/contract/chain.js";
-import { MAX_REPETITIONS } from "../src/contract/suite-file.js";
+import {
+  MAX_REPETITIONS,
+  MAX_SUITE_FILE_CASES,
+} from "../src/contract/suite-file.js";
 import {
   SUITE_FILE_DEFAULT_COVERAGE,
   resolveEvalSuiteFile,
@@ -403,7 +409,7 @@ describe("verdict policy — validity is decided before the task verdict", () =>
 
     // …and it tolerates trials that were never ATTEMPTED, which is exactly
     // what the default coverage rule refuses.
-    const partial = decisionFor("skipped and non-terminal trials");
+    const partial = decisionFor("pending and skipped trials");
     expect(partial.validity.attemptedTrials).toBeLessThan(
       partial.validity.configuredTrials
     );
@@ -469,6 +475,329 @@ describe("verdict policy — validity is decided before the task verdict", () =>
     expect(failed.validity.holds).toBe(true);
     expect(failed.verdict).toBe("failed");
     expect(failed.reasons).toEqual(["casePassRateBelowThreshold"]);
+  });
+});
+
+describe("verdict policy — nested rate arithmetic is validated, not just the top level", () => {
+  // MUTATION tests, deliberately not fixtures: the aggregate schemas embed the
+  // STRUCTURAL rate schema, so the quotient refinements only run if each
+  // aggregate validator invokes them. Taking a decision that parses and
+  // corrupting ONE nested number proves the refinement reaches that depth.
+  const measured = () =>
+    stripAnnotations(
+      findFixture(data.roundTrip, "roundTrip — a fully measured decision")
+    ) as unknown as EvalVerdictDecision;
+
+  it("accepts the un-mutated decision, so every rejection below is the mutation", () => {
+    expect(evalVerdictDecisionSchema.safeParse(measured()).success).toBe(true);
+  });
+
+  const nestedRatePaths = [
+    ["cases", 0, "passRate"],
+    ["cases", 0, "completionRate"],
+    ["cases", 0, "observedStability"],
+    ["validity", "completionRate"],
+    ["validity", "evaluatorErrorRate"],
+  ] as const;
+
+  for (const path of nestedRatePaths) {
+    const label = path.join(".");
+    it(`rejects a value that is not its own quotient at ${label}`, () => {
+      const decision = measured() as unknown as Record<string, unknown>;
+      const rate = path.reduce<Record<string, unknown>>(
+        (node, key) => node[key as never] as Record<string, unknown>,
+        decision
+      );
+      expect(rate.state, `${label} must be measured to mutate`).toBe(
+        "measured"
+      );
+      const numerator = rate.numerator as number;
+      const denominator = rate.denominator as number;
+      // A legal fraction that is simply not this rate's quotient.
+      rate.value = numerator / denominator === 0.5 ? 0.25 : 0.5;
+      const result = evalVerdictDecisionSchema.safeParse(decision);
+      expect(result.success, `${label} accepted an invented value`).toBe(false);
+      expect(
+        result.error?.issues.some((issue) => issue.path.join(".") === `${label}.value`)
+      ).toBe(true);
+    });
+
+    it(`rejects a numerator above the denominator at ${label}`, () => {
+      const decision = measured() as unknown as Record<string, unknown>;
+      const rate = path.reduce<Record<string, unknown>>(
+        (node, key) => node[key as never] as Record<string, unknown>,
+        decision
+      );
+      rate.numerator = (rate.denominator as number) + 1;
+      // Clamped so the fraction bound — which the JSON Schema also enforces —
+      // cannot be what rejects this.
+      rate.value = 1;
+      expect(evalVerdictDecisionSchema.safeParse(decision).success).toBe(false);
+    });
+  }
+
+  it("rejects a nested inconsistency on a bare case aggregate too", () => {
+    const entry = stripAnnotations(
+      findFixture(data.roundTrip, "roundTrip — a fully measured decision")
+    ) as unknown as EvalVerdictDecision;
+    const [first] = entry.cases;
+    if (!first) throw new Error("fixture has no case");
+    const stability = first.observedStability;
+    if (stability.state !== "measured") {
+      throw new Error("fixture case has an unmeasured stability");
+    }
+    const mutated = {
+      ...first,
+      observedStability: {
+        ...stability,
+        // Still a legal fraction, just not this rate's own quotient.
+        value: stability.value === 0.5 ? 0.25 : 0.5,
+      },
+    };
+    expect(
+      evalCaseVerdictAggregationSchema.safeParse(first).success,
+      "the un-mutated case must parse"
+    ).toBe(true);
+    expect(evalCaseVerdictAggregationSchema.safeParse(mutated).success).toBe(
+      false
+    );
+  });
+});
+
+describe("verdict policy — reasons are exactly the checks that failed", () => {
+  const mutateReasons = (
+    labelPrefix: string,
+    cohort: VerdictPolicyFixtureRow[],
+    reasons: string[]
+  ) => {
+    const decision = stripAnnotations(
+      findFixture(cohort, labelPrefix)
+    ) as unknown as Record<string, unknown>;
+    decision.reasons = reasons;
+    return evalVerdictDecisionSchema.safeParse(decision);
+  };
+
+  it("pins the canonical order the vocabulary defines", () => {
+    const nothing = evalVerdictDecisionSchema.parse(
+      verdictPolicyPayload(findFixture(data.accept, "nothing attempted"))
+    );
+    expect(nothing.reasons).toEqual([
+      "eligibleTrialsBelowMinimum",
+      "completionRateNotMeasured",
+      "evaluatorErrorRateNotMeasured",
+      "caseHasNoEligibleTrials",
+    ]);
+    // …and that IS the vocabulary's own order, not a hand-picked sequence.
+    const positions = nothing.reasons.map((reason) =>
+      EVAL_VERDICT_DECISION_REASONS.indexOf(reason)
+    );
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("rejects a missing reason, an extra one, a false one and a reorder", () => {
+    // Missing: the run failed four checks and names three.
+    expect(
+      mutateReasons("nothing attempted", data.accept, [
+        "eligibleTrialsBelowMinimum",
+        "completionRateNotMeasured",
+        "evaluatorErrorRateNotMeasured",
+      ]).success
+    ).toBe(false);
+    // Extra: a fifth reason for a check that is not even in play.
+    expect(
+      mutateReasons("nothing attempted", data.accept, [
+        "configuredTrialsNotAttempted",
+        "eligibleTrialsBelowMinimum",
+        "completionRateNotMeasured",
+        "evaluatorErrorRateNotMeasured",
+        "caseHasNoEligibleTrials",
+      ]).success
+    ).toBe(false);
+    // Reordered: same set, different bytes.
+    expect(
+      mutateReasons("nothing attempted", data.accept, [
+        "completionRateNotMeasured",
+        "eligibleTrialsBelowMinimum",
+        "evaluatorErrorRateNotMeasured",
+        "caseHasNoEligibleTrials",
+      ]).success
+    ).toBe(false);
+    // False: this run's completion floor was met.
+    expect(
+      mutateReasons("explicit minEligibleTrials 4", data.accept, [
+        "completionRateBelowMinimum",
+      ]).success
+    ).toBe(false);
+  });
+
+  it("rejects a validity reason on a run whose validity HELD", () => {
+    const result = mutateReasons("threshold 1.0 with one failure", data.accept, [
+      "completionRateBelowMinimum",
+      "casePassRateBelowThreshold",
+    ]);
+    expect(result.success).toBe(false);
+    const passed = mutateReasons(
+      "suite inheritance and case override",
+      data.accept,
+      ["allMeasuredCasesMetThreshold", "caseHasNoEligibleTrials"]
+    );
+    expect(passed.success).toBe(false);
+  });
+
+  it("still rejects a duplicated reason", () => {
+    expect(
+      mutateReasons("threshold 1.0 with one failure", data.accept, [
+        "casePassRateBelowThreshold",
+        "casePassRateBelowThreshold",
+      ]).success
+    ).toBe(false);
+  });
+});
+
+describe("verdict policy — a case aggregate is identified by case AND execution variant", () => {
+  const fanned = () =>
+    stripAnnotations(
+      findFixture(data.accept, "one case fanned across two provider/model")
+    ) as unknown as EvalVerdictDecision;
+
+  it("keys on the pair, and an omitted variant is its own identity", () => {
+    expect(
+      evalCaseAggregationKey({
+        caseId: "c_alpha",
+        executionVariant: { model: "gpt-4o-mini", provider: "openai" },
+      })
+    ).not.toBe(evalCaseAggregationKey({ caseId: "c_alpha" }));
+    // Two variants of one case are two keys; the same variant is one key.
+    const decision = fanned();
+    const keys = new Set(decision.cases.map(evalCaseAggregationKey));
+    expect(decision.cases).toHaveLength(2);
+    expect(keys.size).toBe(2);
+    expect(new Set(decision.cases.map((entry) => entry.caseId)).size).toBe(1);
+    // The separator cannot be produced by any legal identifier, so no two
+    // distinct identities can collide by concatenation.
+    expect(EVAL_CASE_AGGREGATION_KEY_SEPARATOR).toBe("\u0000");
+    expect(
+      evalCaseAggregationKey({
+        caseId: "c_a",
+        executionVariant: { model: "b", provider: "x" },
+      })
+    ).not.toBe(
+      evalCaseAggregationKey({
+        caseId: "c_a",
+        executionVariant: { model: "x", provider: "b" },
+      })
+    );
+  });
+
+  it("holds every fanned-out variant to its own threshold", () => {
+    const decision = evalVerdictDecisionSchema.parse(fanned());
+    expect(decision.verdict).toBe("failed");
+    expect(decision.reasons).toEqual(["casePassRateBelowThreshold"]);
+    expect(decision.validity.holds).toBe(true);
+    // One variant passed and the run still failed: a suite passes only when
+    // EVERY measured aggregate meets its threshold.
+    expect(
+      decision.cases.filter((entry) => entry.verdict === "passed")
+    ).toHaveLength(1);
+    // Per-variant repetitions stay inside the portable range rather than being
+    // summed into one row.
+    for (const entry of decision.cases) {
+      expect(entry.configuredTrials).toBeLessThanOrEqual(MAX_REPETITIONS);
+    }
+  });
+
+  it("rejects a duplicate pair and a case that mixes keyed with unkeyed rows", () => {
+    const duplicate = fanned();
+    duplicate.cases[1]!.executionVariant = {
+      ...duplicate.cases[0]!.executionVariant!,
+    };
+    expect(evalVerdictDecisionSchema.safeParse(duplicate).success).toBe(false);
+
+    const mixed = fanned();
+    delete mixed.cases[1]!.executionVariant;
+    expect(evalVerdictDecisionSchema.safeParse(mixed).success).toBe(false);
+  });
+
+  it("bounds rows by cases × variants and distinct cases by the suite-file cap", () => {
+    // The row ceiling is built from the portable numbers, so a legal fan-out
+    // run is representable…
+    expect(MAX_EVAL_CASE_AGGREGATIONS).toBe(
+      MAX_SUITE_FILE_CASES * MAX_REPETITIONS
+    );
+    expect(MAX_EVAL_CASE_AGGREGATIONS).toBeGreaterThan(MAX_SUITE_FILE_CASES);
+    // …while DISTINCT cases are still bounded exactly by the suite-file cap.
+    const template = fanned();
+    const [first] = template.cases;
+    if (!first) throw new Error("fixture has no case");
+    const many = {
+      ...template,
+      cases: Array.from({ length: MAX_SUITE_FILE_CASES + 1 }, (_, index) => ({
+        ...structuredClone(first),
+        caseId: `c_${index}`,
+      })),
+    };
+    const result = evalVerdictDecisionSchema.safeParse(many);
+    expect(result.success).toBe(false);
+    expect(
+      result.error?.issues.some((issue) =>
+        issue.message.includes("distinct cases")
+      )
+    ).toBe(true);
+  });
+});
+
+describe("verdict policy — cancelled leaves every denominator, running does not", () => {
+  it("withdraws a cancelled trial from the completion denominator", () => {
+    const decision = evalVerdictDecisionSchema.parse(
+      verdictPolicyPayload(
+        findFixture(data.accept, "a cancelled trial leaves BOTH denominators")
+      )
+    );
+    const [entry] = decision.cases;
+    if (!entry) throw new Error("fixture has no case");
+    expect(entry.completionRate.exclusions.cancelled).toBe(1);
+    expect(entry.passRate.exclusions.cancelled).toBe(1);
+    expect(entry.attemptedTrials).toBeLessThan(entry.configuredTrials);
+    // Cancelling cannot make the run look incomplete: 4/4, not 4/5, and the
+    // 0.9 floor this fixture sets would have failed under the other reading.
+    expect(entry.completionRate.value).toBe(1);
+    expect(decision.validity.policy.minCompletionRate).toBe(0.9);
+    expect(decision.validity.holds).toBe(true);
+    expect(decision.verdict).toBe("passed");
+  });
+
+  it("keeps a running trial in the attempted denominator", () => {
+    const row = data.aggregation.find((entry) =>
+      entry.__label.startsWith("non-terminal trials")
+    );
+    if (!row) throw new Error("no non-terminal aggregation fixture");
+    const statuses = row.input.trials.map((trial) => trial.status);
+    expect(statuses).toContain("running");
+    expect(statuses).toContain("pending");
+    const counts = deriveCaseCounts(row.input.trials);
+    // The running trial is attempted and NOT completed, so it lowers the
+    // completion rate instead of vanishing from the denominator.
+    expect(counts.attempted).toBe(
+      row.input.trials.filter((trial) => trial.status !== "pending" && trial.status !== "skipped")
+        .length
+    );
+    expect(counts.completed).toBeLessThan(counts.attempted);
+    expect(row.expected.attemptedTrials).toBe(counts.attempted);
+    // `notTerminal` splits across the two tallies: both here, one there.
+    expect(counts.eligibilityExclusions.notTerminal).toBe(2);
+    expect(counts.attemptExclusions.notTerminal).toBe(1);
+  });
+
+  it("keeps skipped out of both denominators", () => {
+    const row = data.aggregation.find((entry) =>
+      entry.__label.startsWith("cancelled and skipped")
+    );
+    if (!row) throw new Error("no cancelled/skipped aggregation fixture");
+    const counts = deriveCaseCounts(row.input.trials);
+    expect(counts.attemptExclusions.skipped).toBe(1);
+    expect(counts.attemptExclusions.cancelled).toBe(1);
+    expect(counts.eligibilityExclusions.skipped).toBe(1);
+    expect(counts.eligibilityExclusions.cancelled).toBe(1);
   });
 });
 

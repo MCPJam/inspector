@@ -67,7 +67,11 @@
 
 import { z } from "zod";
 import { opaqueIdSchema } from "./identity.js";
-import { MAX_REPETITIONS, MAX_SUITE_FILE_CASES } from "./suite-file.js";
+import {
+  MAX_REPETITIONS,
+  MAX_SUITE_FILE_CASES,
+  MAX_SUITE_FILE_TITLE_CHARS,
+} from "./suite-file.js";
 
 /**
  * The policy version, as a literal.
@@ -161,11 +165,17 @@ const configuredTrialsSchema = z.number().int().min(1).max(MAX_REPETITIONS);
  * become the thing that decides verdicts.
  *
  *   - `notTerminal`     — still `pending`/`running` when the roll-up was taken.
+ *     A `running` trial HAS begun, so it is attempted and its unfinished state
+ *     lowers the completion rate; a `pending` one has not.
  *   - `skipped`         — deliberately not run (disabled case, filtered
  *     selection). Never attempted, so it is not a completion failure either.
  *   - `setupFailed`     — the environment was never prepared. Says something
  *     about us, not about the server.
  *   - `cancelled`       — a run stopped mid-flight by a human or a shutdown.
+ *     Withdrawn from EVERY denominator, including the completion rate's: the
+ *     harness took the trial's outcome away, so counting it as an incomplete
+ *     attempt would report a suite as unfinished for a decision nobody made
+ *     about the server. See {@link EvalCaseVerdictAggregation.attemptedTrials}.
  *   - `timedOut`        — no terminal outcome inside the budget.
  *   - `executionFailed` — the trial ran and errored out mechanically, so it has
  *     no task verdict to grade.
@@ -309,6 +319,34 @@ export const evalRateMeasurementSchema =
   });
 export type EvalRateMeasurement = z.infer<typeof evalRateMeasurementSchema>;
 
+/**
+ * Re-run {@link evalRateMeasurementSchema} on a rate nested inside an aggregate.
+ *
+ * The aggregate schemas embed the STRUCTURAL rate schema, because a
+ * `discriminatedUnion` carrying a `superRefine` cannot be composed into another
+ * object schema and still project into the generated JSON Schema. The
+ * refinements therefore have to be invoked explicitly, and every aggregate
+ * validator below does so for every rate it carries — a nested rate whose
+ * `value` is not the quotient of the counts it ships with is exactly the drift
+ * that makes a hosted rate and a re-derived one disagree, and it must not
+ * survive validation just because it is one level down.
+ */
+function addNestedRateIssues(
+  ctx: z.RefinementCtx,
+  path: PropertyKey[],
+  rate: unknown
+): void {
+  const parsed = evalRateMeasurementSchema.safeParse(rate);
+  if (parsed.success) return;
+  for (const issue of parsed.error.issues) {
+    ctx.addIssue({
+      code: "custom",
+      path: [...path, ...issue.path],
+      message: issue.message,
+    });
+  }
+}
+
 // ── the resolved validity policy ─────────────────────────────────────────────
 /**
  * The suite-file `validity` block once its documented defaults are resolved —
@@ -437,9 +475,82 @@ export function isEvalValidityDecisionReason(
   );
 }
 
+// ── execution variants ───────────────────────────────────────────────────────
+/**
+ * The provider/model pair one aggregate's trials executed under.
+ *
+ * A hosted run FANS ONE CASE across several provider/model pairs, and each pair
+ * numbers its own iterations from 1. A case-only key therefore cannot say which
+ * aggregate is which, and merging the pairs into one row would both destroy the
+ * per-variant verdict and push `configuredTrials` past the portable
+ * {@link MAX_REPETITIONS} range. So identity is `caseId` PLUS this, one row per
+ * variant, and {@link evalVerdictDecisionSchema} refuses a duplicate pair or a
+ * case that mixes variant-keyed and unkeyed rows.
+ *
+ * OMITTED means the run did not fan out — the single execution the suite file
+ * itself describes (`defaults.model` / `case.model`). Absence is not a wildcard
+ * and never matches a variant-keyed row.
+ *
+ * `model` and `provider` are spelled exactly as `evalSuiteFileDefaultsSchema`
+ * spells them, provider included as the same optional disambiguating hint,
+ * because these are the identifiers the suite file authored and a second
+ * spelling would make two names for one pair.
+ */
+export const evalExecutionVariantSchema = z
+  .object({
+    model: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+    provider: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS).optional(),
+  })
+  .strict();
+export type EvalExecutionVariant = z.infer<typeof evalExecutionVariantSchema>;
+
+/**
+ * The field separator inside an aggregation key.
+ *
+ * `NUL`, because it cannot occur in a `caseId` (see `opaqueIdSchema`) nor in a
+ * model or provider name, so no pair of distinct identities can produce the
+ * same key by concatenation. Exported so the backend mirror joins on the same
+ * byte instead of picking its own delimiter.
+ */
+export const EVAL_CASE_AGGREGATION_KEY_SEPARATOR = "\u0000";
+
+/**
+ * The identity of one aggregate, as a comparable string.
+ *
+ * Exported because every consumer that groups aggregates must group them by the
+ * SAME key — a reader that keys on `caseId` alone silently collapses a fan-out
+ * run's variants into whichever one it saw last. An omitted variant produces a
+ * key that no variant-keyed row can equal, which is what makes "this run did not
+ * fan out" a distinct identity rather than a wildcard.
+ */
+export function evalCaseAggregationKey(entry: {
+  caseId: string;
+  executionVariant?: EvalExecutionVariant;
+}): string {
+  const sep = EVAL_CASE_AGGREGATION_KEY_SEPARATOR;
+  if (!entry.executionVariant) return `${entry.caseId}${sep}`;
+  const { model, provider } = entry.executionVariant;
+  return `${entry.caseId}${sep}${provider ?? ""}${sep}${model}`;
+}
+
+/**
+ * Max case-aggregation rows in ONE decision.
+ *
+ * Rows are (case × execution variant), not cases, so bounding them by
+ * {@link MAX_SUITE_FILE_CASES} alone would make a legal fan-out run
+ * unrepresentable. This is a payload-size ceiling built from the two numbers the
+ * portable suite file already pins, NOT a fan-out policy: how many variants a
+ * run may launch is a product limit enforced where runs are launched, and the
+ * exact per-suite bound the contract does enforce is on DISTINCT `caseId`s (see
+ * {@link evalVerdictDecisionSchema}).
+ */
+export const MAX_EVAL_CASE_AGGREGATIONS =
+  MAX_SUITE_FILE_CASES * MAX_REPETITIONS;
+
 // ── per-case aggregation ─────────────────────────────────────────────────────
 /**
- * One case's trials, rolled up.
+ * One case's trials, rolled up — for ONE execution variant when the run fanned
+ * out across provider/model pairs.
  *
  * The arithmetic is pinned here because four runtimes must agree on it:
  *
@@ -459,9 +570,24 @@ export function isEvalValidityDecisionReason(
 export const evalCaseVerdictAggregationStructuralSchema = z
   .object({
     caseId: opaqueIdSchema,
-    /** What the resolved suite/case `repetitions` asked for. */
+    /**
+     * The provider/model pair these trials ran under, when the run fanned the
+     * case out across several. Omitted for a single-execution run.
+     */
+    executionVariant: evalExecutionVariantSchema.optional(),
+    /**
+     * What the resolved suite/case `repetitions` asked for — PER VARIANT, which
+     * is why the portable `1..100` range still bounds it on a fan-out run.
+     */
     configuredTrials: configuredTrialsSchema,
-    /** Configured trials that actually began. */
+    /**
+     * Configured trials that began and were not withdrawn.
+     *
+     * A `running` trial has begun and counts; a `cancelled` one is WITHDRAWN and
+     * does not, so cancelling a run cannot depress its completion rate. Both
+     * halves of that rule are the difference between "we did not finish" and
+     * "we were told to stop" — see {@link EVAL_TRIAL_EXCLUSION_REASONS}.
+     */
     attemptedTrials: trialCountSchema,
     /** Attempted trials that produced a gradeable task verdict. */
     eligibleTrials: trialCountSchema,
@@ -492,6 +618,10 @@ export const evalCaseVerdictAggregationSchema =
   evalCaseVerdictAggregationStructuralSchema.superRefine((entry, ctx) => {
     const fail = (path: string, message: string) =>
       ctx.addIssue({ code: "custom", path: [path], message });
+
+    addNestedRateIssues(ctx, ["passRate"], entry.passRate);
+    addNestedRateIssues(ctx, ["completionRate"], entry.completionRate);
+    addNestedRateIssues(ctx, ["observedStability"], entry.observedStability);
 
     if (entry.attemptedTrials > entry.configuredTrials) {
       fail(
@@ -631,9 +761,43 @@ export const evalVerdictDecisionStructuralSchema = z
     cases: z
       .array(evalCaseVerdictAggregationStructuralSchema)
       .min(1)
-      .max(MAX_SUITE_FILE_CASES),
+      .max(MAX_EVAL_CASE_AGGREGATIONS),
   })
   .strict();
+
+/**
+ * Refuse a `reasons` list that is not EXACTLY the expected one, in order.
+ *
+ * Order is part of the contract, not presentation: `reasons` is compared
+ * element-by-element against the vocabulary's own order, so the same run cannot
+ * produce two different byte sequences depending on which producer summarized
+ * it. That is what makes a hosted decision and an SDK decision comparable at
+ * all.
+ */
+function assertExactReasons(
+  fail: (path: PropertyKey[], message: string) => void,
+  actual: readonly EvalVerdictDecisionReason[],
+  expected: readonly EvalVerdictDecisionReason[]
+): void {
+  // Sorted by the vocabulary rather than by call order, so "canonical order" is
+  // one definition in one place instead of a property of how the checks above
+  // happen to be written.
+  const canonical = [...expected].sort(
+    (left, right) =>
+      EVAL_VERDICT_DECISION_REASONS.indexOf(left) -
+      EVAL_VERDICT_DECISION_REASONS.indexOf(right)
+  );
+  const same =
+    actual.length === canonical.length &&
+    actual.every((reason, index) => reason === canonical[index]);
+  if (same) return;
+  fail(
+    ["reasons"],
+    `reasons must be exactly [${canonical.join(", ")}] in that order — the ` +
+      `checks this decision's own measurements failed (or, once validity holds, ` +
+      `the one its cases produced) — not [${actual.join(", ")}]`
+  );
+}
 
 /**
  * The decision validator.
@@ -647,8 +811,13 @@ export const evalVerdictDecisionStructuralSchema = z
  *      threshold ⇒ `failed`; otherwise `passed`.
  *
  * `holds` itself is checked against the measurements it claims to summarize, so
- * a producer cannot assert validity it did not have. This is validation of a
- * supplied summary — no verdict is produced from trials anywhere in this file.
+ * a producer cannot assert validity it did not have, and `reasons` must be
+ * EXACTLY the reasons those checks produce — in the vocabulary's own order,
+ * with nothing missing and nothing invented. A reason list that is merely
+ * plausible is an audit trail that cannot be audited: two producers would
+ * disagree byte-for-byte on the same run, and a reader could not tell which
+ * check actually failed. This is validation of a supplied summary — no verdict
+ * is produced from trials anywhere in this file.
  */
 export const evalVerdictDecisionSchema =
   evalVerdictDecisionStructuralSchema.superRefine((decision, ctx) => {
@@ -671,6 +840,45 @@ export const evalVerdictDecisionSchema =
       }
       seenReasons.add(reason);
     });
+
+    // ── one row per (case, execution variant) ──
+    const seenKeys = new Set<string>();
+    const variantedCases = new Set<string>();
+    const unvariantedCases = new Set<string>();
+    decision.cases.forEach((entry, index) => {
+      const key = evalCaseAggregationKey(entry);
+      if (seenKeys.has(key)) {
+        fail(
+          ["cases", index],
+          `case "${entry.caseId}" already has an aggregate for this execution ` +
+            `variant; a fan-out run reports ONE row per provider/model pair`
+        );
+      }
+      seenKeys.add(key);
+      (entry.executionVariant ? variantedCases : unvariantedCases).add(
+        entry.caseId
+      );
+    });
+    for (const caseId of variantedCases) {
+      if (unvariantedCases.has(caseId)) {
+        fail(
+          ["cases"],
+          `case "${caseId}" mixes variant-keyed and unkeyed aggregates: an ` +
+            `omitted executionVariant means "this run did not fan out", not ` +
+            `"any variant", so the two cannot describe the same case`
+        );
+      }
+    }
+    const distinctCases = new Set(
+      decision.cases.map((entry) => entry.caseId)
+    ).size;
+    if (distinctCases > MAX_SUITE_FILE_CASES) {
+      fail(
+        ["cases"],
+        `${distinctCases} distinct cases exceeds the portable suite-file maximum ` +
+          `of ${MAX_SUITE_FILE_CASES}`
+      );
+    }
 
     const totals = decision.cases.reduce(
       (sum, entry) => ({
@@ -705,6 +913,16 @@ export const evalVerdictDecisionSchema =
         `completionRate denominator ${validity.completionRate.denominator} must be attemptedTrials ${validity.attemptedTrials}`
       );
     }
+    addNestedRateIssues(
+      ctx,
+      ["validity", "completionRate"],
+      validity.completionRate
+    );
+    addNestedRateIssues(
+      ctx,
+      ["validity", "evaluatorErrorRate"],
+      validity.evaluatorErrorRate
+    );
     if (validity.evaluatorErrorRate.denominator !== validity.attemptedTrials) {
       fail(
         ["validity", "evaluatorErrorRate"],
@@ -756,6 +974,38 @@ export const evalVerdictDecisionSchema =
             `and did not hold`
         );
       }
+      // The reasons are the FAILED checks, all of them and only them: a missing
+      // one hides why the run said nothing, and an extra one accuses a check
+      // that passed.
+      const expectedReasons: EvalValidityDecisionReason[] = [];
+      if (validity.policy.coverage.kind === "allConfiguredTrialsAttempted") {
+        if (validity.attemptedTrials !== validity.configuredTrials) {
+          expectedReasons.push("configuredTrialsNotAttempted");
+        }
+        if (
+          validity.eligibleTrials < validity.policy.coverage.minGradeableTrials
+        ) {
+          expectedReasons.push("noGradeableTrials");
+        }
+      } else if (
+        validity.eligibleTrials < validity.policy.coverage.minEligibleTrials
+      ) {
+        expectedReasons.push("eligibleTrialsBelowMinimum");
+      }
+      if (validity.completionRate.state !== "measured") {
+        expectedReasons.push("completionRateNotMeasured");
+      } else if (!completionMet) {
+        expectedReasons.push("completionRateBelowMinimum");
+      }
+      if (validity.evaluatorErrorRate.state !== "measured") {
+        expectedReasons.push("evaluatorErrorRateNotMeasured");
+      } else if (!evaluatorMet) {
+        expectedReasons.push("evaluatorErrorRateAboveMaximum");
+      }
+      if (!everyCaseMeasured) {
+        expectedReasons.push("caseHasNoEligibleTrials");
+      }
+      assertExactReasons(fail, decision.reasons, expectedReasons);
       return;
     }
 
@@ -776,19 +1026,14 @@ export const evalVerdictDecisionSchema =
         `with validity holding, the cases make this run "${expectedVerdict}"`
       );
     }
-    if (expectedVerdict === "passed") {
-      if (!decision.reasons.includes("allMeasuredCasesMetThreshold")) {
-        fail(
-          ["reasons"],
-          `a passed run records "allMeasuredCasesMetThreshold"`
-        );
-      }
-    } else if (
-      expectedVerdict === "failed" &&
-      !decision.reasons.includes("casePassRateBelowThreshold")
-    ) {
-      fail(["reasons"], `a failed run records "casePassRateBelowThreshold"`);
-    }
+    // With validity holding, every case was measured, so the verdict is
+    // `passed` or `failed` and its reason is the one the cases produced — and
+    // a validity reason here would claim a check failed when none did.
+    assertExactReasons(fail, decision.reasons, [
+      expectedVerdict === "passed"
+        ? "allMeasuredCasesMetThreshold"
+        : "casePassRateBelowThreshold",
+    ]);
   });
 export type EvalVerdictDecision = z.infer<typeof evalVerdictDecisionSchema>;
 export type EvalVerdictValidity = EvalVerdictDecision["validity"];
