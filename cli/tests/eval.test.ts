@@ -1969,6 +1969,19 @@ test("eval run prints the disclosure block in human mode, before the run link", 
         run.stdout,
       ),
     );
+    // Capture/redaction facts are the human's only pre-launch view of what
+    // happens to content once it exists (the standalone disclosure command
+    // is excluded) — a consequential setting like a non-DLP redaction module
+    // must not be silently absent from the printed block.
+    assert.match(run.stdout, /Capture: full · reporting standard/);
+    assert.match(
+      run.stdout,
+      /Redaction: credential-shaped — NOT a DLP system \(not DLP\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Export defaults: excludes content \(redacted by default\)/,
+    );
   } finally {
     await fixture.close();
   }

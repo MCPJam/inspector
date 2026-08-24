@@ -442,6 +442,28 @@ function writeRunDisclosure(
         : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
     );
   }
+  // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
+  // — it is what happens to content once it exists, not a fact about whether
+  // this run executed. This is the human's only pre-launch view (the
+  // standalone disclosure command is deliberately excluded), so a
+  // consequential setting like a non-DLP redaction module or a captureLevel
+  // of "full" must not be silently absent from the printed block.
+  lines.push(
+    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`
+  );
+  lines.push(
+    `  Redaction: ${disclosure.capture.redaction.kind}` +
+      (disclosure.capture.redaction.isDlp
+        ? ""
+        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
+  );
+  lines.push(
+    `  Export defaults: ${
+      disclosure.capture.exportDefaults.includeContent
+        ? "includes content"
+        : "excludes content"
+    } (${disclosure.capture.exportDefaults.note})`
+  );
   const firingAnalysis = disclosure.analysis.filter(
     (touchpoint) => typeof touchpoint.fires === "string"
   );
