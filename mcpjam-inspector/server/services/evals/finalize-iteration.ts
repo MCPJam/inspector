@@ -33,6 +33,7 @@ import {
   type StageEvidence,
   type StageResultRow,
   type StageSetupSignals,
+  type IterationStatus as ContractIterationStatus,
 } from "@mcpjam/sdk/contract";
 import {
   resolveGradingEngineMode,
@@ -52,8 +53,19 @@ import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
+import { isTerminalIterationStatus } from "./run-status.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary, imported rather than re-spelled: this
+ * file used to declare a three-value subset of it, which is what forced a
+ * runner whose ENVIRONMENT never came up to report `failed` — a word that says
+ * something about the server under test.
+ *
+ * Lifecycle is not the verdict. A run that asked the question and got the wrong
+ * answer is `completed` + `result: "failed"`; `failed` is reserved for the
+ * execution itself breaking.
+ */
+type IterationStatus = ContractIterationStatus;
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
 type PolicyBlockRecord = { reason?: unknown };
@@ -171,7 +183,13 @@ export function buildStageMetadata(args: {
    */
   judgeEvidence?: StageEvidence["judgeEvidence"];
   policy?: { blocked: boolean; reason?: string };
-  status: "completed" | "failed";
+  /**
+   * The EXECUTION lifecycle status, forwarded to the analyzer unchanged. The
+   * stopped states (`cancelled`, `timed_out`, `setup_failed`, `skipped`) are
+   * what let it report a stage as `notMeasured` rather than failed, so
+   * narrowing them to `failed` here would file evidence gaps as findings.
+   */
+  status: IterationStatus;
   error?: string;
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
@@ -354,7 +372,12 @@ export function buildIterationFinishParams(args: {
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   browserInteractionSteps?: RunnerBrowserInteractionStep[];
-  status: "completed" | "failed";
+  /**
+   * REQUIRED and explicit. Callers classify their own path — a graded task
+   * failure is `completed`, a setup abort `setup_failed`, a budget expiry
+   * `timed_out` — because `passed` cannot distinguish them and never could.
+   */
+  status: IterationStatus;
   startedAt: number;
   error?: string;
   errorDetails?: string;
@@ -569,8 +592,6 @@ export function buildIterationFinishParams(args: {
   };
 }
 
-const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
-
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
@@ -608,7 +629,8 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
-  status?: IterationStatus;
+  /** Explicit harness lifecycle status; never infer it from the verdict. */
+  status: IterationStatus;
   startedAt?: number;
   error?: string;
   errorDetails?: string;
@@ -684,16 +706,13 @@ export async function finalizeEvalIteration(
   // Check if the iteration is already in a terminal stop state before trying
   // to update. A timed-out iteration whose original LLM/browser work ignores
   // the abort and completes late must NOT overwrite the `timed_out` row with a
-  // completed/failed result — both `cancelled` and `timed_out` are terminal.
+  // completed/failed result — every terminal lifecycle status is protected.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (
-      iteration?.status === "cancelled" ||
-      iteration?.status === "timed_out"
-    ) {
+    if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
@@ -705,8 +724,9 @@ export async function finalizeEvalIteration(
     // If we can't check status, continue anyway.
   }
 
-  const iterationStatus =
-    status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
+  const iterationStatus = status;
+  // The TASK verdict, independent of the lifecycle above: `completed` +
+  // `failed` is a run that worked and a case that did not.
   const result = passed ? "passed" : "failed";
 
   // PR-2 eval→chatSessions fanout: write the transcript as per-turn rows
@@ -738,7 +758,10 @@ export async function finalizeEvalIteration(
   // error transcript with the wrong reason. Presence of `error` is the
   // cycle-failure signal we already have in scope.
   const isCycleFailure =
-    iterationStatus === "failed" || (error !== undefined && error !== "");
+    iterationStatus === "failed" ||
+    iterationStatus === "setup_failed" ||
+    iterationStatus === "timed_out" ||
+    (error !== undefined && error !== "");
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"

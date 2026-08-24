@@ -13,6 +13,7 @@ import type {
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
   UserValueStage,
@@ -507,7 +508,15 @@ export interface PlatformEvalRun {
   runNumber: number | null;
   /** Poll until terminal: "completed" | "failed" | "cancelled". */
   status: string;
-  /** Pass/fail verdict once terminal: "passed" | "failed" | null. */
+  /**
+   * Verdict once terminal: `"passed" | "failed" | "inconclusive" | null`.
+   *
+   * `"inconclusive"` exists only under `verdictPolicyVersion: 2` and is NOT a
+   * failure: the run did not measure the server well enough to say (too few
+   * gradeable trials, too many evaluator errors), so a gate that folds it into
+   * `failed` reports a server defect the run never observed. Read
+   * `verdictSummary.reasons` for which check withheld the verdict.
+   */
   result: string | null;
   summary: {
     total?: number;
@@ -551,6 +560,32 @@ export interface PlatformEvalRun {
    * `"invalid"`: absent evidence is not valid evidence.
    */
   scoreIntegrity?: "valid" | "invalid" | null;
+  /**
+   * The verdict policy this run was decided under, frozen at run start.
+   *
+   * ABSENT means legacy percent-threshold grading — the run's `result` cannot
+   * be `"inconclusive"` and there is no `verdictSummary` to read. A caller
+   * that gates on fractions or on validity must check this first rather than
+   * assume a missing summary means a clean run.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * How the verdict was reached: the resolved validity policy, the measured
+   * rates with their denominators and exclusions, the per-case and
+   * per-execution-variant aggregates, and the exact reasons.
+   *
+   * Absent when the run was not decided under policy 2, or when the stored
+   * summary failed contract validation at the boundary — a public caller never
+   * receives a partially-valid decision, since a gate cannot tell the
+   * difference between a missing field and a satisfied check.
+   */
+  verdictSummary?: EvalVerdictDecision;
+  /**
+   * Why a policy-2 run could not be decided from its own evidence (a missing
+   * or malformed policy snapshot, mixed evaluator configs). Accompanies an
+   * `"inconclusive"` result; it is never a task failure.
+   */
+  verdictPolicyIntegrityError?: string;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -859,6 +894,47 @@ export interface PlatformEvalSuiteSettings {
      */
     threshold?: number;
   };
+  /**
+   * The verdict policy this suite's runs are decided under.
+   *
+   * `2` is the fraction-and-validity policy: each case is graded against a
+   * `passThreshold` FRACTION over its own `repetitions`, and a run is decided
+   * valid-first (an invalid run is `"inconclusive"`, not failed).
+   *
+   * ABSENT means legacy: runs are graded by `minimumAccuracy` (a suite-wide
+   * PERCENT) over `max(case.iterations, minimumIterations)`. The two are not
+   * convertible, which is why absence is reported rather than defaulted —
+   * reading a historical percent as a fraction silently moves every bar.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * Suite defaults a case inherits under policy 2. Present only with
+   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
+   * `passThreshold` cannot answer what a case is graded against.
+   */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+}
+
+/** Suite-level defaults under verdict policy 2. Fractions, never percents. */
+export interface PlatformEvalVerdictPolicyDefaults {
+  /** Trials per case unless the case overrides `repetitions`. */
+  repetitions: number;
+  /** Fraction of a case's trials that must pass, in [0, 1]. */
+  passThreshold: number;
+  /**
+   * When a run's measurement counts as trustworthy enough to decide.
+   *
+   * DECLARED, not resolved: an omitted field is not "no minimum" but the
+   * contract's default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1,
+   * and an omitted `minEligibleTrials` requiring every configured trial
+   * attempted plus at least one gradeable trial. The resolved policy a run was
+   * actually decided under is on the run's `verdictSummary.validity`.
+   */
+  validity?: {
+    minEligibleTrials?: number;
+    minCompletionRate?: number;
+    maxEvaluatorErrorRate?: number;
+  };
 }
 
 /** The sandbox image a suite's eval runs boot from. */
@@ -984,6 +1060,24 @@ export interface PlatformEvalCase {
   expectedOutput?: string;
   /** Iterations to run per eval run (← internal runs). */
   iterations: number;
+  /**
+   * Trials this case runs under verdict policy 2, overriding the suite
+   * default. Absent means the case inherits it.
+   *
+   * NOT a second spelling of `iterations`: that one is the legacy count, which
+   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
+   * and which a policy-2 case still reports for compatibility. This one is
+   * exact.
+   */
+  repetitions?: number;
+  /**
+   * Fraction of this case's trials that must pass, in [0, 1], overriding the
+   * suite default. Absent means the case inherits it.
+   *
+   * Never derived from the suite's `minimumAccuracy`, which is a percent under
+   * a different resolver.
+   */
+  passThreshold?: number;
   isNegative: boolean;
   scenario?: string;
   /** Execution models (plural — preserves compare behavior). */
@@ -1638,7 +1732,18 @@ export interface PlatformEvalIteration {
   testCaseId: string | null;
   title: string | null;
   iterationNumber: number;
+  /**
+   * LIFECYCLE, not verdict: `pending`, `running`, `completed`, `failed`,
+   * `cancelled`, `timed_out`, `setup_failed`, `skipped`.
+   *
+   * A normally-executed trial that graded badly is `completed` with
+   * `result: "failed"` — reading `status === "failed"` as "the case failed"
+   * counts harness noise as server defects. `setup_failed` (environment never
+   * came up) and `skipped` (deliberately not run) are the two states an older
+   * deployment cannot emit.
+   */
   status: string;
+  /** Task verdict once terminal: `"passed" | "failed" | null`. */
   result: string | null;
   model: string | null;
   provider: string | null;
