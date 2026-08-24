@@ -162,6 +162,11 @@ const PLAIN_TOOLS = [
   "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
+  // Agent Playground: the turn plus its two reads. Agent-oriented payloads —
+  // a trace panel would be a second, drifting copy of the eval trace viewer.
+  "send_chat_message",
+  "get_chat_session",
+  "get_chat_session_trace",
   // Swarms + user testing. No widget views yet: these are agent-oriented
   // payloads, and a half-designed panel is worse than the structured JSON.
   "get_capabilities",
@@ -395,6 +400,9 @@ describe("platform tool registration", () => {
       "get_scenario",
       "list_chat_sessions",
       "search_sessions",
+      "send_chat_message",
+      "get_chat_session",
+      "get_chat_session_trace",
       "get_capabilities",
       "list_personas",
       "get_persona",
@@ -619,7 +627,13 @@ describe("platform tool registration", () => {
           destructiveHint: true,
           idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE.has(registration.name),
         });
-      } else if (registration.name === "call_server_tool") {
+      } else if (
+        registration.name === "call_server_tool" ||
+        // A turn under `toolMode: "auto"` executes arbitrary third-party
+        // tools with the MODEL choosing the arguments, so its effects are no
+        // more knowable than a direct call's. Same absent hints, same reason.
+        registration.name === "send_chat_message"
+      ) {
         // Arbitrary third-party tool execution: destructive/idempotent hints
         // are deliberately absent so clients assume destructive (spec
         // default).

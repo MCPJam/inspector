@@ -180,6 +180,8 @@ export type ResolvedEvalSuiteFile = {
   defaults: {
     model: string;
     provider?: string;
+    systemPrompt?: string;
+    temperature?: number;
     repetitions: number;
     passThreshold: number;
     captureLevel: typeof SUITE_FILE_DEFAULT_CAPTURE_LEVEL;
@@ -436,6 +438,12 @@ export function resolveEvalSuiteFile(
       ...(defaults.provider === undefined
         ? {}
         : { provider: defaults.provider }),
+      ...(defaults.systemPrompt === undefined
+        ? {}
+        : { systemPrompt: defaults.systemPrompt }),
+      ...(defaults.temperature === undefined
+        ? {}
+        : { temperature: defaults.temperature }),
       repetitions: defaults.repetitions,
       passThreshold: defaults.passThreshold,
       captureLevel: defaults.captureLevel ?? SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
