@@ -41,7 +41,7 @@ const {
   // — an empty loaded list means "deleted", which is the other route guard's
   // subject (see `HostsRoute.deleted-host-permalink.test.tsx`).
   mockHostList: {
-    hosts: [] as Array<{ hostId: string }>,
+    hosts: [] as Array<{ hostId: string; name?: string }>,
     isLoading: false,
   },
   mockCreateHost: vi.fn(),
@@ -159,6 +159,8 @@ vi.mock("@codemirror/lint", () => ({
 }));
 
 import { HostsRoute } from "../App";
+import { buildHostsPath } from "../lib/app-navigation";
+import { toast } from "../lib/toast";
 
 beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
@@ -194,6 +196,44 @@ describe("HostsRoute — a URL segment that is not a Convex host id", () => {
       });
     });
     expect(mockCreateHost).not.toHaveBeenCalled();
+    // The bounce lands on a list that looks unchanged, so the toast is the only
+    // thing telling the user why their link did nothing.
+    expect(toast.error).toHaveBeenCalledWith("Codex is not available yet.");
+  });
+
+  it("opens a gated host the account already has", async () => {
+    mockHostList.hosts = [{ hostId: CONVEX_HOST_ID, name: "Codex" }];
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    render(<HostsRoute />);
+
+    // Reuse is matched by name and runs ahead of the rollout gate — an account
+    // that already has the host keeps reaching it, flag or no flag.
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith(buildHostsPath(CONVEX_HOST_ID), {
+        replace: true,
+      });
+    });
+    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not create again after a failed create", async () => {
+    mockHostList.hosts = [];
+    mockFeatureFlags.codex = true;
+    mockCreateHost.mockRejectedValue(new Error("host limit reached"));
+    window.history.replaceState({}, "", `${routePaths.hosts}?template=codex`);
+
+    const { rerender } = render(<HostsRoute />);
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("host limit reached")
+    );
+    // A later render (the other flag settling, a host-list update) must not
+    // retry a create that may have committed before it failed.
+    mockFeatureFlags.claudeCode = false;
+    rerender(<HostsRoute />);
+    await waitFor(() => expect(mockCreateHost).toHaveBeenCalledTimes(1));
   });
 
   it("waits for an unresolved flag instead of bouncing the verify URL", async () => {
