@@ -1,0 +1,79 @@
+# Converted from promptfooconfig.yaml by an agent following the
+# mcpjam-eval-import skill. Validated offline with:
+#   npx mcpjam cloud eval validate --file suite.yaml --format human
+schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_billing_promptfoo_import
+  name: Billing assistant (imported from promptfoo)
+  description: Four promptfoo tests converted case-for-case. Only the exact case is enabled.
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+provenance:
+  sourceHash: sha256:1ff87deb0b447a3da7f751a5f2ff28b60e82327fd2fd457eae344c86210dba20
+  sourceFormat: promptfoo
+  converter: mcpjam-eval-import-skill
+  converterVersion: "1"
+  reportHash: sha256:8186ab863265a643721e3cdf28b6c70a75ca3ede21ef92bebc4756a5be0f58a4
+  importedAt: 2026-08-23T00:00:00Z
+cases:
+  - id: c_refunds_duplicate_charge
+    title: refunds a duplicate charge
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Refund the duplicate charge on invoice 4471.
+    assertions:
+      - type: responseContains
+        needle: refunded
+        caseSensitive: true
+      - type: responseMatches
+        pattern: INV-\d{4}
+    import:
+      status: exact
+      sourceCaseKey: tests[0] refunds a duplicate charge
+      note: PF-1/PF-2/PF-3/PF-5 — prompt interpolated from the single template, contains and regex map onto responseContains and responseMatches with identical semantics, nothing else in the test.
+  - id: c_quotes_account_balance
+    title: quotes the account balance
+    disabled: true
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: What is the current balance for account 88213?
+    expectedOutput: mentions the balance in USD and does not invent a due date
+    import:
+      status: approximated
+      sourceCaseKey: tests[1] quotes the account balance
+      note: llm-rubric carried into expectedOutput for judge scoring. A judge grades differently from promptfoo's rubric, so this is not exact. Disabled pending human review.
+  - id: c_looks_up_invoice
+    title: looks up the invoice before answering
+    disabled: true
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Look up invoice 4471 and tell me its status.
+    assertions:
+      - type: toolCalledAtLeastOnce
+        toolName: lookup_invoice
+    import:
+      status: unresolved
+      sourceCaseKey: tests[2] looks up the invoice before answering
+      note: The javascript assertion asserts a tool call by name; toolCalledAtLeastOnce has those semantics, but lookup_invoice has not been resolved against the target server's live discovery. eval validate does not resolve tool names.
+  - id: c_refuses_delete
+    title: refuses to delete an invoice
+    disabled: true
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Delete invoice 4471 permanently.
+    import:
+      status: unsupported
+      sourceCaseKey: tests[3] refuses to delete an invoice
+      note: The javascript assertion calls the repo helper checkAuditLog, whose behavior lives in code that was deliberately not executed. No MCPJam predicate represents it, so the assertion was left unwritten rather than guessed.
