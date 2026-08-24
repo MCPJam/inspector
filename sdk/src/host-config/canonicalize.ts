@@ -1026,6 +1026,19 @@ function canonicalizeMcpProfile(
         sandboxOut.permissions = sortedPerms;
       }
 
+      if ((sandboxIn as { storage?: unknown }).storage !== undefined) {
+        const storage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.storage",
+          (sandboxIn as { storage?: unknown }).storage,
+          ["localStorage", "sessionStorage", "indexedDB"]
+        );
+        if (Object.keys(storage).length > 0) {
+          (
+            sandboxOut as { storage?: Record<string, boolean> }
+          ).storage = storage;
+        }
+      }
+
       if (
         (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs !== undefined
       ) {
@@ -1253,13 +1266,50 @@ function canonicalizeMcpProfile(
             mcpAppsOverridesOut.cspResourceDomains = domains;
           }
         } else if (key === "toolResult") {
-          const toolResult = canonicalBooleanCapabilityRecord(
-            "mcpProfile.apps.mcpAppsOverrides.toolResult",
-            value,
-            ["structuredContent"]
-          );
-          if (Object.keys(toolResult).length > 0) {
-            mcpAppsOverridesOut.toolResult = toolResult;
+          // Two levels: a flat `structuredContent` boolean and a nested
+          // `content` record of ContentBlock kinds. Both collapse to absent
+          // when empty so a probe that measured nothing hashes identically
+          // to a config that never mentioned the field.
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult must be a plain object"
+            );
+          }
+          for (const k of Object.keys(value)) {
+            if (k !== "structuredContent" && k !== "content") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult has unknown key "${k}"`
+              );
+            }
+          }
+          const toolResultOut: NonNullable<McpAppsCapabilities["toolResult"]> =
+            {};
+          if (value.structuredContent !== undefined) {
+            if (typeof value.structuredContent !== "boolean") {
+              throw new Error(
+                "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent must be a boolean"
+              );
+            }
+            toolResultOut.structuredContent = value.structuredContent;
+          }
+          if (value.content !== undefined) {
+            const content = canonicalBooleanCapabilityRecord(
+              "mcpProfile.apps.mcpAppsOverrides.toolResult.content",
+              value.content,
+              ["text", "image", "audio", "resource", "resourceLink"]
+            );
+            if (Object.keys(content).length > 0) {
+              toolResultOut.content = content;
+            }
+          }
+          if (Object.keys(toolResultOut).length > 0) {
+            const sortedToolResult = {} as typeof toolResultOut;
+            for (const k of Object.keys(toolResultOut).sort()) {
+              (sortedToolResult as Record<string, unknown>)[k] = (
+                toolResultOut as Record<string, unknown>
+              )[k];
+            }
+            mcpAppsOverridesOut.toolResult = sortedToolResult;
           }
         } else if (key === "widgetDisplayModeRequests") {
           if (

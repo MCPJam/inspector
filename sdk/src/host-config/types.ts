@@ -329,6 +329,18 @@ export type HostConfigMcpProfileV1 = {
         allow?: Record<string, boolean>;
         extensions?: Record<string, unknown>;
       };
+      // Whether web storage works inside the widget iframe (probe-measured).
+      // Not an MCP-protocol fact - a browser-sandbox one, which is why it
+      // sits beside `csp` and `permissions` rather than on the profile root.
+      // A widget that persists state breaks silently on a host that blocks
+      // these. Each API is measured separately because a host can block one
+      // and not the others (Safari private mode exposes `localStorage` and
+      // throws only on write). Absent -> available.
+      storage?: {
+        localStorage?: boolean;
+        sessionStorage?: boolean;
+        indexedDB?: boolean;
+      };
       // Extra outer/inner iframe `sandbox=` tokens unioned with the
       // mandatory `allow-scripts allow-same-origin`. Inspector-only.
       sandboxAttrs?: string[];
@@ -426,6 +438,24 @@ export type McpAppsCapabilities = {
   // widget reading it silently breaks. Absent -> forwarded (spec-conforming).
   toolResult?: {
     structuredContent?: boolean;
+    // Which `ContentBlock` kinds survive the host->widget relay, per the MCP
+    // spec "Tool Result" section under server/tools. Each kind names the
+    // revision it arrived in: `text`/`image`/`resource` since 2024-11-05,
+    // `audio` since 2025-03-26, `resource_link` since 2025-06-18.
+    //
+    // THIRD AXIS - do not merge with the two that already exist:
+    //   `modelVisibleMcpToolResults`   - what the MODEL sees
+    //   `mcpToolResultImageRendering`  - what mcpjam's own chat UI renders
+    //   this field                     - what a WIDGET receives when it calls
+    //                                    a tool itself
+    // Absent -> relayed (spec-conforming).
+    content?: {
+      text?: boolean;
+      image?: boolean;
+      audio?: boolean;
+      resource?: boolean;
+      resourceLink?: boolean;
+    };
   };
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;

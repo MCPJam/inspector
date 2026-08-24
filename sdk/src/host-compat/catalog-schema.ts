@@ -74,6 +74,15 @@ export const mcpAppsCapabilitiesSchema = z.object({
   toolResult: z
     .object({
       structuredContent: z.boolean().optional(),
+      content: z
+        .object({
+          text: z.boolean().optional(),
+          image: z.boolean().optional(),
+          audio: z.boolean().optional(),
+          resource: z.boolean().optional(),
+          resourceLink: z.boolean().optional(),
+        })
+        .optional(),
     })
     .optional(),
   resourcePrefersBorder: z.boolean().optional(),

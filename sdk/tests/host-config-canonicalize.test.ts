@@ -717,13 +717,62 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
     expect(absent.mcpProfile).toBeUndefined();
   });
 
+  it("round-trips toolResult.content and sandbox.storage", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              toolResult: {
+                structuredContent: true,
+                content: {
+                  text: true,
+                  image: false,
+                  audio: true,
+                  resource: false,
+                  resourceLink: true,
+                },
+              },
+            },
+            sandbox: {
+              storage: {
+                localStorage: true,
+                sessionStorage: false,
+                indexedDB: true,
+              },
+            },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides?.toolResult).toEqual({
+      content: {
+        text: true,
+        image: false,
+        audio: true,
+        resource: false,
+        resourceLink: true,
+      },
+      structuredContent: true,
+    });
+    expect(c.mcpProfile?.apps?.sandbox?.storage).toEqual({
+      localStorage: true,
+      sessionStorage: false,
+      indexedDB: true,
+    });
+  });
+
   it("hashes an empty record the same as absent, so pre-feature configs keep their hash", async () => {
     const emptyHash = await hash(
       base({
         mcpProfile: {
           profileVersion: 1,
           toolListChanged: {},
-          apps: { mcpAppsOverrides: { toolResult: {} } },
+          apps: {
+            mcpAppsOverrides: { toolResult: { content: {} } },
+            sandbox: { storage: {} },
+          },
         },
       })
     );
@@ -750,12 +799,36 @@ describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields
           mcpProfile: {
             profileVersion: 1,
             apps: {
-              mcpAppsOverrides: { toolResult: { content: true } as never },
+              mcpAppsOverrides: { toolResult: { structured: true } as never },
             },
           },
         })
       )
-    ).toThrow(/toolResult has unknown key "content"/);
+    ).toThrow(/toolResult has unknown key "structured"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: {
+                toolResult: { content: { video: true } } as never,
+              },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult\.content has unknown key "video"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: { sandbox: { storage: { cookies: true } } as never },
+          },
+        })
+      )
+    ).toThrow(/sandbox\.storage has unknown key "cookies"/);
   });
 });
 

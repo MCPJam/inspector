@@ -161,6 +161,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "script": true,
             "stylesheet": true,
           },
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
         },
         "sandbox": {
           "csp": {
@@ -209,6 +219,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow-popups",
             "allow-popups-to-escape-sandbox",
           ],
+          "storage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
         },
         "uiInitialize": {
           "hostInfo": {
@@ -229,7 +244,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         ],
       },
       "mcpProtocolVersion": "auto",
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": false,
+      },
     },
     "modelId": "openai/gpt-5.6-luna",
     "optionalServerIds": [],
@@ -320,6 +339,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "script": true,
             "stylesheet": true,
           },
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
         },
         "sandbox": {
           "csp": {
@@ -368,6 +397,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow-popups",
             "allow-popups-to-escape-sandbox",
           ],
+          "storage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
         },
         "uiInitialize": {
           "hostInfo": {
@@ -388,7 +422,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         ],
       },
       "mcpProtocolVersion": "auto",
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": false,
+      },
     },
     "modelId": "openai/gpt-5.6-luna",
     "optionalServerIds": [],

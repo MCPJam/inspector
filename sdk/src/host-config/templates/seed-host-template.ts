@@ -885,6 +885,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        // The 2026-08-24 prober capture (2026-07-28 lane) walked `nextCursor`
+        // and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // Same capture: ChatGPT never opened a `subscriptions/listen` stream,
+        // so no server notification can reach it. `refetches` stays absent —
+        // unprovable while nothing is ever delivered.
+        toolListChanged: { listens: false },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
@@ -921,6 +928,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               image: true,
               font: true,
               media: true,
+            },
+            // The 2026-08-24 capture called a tool FROM the widget and
+            // compared fingerprints on the way back: every ContentBlock kind
+            // arrived unchanged and `structuredContent` was forwarded. Widget
+            // axis — distinct from `modelVisibleMcpToolResults` (model) and
+            // `mcpToolResultImageRendering` (mcpjam's own chat UI).
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
             },
           },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
@@ -960,6 +982,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // widget testing in MCPJam-as-ChatGPT actually gets what
               // the production iframe grants.
               allow: { microphone: true, clipboardWrite: true },
+            },
+            // The 2026-08-24 capture read and wrote all three web-storage
+            // APIs from inside the widget sandbox — every one available,
+            // no error. A browser-sandbox fact, not an MCP-protocol one,
+            // which is why it sits beside `csp` and `permissions`.
+            storage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
             },
             // sandboxAttrs — captured 2026-05-18 from the outer and
             // inner iframe `sandbox=` attributes. There's an asymmetry:
