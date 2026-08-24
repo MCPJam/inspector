@@ -98,9 +98,9 @@ vi.mock("../PlaygroundLeftRail", () => ({
 import { PlaygroundTab } from "../PlaygroundTab";
 
 // isWorkOsAuthLoading:true short-circuits the one-time view-tracking effect.
-const baseProps = {
+const baseProps: ComponentProps<typeof PlaygroundTab> = {
   isWorkOsAuthLoading: true,
-} as unknown as ComponentProps<typeof PlaygroundTab>;
+};
 
 describe("PlaygroundTab loading branch", () => {
   beforeEach(() => {

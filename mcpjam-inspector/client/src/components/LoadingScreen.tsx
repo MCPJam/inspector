@@ -49,7 +49,7 @@ export default function LoadingScreen({ message }: LoadingScreenProps) {
         >
           <div
             aria-hidden="true"
-            className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-primary mx-auto"
+            className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-primary"
             style={{ animationDelay: animationDelayRef.current }}
           />
           {message ? (
