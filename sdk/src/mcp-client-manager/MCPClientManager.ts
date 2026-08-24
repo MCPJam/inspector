@@ -943,6 +943,15 @@ export class MCPClientManager {
   }
 
   /**
+   * Whether a complete tools/list response has populated the annotation cache.
+   * An empty map is still a valid populated response for a server with no
+   * tools; callers must distinguish that from a cold or invalidated cache.
+   */
+  hasCachedToolAnnotations(serverId: string): boolean {
+    return this.toolsAnnotationsCache.has(serverId);
+  }
+
+  /**
    * Gets tools formatted for Vercel AI SDK.
    *
    * @param serverIds - Server IDs to get tools from (or all if omitted)

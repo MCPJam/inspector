@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createToolPolicyGate,
   toolAnnotationsKey,
-  UnmatchedToolPolicyNameError,
+  validateToolPolicyNames,
 } from "../tool-policy-gate";
 
 describe("createToolPolicyGate", () => {
@@ -124,21 +124,27 @@ describe("createToolPolicyGate", () => {
   });
 
   it("refuses unmatched deny names and warns for unmatched allow names", () => {
-    const denyGate = createToolPolicyGate({
-      policy: { mode: "default", deny: ["missing"] },
-      annotations: new Map(),
-    });
-    expect(() => denyGate.wrap({ present: {} } as any)).toThrow(
-      UnmatchedToolPolicyNameError
-    );
+    const denyPolicy = { mode: "default" as const, deny: ["missing"] };
+    expect(() =>
+      validateToolPolicyNames({
+        policy: denyPolicy,
+        availableToolNames: ["present"],
+      })
+    ).toThrow("Tool policy deny name(s) did not match any available tool");
 
+    const allowPolicy = { mode: "default" as const, allow: ["missing"] };
     const allowGate = createToolPolicyGate({
-      policy: { mode: "default", allow: ["missing"] },
+      policy: allowPolicy,
       annotations: new Map(),
     });
-    allowGate.wrap({ present: {} } as any);
-    expect(allowGate.warnings).toEqual([
+    const warnings = validateToolPolicyNames({
+      policy: allowPolicy,
+      availableToolNames: ["present"],
+    });
+    expect(warnings).toEqual([
       "Tool policy allow name(s) did not match any available tool: missing",
     ]);
+    allowGate.wrap({ present: {} } as any);
+    expect(allowGate.warnings).toEqual([]);
   });
 });

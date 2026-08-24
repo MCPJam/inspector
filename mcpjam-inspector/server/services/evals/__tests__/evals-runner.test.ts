@@ -124,6 +124,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
     getAllToolAnnotations: vi.fn(),
+    hasCachedToolAnnotations: vi.fn(),
     // PR 3 of the engine consolidation: the engine that
     // `runIterationViaBackend` now drives calls
     // `getAllToolsMetadata(serverId)` during message scrubbing
@@ -149,6 +150,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
     mcpClientManager.listTools.mockResolvedValue({ tools: [] });
     mcpClientManager.getAllToolAnnotations.mockReturnValue({});
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValue(true);
     mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     mcpClientManager.executeTool.mockResolvedValue({
@@ -416,6 +418,23 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
     expect(payload.result).toBe("failed");
     expect(payload.metadata?.policyBlockCount).toBe(1);
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(
+      applicableStages.every(
+        (row) => row.state === "notMeasured" && row.reason === "blockedByPolicy"
+      )
+    ).toBe(true);
+    expect(
+      applicableStages.some(
+        (row) => row.state === "failed" || row.reason === "missingToolCall"
+      )
+    ).toBe(false);
   });
 
   it("allows an explicitly allowed destructive MCP tool through the runner", async () => {
@@ -437,6 +456,39 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(payload.metadata?.policyBlocks).toMatchObject([
       { reason: "readOnlyModeUnclassified", classification: "unknown" },
     ]);
+  });
+
+  it("refuses an unmatched deny name once before starting iterations", async () => {
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default", deny: ["missing"] },
+      } as any)
+    ).rejects.toThrow(
+      "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool"
+    );
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("persists a warning for an unmatched allow name", async () => {
+    const { payload } = await runPolicyTool({
+      mode: "default",
+      allow: ["missing"],
+    });
+    expect(payload.metadata?.policyWarnings).toEqual([
+      "Tool policy allow name(s) did not match any available tool: missing",
+    ]);
+  });
+
+  it("refuses a policy run when annotation cache data is unavailable", async () => {
+    mcpClientManager.hasCachedToolAnnotations.mockReturnValueOnce(false);
+    await expect(
+      runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        toolPolicy: { mode: "default" },
+      } as any)
+    ).rejects.toThrow("TOOL_POLICY_ANNOTATIONS_UNAVAILABLE");
+    expect(streamTextMock).not.toHaveBeenCalled();
   });
 
   it("surfaces a clear error when the selected server fails tools/list", async () => {

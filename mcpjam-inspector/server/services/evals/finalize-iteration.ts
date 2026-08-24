@@ -302,7 +302,6 @@ export function buildIterationFinishParams(args: {
     policy:
       policyBlocks &&
       policyBlocks.length > 0 &&
-      passed &&
       !error &&
       !(stageToolErrors && stageToolErrors.length > 0)
         ? {

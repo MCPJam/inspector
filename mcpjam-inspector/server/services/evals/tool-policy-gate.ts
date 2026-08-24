@@ -31,9 +31,11 @@ export type ToolPolicyGate = {
 };
 
 export class UnmatchedToolPolicyNameError extends Error {
+  readonly code = "TOOL_POLICY_INVALID";
+
   constructor(names: string[]) {
     super(
-      `Tool policy deny name(s) did not match any available tool: ${names.join(
+      `TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool: ${names.join(
         ", "
       )}`
     );
@@ -43,6 +45,29 @@ export class UnmatchedToolPolicyNameError extends Error {
 
 export function toolAnnotationsKey(serverId: string, toolName: string): string {
   return `${serverId}:${toolName}`;
+}
+
+export function validateToolPolicyNames(args: {
+  policy: EvalSuiteFileToolPolicy;
+  availableToolNames: Iterable<string>;
+}): string[] {
+  const availableNames = new Set(args.availableToolNames);
+  const unmatchedDeny = (args.policy.deny ?? []).filter(
+    (name) => !availableNames.has(name)
+  );
+  if (unmatchedDeny.length > 0) {
+    throw new UnmatchedToolPolicyNameError(unmatchedDeny);
+  }
+  const unmatchedAllow = (args.policy.allow ?? []).filter(
+    (name) => !availableNames.has(name)
+  );
+  return unmatchedAllow.length > 0
+    ? [
+        `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
+          ", "
+        )}`,
+      ]
+    : [];
 }
 
 /**
@@ -62,10 +87,10 @@ export function toolAnnotationsKey(serverId: string, toolName: string): string {
 export function createToolPolicyGate(args: {
   policy: EvalSuiteFileToolPolicy;
   annotations: ToolAnnotationsLookup;
+  warnings?: ReadonlyArray<string>;
 }): ToolPolicyGate {
   const blocks: ToolPolicyBlock[] = [];
-  const warnings: string[] = [];
-  let namesValidated = false;
+  const warnings: string[] = [...(args.warnings ?? [])];
   return {
     policy: args.policy,
     annotations: args.annotations,
@@ -75,26 +100,6 @@ export function createToolPolicyGate(args: {
       blocks.push({ ...block, at: Date.now() });
     },
     wrap(tools) {
-      if (!namesValidated) {
-        namesValidated = true;
-        const availableNames = new Set(Object.keys(tools));
-        const unmatchedDeny = (args.policy.deny ?? []).filter(
-          (name) => !availableNames.has(name)
-        );
-        if (unmatchedDeny.length > 0) {
-          throw new UnmatchedToolPolicyNameError(unmatchedDeny);
-        }
-        const unmatchedAllow = (args.policy.allow ?? []).filter(
-          (name) => !availableNames.has(name)
-        );
-        if (unmatchedAllow.length > 0) {
-          warnings.push(
-            `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
-              ", "
-            )}`
-          );
-        }
-      }
       const wrapped: ToolSet = { ...tools };
       for (const [toolName, tool] of Object.entries(tools)) {
         const serverId =

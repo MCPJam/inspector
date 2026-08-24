@@ -130,6 +130,8 @@ import type {
 import {
   createToolPolicyGate,
   toolAnnotationsKey,
+  UnmatchedToolPolicyNameError,
+  validateToolPolicyNames,
   type ToolAnnotationsLookup,
 } from "./evals/tool-policy-gate.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
@@ -1460,6 +1462,7 @@ type RunIterationBaseParams = {
   toolSignals?: ToolExposureSignals;
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -1869,6 +1872,7 @@ const executeTestCase = async (params: {
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
+  toolPolicyWarnings?: string[];
 }) => {
   const {
     test,
@@ -1901,6 +1905,7 @@ const executeTestCase = async (params: {
     pinnedHarnessSkills,
     toolPolicy,
     toolAnnotations,
+    toolPolicyWarnings,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1987,7 +1992,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
-        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2115,7 +2122,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
-        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2168,7 +2177,9 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
-        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
+        ...(toolPolicy
+          ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+          : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2218,7 +2229,9 @@ const executeTestCase = async (params: {
       convexAuthToken,
       pinnedSkillSource,
       pinnedHarnessSkills,
-      ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
+      ...(toolPolicy
+        ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
+        : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2333,6 +2346,7 @@ export const runEvalSuiteWithAiSdk = async ({
     expectedServerIds: serverIds,
     convexHttpUrl,
   });
+  let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
     // When a host policy is present we need the full tool set (including
@@ -2356,6 +2370,38 @@ export const runEvalSuiteWithAiSdk = async ({
     });
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
+      const uncachedServerIds = serverIds.filter(
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
+      );
+      if (uncachedServerIds.length > 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
+            ", "
+          )}.`,
+          {
+            reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
+            serverIds: uncachedServerIds,
+          }
+        );
+      }
+      try {
+        resolvedToolPolicyWarnings = validateToolPolicyNames({
+          policy: toolPolicy,
+          availableToolNames: Object.keys(tools),
+        });
+      } catch (error) {
+        if (error instanceof UnmatchedToolPolicyNameError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message,
+            { reason: "TOOL_POLICY_INVALID" }
+          );
+        }
+        throw error;
+      }
       for (const serverId of serverIds) {
         for (const [toolName, annotations] of Object.entries(
           mcpClientManager.getAllToolAnnotations(serverId)
@@ -2446,7 +2492,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
-        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
+        ...(toolPolicy
+          ? {
+              toolPolicy,
+              toolAnnotations,
+              toolPolicyWarnings: resolvedToolPolicyWarnings,
+            }
+          : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
@@ -2772,6 +2824,7 @@ const runLocalIteration = async ({
   pinnedSkillSource,
   toolPolicy,
   toolAnnotations,
+  toolPolicyWarnings,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2782,6 +2835,7 @@ const runLocalIteration = async ({
     ? createToolPolicyGate({
         policy: toolPolicy,
         annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
       })
     : null;
 
@@ -3762,6 +3816,7 @@ const runHostedIterationWithBrowser = async (
     pinnedHarnessSkills,
     toolPolicy,
     toolAnnotations,
+    toolPolicyWarnings,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3774,6 +3829,7 @@ const runHostedIterationWithBrowser = async (
     ? createToolPolicyGate({
         policy: toolPolicy,
         annotations: toolAnnotations ?? new Map(),
+        warnings: toolPolicyWarnings,
       })
     : null;
 
