@@ -294,28 +294,35 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   async function runPolicyTool(
     policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
     annotations?: Record<string, unknown>,
-    expectedToolCall = false
+    expectedToolCall = false,
+    toolName = "write"
   ) {
     const originalExecute = vi.fn(async () =>
-      mcpClientManager.executeTool("srv-1", "write", {})
+      mcpClientManager.executeTool("srv-1", toolName, {})
     );
     preparedToolsOverride.current = {
-      write: { _serverId: "srv-1", execute: originalExecute },
+      [toolName]: {
+        ...(toolName === "write" ? { _serverId: "srv-1" } : {}),
+        execute: originalExecute,
+      },
     };
     mcpClientManager.listTools.mockResolvedValueOnce({
       tools: [
         {
-          name: "write",
+          name: toolName,
           ...(annotations !== undefined ? { annotations } : {}),
         },
       ],
     });
     mcpClientManager.getAllToolAnnotations.mockReturnValue({
-      write: annotations,
+      [toolName]: annotations,
     });
     streamTextMock.mockImplementationOnce((options: any) => ({
       consumeStream: async () => {
-        await options.tools.write.execute({}, { toolCallId: "policy-call" });
+        await options.tools[toolName].execute(
+          {},
+          { toolCallId: "policy-call" }
+        );
       },
       response: Promise.resolve({
         modelId: "gpt-4-turbo",
@@ -326,7 +333,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
               ? [
                   {
                     type: "tool-call",
-                    toolName: "write",
+                    toolName,
                     toolCallId: "policy-call",
                     input: {},
                   },
@@ -347,11 +354,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const runConfig = buildQuickRunConfig();
     if (expectedToolCall) {
       const testConfig = runConfig.config.tests[0];
-      testConfig.expectedToolCalls = [
-        { toolName: "write", arguments: {} },
-      ];
+      testConfig.expectedToolCalls = [{ toolName, arguments: {} }];
       testConfig.promptTurns[0].expectedToolCalls = [
-        { toolName: "write", arguments: {} },
+        { toolName, arguments: {} },
       ];
     }
     await runEvalSuiteWithAiSdk({
@@ -445,6 +450,32 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(originalExecute).toHaveBeenCalledTimes(1);
     expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
     expect(payload.metadata?.policyBlockCount).toBeUndefined();
+  });
+
+  it("accepts an explicit deny for the injected bash tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["bash"] },
+      undefined,
+      false,
+      "bash"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "bash", reason: "denyList" },
+    ]);
+  });
+
+  it("accepts an explicit deny for the injected computer tool and blocks execution", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", deny: ["computer"] },
+      undefined,
+      false,
+      "computer"
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { toolName: "computer", reason: "denyList" },
+    ]);
   });
 
   it("blocks an unannotated MCP tool in readOnly mode through the runner", async () => {

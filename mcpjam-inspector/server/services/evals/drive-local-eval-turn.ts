@@ -272,6 +272,13 @@ export async function driveLocalEvalTurn(
   sinks?.onTurnStart?.();
 
   const promptInputLength = acc.activePromptInputMessages.length;
+  const mergedTools = {
+    ...prepared.allTools,
+    ...browser.computerWidgetTools,
+  } as ToolSet;
+  const toolsForTurn = toolPolicyGate
+    ? toolPolicyGate.wrap(mergedTools)
+    : mergedTools;
   const handle = runDirectChatTurn({
     llmModel,
     modelId: test.model,
@@ -290,13 +297,7 @@ export async function driveLocalEvalTurn(
     ...(prepared.resolvedTemperature == null
       ? {}
       : { temperature: prepared.resolvedTemperature }),
-    tools: (() => {
-      const mergedTools = {
-        ...prepared.allTools,
-        ...browser.computerWidgetTools,
-      } as ToolSet;
-      return toolPolicyGate ? toolPolicyGate.wrap(mergedTools) : mergedTools;
-    })(),
+    tools: toolsForTurn,
     progressivePlan: prepared.progressivePlan,
     discoveryState: prepared.discoveryState,
     ...(browser.prepareAdvertisedTools

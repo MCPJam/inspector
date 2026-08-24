@@ -27,6 +27,7 @@ export type ToolPolicyGate = {
   blocks: ToolPolicyBlock[];
   warnings: string[];
   recordBlock: (block: Omit<ToolPolicyBlock, "at">) => void;
+  blockedToolCallIds: () => ReadonlySet<string>;
   wrap: (tools: ToolSet) => ToolSet;
 };
 
@@ -50,24 +51,36 @@ export function toolAnnotationsKey(serverId: string, toolName: string): string {
 export function validateToolPolicyNames(args: {
   policy: EvalSuiteFileToolPolicy;
   availableToolNames: Iterable<string>;
+  deferredToolNames?: Iterable<string>;
 }): string[] {
   const availableNames = new Set(args.availableToolNames);
+  const deferredNames = new Set(args.deferredToolNames ?? []);
   const unmatchedDeny = (args.policy.deny ?? []).filter(
     (name) => !availableNames.has(name)
   );
-  if (unmatchedDeny.length > 0) {
-    throw new UnmatchedToolPolicyNameError(unmatchedDeny);
+  const invalidDeny = unmatchedDeny.filter((name) => !deferredNames.has(name));
+  if (invalidDeny.length > 0) {
+    throw new UnmatchedToolPolicyNameError(invalidDeny);
   }
+  const warnings =
+    unmatchedDeny.length > invalidDeny.length
+      ? [
+          `Tool policy deny name(s) could not be resolved at run start: ${unmatchedDeny
+            .filter((name) => deferredNames.has(name))
+            .join(", ")}`,
+        ]
+      : [];
   const unmatchedAllow = (args.policy.allow ?? []).filter(
     (name) => !availableNames.has(name)
   );
-  return unmatchedAllow.length > 0
-    ? [
-        `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
-          ", "
-        )}`,
-      ]
-    : [];
+  if (unmatchedAllow.length > 0) {
+    warnings.push(
+      `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
+        ", "
+      )}`
+    );
+  }
+  return warnings;
 }
 
 /**
@@ -90,15 +103,21 @@ export function createToolPolicyGate(args: {
   warnings?: ReadonlyArray<string>;
 }): ToolPolicyGate {
   const blocks: ToolPolicyBlock[] = [];
+  const blockedCallIds = new Set<string>();
   const warnings: string[] = [...(args.warnings ?? [])];
+  const recordBlock = (block: Omit<ToolPolicyBlock, "at">): void => {
+    blocks.push({ ...block, at: Date.now() });
+    if (block.toolCallId) {
+      blockedCallIds.add(block.toolCallId);
+    }
+  };
   return {
     policy: args.policy,
     annotations: args.annotations,
     blocks,
     warnings,
-    recordBlock(block) {
-      blocks.push({ ...block, at: Date.now() });
-    },
+    recordBlock,
+    blockedToolCallIds: () => new Set(blockedCallIds),
     wrap(tools) {
       const wrapped: ToolSet = { ...tools };
       for (const [toolName, tool] of Object.entries(tools)) {
@@ -131,7 +150,7 @@ export function createToolPolicyGate(args: {
                 ? { toolCallId: options.toolCallId }
                 : {}),
             } satisfies Omit<ToolPolicyBlock, "at">;
-            this.recordBlock(block);
+            recordBlock(block);
             return {
               content: [
                 {

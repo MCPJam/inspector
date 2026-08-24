@@ -41,6 +41,26 @@ describe("createToolPolicyGate", () => {
     expect(gate.blocks[0]?.at).toEqual(expect.any(Number));
   });
 
+  it("records blocks when wrap is detached from the gate", async () => {
+    const gate = createToolPolicyGate({
+      policy: { mode: "default" },
+      annotations: new Map([
+        [toolAnnotationsKey("server-1", "write"), { destructiveHint: true }],
+      ]),
+    });
+    const { wrap } = gate;
+    const wrapped = wrap({
+      write: { _serverId: "server-1" },
+    } as any);
+
+    await wrapped.write.execute!({}, { toolCallId: "detached-call" } as any);
+
+    expect(gate.blocks).toMatchObject([
+      { toolName: "write", toolCallId: "detached-call" },
+    ]);
+    expect(gate.blockedToolCallIds()).toEqual(new Set(["detached-call"]));
+  });
+
   it("leaves internal tools subject to explicit deny but not mode-derived rules", async () => {
     const execute = vi.fn().mockResolvedValue({ content: [] });
     const gate = createToolPolicyGate({
@@ -146,5 +166,17 @@ describe("createToolPolicyGate", () => {
     ]);
     allowGate.wrap({ present: {} } as any);
     expect(allowGate.warnings).toEqual([]);
+  });
+
+  it("warns instead of refusing names for conditionally injected tools", () => {
+    expect(
+      validateToolPolicyNames({
+        policy: { mode: "default", deny: ["loadSkill"] },
+        availableToolNames: [],
+        deferredToolNames: ["loadSkill"],
+      })
+    ).toEqual([
+      "Tool policy deny name(s) could not be resolved at run start: loadSkill",
+    ]);
   });
 });

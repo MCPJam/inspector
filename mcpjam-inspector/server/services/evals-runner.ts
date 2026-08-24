@@ -71,9 +71,11 @@ import {
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
+  SKILL_TOOL_NAMES,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
+import { META_TOOL_NAMES } from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -2387,9 +2389,16 @@ export const runEvalSuiteWithAiSdk = async ({
         );
       }
       try {
+        const availableToolNames = new Set([
+          ...Object.keys(tools),
+          "computer",
+          "finish_widget",
+          EVAL_BASH_TOOL_NAME,
+        ]);
         resolvedToolPolicyWarnings = validateToolPolicyNames({
           policy: toolPolicy,
-          availableToolNames: Object.keys(tools),
+          availableToolNames,
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
         });
       } catch (error) {
         if (error instanceof UnmatchedToolPolicyNameError) {
@@ -3355,11 +3364,7 @@ const runLocalIteration = async ({
       extractToolCalls: (params) =>
         extractToolCallsExcludingPolicyBlocks(
           params,
-          new Set(
-            (toolPolicyGate?.blocks ?? [])
-              .map((block) => block.toolCallId)
-              .filter((id): id is string => typeof id === "string")
-          )
+          toolPolicyGate?.blockedToolCallIds() ?? new Set()
         ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
@@ -4240,11 +4245,7 @@ const runHostedIterationWithBrowser = async (
         extractToolCalls: (messages) =>
           extractToolCallsExcludingPolicyBlocks(
             { messages },
-            new Set(
-              (toolPolicyGate?.blocks ?? [])
-                .map((block) => block.toolCallId)
-                .filter((id): id is string => typeof id === "string")
-            )
+            toolPolicyGate?.blockedToolCallIds() ?? new Set()
           ),
         buildTraceSnapshotEvent,
       })
@@ -4317,11 +4318,7 @@ const runHostedIterationWithBrowser = async (
     extractToolCalls: (messages) =>
       extractToolCallsExcludingPolicyBlocks(
         { messages },
-        new Set(
-          (toolPolicyGate?.blocks ?? [])
-            .map((block) => block.toolCallId)
-            .filter((id): id is string => typeof id === "string")
-        )
+        toolPolicyGate?.blockedToolCallIds() ?? new Set()
       ),
     acc: {
       messageHistory,
