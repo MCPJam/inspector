@@ -44,7 +44,7 @@ describe("assembleStepResults", () => {
           locatorLabel: "Add to cart",
           ok: false,
           videoOffsetMs: 4200,
-          widgetToolCalls: [{ name: "view-cart", args: {}, ok: true }],
+          widgetToolCalls: [{ name: "view-cart", args: {}, ok: true, elapsedMs: 18 }],
         },
       ],
       widgetRenderObservations: [
@@ -72,12 +72,33 @@ describe("assembleStepResults", () => {
       // videoUrl present only because this step is seekable (has an offset).
       videoOffsetMs: 4200,
       videoUrl: "https://blob/run.webm",
-      toolCalls: [{ name: "view-cart", ok: true }],
+      toolCalls: [{ name: "view-cart", ok: true, elapsedMs: 18 }],
     });
     // widgetRendered assert picks up the render-observation screenshot.
     expect(out[2].evidence?.screenshotUrl).toBe("https://blob/s3.png");
     // A step with no artifact has no evidence key at all.
     expect(out[0].evidence).toBeUndefined();
+  });
+
+  it("omits elapsedMs on widget tool calls that did not record it", () => {
+    const metadata = {
+      stepResults: [
+        { stepId: "s4", stepIndex: 3, kind: "interact", status: "ok" },
+      ],
+    };
+    const envelope = {
+      browserInteractionSteps: [
+        {
+          authoredStepId: "s4",
+          widgetToolCalls: [{ name: "view-cart", args: {}, ok: true }],
+        },
+      ],
+    };
+    const out = assembleStepResults(steps, metadata, envelope);
+    expect(out[3].evidence?.toolCalls).toEqual([
+      { name: "view-cart", args: {}, ok: true },
+    ]);
+    expect(out[3].evidence?.toolCalls?.[0]).not.toHaveProperty("elapsedMs");
   });
 
   it("falls back to browser rows + skippedSteps when stepResults is absent", () => {

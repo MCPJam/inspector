@@ -306,4 +306,21 @@ describe("buildRunCompareReport", () => {
     expect(xml).toContain('tests="1"');
     expect(xml).toContain("gate: passed");
   });
+
+  it("carries a supplied decision summary and omits it when absent", () => {
+    const decisionSummary = {
+      verdict: "failed" as const,
+      passRate: { total: 1, passed: 0, failed: 1, percent: 0 },
+      iterationWalkComplete: true,
+      cases: [],
+    };
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE, {
+        decisionSummary,
+      }).decisionSummary
+    ).toBe(decisionSummary);
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE)
+    ).not.toHaveProperty("decisionSummary");
+  });
 });

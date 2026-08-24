@@ -50,6 +50,7 @@ import {
   createAiSdkEvalTraceContext,
   wrapToolSetForEvalTrace,
 } from "./eval-trace-capture";
+import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 
 type ToolCall = { toolName: string; arguments: Record<string, any> };
@@ -129,6 +130,7 @@ export interface DriveHostedEvalTurnParams {
    *  (no interactive approval yet). The emulated eval path is unchanged (it
    *  doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
   requireToolApproval?: boolean;
+  toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
    *  resolve the E2B sandbox. Forwarded (harness turns only) from the eval's
    *  resolved billing target; absent for org-level evals (no project/computer,
@@ -157,6 +159,14 @@ export interface DriveHostedEvalTurnParams {
    * is identical and must not be re-derived here.
    */
   harnessMcpProxy?: RunAssistantTurnOptions["harnessMcpProxy"];
+  /**
+   * D4b: resolved `toolPolicy` decisions per selected server, sealed into the
+   * harness's proxy token so its out-of-process `tools/call`s are enforced at
+   * the MCP proxy, plus the sink that accounts the refusals back onto this
+   * iteration. Absent on the emulated path, which is gated in process.
+   */
+  harnessToolPolicy?: RunAssistantTurnOptions["harnessToolPolicy"];
+  onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
    *
@@ -242,8 +252,14 @@ export async function driveHostedEvalTurn(
   // tools ride the same wrap so `computer` / `finish_widget` executions
   // land as tool spans in the trace UI like every other local tool.
   const traceCtx = createAiSdkEvalTraceContext(params.runStartedAt);
+  const mergedTools = {
+    ...prepared.allTools,
+    ...browser.computerWidgetTools,
+  };
   const tracedTools = wrapToolSetForEvalTrace(
-    { ...prepared.allTools, ...browser.computerWidgetTools },
+    params.toolPolicyGate
+      ? params.toolPolicyGate.wrap(mergedTools)
+      : mergedTools,
     traceCtx,
     promptIndex
   );
@@ -426,6 +442,14 @@ export async function driveHostedEvalTurn(
             // has servers, so its absence is a thrown turn, not a degraded one.
             ...(params.harnessMcpProxy
               ? { harnessMcpProxy: params.harnessMcpProxy }
+              : {}),
+            // Policied harness run: the sealed snapshot rides the `.mcp.json`
+            // proxy token, and refusals come back through this sink.
+            ...(params.harnessToolPolicy
+              ? { harnessToolPolicy: params.harnessToolPolicy }
+              : {}),
+            ...(params.onHarnessPolicyBlocks
+              ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
               : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
             // this checks for undefined rather than truthiness. Absent would
