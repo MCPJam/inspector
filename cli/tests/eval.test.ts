@@ -2007,6 +2007,12 @@ test("eval run prints the disclosure block in human mode, before the run link", 
       run.stdout,
       /Run insights report fires automatically on completion/,
     );
+    // The raw enum plus policy days beside it can read as self-contradictory
+    // for an org whose policy number isn't enforced — "kept-indefinitely
+    // (30d policy)" makes the 30 the number a reader takes away. Print the
+    // humanized claim only, matching the UI's already-correct phrasing.
+    assert.match(run.stdout, /Retention: swept after 30 day\(s\)/);
+    assert.equal(run.stdout.includes("kept-indefinitely"), false);
   } finally {
     await fixture.close();
   }
@@ -2137,6 +2143,47 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     assert.equal(junit.includes("top-secret"), false);
     assert.equal(junitRun.stdout.includes("Pre-run disclosure:"), false);
     assert.match(junitRun.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --format human --reporter redirects the disclosure block to stderr, not stdout", async () => {
+  // A CI user on --reporter is the population most likely to want a record
+  // of what a run discloses, and the fetch happens regardless of whether
+  // anyone consumes it — fully suppressing the block would leave them no
+  // route to it at all. stderr keeps stdout a single parseable document
+  // while still surfacing the disclosure somewhere visible.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary",
+          "--out",
+          jsonPath,
+          "--format",
+          "human",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(await readFile(jsonPath, "utf8"));
+    assert.match(run.stderr, /Pre-run disclosure:/);
+    assert.match(run.stderr, /Execution: emulated/);
   } finally {
     await fixture.close();
   }

@@ -924,6 +924,92 @@ describe("run_eval_suite pre-run disclosure (G4b)", () => {
     }
   });
 
+  it("reports a host-targeted launch as unavailable instead of disclosing a misleading suite-base plan", async () => {
+    // The backend contract has no host selector, so sending none would
+    // silently return the SUITE-BASE disclosure and attach it to the
+    // receipt as if it described this launch — but a host config can pin
+    // its own model and harness, so the run could actually boot a different
+    // engine on a different model than a suite-base disclosure would claim.
+    // An honest absence beats a confident wrong answer.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const disclosureSpy = vi.spyOn(client, "getEvalRunDisclosure");
+    let disclosureCalled = false;
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      {
+        client,
+        onDisclosure: () => (disclosureCalled = true),
+        onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+      },
+    );
+    expect(result.outcome).toBe("started");
+    expect(result.disclosure).toBeUndefined();
+    expect(disclosureCalled).toBe(false);
+    expect(unavailableReason).toMatch(/host-targeted launch/);
+    // The fetch itself must never happen — there is no query it could send.
+    expect(disclosureSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not fire onDisclosureUnavailable for a caller-initiated cancellation — that is not a disclosure failure", async () => {
+    // Every AbortError looks the same from inside the fetch, but a caller
+    // cancelling the WHOLE operation (the launch's own signal aborting) is
+    // not a "the disclosure fetch timed out" story — the launch is about to
+    // fail the same way for an unrelated reason, and mislabeling it would
+    // misdescribe that abort. Spies directly on the client method rather
+    // than relying on the fetch mock to replicate native fetch's
+    // synchronous already-aborted check, which it does not.
+    const { client } = makeClient();
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+    vi.spyOn(client, "getEvalRunDisclosure").mockRejectedValue(abortError);
+    const controller = new AbortController();
+    controller.abort(new Error("caller cancelled"));
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke" },
+        {
+          client,
+          signal: controller.signal,
+          onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+        },
+      )
+      .catch((error: unknown) => error);
+    expect(result).toBeDefined();
+    expect(unavailableReason).toBeUndefined();
+  });
+
+  it("does not surface an unhandled rejection when an async onDisclosureUnavailable callback rejects", async () => {
+    // Same defensive contract as onDisclosure: an async callback (despite
+    // the sync-only type) must not turn its rejection into an unhandled one.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const { client } = makeClient({ disclosureUnavailable: true });
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosureUnavailable: async () => {
+            await Promise.resolve();
+            throw new Error("async callback rejection");
+          },
+        },
+      );
+      expect(result.outcome).toBe("started");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
   it("does not surface an unhandled rejection when an async onDisclosure callback rejects", async () => {
     // TypeScript accepts an async function for a `void`-returning callback
     // param, so a caller awaiting inside `onDisclosure` can hand back a
@@ -1030,6 +1116,15 @@ describe("get_eval_run_disclosure target resolution parity with run_eval_suite",
       .catch((caught: unknown) => caught as PlatformApiError);
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).message).toMatch(/TARGET_REQUIRED/);
+    // This operation's input schema has no host/hosts/allAttached selector,
+    // and it spends nothing (readOnly: true) — the shared run_eval_suite
+    // refusal text names all three, which would send a caller retrying with
+    // a flag this operation's own schema validation rejects.
+    const message = (error as PlatformApiError).message;
+    expect(message).not.toMatch(/allAttached/);
+    expect(message).not.toMatch(/\bhost\b/i);
+    expect(message).not.toMatch(/PAID RUN/);
+    expect(message).toMatch(/environment/);
   });
 
   it("still discloses when a caller names one of several attached environments", async () => {

@@ -152,7 +152,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_eval_suite: { command: "cloud eval get" },
   get_eval_run_disclosure: {
     excluded:
-      "Not a standalone command: `cloud eval run` already fetches this for its frozen launch plan and prints it (writeRunDisclosure) before the run link in human mode, and carries it on the JSON receipt's `disclosure` field. A separate command would only invite checking by hand what the launch already discloses.",
+      "Not a standalone command: `cloud eval run` already fetches this for its frozen launch plan and prints it (writeRunDisclosure) before the run link in human mode — on stderr instead of stdout when a --reporter is configured, so the structured report stays the sole document on stdout without losing the disclosure entirely — and carries it on the JSON receipt's `disclosure` field. A separate command would only invite checking by hand what the launch already discloses.",
   },
   update_eval_suite: { command: "cloud eval update" },
   delete_eval_suite: { command: "cloud eval delete" },

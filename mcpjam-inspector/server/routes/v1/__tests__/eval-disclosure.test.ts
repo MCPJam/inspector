@@ -222,6 +222,32 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.details?.reason).toBe("contract_unavailable");
   });
 
+  it("also answers contract_unavailable when a missing-function failure arrives production-redacted", async () => {
+    // Production Convex redacts a plain server-side Error to "Server
+    // Error" — including a missing-function failure, which is exactly that
+    // shape. `isMissingConvexFunctionError`'s message match cannot see it
+    // once redacted, so this route must not fall through to the generic
+    // upstream/502 incident path: this is exactly the state production is
+    // in right now, before g4a's promote, and every request would otherwise
+    // page Sentry.
+    queryMock.mockRejectedValue(new Error("Server Error"));
+    const res = await get();
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(body.details?.reason).toBe("contract_unavailable");
+  });
+
+  it("still answers a genuine outage as an upstream incident, not contract_unavailable", async () => {
+    // A network failure or timeout does not match the redaction shape — the
+    // broadened contract_unavailable check must not swallow a real incident.
+    queryMock.mockRejectedValue(new Error("fetch failed"));
+    const res = await get();
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("SERVER_UNREACHABLE");
+  });
+
   it("never defaults a missing field to a reassuring value (anti-sandboxesOf)", async () => {
     // `capabilities.ts`'s `sandboxesOf` hands back a permissive value when a
     // field is absent, because the write path re-enforces it regardless. That

@@ -10,6 +10,7 @@ import {
   useRunDisclosure,
   type RunDisclosureState,
 } from "@/hooks/use-run-disclosure";
+import { useRunDisclosureEnabled } from "@/hooks/useRunDisclosureEnabled";
 
 /**
  * Info icon whose tooltip shows what a run of this suite would disclose —
@@ -137,6 +138,17 @@ export function describeRunDisclosureDetail(
   const { disclosure } = state;
   const lines: string[] = [];
   if (disclosure.execution) {
+    // `execution.locus` is the ONE field this route composes onto the
+    // backend contract (see `eval-disclosure.ts`'s `withLocus`) — the CLI
+    // prints it as "MCPJam-hosted" vs "your own machine", and the tooltip
+    // must not be the surface that never says where the run executes.
+    const locus =
+      disclosure.execution.locus.known === true
+        ? disclosure.execution.locus.hosted
+          ? "MCPJam-hosted"
+          : "your own machine"
+        : "unknown";
+    lines.push(`Execution: ${disclosure.execution.engine} · ${locus}`);
     for (const model of disclosure.execution.models) {
       const destination =
         model.byok?.baseUrlHost ??
@@ -238,7 +250,8 @@ export function SuiteRunDisclosureHint({
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
 }) {
-  if (suppressed || !suiteId) {
+  const flagEnabled = useRunDisclosureEnabled();
+  if (!flagEnabled || suppressed || !suiteId) {
     return null;
   }
   return (

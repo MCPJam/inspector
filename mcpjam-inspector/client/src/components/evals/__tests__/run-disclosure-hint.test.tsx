@@ -11,6 +11,15 @@ vi.mock("@/hooks/use-run-disclosure", async (importOriginal) => {
   return { ...actual, useRunDisclosure: useRunDisclosureMock };
 });
 
+// The rollout flag defaults to enabled here — the sibling
+// `useCreditEstimateEnabled` tests use the same default-true pattern — so
+// every other test in this file exercises the gated-open path. The gate
+// itself gets its own describe block below, flipping this to false.
+let runDisclosureFlagEnabled: boolean | undefined = true;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => runDisclosureFlagEnabled,
+}));
+
 /**
  * CONTRACT: the pre-run disclosure hint is read-only. It must never disable,
  * gate, or delay the run control beside it — whatever state the fetch is in
@@ -267,6 +276,11 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       }),
     });
     const detail = describeRunDisclosureDetail(state);
+    // `execution.locus` — the one field this route composes onto the backend
+    // contract — must not be the field the tooltip never mentions.
+    expect(
+      detail.some((line) => /Execution: emulated .* your own machine/.test(line)),
+    ).toBe(true);
     // Each model's own line names ITS destination — a regression that
     // rendered the wrong model's destination (or dropped it) must fail here,
     // not just a check that the model id appears somewhere.
@@ -458,6 +472,31 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     render(<SuiteRunDisclosureHint suiteId="suite-1" suppressed />);
     expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
     expect(useRunDisclosureMock).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing — and never fetches — when the rollout flag is off", () => {
+    // The backend contract is not promoted to production yet: without this
+    // gate every prod hover would fire a request that 422s. Flag off must
+    // mean the fetch never fires, not just that the icon is hidden.
+    runDisclosureFlagEnabled = false;
+    try {
+      render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+      expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
+      expect(useRunDisclosureMock).not.toHaveBeenCalled();
+    } finally {
+      runDisclosureFlagEnabled = true;
+    }
+  });
+
+  it("treats an undefined flag (still loading, or the flag does not exist) as off", () => {
+    runDisclosureFlagEnabled = undefined;
+    try {
+      render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+      expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
+      expect(useRunDisclosureMock).not.toHaveBeenCalled();
+    } finally {
+      runDisclosureFlagEnabled = true;
+    }
   });
 
   it("mounts the fetcher and renders the hint for a real suiteId", () => {

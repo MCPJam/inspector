@@ -407,7 +407,8 @@ function writeRunGroupSummary(
  */
 function writeRunDisclosure(
   format: string,
-  disclosure: PlatformEvalRunDisclosure | undefined
+  disclosure: PlatformEvalRunDisclosure | undefined,
+  stream: NodeJS.WritableStream = process.stdout
 ): void {
   if (format !== "human" || !disclosure) return;
   const lines: string[] = ["Pre-run disclosure:"];
@@ -490,10 +491,9 @@ function writeRunDisclosure(
     lines.push("  Analysis: no analyzer/judge touchpoint can fire for this run");
   }
   lines.push(
-    `  Retention: ${disclosure.retention.effectiveToday}` +
-      (disclosure.retention.policyDays !== null
-        ? ` (${disclosure.retention.policyDays}d policy)`
-        : "")
+    disclosure.retention.effectiveToday === "kept-indefinitely"
+      ? "  Retention: kept indefinitely"
+      : `  Retention: swept after ${disclosure.retention.policyDays ?? "?"} day(s)`
   );
   lines.push(
     disclosure.region.stated
@@ -506,7 +506,7 @@ function writeRunDisclosure(
       `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
     );
   }
-  process.stdout.write(`${lines.join("\n")}\n`);
+  stream.write(`${lines.join("\n")}\n`);
 }
 
 /**
@@ -2388,32 +2388,34 @@ export function registerEvalCommands(program: Command): void {
           // finished receipt afterward would print it only after the run had
           // already been created and had possibly already sent content.
           //
-          // SUPPRESSED when a reporter is configured: `--reporter` writes a
-          // single structured document (junit-xml/json-summary) to this same
-          // stdout stream later, and prepending human prose to it would make
-          // that document unparseable. `--format json` without a reporter is
-          // unaffected — `writeRunDisclosure` already no-ops there.
-          const onDisclosure =
-            reporter === undefined
-              ? (disclosure: PlatformEvalRunDisclosure) => {
-                  writeRunDisclosure(globalOptions.format, disclosure);
-                }
-              : undefined;
+          // REDIRECTED TO STDERR when a reporter is configured: `--reporter`
+          // writes a single structured document (junit-xml/json-summary) to
+          // stdout later, and prepending human prose there would make that
+          // document unparseable. But fully suppressing the block would
+          // leave a CI user — the population most likely to want a record of
+          // what a run discloses — with no route to it at all, despite the
+          // fetch happening either way. Printing to stderr keeps stdout a
+          // single parseable document while still surfacing the disclosure
+          // somewhere a human or a log aggregator can see it. `--format
+          // json` without a reporter is unaffected — `writeRunDisclosure`
+          // already no-ops there regardless of stream.
+          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
+            writeRunDisclosure(
+              globalOptions.format,
+              disclosure,
+              reporter === undefined ? process.stdout : process.stderr
+            );
+          };
           // The failure counterpart: without this, a fetch that failed and a
           // build with no disclosure feature at all look IDENTICAL to a
           // human running this command — no output either way. Same
-          // reporter-stream rule as onDisclosure: only prints in human mode
-          // with no reporter configured, never gates or delays the launch.
-          const onDisclosureUnavailable =
-            reporter === undefined
-              ? (reason: string) => {
-                  if (globalOptions.format === "human") {
-                    process.stdout.write(
-                      `Pre-run disclosure unavailable: ${reason}\n`
-                    );
-                  }
-                }
-              : undefined;
+          // reporter-stream rule as onDisclosure: stderr under a reporter,
+          // stdout otherwise, never gates or delays the launch.
+          const onDisclosureUnavailable = (reason: string) => {
+            if (globalOptions.format !== "human") return;
+            const stream = reporter === undefined ? process.stdout : process.stderr;
+            stream.write(`Pre-run disclosure unavailable: ${reason}\n`);
+          };
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(

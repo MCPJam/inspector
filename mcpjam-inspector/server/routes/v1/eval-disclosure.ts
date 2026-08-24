@@ -36,7 +36,10 @@ import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Resource } from "./envelope.js";
-import { translateConvexReadError } from "./convex-read-errors.js";
+import {
+  classifyConvexReadError,
+  translateConvexReadError,
+} from "./convex-read-errors.js";
 import { HOSTED_MODE } from "../../config.js";
 
 const evalDisclosure = new Hono();
@@ -59,6 +62,13 @@ function withLocus(execution: Record<string, unknown>): Record<string, unknown> 
  * function — the one failure this route is allowed to read as "the contract
  * is not deployed yet" rather than an outage. Matched on the message because
  * Convex surfaces this as a plain client error with no structured code.
+ *
+ * NOT resilient to production redaction on its own: production Convex
+ * redacts a plain server-side `Error` — which is exactly the shape a
+ * missing-function failure can arrive in — to the generic "Server Error",
+ * and none of the three substrings below appear in that string. The catch
+ * block below also treats `classifyConvexReadError`'s "redacted" kind as
+ * contract-unavailable for that reason; see the comment there.
  */
 function isMissingConvexFunctionError(error: unknown): boolean {
   const message = String(
@@ -126,7 +136,26 @@ evalDisclosure.get(
         ...(environmentIds ? { environmentIds } : {}),
       } as never)) as Record<string, unknown> | null;
     } catch (error) {
-      if (isMissingConvexFunctionError(error)) {
+      // The redacted branch: production Convex turns a plain server-side
+      // `Error` into the generic "Server Error", and a missing-function
+      // failure is exactly that shape — so `isMissingConvexFunctionError`'s
+      // message match cannot see it once redacted, and it would otherwise
+      // fall through to `translateConvexReadError`'s generic `upstream`
+      // branch: a 502 plus a Sentry page on every request, for the entire
+      // window between this route shipping and the backend query actually
+      // being promoted (which is where production is RIGHT NOW). This route
+      // is best-effort everywhere it is consumed — the SDK's `onDisclosure`
+      // never blocks a launch on it, the CLI/UI both render a plain
+      // "not available" for any failure — so reading an ambiguous redacted
+      // failure as "the contract probably isn't deployed yet" is the safer
+      // default here specifically. A genuine outage (a network failure, a
+      // timeout) does not match the redaction shape and still falls through
+      // to the incident path below; only the specific "Server Error" string
+      // is affected.
+      if (
+        isMissingConvexFunctionError(error) ||
+        classifyConvexReadError(error).kind === "redacted"
+      ) {
         throw new WebRouteError(
           422,
           ErrorCode.FEATURE_NOT_SUPPORTED,

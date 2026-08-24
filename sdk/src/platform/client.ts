@@ -1391,9 +1391,10 @@ export class PlatformApiClient {
    * volume, which is not part of this contract, and the inspector server
    * rejects them rather than silently ignoring them.
    *
-   * Throws `PlatformApiError` with code `CONTRACT_UNAVAILABLE` against an
-   * inspector deployment too old to compute this — never treat a missing
-   * disclosure as "nothing to disclose".
+   * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
+   * `details.reason === "contract_unavailable"` against an inspector
+   * deployment too old to compute this — never treat a missing disclosure as
+   * "nothing to disclose".
    */
   getEvalRunDisclosure(
     params: {
