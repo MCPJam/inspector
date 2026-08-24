@@ -1,5 +1,5 @@
 /**
- * Assistant turn engine (Stage 1 of horizontally-safe synthetic chatbox
+ * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
  *
  * `runAssistantTurn` is the shared assistant-turn driver for both the live
@@ -67,7 +67,7 @@ export type RunAssistantTurnPersistMode = "handler" | "caller";
 export interface RunAssistantTurnOptions {
   messages: ModelMessage[];
   projectId?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 
   modelDefinition: ModelDefinition;
@@ -92,7 +92,7 @@ export interface RunAssistantTurnOptions {
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
    */
-  sourceType: "direct" | "chatbox" | "eval" | "swarm";
+  sourceType: "direct" | "scenario" | "eval" | "swarm";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -195,6 +195,15 @@ export interface RunAssistantTurnOptions {
    * turns and harness turns with no MCP servers ignore it.
    */
   harnessMcpProxy?: MCPJamHandlerOptions["harnessMcpProxy"];
+
+  /**
+   * Resolved per-server `toolPolicy` decisions and the sink for the calls the
+   * MCP proxy refuses. Eval drives the harness through this facade, so both
+   * must be pass-throughs; every other caller omits them and keeps today's
+   * unpoliced path.
+   */
+  harnessToolPolicy?: MCPJamHandlerOptions["harnessToolPolicy"];
+  onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
 
   /**
    * Swarm (journey-execution) continuity identity. Forwarded to the harness
@@ -348,7 +357,7 @@ function extractToolResults(
 /**
  * Build the `extraBodyFields` payload forwarded to the Convex `/stream`
  * request. (The synthesis attribution keys this used to append were removed
- * with the chatbox synthetic surface.)
+ * with the scenario synthetic surface.)
  */
 function buildExtraBodyFields(
   opts: RunAssistantTurnOptions
@@ -383,12 +392,19 @@ function buildHandlerOptions(
         opts.persistMode === "handler" &&
         typeof opts.onConversationComplete === "function"
       ) {
-        await opts.onConversationComplete(
+        // RETURNED, not just awaited. The engine reads this to decide whether
+        // the turn was actually saved — it emits the persist receipt from it,
+        // and the harness releases its session lease when it is not a success.
+        // Swallowing it here would make `undefined` mean both "this caller
+        // reports nothing" and "the outcome was dropped in transit", and the
+        // engine reads the first meaning: a failed ingest would look saved.
+        return await opts.onConversationComplete(
           fullHistory,
           turnTrace,
           harnessSessionCommit
         );
       }
+      return undefined;
     };
 
   const handlerOptions: MCPJamHandlerOptions = {
@@ -402,7 +418,7 @@ function buildHandlerOptions(
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
-    ...(opts.chatboxId ? { chatboxId: opts.chatboxId } : {}),
+    ...(opts.scenarioId ? { scenarioId: opts.scenarioId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
       : {}),
@@ -422,6 +438,12 @@ function buildHandlerOptions(
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
     // (b) claim the correct owner lane (`swarm-chat` for swarm).
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.harnessToolPolicy
+      ? { harnessToolPolicy: opts.harnessToolPolicy }
+      : {}),
+    ...(opts.onHarnessPolicyBlocks
+      ? { onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks }
+      : {}),
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     // Pinned harness skills: presence (even an EMPTY array) is semantic — an
@@ -564,7 +586,7 @@ export async function runAssistantTurn(
   // fall back to emulated.
   const canonicalHarnessModelId = getCanonicalModelId(
     harnessModelId,
-    opts.modelDefinition.provider,
+    opts.modelDefinition.provider
   );
   const modelEligible =
     isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
@@ -582,7 +604,7 @@ export async function runAssistantTurn(
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
-      },
+      }
     );
   }
   const engineResult = useHarness

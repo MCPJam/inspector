@@ -18,26 +18,44 @@ export interface PlatformClientOptions {
   timeoutMs?: number;
 }
 
+export type ApiUrlInspection =
+  | { ok: true; apiUrl: string }
+  | { ok: false; error: string };
+
+/**
+ * Classify an explicit API URL without throwing. `cloud status` reports the
+ * error in-band; other Cloud commands still reject via {@link validateApiUrl}.
+ */
+export function inspectApiUrl(value: string, source: string): ApiUrlInspection {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return {
+      ok: false,
+      error: `Invalid ${source} value "${value}". Expected a full URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
+    };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      error: `Invalid ${source} value "${value}". Expected an http(s) URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
+    };
+  }
+  return { ok: true, apiUrl: value };
+}
+
 /**
  * An explicitly supplied API URL (flag or env) that does not parse must
  * hard-error: silently falling back to prod would run a login or send a
  * token somewhere the user did not ask for.
  */
-function validateApiUrl(value: string, source: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw usageError(
-      `Invalid ${source} value "${value}". Expected a full URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
-    );
+export function validateApiUrl(value: string, source: string): string {
+  const inspected = inspectApiUrl(value, source);
+  if (!inspected.ok) {
+    throw usageError(inspected.error);
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw usageError(
-      `Invalid ${source} value "${value}". Expected an http(s) URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
-    );
-  }
-  return value;
+  return inspected.apiUrl;
 }
 
 /** The API URL the user explicitly asked for, if any (flag wins over env). */
@@ -135,7 +153,7 @@ export function toCliError(error: unknown): CliError {
   if (isPlatformApiError(error)) {
     const message =
       error.code === "UNAUTHORIZED"
-        ? `${error.message} Run \`mcpjam login\` or pass a valid sk_ API key.`
+        ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
         : error.message;
     return cliError(error.code, message, 1, error.details);
   }

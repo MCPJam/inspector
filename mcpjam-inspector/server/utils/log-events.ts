@@ -32,6 +32,26 @@ interface CommonLogContext {
   durationMs?: number;
 
   authType: AuthType;
+  /**
+   * Whether the caller presented a bearer credential AT ALL, set by
+   * `bearerAuthMiddleware` on every route it fronts. This is not "was the
+   * caller authorized" — an invalid key, an unknown user and an orphaned key
+   * are all `true`. It answers the one question a 401 count cannot: did
+   * somebody's credential fail, or did nobody send one?
+   *
+   * The distinction is the difference between a customer outage and
+   * background noise. A contracted pentest sweep (or any scanner) walks the
+   * public API with no `Authorization` header and produces hundreds of
+   * perfectly correct 401s; a real auth incident produces 401s from callers
+   * who DID present something. Without this field both fingerprint as
+   * "route 401" and the 4xx storm monitor cannot tell them apart — which is
+   * exactly what happened on 2026-08-18, where a scan tripped the WARN and
+   * triage had no query that could name the caller.
+   *
+   * Absent on routes that do not run `bearerAuthMiddleware`; monitors must
+   * treat null as "unknown", never as "no credential".
+   */
+  credentialPresented?: boolean | null;
   userId?: string | null;
   userExternalId?: string | null;
   guestExternalId?: string | null;
@@ -45,7 +65,7 @@ interface CommonLogContext {
   accessLevel?: AccessLevel | null;
   serverId?: string | null;
   sessionId?: string | null;
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   surface?: Surface | null;
   serverTransport?: ServerTransport | null;
   statusCode?: number | null;
@@ -219,15 +239,54 @@ export type RequestEventMap = {
     path: string;
   };
   "chat.session.persist.failed": {
-    failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
+    failureKind:
+      | "timeout"
+      | "http_error"
+      // A 2xx whose body could not be read, or carried no version. Distinct
+      // from http_error: the request succeeded, the contract did not.
+      | "protocol_error"
+      | "exception"
+      | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct" | "eval" | "swarm";
+    /**
+     * Sanitized, length-capped excerpt of the ingest's response body (see
+     * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
+     * and it is truncated). Carried mainly for 4xx, where the body text names
+     * the misconfiguration and is the difference between a diagnosable failure
+     * and a bare status code.
+     */
+    responsePreview?: string;
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
+  };
+  /**
+   * The backend accepted the request but declined the write, judging the
+   * transcript a replay. Previously invisible — the turn was dropped and
+   * nothing recorded it — which is how hosted turns went missing for months.
+   * Its own event so the silent-drop class is measurable rather than inferred.
+   */
+  "chat.session.persist.skipped": {
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
+    /** False means the payload had no idempotency key to dedupe on. */
+    hasTurnId: boolean;
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
@@ -393,7 +452,9 @@ function blankToNull(value: string | undefined): string | null {
 }
 
 export function resolveAppVersion(): string | null {
-  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+  return (
+    blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version)
+  );
 }
 
 /**

@@ -97,8 +97,17 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     // hand a guest any future mutation added at the same URL for free.
     methods: ["GET"],
   },
-  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
-  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
+  // Directory reads only. Backing Convex queries are publicQuery and the
+  // Convex `/v1` twins use authedV1ReadOnly (no guest user/org/project
+  // materialization). Registry-server reads, connection reads, and every
+  // install/uninstall stay guest-DENIED (default). Bearer is still required
+  // — these stay OUT of openapi-drift PUBLIC_OPERATIONS; anonymous MCP
+  // callers arrive with minted guest tokens, not with no token.
+  { pattern: /^\/registry\/directory-servers$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-servers\/[^/]+$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-sources$/, methods: ["GET"] },
 ];
 
 export function isGuestAllowedV1Request(

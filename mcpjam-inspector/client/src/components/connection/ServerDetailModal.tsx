@@ -33,6 +33,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
@@ -92,7 +93,7 @@ interface ServerDetailModalProps {
    * Undefined = no host-level pin = "Legacy · default" attribution on
    * the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion | "auto";
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -136,7 +137,9 @@ export function ServerDetailModal({
   // `project_` placeholder) makes it reject during render. Same guard every
   // other project-scoped Convex consumer uses; callers in local mode should
   // pass null, but this keeps a stray local id from taking down the page.
-  const canQueryProjectServerConfig = shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
@@ -157,7 +160,7 @@ export function ServerDetailModal({
   // The History tab + drift chip surface persisted snapshot revisions, which
   // only exist for project-scoped (hosted) servers — hidden in local mode.
   // Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId);
+  const showHistory = isUserReady && Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -176,8 +179,12 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const storedHostDefaultMcpProtocolVersion =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    storedHostDefaultMcpProtocolVersion === "auto"
+      ? undefined
+      : storedHostDefaultMcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     canQueryProjectServerConfig &&
       serverId &&
@@ -523,6 +530,9 @@ export function ServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
+        // Browser translators rewrite text nodes in-place. React then cannot
+        // safely remove this portaled dialog after its close animation.
+        translate="no"
         // The `sm:` prefix is load-bearing. DialogContent's base carries
         // `sm:max-w-lg`, and tailwind-merge only collapses classes that
         // share a variant — so an unprefixed `max-w-2xl` never conflicts
@@ -532,7 +542,7 @@ export function ServerDetailModal({
         // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
         // used to drop as a same-variant conflict — that's the guard that
         // keeps the dialog off both screen edges below 640px.
-        className="sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}

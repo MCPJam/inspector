@@ -92,6 +92,8 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -235,7 +237,7 @@ describe("runHarnessTurn empty output projection", () => {
 
     // The continuity claim (and therefore the resume-state commit) resolves the
     // `swarm-chat` owner keyed on the run + pinned host + session — never the
-    // Direct/Chatbox lane a swarm turn used to misfile under.
+    // Direct/Scenario lane a swarm turn used to misfile under.
     expect(claimHarnessSessionState).toHaveBeenCalled();
     const owner = (vi.mocked(claimHarnessSessionState).mock.calls[0]![0] as any)
       .owner;

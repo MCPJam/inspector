@@ -73,7 +73,7 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
-import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
@@ -1338,7 +1338,7 @@ export function useServerState({
     (
       serverConfig: MCPServerConfig,
       // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
-      // already resolved from a chatbox/project context. When provided,
+      // already resolved from a scenario/project context. When provided,
       // its `initialize.clientInfo` and first
       // `initialize.supportedProtocolVersions` entry flow onto the
       // ConnectionDefaults wire shape. Undefined preserves historical

@@ -32,10 +32,10 @@
  *     operation catalog, see built-in-tools/mcpjam.ts): require
  *     ctx.mcpjamPlatformClient, the route-injected PlatformApiClient bound
  *     to the caller's bearer; engines that don't pass it never advertise
- *     them. Skipped for guest actors AND chatbox sessions — mirrors the
+ *     them. Skipped for guest actors AND scenario sessions — mirrors the
  *     /api/v1 boundary ("Guests cannot access /api/v1"): the workspace
  *     surface is for project members, and the operations authorize via
- *     project membership, not chatbox tokens. Connection-opening ops
+ *     project membership, not scenario tokens. Connection-opening ops
  *     inherit `requireToolApproval` like bash does.
  *
  * Deliberately thin: this module merges tool sets, it does not absorb
@@ -83,7 +83,7 @@ export interface TrustedSandboxBinding {
   /**
    * How long this box lives, which the tool DESCRIPTION tells the model.
    * `run` (default) is one eval iteration / one swarm attempt; `conversation`
-   * is a chatbox box that survives between turns. A model told its files vanish
+   * is a scenario box that survives between turns. A model told its files vanish
    * after every run will not build work up across turns, so the wrong value
    * here changes behaviour, not just wording.
    */
@@ -113,21 +113,21 @@ export interface BuiltInToolContext {
    */
   isGuest?: boolean;
   /**
-   * True when this turn runs under a chatbox / share-link token rather than
+   * True when this turn runs under a scenario / share-link token rather than
    * project membership. Workspace tools (`mcpjam_*`) are not advertised in
    * those sessions: the surface is for project members, and the live-op
    * pipeline authorizes via membership — a non-member visitor's calls would
    * all fail closed at Convex anyway.
    */
-  isChatboxSession?: boolean;
+  isScenarioSession?: boolean;
   /**
-   * The chatbox this turn runs in, when it is a chatbox turn. Unlike
-   * {@link isChatboxSession} — which decides what to ADVERTISE — this is
-   * forwarded to Convex so a spend can be billed to the chatbox OWNER rather
+   * The scenario this turn runs in, when it is a scenario turn. Unlike
+   * {@link isScenarioSession} — which decides what to ADVERTISE — this is
+   * forwarded to Convex so a spend can be billed to the scenario OWNER rather
    * than the visitor, who has no wallet to charge. Web search needs it for the
    * same reason the model turn and voice transcription already do.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   /**
    * True when this turn belongs to a Journey (swarm) simulated session.
    * Computer-backed tools are suppressed for those UNLESS the turn holds a
@@ -192,9 +192,22 @@ export interface HostComputerResource {
 }
 
 /**
- * Narrow an untrusted runtime-config `computer` value to the resource shape.
- * Tolerates (and ignores) the legacy `toolset` key that pre-split backends
- * still persist; rejects everything else by returning null.
+ * Narrow an untrusted runtime-config `computer` value to the PERSONAL resource
+ * shape. Tolerates (and ignores) the legacy `toolset` key that pre-split
+ * backends still persist; rejects everything else by returning null.
+ *
+ * `kind: "personal"` is required, and that requirement is LOAD-BEARING now that
+ * the column carries a second kind. `kind: "ephemeral"` names a per-run box the
+ * platform provisioned; it is not a resource this resolver can reach — the
+ * personal path below resolves a machine per (project, user), and a per-run box
+ * has neither. A turn that owns one passes it out of band as
+ * `ctx.sandboxBinding`, which is checked FIRST and returns before any of this.
+ *
+ * So the two paths cannot both fire: an eval iteration whose pinned config
+ * carries an ephemeral computer gets its `bash` from the binding, or from the
+ * runner's own out-of-band injection, and never a second one from here.
+ * Returning the ephemeral kind as a personal resource would be the double
+ * registration — and worse, would point the tool at the caller's own machine.
  */
 export function narrowHostComputer(
   value: unknown
@@ -252,11 +265,11 @@ export function resolveHostTools(
         authHeader,
         projectId: ctx.projectId,
         ...(ctx.chatSessionId ? { chatSessionId: ctx.chatSessionId } : {}),
-        // Lets Convex bill the chatbox owner. Unlike `bash` and the
-        // `mcpjam_*` tools below, web search stays ADVERTISED in a chatbox
+        // Lets Convex bill the scenario owner. Unlike `bash` and the
+        // `mcpjam_*` tools below, web search stays ADVERTISED in a scenario
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
-        ...(ctx.chatboxId ? { chatboxId: ctx.chatboxId } : {}),
+        ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
       });
       continue;
     }
@@ -291,7 +304,7 @@ export function resolveHostTools(
       // independent.
       //
       // Threading `executionScope` can't fix it. `kind: "swarm"` is a hosted-
-      // chatbox grant (it keys on `swarmId: Id<'chatboxes'>` + accessVersion),
+      // scenario grant (it keys on `swarmId: Id<'scenarios'>` + accessVersion),
       // not a Journey run, and a signed-in launcher resolves to
       // `project_member` — so a Journey run's bash lands right back on that
       // shared computer. Real isolation is the per-attempt sandbox above.
@@ -336,14 +349,14 @@ export function resolveHostTools(
       // Engine coercion — the SECOND, independent layer under the route-level
       // parse gates: whatever engine the route resolved, `local` survives
       // only for a signed-in member's own direct turn. Everything else
-      // (guest, chatbox session, journey, swarm scope) re-resolves to the
+      // (guest, scenario session, journey, swarm scope) re-resolves to the
       // cloud family right here at the chokepoint.
       const requestedEngine =
         ctx.computerEngine ??
         resolvePersonalComputerEngine({ localConsentValid: false });
       const engine = coercePersonalEngineForActor(requestedEngine, {
         isGuest: Boolean(ctx.isGuest),
-        isChatboxSession: Boolean(ctx.isChatboxSession),
+        isScenarioSession: Boolean(ctx.isScenarioSession),
         isJourneySession: Boolean(ctx.isJourneySession),
         executionScopeKind: ctx.executionScope?.kind,
       });
@@ -355,7 +368,7 @@ export function resolveHostTools(
             requestedEngine,
             engine,
             isGuest: Boolean(ctx.isGuest),
-            isChatboxSession: Boolean(ctx.isChatboxSession),
+            isScenarioSession: Boolean(ctx.isScenarioSession),
           }
         );
       }
@@ -376,9 +389,9 @@ export function resolveHostTools(
       continue;
     }
     if (isMcpjamToolId(id)) {
-      if (ctx.isGuest || ctx.isChatboxSession) {
+      if (ctx.isGuest || ctx.isScenarioSession) {
         logger.debug(
-          "[built-in-tools] workspace tools not advertised to guest/chatbox actors; skipping",
+          "[built-in-tools] workspace tools not advertised to guest/scenario actors; skipping",
           { id }
         );
         continue;

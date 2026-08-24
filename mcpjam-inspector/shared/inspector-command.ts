@@ -43,6 +43,7 @@ export type InspectorCommandType =
   | "connectRegistryServer"
   | "disconnectRegistryServer"
   | "toggleRegistryStar"
+  | "searchRegistryDirectory"
   | "openEvalSuiteForm"
   | "runEvalSuite"
   | "cancelEvalRun"
@@ -60,8 +61,8 @@ export type InspectorCommandType =
   | "hibernateComputer"
   | "resetComputer"
   | "deleteComputer"
-  | "publishChatbox"
-  | "deleteChatbox"
+  | "publishScenario"
+  | "deleteScenario"
   | "selectModel"
   | "setSystemPrompt"
   | "resetChat"
@@ -89,6 +90,7 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "connectRegistryServer",
   "disconnectRegistryServer",
   "toggleRegistryStar",
+  "searchRegistryDirectory",
   "openEvalSuiteForm",
   "runEvalSuite",
   "cancelEvalRun",
@@ -106,8 +108,8 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "hibernateComputer",
   "resetComputer",
   "deleteComputer",
-  "publishChatbox",
-  "deleteChatbox",
+  "publishScenario",
+  "deleteScenario",
   "selectModel",
   "setSystemPrompt",
   "resetChat",
@@ -311,6 +313,26 @@ export interface ToggleRegistryStarInspectorCommand {
   id: string;
   type: "toggleRegistryStar";
   payload: { serverName: string; starred: boolean };
+  timeoutMs?: number;
+}
+
+/**
+ * Search a mirrored connector directory shown on the Registry screen.
+ *
+ * Read-only, and deliberately narrow: it DRIVES the screen's own controls, so
+ * what the model sees is what the person sees. `query` is optional because an
+ * absent one is a real request — browse the directory — not an error, and a
+ * blank one means the same thing (see `searchCatalogServers`).
+ *
+ * `source` picks WHICH directory (`anthropic-directory` or
+ * `chatgpt-directory`); omitted leaves the one already on screen, so a model
+ * that does not know there are two cannot silently switch the user's view.
+ * `tier` only exists on the Claude source, and switching source clears it.
+ */
+export interface SearchRegistryDirectoryInspectorCommand {
+  id: string;
+  type: "searchRegistryDirectory";
+  payload: { query?: string; tier?: string; source?: string };
   timeoutMs?: number;
 }
 
@@ -558,7 +580,7 @@ export interface DeleteComputerInspectorCommand {
 
 /**
  * User Testing commands, handled by `UserTestingTab` while `/user-testing` is
- * mounted. A chatbox (a "scenario" in the UI) is the shareable surface bound
+ * mounted. A scenario (a "scenario" in the UI) is the shareable surface bound
  * 1:1 to a host.
  *
  * Publish and delete are HOST-ANCHORED: `host` is a host name or id as the
@@ -566,9 +588,9 @@ export interface DeleteComputerInspectorCommand {
  * reject anything else as `invalid_request` (ambiguous → ask for the id) — never
  * a fuzzy guess. Two deliberate postures mirror the eval/swarm/host groups:
  * - **The Swarms-owned dead-end.** A standalone Journeys-owned host has NO
- *   publish surface. `publishChatbox` refuses it with `unsupported_in_mode`
+ *   publish surface. `publishScenario` refuses it with `unsupported_in_mode`
  *   carrying the same reason the UI's "Managed by Swarms" notice shows — it
- *   never back-mints a chatbox for such a host.
+ *   never back-mints a scenario for such a host.
  *
  * Reviewing sessions and copying the share link are READ-ONLY human actions —
  * exposed in the snapshot, not as commands. The share TOKEN never crosses the
@@ -585,9 +607,9 @@ export interface DeleteComputerInspectorCommand {
  * returned and opened UNCHANGED, so a second call can never re-mode or rename
  * a live scenario.
  */
-export interface PublishChatboxInspectorCommand {
+export interface PublishScenarioInspectorCommand {
   id: string;
-  type: "publishChatbox";
+  type: "publishScenario";
   payload: {
     environment: string;
     access?: "invited_only" | "link_guests" | "project";
@@ -598,10 +620,10 @@ export interface PublishChatboxInspectorCommand {
 
 /**
  * Generate AI personas and run synthetic sessions against the on-screen
- * chatbox. Low-entropy counts only (personaCount / sessionsPerPersona /
+ * scenario. Low-entropy counts only (personaCount / sessionsPerPersona /
  * maxTurns); the backend generates the personas. SPENDS MONEY, so it is
  * destructive (approval pill) and open-world. No target — it acts on the
- * currently-selected chatbox, like the computer commands act on the one
+ * currently-selected scenario, like the computer commands act on the one
  * computer.
  */
 
@@ -611,9 +633,9 @@ export interface PublishChatboxInspectorCommand {
  * scenario list shows it; deleting an environment-backed scenario leaves the
  * environment itself untouched.
  */
-export interface DeleteChatboxInspectorCommand {
+export interface DeleteScenarioInspectorCommand {
   id: string;
-  type: "deleteChatbox";
+  type: "deleteScenario";
   payload: { scenario: string };
   timeoutMs?: number;
 }
@@ -684,7 +706,7 @@ export interface StopGenerationInspectorCommand {
  * Server-primitive READ commands, handled by the Resources and Prompts screens
  * while `/resources` / `/prompts` are mounted. Both act on the currently
  * SELECTED server (resolved from the surface, never from the agent) — there is
- * no `serverName` in the payload, mirroring the computer/chatbox "no target"
+ * no `serverName` in the payload, mirroring the computer/scenario "no target"
  * shape. Both call the SAME api the screen's Read/Run buttons use.
  *
  * Read-only reads (a GET against the server), so both stay side-effect-free
@@ -783,6 +805,7 @@ export type InspectorCommand =
   | RemoveServerInspectorCommand
   | ConnectRegistryServerInspectorCommand
   | DisconnectRegistryServerInspectorCommand
+  | SearchRegistryDirectoryInspectorCommand
   | ToggleRegistryStarInspectorCommand
   | OpenEvalSuiteFormInspectorCommand
   | RunEvalSuiteInspectorCommand
@@ -801,8 +824,8 @@ export type InspectorCommand =
   | HibernateComputerInspectorCommand
   | ResetComputerInspectorCommand
   | DeleteComputerInspectorCommand
-  | PublishChatboxInspectorCommand
-  | DeleteChatboxInspectorCommand
+  | PublishScenarioInspectorCommand
+  | DeleteScenarioInspectorCommand
   | SelectModelInspectorCommand
   | SetSystemPromptInspectorCommand
   | ResetChatInspectorCommand

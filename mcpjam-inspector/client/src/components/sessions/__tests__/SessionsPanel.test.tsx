@@ -139,7 +139,7 @@ describe("SessionsPanel — query contract", () => {
 
     // Selecting every pill means "no filter" — the arg must drop back out so
     // the backend serves the plain project index.
-    for (const pill of ["direct", "chatbox", "eval"]) {
+    for (const pill of ["direct", "scenario", "eval"]) {
       fireEvent.click(screen.getByTestId(`sessions-source-pill-${pill}`));
     }
     expect(lastCall().args).toEqual({ projectId: "p1" });
@@ -223,6 +223,43 @@ describe("SessionsPanel — rows and detail", () => {
 
     const quick = within(screen.getByTestId("session-row-cs_quick"));
     expect(quick.getByText("Quick Run")).toBeInTheDocument();
+  });
+
+  test("renders an API origin chip and falls back for unknown origins", () => {
+    setRows([
+      makeRow({
+        chatSessionId: "cs_api",
+        sourceType: "direct",
+        origin: "api",
+        title: "Agent turn",
+      }),
+      makeRow({
+        chatSessionId: "cs_future",
+        sourceType: "direct",
+        origin: "future_surface",
+        title: "Unknown origin",
+      }),
+      makeRow({
+        chatSessionId: "cs_proto",
+        sourceType: "direct",
+        origin: "constructor",
+        title: "Inherited key",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const apiRow = within(screen.getByTestId("session-row-cs_api"));
+    expect(apiRow.getByTestId("session-origin-chip")).toHaveTextContent("API");
+
+    const future = within(screen.getByTestId("session-row-cs_future"));
+    expect(future.getByTestId("session-origin-chip")).toHaveTextContent(
+      "future_surface"
+    );
+
+    const proto = within(screen.getByTestId("session-row-cs_proto"));
+    expect(proto.getByTestId("session-origin-chip")).toHaveTextContent(
+      "constructor"
+    );
   });
 
   test("clicking a row opens the detail pane with the row's `id`, not its chatSessionId", () => {

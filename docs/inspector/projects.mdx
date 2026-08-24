@@ -36,6 +36,8 @@ The context menu leads with the **Projects** list. At the bottom of the menu, a 
 - **New organization** — appears at the bottom of the switch list (or directly in the footer when you have only one org and can create another).
 - The **gear icon** next to an organization name navigates to that organization's settings.
 
+If you were invited to a paid-seat organization but the seat hasn't been paid for yet, that organization appears greyed out in the list with a **Seat not paid yet** tooltip. You cannot open it until the org owner completes payment for your seat.
+
 <Info>
 After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
 </Info>
@@ -117,9 +119,9 @@ Open **Project Settings** (gear icon in the header) to manage project-level conf
 
 ### Default host config
 
-The **Default Host Config** section sets the seed configuration applied to new chatboxes, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
+The **Default Host Config** section sets the seed configuration applied to new scenarios, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
 
-Editing the default host config does **not** change existing chatboxes or eval suites — each owns its own config once created.
+Editing the default host config does **not** change existing scenarios or eval suites — each owns its own config once created.
 
 The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
 

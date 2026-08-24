@@ -1,0 +1,59 @@
+---
+title: "Migrating to CLI 4.0"
+description: "Command-path and flag changes when account-bound mcpjam commands moved under mcpjam cloud"
+icon: "arrow-right-arrow-left"
+---
+
+`@mcpjam/cli` 4.0 separates local MCP operations from account-bound Cloud operations. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the intentional root-level exception because it targets publisher directory checks and does not use Cloud project links. There are no compatibility aliases for the old Cloud command paths.
+
+```bash
+mcpjam server probe --url https://example.com/mcp       # local
+mcpjam oauth login --url https://example.com/mcp        # local MCP OAuth
+mcpjam cloud login                                      # MCPJam Cloud account
+mcpjam cloud projects list                              # MCPJam Cloud
+mcpjam cloud eval run --suite smoke                     # MCPJam Cloud
+mcpjam cloud tunnel --server dev -- npm start           # local target, Cloud registration
+```
+
+## What did not change
+
+- Frozen local commands: `server`, `tools`, `resources`, `prompts`, `subscriptions`, `tasks`, `apps`, `oauth`, `protocol`, `xaa`, `compat`, `inspector`, `mcp`, `telemetry`
+- Local commands still reject `--api-key` / `--api-url` / `--project`
+- Hosted `readiness start|status|list|cancel|report` stays under the root `readiness` command (leaf `--api-key`; no Cloud project link)
+- Local `mcpjam mcp` protocol `serverInfo.name` is still `mcpjam` (title is now `MCPJam CLI`)
+
+## Command paths
+
+| 3.x | 4.0 |
+|-----|-----|
+| `mcpjam login` / `logout` / `whoami` | `mcpjam cloud login` / `logout` / `whoami` |
+| `mcpjam organizations` | `mcpjam cloud organizations` |
+| `mcpjam projects …` | `mcpjam cloud projects …` |
+| `mcpjam eval …` | `mcpjam cloud eval …` |
+| `mcpjam chat-sessions list` | `mcpjam cloud sessions list` |
+| `mcpjam sessions search` | `mcpjam cloud sessions search` |
+| `mcpjam hosts …` | `mcpjam cloud hosts …` |
+| `mcpjam environments …` | `mcpjam cloud environments …` |
+| `mcpjam capabilities` | `mcpjam cloud projects capabilities` |
+| `mcpjam projects server …` | `mcpjam cloud projects servers …` (plural only) |
+| `mcpjam personas` / `journeys` / `scenarios` / `swarms` / `user-testing` | `mcpjam cloud …` (same names) |
+| `mcpjam images …` | `mcpjam cloud images …` |
+| `mcpjam tunnel …` | `mcpjam cloud tunnel …` |
+
+## Flags
+
+| 3.x | 4.0 |
+|-----|-----|
+| `--api-key` / `--api-url` on each Cloud leaf | Declared on `mcpjam cloud`; work before or after descendants |
+| `projects list --organization-id` | `mcpjam cloud projects list --org` |
+| `tunnel --id <name>` | `mcpjam cloud tunnel --server <name>` (`--id` still works, hidden) |
+| `eval status|cancel|judge|iterations|gate|compare|trace|steps|screenshot|video --project` required | Optional. Same precedence as other Cloud commands |
+| `sessions list` with no `--project` | Project-scoped (link / env / automatic). Pass `--all-projects` for the old all-projects listing |
+
+Project-selection precedence: `--project` > explicit `project` in `--file`/`--json` > `MCPJAM_PROJECT` > nearest `.mcpjam/project.json` > automatic (most recently updated). `MCPJAM_PROJECT_ID` does not select a Cloud CLI project.
+
+`mcpjam cloud link` writes `.mcpjam/project.json`; use `mcpjam cloud link --remove` to remove the nearest link. `mcpjam cloud status` is zero-network.
+
+## Local MCP identity
+
+`mcpjam mcp` still announces protocol name `mcpjam`. The display title is `MCPJam CLI`. Instructions say this is the local testing engine, not the hosted Cloud MCP at `mcp.mcpjam.com`.

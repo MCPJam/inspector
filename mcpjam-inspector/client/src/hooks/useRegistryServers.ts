@@ -25,13 +25,31 @@ import { toast } from "@/lib/toast";
 const DEV_MOCK_REGISTRY =
   import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK_REGISTRY === "true";
 
-// Kill switch for the entire registry feature. The registry UI is gated
-// behind an internal feature flag and isn't shipped to prod users yet, but
-// the hook was still firing network requests (catalog fetch, guest-stars
-// merge) for internal users with the flag on and producing visible errors.
-// While `false`, the hook is fully inert: empty data, no fetches, no-op
-// mutations. Flip to true once the registry backend is ready for real use.
-const REGISTRY_FEATURE_ENABLED = false;
+// Kill switch for the entire registry feature. It was added because the
+// PostHog `registry-enabled` flag gates the ROUTE, not the data: an internal
+// user with that flag on mounted the tab and the hook fired requests
+// (catalog fetch, guest-stars merge) at a backend that wasn't ready yet,
+// producing visible errors. While `false`, the hook is fully inert: empty
+// data, no fetches, no-op mutations.
+//
+// Its stated exit condition — "flip once the registry backend is ready for
+// real use" — is now met. Both catalogs are live: the curated registry is
+// seeded, and the Claude connectors directory carries ~2,000 rows synced
+// daily with working search.
+//
+// It is now `true` and its remaining life is short. It duplicates a control
+// that is strictly better at the job: `registry-enabled` is per-user and
+// takes effect without a deploy, while this needs a build to move, so an
+// actual emergency reaches for the flag every time. Removing it means
+// deleting the `enabled` plumbing in both hooks and un-skipping the two
+// suites it currently forces to `describe.skip` — a small refactor kept out
+// of this change so that reverting "turn it on" never means reverting that.
+//
+// EXPORTED so the Claude-directory half of the Registry tab
+// (`useServerDirectory`) reads the same switch. Two constants would let the
+// screen half-light: a directory that queries while the curated catalog is
+// dark is exactly the state this flag exists to prevent.
+export const REGISTRY_FEATURE_ENABLED = true;
 
 const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   {
@@ -367,6 +385,24 @@ function isMissingProjectConnectionError(error: unknown): boolean {
 }
 
 /**
+ * Auth bootstrap failures from the Convex registry routes. Catalog used to
+ * 401 before a bearer was attached (and still can, on star-merge), and the
+ * hook toasted the raw `Missing or invalid bearer token` message on every
+ * /servers pageload. These are retryable, not user-actionable.
+ */
+function isBackgroundAuthError(error: unknown): boolean {
+  if (error instanceof WebApiError) {
+    if (error.status === 401 || error.status === 403) return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message === "Missing or invalid bearer token" ||
+    message === "Signed-in user required" ||
+    message === "User not found"
+  );
+}
+
+/**
  * Hook for fetching registry servers and managing connections.
  *
  * Pattern follows useProjectMutations / useServerMutations in useProjects.ts.
@@ -418,12 +454,15 @@ export function useRegistryServers({
       const cards = await fetchRegistryCatalog();
       setRawCatalog(cards);
     } catch (error) {
+      if (isBackgroundAuthError(error)) {
+        return;
+      }
       const message =
         error instanceof WebApiError
           ? error.message
           : "Failed to load registry catalog";
       toast.error(message);
-      setRawCatalog([]);
+      setRawCatalog((prev) => prev ?? []);
     }
   }, []);
 
@@ -431,7 +470,9 @@ export function useRegistryServers({
     if (!enabled) return;
     if (DEV_MOCK_REGISTRY) return;
     void loadCatalog();
-  }, [enabled, loadCatalog]);
+    // Re-fetch when the actor flips so a first anonymous/unstarred catalog
+    // is replaced with the viewer's `isStarred` once a session exists.
+  }, [enabled, loadCatalog, isAuthenticated]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -462,10 +503,22 @@ export function useRegistryServers({
         mergeRanRef.current = true;
       } catch (error) {
         const message =
-          error instanceof WebApiError
-            ? error.message
-            : "Could not merge guest stars";
-        toast.error(message);
+          error instanceof Error ? error.message : String(error);
+        if (
+          message === "Signed-in user required" ||
+          message === "User not found"
+        ) {
+          // Convex guests cannot merge. Latch so we don't toast or retry.
+          mergeRanRef.current = true;
+          return;
+        }
+        if (!isBackgroundAuthError(error)) {
+          toast.error(
+            error instanceof WebApiError
+              ? error.message
+              : "Could not merge guest stars",
+          );
+        }
         // Schedule a retry by bumping the nonce, which is in this effect's
         // deps. Backoff grows with attempt count; capped by MAX_MERGE_ATTEMPTS.
         if (

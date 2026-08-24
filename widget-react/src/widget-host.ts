@@ -66,8 +66,8 @@ export interface OpenAiAppsCapabilities {
 /** usePreferencesStore theme mode. */
 export type ThemeMode = "light" | "dark";
 
-/** Host-style id (the inspector's `ChatboxHostStyle`). */
-export type ChatboxHostStyle = string;
+/** Host-style id (the inspector's `ScenarioHostStyle`). */
+export type ScenarioHostStyle = string;
 
 export interface DeviceCapabilities {
   hover: boolean;
@@ -102,6 +102,29 @@ export type ResolvedHostInfo = Record<string, unknown> | undefined;
 /** Required form of the OpenAI Apps compat surface. */
 export type ResolvedOpenAiAppsCapabilities = Required<OpenAiAppsCapabilities>;
 
+export type McpAppsCspConnectDomains = {
+  fetch?: boolean;
+  xhr?: boolean;
+  websocket?: boolean;
+};
+
+export type McpAppsCspResourceDomains = {
+  script?: boolean;
+  stylesheet?: boolean;
+  image?: boolean;
+  font?: boolean;
+  media?: boolean;
+};
+
+export type CspSubtypePolicy = {
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
+};
+
+export type CspSubtype =
+  | keyof McpAppsCspConnectDomains
+  | keyof McpAppsCspResourceDomains;
+
 /** resolveEffectiveCompatRuntime result. */
 export type EffectiveCompatRuntime =
   | { injected: false }
@@ -124,6 +147,8 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
@@ -153,12 +178,12 @@ export interface ResolvedHostStyle {
 
 /**
  * Which surface the widget is mounted on. Collapses the inspector's
- * `useIsChatboxSurface` / `useWidgetSurface` signals into one descriptor.
+ * `useIsScenarioSurface` / `useWidgetSurface` signals into one descriptor.
  */
 export type WidgetSurfaceKind =
   | "chat"
   | "playground"
-  | "chatbox"
+  | "scenario"
   | "standalone";
 
 /** Per-surface identity + routing the renderer reads ambiently. */
@@ -206,6 +231,7 @@ export interface CspViolation {
   lineNumber?: number | null;
   columnNumber?: number | null;
   timestamp: number;
+  subtype?: CspSubtype;
 }
 
 export interface WidgetLifecycleEvent {
@@ -229,6 +255,7 @@ export interface WidgetSandboxApplied {
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
   cspDirectives?: Record<string, string[]>;
+  cspSubtypePolicy?: CspSubtypePolicy;
   permissive: boolean;
   hostPolicyApplied: boolean;
   restrictTo?: {
@@ -330,16 +357,16 @@ export interface WidgetDebugSink {
   recordMount: (toolCallId: string, reason: string) => void;
   setWidgetDebugInfo: (
     toolCallId: string,
-    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
+    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>
   ) => void;
   setWidgetState: (toolCallId: string, state: unknown) => void;
   setWidgetGlobals: (
     toolCallId: string,
-    globals: Partial<WidgetGlobals>,
+    globals: Partial<WidgetGlobals>
   ) => void;
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetSandboxInfo, "violations">,
+    csp: Omit<WidgetSandboxInfo, "violations">
   ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
   clearCspViolations: (toolCallId: string) => void;
@@ -348,24 +375,21 @@ export interface WidgetDebugSink {
     context: {
       content?: unknown[];
       structuredContent?: Record<string, unknown>;
-    } | null,
+    } | null
   ) => void;
   setWidgetHtml: (
     toolCallId: string,
     html: string,
     injectedOpenAiCompat?: boolean,
-    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
+    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities
   ) => void;
   setSandboxApplied: (
     toolCallId: string,
     applied: WidgetSandboxApplied,
     hostProfileId?: string,
-    hostInfo?: { name: string; version: string } | null,
+    hostInfo?: { name: string; version: string } | null
   ) => void;
-  appendLifecycle: (
-    toolCallId: string,
-    event: WidgetLifecycleEvent,
-  ) => void;
+  appendLifecycle: (toolCallId: string, event: WidgetLifecycleEvent) => void;
   /** useTrafficLogStore.addLog */
   addTrafficLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
 }
@@ -402,7 +426,7 @@ export interface WidgetCheckoutProps {
   onCancel: () => void;
   onCallTool: (
     toolName: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown>
   ) => Promise<unknown>;
 }
 
@@ -456,9 +480,9 @@ export interface WidgetHostProfileSandbox {
  */
 export interface WidgetHostEnvironmentInputs {
   themeMode: ThemeMode;
-  sharedHostStyle: ChatboxHostStyle;
-  chatboxHostStyle: ChatboxHostStyle | null;
-  chatboxHostTheme: "light" | "dark" | null;
+  sharedHostStyle: ScenarioHostStyle;
+  scenarioHostStyle: ScenarioHostStyle | null;
+  scenarioHostTheme: "light" | "dark" | null;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   /**
    * Stable hash of the active MCP profile. The profile object is bound in the
@@ -494,10 +518,10 @@ export interface WidgetHostEnvironmentInputs {
 // renderer's recompute reactivity.
 export interface WidgetHostResolvers {
   resolveEffectiveCompatRuntime: (args: {
-    hostStyle: ChatboxHostStyle | string | null | undefined;
+    hostStyle: ScenarioHostStyle | string | null | undefined;
   }) => EffectiveCompatRuntime;
   resolveEffectiveMcpAppsCapabilities: (args: {
-    hostStyle: ChatboxHostStyle | string | null | undefined;
+    hostStyle: ScenarioHostStyle | string | null | undefined;
   }) => ResolvedMcpAppsCapabilities;
   resolveEffectiveHostCapabilities: (args: {
     hostStyle: string | null | undefined;
@@ -507,17 +531,17 @@ export interface WidgetHostResolvers {
   getHostStyleOrDefault: (id: string | null | undefined) => ResolvedHostStyle;
   DEFAULT_HOST_STYLE: ResolvedHostStyle;
   extractHostTheme: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => "light" | "dark" | undefined;
   extractHostDisplayMode: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => DisplayMode | undefined;
   extractHostDisplayModes: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => DisplayMode[];
   clampDisplayModeToAvailableModes: (
     displayMode: DisplayMode | undefined,
-    availableDisplayModes: DisplayMode[],
+    availableDisplayModes: DisplayMode[]
   ) => DisplayMode;
   stableStringifyJson: (value: unknown) => string;
 }
@@ -577,23 +601,23 @@ export type ListResourcesResult = {
  */
 export interface WidgetHostServices {
   fetchWidgetContent: (
-    req: FetchWidgetContentRequest,
+    req: FetchWidgetContentRequest
   ) => Promise<FetchWidgetContentResponse>;
   // Mirrors the inspector api fn (returns `Promise<any>`); the bridge handler
   // treats the resource payload opaquely.
   readResource: (
     serverId: string,
     uri: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<any>;
   listResources: (
     serverId: string,
     cursor?: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<ListResourcesResult>;
   listPrompts: (
     serverId: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<MCPPrompt[]>;
   listResourceTemplates: (serverId: string) => Promise<MCPResourceTemplate[]>;
   /**
@@ -602,7 +626,10 @@ export interface WidgetHostServices {
    * file-upload bridge (`openai:uploadFile`); plain static/cached fetches use
    * the global `fetch` directly.
    */
-  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  authFetch: (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ) => Promise<Response>;
 }
 
 // --- The seam ----------------------------------------------------------------

@@ -105,7 +105,7 @@ vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [], isLoading: false }),
   useDbUserReady: () => true,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -138,7 +138,7 @@ async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   openPersonasTab();
   await waitFor(() => {
-    expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+    expect(screen.getByLabelText("Use cases and context")).toBeTruthy();
   });
 }
 

@@ -19,7 +19,7 @@ import {
 } from "../routes/web/errors.js";
 import {
   buildHostedOAuthUnauthorizedHandler,
-  forceRefreshHostedOAuthAccessToken,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
@@ -187,7 +187,7 @@ export interface WorkosApiKeyActingAs {
 /**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
- * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
+ * STDIO command/args/env. Hosted-only fields (share/scenario tokens) are not
  * accepted by this endpoint by design.
  *
  * `c` is only a request-log sink; callers without a live Hono context (the
@@ -304,7 +304,7 @@ export async function authorizeBatchLocal(
       // the batch instead.
       partial.serverId = null;
       partial.serverTransport = null;
-      partial.chatboxId = null;
+      partial.scenarioId = null;
     }
     setRequestLogContext(c, partial);
   }
@@ -801,6 +801,12 @@ export function toMCPServerConfig(
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
+      // In local mode this process is the one that can reach a private
+      // authorization server. Covers the in-flight 401 during a long session,
+      // not just the connect. `!HOSTED_MODE` rather than `true`:
+      // toMCPServerConfig is exported, so gate at the call site too instead of
+      // relying solely on the assertion inside local-oauth-refresh.
+      allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
     });
   } else if (
     oauthToken &&
@@ -850,7 +856,7 @@ async function applyLocalRuntimeResolution<
     serverDisplayName?: string;
     /** Secret-reveal scope; must match what the hosted mint path would send. */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -875,7 +881,7 @@ async function applyLocalRuntimeResolution<
       projectId,
       serverId,
       accessScope: args.accessScope,
-      chatboxId: args.chatboxId,
+      scenarioId: args.scenarioId,
       accessVersion: args.accessVersion,
       workosApiKeyActingAs: args.workosApiKeyActingAs,
     });
@@ -988,7 +994,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   serverId: string;
   serverDisplayName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 }): Promise<PluginStdioLaunchSpec> {
   const result = await authorizeServerLocal(
@@ -1019,10 +1025,12 @@ export async function readAuthorizedStdioLaunchSpec(args: {
             projectId: args.projectId,
             serverId: args.serverId,
             accessScope: args.accessScope,
-            chatboxId: args.chatboxId,
+            scenarioId: args.scenarioId,
             accessVersion: args.accessVersion,
           })
-        ).env ?? config.env ?? {}
+        ).env ??
+        config.env ??
+        {}
       : config.env ?? {};
 
   return {
@@ -1065,11 +1073,11 @@ export async function resolveLocalStdioServerConfig(
      * Secret-reveal scope + delegated identity, threaded from
      * `createAuthorizedManager`'s options and caller context so the local
      * reread and reveal follow the same trust model as the hosted batch —
-     * a chatbox-scoped or WorkOS-API-key caller must not get a lesser (or
+     * a scenario-scoped or WorkOS-API-key caller must not get a lesser (or
      * failing) resolution just because the deployment is local.
      */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -1107,7 +1115,7 @@ export async function resolveLocalStdioServerConfig(
     managerKey: serverId,
     serverDisplayName: options?.serverDisplayName,
     accessScope: options?.accessScope,
-    chatboxId: options?.chatboxId,
+    scenarioId: options?.scenarioId,
     accessVersion: options?.accessVersion,
     workosApiKeyActingAs: options?.workosApiKeyActingAs,
     onPluginLease: options?.onPluginLease,
@@ -1212,12 +1220,13 @@ export async function resolveLocalServerForConnect(
   if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: displayName }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: displayName }
+        );
     } catch (error) {
       const refreshTokenInvalid =
         error instanceof WebRouteError &&
@@ -1258,12 +1267,13 @@ export async function resolveLocalServerForConnect(
   // needs auth, the connect 401s and the tagged error escalates client-side.
   if (effectiveAuth === "discover" && !resolvedOauthAccessToken) {
     try {
-      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
-        bearerToken,
-        projectId,
-        serverId,
-        { serverName: options?.serverDisplayName ?? serverId }
-      );
+      resolvedOauthAccessToken =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          serverId,
+          { serverName: options?.serverDisplayName ?? serverId }
+        );
     } catch (error) {
       logger.debug(
         "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",

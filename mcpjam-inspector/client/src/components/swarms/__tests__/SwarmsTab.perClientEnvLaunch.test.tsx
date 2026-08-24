@@ -190,7 +190,7 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
 
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 
@@ -219,22 +219,6 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
     >
       add criterion ({value.length})
     </button>
-  ),
-}));
-
-vi.mock("@/components/mcpjam-agent/McpjamAgentComposer", () => ({
-  McpjamAgentComposer: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (next: string) => void;
-  }) => (
-    <textarea
-      aria-label="Describe swarm"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
   ),
 }));
 
@@ -293,7 +277,7 @@ function perClientEnvironments() {
 /** Describe with a paragraph and BOTH per-client environments selected. */
 function describeAcrossBothClients() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
-  fireEvent.change(screen.getByLabelText("Describe swarm"), {
+  fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
     target: { value: "Finance ops reconciling payouts" },
   });
   const picker = screen.getByTestId("new-swarm-environments-picker");
@@ -348,7 +332,7 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
       "ChatGPT prod · Claude prod"
     );
     expect(
-      screen.getByText(/2 personas · 2 goals · 4 new sessions/i)
+      screen.getByText(/run 4 sessions total in this swarm/i)
     ).toBeInTheDocument();
 
     // Attach the rubric: a deterministic check plus the LLM judge, moved off

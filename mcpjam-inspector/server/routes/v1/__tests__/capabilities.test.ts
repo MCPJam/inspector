@@ -97,7 +97,7 @@ describe("capability derivation", () => {
   });
 
   it("gives a member the exposure controls but not guest execution", async () => {
-    // The chatbox mutations behind mode changes, member edits and link
+    // The scenario mutations behind mode changes, member edits and link
     // rotation gate at workspace MEMBERSHIP upstream — reporting them as
     // admin-only denied capabilities the caller actually held, this
     // endpoint's own failure mode. Guest execution is the one exposure
@@ -149,6 +149,72 @@ describe("capability derivation", () => {
     expect(body.can.requestInsights).toBe(true);
   });
 
+  it("gives the eval EDIT tier to a guest holding only a project grant", async () => {
+    // The case that separates the eval keys from the swarm keys above. Swarm
+    // writes rank the org role alone, so this caller cannot author a journey;
+    // eval writes resolve project ACCESS, where the grant counts, so every
+    // eval write in this project would be accepted. Reporting `isMember` for
+    // both would deny capabilities this caller holds.
+    queryMock.mockResolvedValue(
+      row({ role: "guest", projectRole: "editor", isProjectAdmin: false })
+    );
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.writeSwarms).toBe(false);
+    expect(body.can.readEvals).toBe(true);
+    expect(body.can.writeEvalSuites).toBe(true);
+    expect(body.can.launchEvalRun).toBe(true);
+    expect(body.can.exportEvalTraces).toBe(true);
+  });
+
+  it("withholds deleting OTHER people's eval suites from a member", async () => {
+    // The G1c tightening: destructive eval actions need the project manage
+    // tier. `deleteAny*` is the honest name — the backend keeps a creator
+    // escape hatch this project-level answer cannot express, which is why the
+    // key does not claim to describe a suite the caller made.
+    queryMock.mockResolvedValue(row());
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.writeEvalSuites).toBe(true);
+    expect(body.can.deleteAnyEvalSuite).toBe(false);
+    expect(body.can.deleteAnyEvalRun).toBe(false);
+  });
+
+  it("gives deleting to an admin, and to a project-admin GRANT", async () => {
+    // Both halves of `canManageProjectMembers`, which is exactly the tier the
+    // backend's `manage` predicate applies to eval deletes.
+    queryMock.mockResolvedValue(row({ role: "admin", isProjectAdmin: true }));
+    const asAdmin = (await (await get()).json()) as Body;
+    expect(asAdmin.can.deleteAnyEvalSuite).toBe(true);
+    expect(asAdmin.can.deleteAnyEvalRun).toBe(true);
+
+    queryMock.mockResolvedValue(
+      row({ role: "guest", projectRole: "admin", isProjectAdmin: true })
+    );
+    const asGrantHolder = (await (await get()).json()) as Body;
+    expect(asGrantHolder.can.deleteAnyEvalSuite).toBe(true);
+    // …even though the same caller cannot author a swarm.
+    expect(asGrantHolder.can.writeSwarms).toBe(false);
+  });
+
+  it("keeps the eval keys out of the beta gate", async () => {
+    // Evals are not behind `sandboxes-enabled`. An org that loses the flag
+    // keeps every eval capability, and an agent that inferred otherwise would
+    // refuse work the platform still does.
+    queryMock.mockResolvedValue(
+      row({
+        role: "admin",
+        isProjectAdmin: true,
+        features: {
+          sandboxes: { flagEnabled: false, mode: "enforce", enforced: true },
+        },
+      })
+    );
+    const body = (await (await get()).json()) as Body;
+    expect(body.can.writeSwarms).toBe(false);
+    expect(body.can.writeEvalSuites).toBe(true);
+    expect(body.can.launchEvalRun).toBe(true);
+    expect(body.can.deleteAnyEvalSuite).toBe(true);
+  });
+
   it("does not answer 200 when the safety read itself fails", async () => {
     // The degrade-to-ungated path is for a projection that is PRESENT but
     // lagging. A read that failed outright knows nothing, and answering it
@@ -174,7 +240,7 @@ describe("capability derivation", () => {
     const body = (await (await get()).json()) as Body;
     expect(body.can.cancelJourneyRun).toBe(true);
     expect(body.can.unpublishUserTestingScenario).toBe(true);
-    // The scenario controls stay true too: none of the chatbox mutations
+    // The scenario controls stay true too: none of the scenario mutations
     // behind them (mode, members, rotate, guest execution) check the beta
     // flag — only publish/rebind do. Claiming otherwise would deny writes
     // the backend accepts.

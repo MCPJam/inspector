@@ -77,10 +77,13 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunCreated: "PlatformEvalRunCreated",
+  EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
+  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
+  EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
   EvalDeleted: "PlatformEvalSuiteDeleted",
@@ -89,6 +92,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   HostDeleted: "PlatformHostDeleted",
   EnvironmentSkillSelection: "PlatformEnvironmentSkillSelection",
   ProjectEnvironment: "PlatformEnvironment",
+  AdhocEnvironment: "PlatformAdhocEnvironment",
+  AdhocEnvironmentEnsured: "PlatformAdhocEnvironmentEnsured",
+  EvalSuiteEnvironmentAttached: "PlatformEvalSuiteEnvironmentAttached",
   ProjectEnvironmentCapabilities: "PlatformEnvironmentCapabilities",
   ProjectEnvironmentResolved: "PlatformEnvironmentResolved",
   Plugin: "PlatformPlugin",
@@ -99,10 +105,10 @@ const PAIRS: Readonly<Record<string, string>> = {
   SandboxImageBuildStarted: "PlatformImageBuildStarted",
   ComputerAttached: "PlatformComputerAttached",
   ComputerReset: "PlatformComputerReset",
-  ChatboxLink: "PlatformChatboxLink",
-  ChatboxServer: "PlatformChatboxServer",
-  Chatbox: "PlatformChatbox",
-  ChatboxDetail: "PlatformChatboxDetail",
+  ScenarioLink: "PlatformScenarioLink",
+  ScenarioServer: "PlatformScenarioServer",
+  Scenario: "PlatformScenario",
+  ScenarioDetail: "PlatformScenarioDetail",
   TunnelGrant: "PlatformTunnelGrant",
   TunnelClosed: "PlatformTunnelClosed",
 
@@ -172,6 +178,14 @@ const PAIRS: Readonly<Record<string, string>> = {
   ActionableFindingEvidence: "PlatformActionableFindingEvidence",
   ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
   EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
+  EvalRunJudgeRequested: "PlatformEvalRunJudgeRequested",
+  EvalRunJudges: "PlatformEvalRunJudges",
+  EvalRunJudgeState: "PlatformEvalRunJudgeState",
+  EvalRunGoalCompletionJudge: "PlatformEvalRunGoalCompletionJudge",
+  EvalRunGroundednessJudge: "PlatformEvalRunGroundednessJudge",
+  EvalRunJudgeCase: "PlatformEvalRunJudgeCase",
+  EvalRunGoalCompletionCase: "PlatformEvalRunGoalCompletionCase",
+  EvalRunGroundednessCase: "PlatformEvalRunGroundednessCase",
   ProjectCapabilities: "PlatformCapabilities",
 };
 
@@ -258,6 +272,18 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     const root = unwrapTypeNode(node);
     let members: ts.TypeNode[] = [root];
 
+    // A field typed EXACTLY `null` (not `X | null`) is nullable too. Without
+    // this the parser sees only the union form, so a field whose sole type is
+    // null reads as non-nullable and disagrees with a spec that correctly says
+    // it is — a false positive on the honest description.
+    if (
+      root.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isLiteralTypeNode(root) &&
+        root.literal.kind === ts.SyntaxKind.NullKeyword)
+    ) {
+      return { nullable: true, enumValues: null, refName: null, isArray: false };
+    }
+
     if (ts.isUnionTypeNode(root)) {
       members = root.types.map(unwrapTypeNode).filter((t) => {
         // `| null` and `| undefined` are nullability, not variants.
@@ -336,8 +362,8 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
   visit(source);
 
   // Flatten `extends`. Without this every inherited field reads as "documented
-  // in the spec, absent from the SDK" — `PlatformChatboxDetail extends
-  // PlatformChatbox` alone produced twelve such phantoms, which is exactly the
+  // in the spec, absent from the SDK" — `PlatformScenarioDetail extends
+  // PlatformScenario` alone produced twelve such phantoms, which is exactly the
   // noise that gets a ratchet switched off.
   //
   // A child's own declaration WINS over an inherited one: that is what

@@ -211,6 +211,36 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
     ).rejects.toThrow();
     expect(bridge.sendToolCancelled).not.toHaveBeenCalled();
   });
+
+  // Nobody awaits the side-channel notification, and the app-tool call that
+  // failed is often what tore the widget down in the first place — so the
+  // bridge can already be disconnected by the time we send it. An unguarded
+  // send then rejects with "Not connected" and surfaces as an unhandled
+  // rejection, which the hosted app reports as a client crash.
+  it("swallows a send failure when the bridge is already disconnected", async () => {
+    const bridge = makeStubBridge();
+    const toolError = new Error("boom");
+    // Assert on the very promise the handler receives ("this rejection was
+    // handled") rather than on the runtime staying quiet: an unhandled
+    // rejection is reported by the browser, not by vitest's jsdom worker.
+    const sendResult = Promise.reject(new Error("Not connected"));
+    const handled = vi.spyOn(sendResult, "catch");
+    bridge.sendToolCancelled.mockReturnValue(sendResult);
+    register(bridge, {
+      callbacks: { onCallTool: vi.fn().mockRejectedValue(toolError) },
+    });
+
+    // The tool error still reaches the app through the response path.
+    await expect(
+      (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
+        { name: "go", arguments: {} },
+        {},
+      ),
+    ).rejects.toBe(toolError);
+
+    expect(bridge.sendToolCancelled).toHaveBeenCalledWith({ reason: "boom" });
+    expect(handled).toHaveBeenCalled();
+  });
 });
 
 describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {

@@ -1,6 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildConformanceRunPath,
+  buildConformanceSharePath,
+  buildEvalSharePath,
   buildOrganizationPath,
   buildSessionsPath,
   buildSwarmPath,
@@ -22,6 +25,18 @@ import {
   useCurrentOrgRoute,
   useCurrentSearchParam,
 } from "../app-navigation";
+
+describe("conformance run and share paths", () => {
+  it("builds encoded detail and share URLs", () => {
+    expect(buildConformanceRunPath("run/1", "proj")).toBe(
+      "/conformance/runs/run%2F1?project=proj"
+    );
+    expect(buildConformanceSharePath("tok/en")).toBe(
+      "/conformance/shared/tok%2Fen"
+    );
+    expect(buildEvalSharePath("tok/en")).toBe("/evals/shared/tok%2Fen");
+  });
+});
 
 describe("isDebugOAuthCallbackPath", () => {
   it("matches the OAuth debugger callback popup route", () => {
@@ -163,6 +178,7 @@ describe("pathnameToActiveTab", () => {
     // from KNOWN_APP_TAB_SEGMENTS resolves to "servers", so the shell's
     // flag-redirect / auto-select / active-server-selector never fire.
     expect(pathnameToActiveTab("/conformance")).toBe("conformance");
+    expect(pathnameToActiveTab("/conformance/runs/abc")).toBe("conformance");
     expect(pathnameToActiveTab("/compatibility")).toBe("compatibility");
   });
 
@@ -182,7 +198,7 @@ describe("pathnameToActiveTab", () => {
 
   it("uses servers for unknown paths", () => {
     expect(pathnameToActiveTab("/not-a-tab")).toBe("servers");
-    expect(pathnameToActiveTab("/chatbox-session-slug")).toBe("servers");
+    expect(pathnameToActiveTab("/scenario-session-slug")).toBe("servers");
   });
 
   it("ignores legacy hashes outside a Router", () => {
@@ -193,8 +209,8 @@ describe("pathnameToActiveTab", () => {
     expect(result.current).toBe("home");
   });
 
-  it("does not treat arbitrary chatbox session hashes as app tabs", () => {
-    window.location.hash = "#chatbox-slug";
+  it("does not treat arbitrary scenario session hashes as app tabs", () => {
+    window.location.hash = "#scenario-slug";
 
     const { result } = renderHook(() => useActiveTab());
 
@@ -294,7 +310,7 @@ describe("path navigation compatibility helpers", () => {
     expect(navigationTargetToPath("not-a-tab")).toBe("/servers");
   });
 
-  it("recognizes old hash bookmarks without claiming chatbox slugs", () => {
+  it("recognizes old hash bookmarks without claiming scenario slugs", () => {
     expect(legacyHashBookmarkToPath("#servers")).toBe("/servers");
     expect(legacyHashBookmarkToPath("#/evals/suite/s_1")).toBe(
       "/evals/suite/s_1"
@@ -302,7 +318,7 @@ describe("path navigation compatibility helpers", () => {
     expect(legacyHashBookmarkToPath("#organizations/org-a/billing")).toBe(
       "/organizations/org-a/billing"
     );
-    expect(legacyHashBookmarkToPath("#chatbox-slug")).toBeNull();
+    expect(legacyHashBookmarkToPath("#scenario-slug")).toBeNull();
   });
 
   it("normalizes the initial legacy hash bookmark before router mount", () => {

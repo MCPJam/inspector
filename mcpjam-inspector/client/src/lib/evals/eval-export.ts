@@ -5,6 +5,7 @@ import type {
   EvalSuiteRun,
 } from "@/components/evals/types";
 import type { ServerWithName } from "@/state/app-types";
+import { isOpaqueId, mintCaseId } from "@mcpjam/sdk/contract";
 import {
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
@@ -430,6 +431,30 @@ export function buildServerConnections(
   });
 }
 
+/**
+ * The `id` literal written into the exported file.
+ *
+ * Prefers the dashboard case's own id so the exported code-first test joins the
+ * hosted case's history. Neither branch derives an id from display text: an id
+ * derived from a title forks history on the first rename, which is exactly what
+ * a declared id exists to prevent.
+ *
+ * The fallback MINTS a fresh id rather than numbering by position. A positional
+ * id (`c_exported_3`) is order-dependent identity: export, insert a case above
+ * it, export again, and two different cases have swapped committed ids — which
+ * joins each to the other's history the moment either is uploaded. A minted id
+ * is at worst brand new, never someone else's. Validity is checked with the
+ * contract's own `isOpaqueId`, not a local regex, so this cannot drift from the
+ * rule the SDK enforces at construction.
+ */
+function exportedCaseId(testCase: EvalExportCaseInput): string {
+  const declared = testCase.id?.trim();
+  if (declared && isOpaqueId(declared)) {
+    return declared;
+  }
+  return mintCaseId();
+}
+
 function buildCaseTestBlock(
   testCase: EvalExportCaseInput,
   index: number
@@ -450,9 +475,16 @@ function buildCaseTestBlock(
 
   pushCaseComments(lines, testCase);
 
-  // Build EvalTest config
+  // Build EvalTest config.
+  //
+  // `id` is the case's declared identity and is required by the SDK. Emit the
+  // dashboard case's own id when we have it — the exported file then joins back
+  // to the same history — and mint a fresh one only for a case that never had
+  // one. Either way it is minted ONCE, into a file the user commits, so a later
+  // rename of `name` cannot fork the case.
   lines.push(
     "      const evalTest = new EvalTest({",
+    `        id: ${JSON.stringify(exportedCaseId(testCase))},`,
     `        name: ${JSON.stringify(caseTitle)},`
   );
 

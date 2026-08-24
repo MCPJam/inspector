@@ -1,8 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
-import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
@@ -32,20 +31,17 @@ export function CaniuseCapabilityPage({
 }: CaniuseCapabilityPageProps) {
   const capability = getCaniuseCapabilityBySlug(capabilitySlug);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const catalogState = useHostCatalog();
   const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
-  const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<string>();
-    if (!claudeCodeEnabled) excluded.add("claude-code");
-    return excluded;
-  }, [claudeCodeEnabled]);
+  // No feature-flag gate here. `claude-code-host-enabled` / `codex-host-enabled`
+  // gate the New Host template picker while those profiles are iterated on;
+  // this page is public reference data about what a third-party host supports,
+  // which is a different question from whether MCPJam will let you create one.
+  // Consulting the flags also hid both hosts from every anonymous visitor: the
+  // hooks read an unresolved flag as off, and the flags are @mcpjam.com-scoped.
   const presets = useMemo(
-    () =>
-      buildPresetCompareEntries(compareCatalog, {
-        excludedTemplateIds: excludedPresetTemplateIds,
-      }),
-    [compareCatalog, excludedPresetTemplateIds]
+    () => buildPresetCompareEntries(compareCatalog),
+    [compareCatalog]
   );
   const hosts = useMemo(
     () => sortCaniusePresetHosts(presets.hosts),
@@ -156,7 +152,7 @@ export function CaniuseCapabilityPage({
               subject.config
             );
             const label = getCaniuseSupportLabel(level);
-            const logoSrc = getChatboxHostLogo(
+            const logoSrc = getScenarioHostLogo(
               subject.hostStyle,
               subject.config.chatUiOverride,
               themeMode

@@ -9,7 +9,7 @@
  * and failure classification. This is the core the swarm runner executes every
  * attempt through, so these are swarm-critical guarantees.
  *
- * Drives the core directly (the chatbox batch loop that used to wrap it is
+ * Drives the core directly (the scenario batch loop that used to wrap it is
  * gone). Two side-persistence paths are exercised here: the widget-snapshot
  * capture the surface injects via `onTurnPersisted`, and the browser-artifact
  * outbox the core drives itself (`browserArtifacts`) — the latter because its
@@ -228,7 +228,9 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_URL", "https://convex.cloud");
   runAssistantTurnMock.mockReset();
   resolveSyntheticModelSourceMock.mockReset();
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   captureMcpAppWidgetSnapshotsMock.mockReset().mockResolvedValue([]);
   prepareChatV2Mock.mockReset().mockResolvedValue({
     allTools: { search: { description: "noop" } },
@@ -330,9 +332,9 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
           computer: { kind: "personal", workdir: "/workspace" },
           requireToolApproval: true,
         },
-        // A hosted-chatbox surface: bash is still resolved there. Swarm
+        // A hosted-scenario surface: bash is still resolved there. Swarm
         // sessions are the ones that fail closed — see the test below.
-        persist: { sourceType: "chatbox", origin: "chatbox" },
+        persist: { sourceType: "scenario", origin: "scenario" },
       }) as never
     );
 
@@ -384,8 +386,8 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
-    // which writes skills into the sandbox itself; the emulated listSkills/
-    // loadSkill tools must NOT also be advertised.
+    // which writes skills into the sandbox itself; the emulated prompt catalog
+    // + loadSkill tools must NOT also be advertised.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { harness: "claude-code" } }) as never
     );
@@ -399,14 +401,45 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so the always-present listSkills/loadSkill
-    // meta-tools must not be injected when requireToolApproval is on.
+    // on any non-empty tool set, so emulated skill tools must not be injected
+    // when requireToolApproval is on (the skip stays correct even though
+    // empty projects no longer advertise phantom tools).
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
+  it("forwards a skills catalog fetch failure as a session_notice", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: { search: { description: "noop" } },
+      enhancedSystemPrompt: "enhanced system",
+      resolvedTemperature: undefined,
+      progressivePlan: undefined,
+      discoveryState: undefined,
+      skillsFetchFailed: {
+        errorClass: "CloudSkillsError",
+        status: 500,
+        message: "CONVEX_URL is not configured",
+        latencyMs: 12,
+      },
+    });
+    const emitted: any[] = [];
+
+    await runSyntheticHostSession(
+      baseAdapter({ emit: (payload) => emitted.push(payload) }) as never
+    );
+
+    const notice = emitted.find((p) => p.type === "session_notice");
+    expect(notice).toMatchObject({
+      kind: "tool_suppressed",
+      toolId: "skills",
+      message: "CONVEX_URL is not configured",
+    });
   });
 
   it("disposes the context when the turn throws, and reports failed", async () => {

@@ -3,10 +3,10 @@ import {
   type HostedOAuthSurface,
 } from "@/lib/hosted-oauth-resume";
 import {
-  readChatboxSession,
-  CHATBOX_OAUTH_PENDING_KEY,
+  readScenarioSession,
+  SCENARIO_OAUTH_PENDING_KEY,
   slugify,
-} from "@/lib/chatbox-session";
+} from "@/lib/scenario-session";
 import {
   legacyHashBookmarkToPath,
   normalizeReturnTargetPath,
@@ -22,7 +22,7 @@ export interface HostedOAuthPendingMarker {
   serverUrl: string | null;
   sessionId?: string | null;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   returnPath: string | null;
   startedAt: number;
 }
@@ -39,7 +39,7 @@ export const HOSTED_OAUTH_PENDING_STORAGE_KEY = "mcp-hosted-oauth-pending";
  * `"true"` to whichever `pendingKey` its caller named. Passing the marker's own
  * key overwrites the marker with `"true"`, `readHostedOAuthPendingMarker` then
  * fails to parse it as an object, clears it, and the whole callback round trip
- * silently dead-ends. Chatbox has always used its own sentinel for the same
+ * silently dead-ends. Scenario has always used its own sentinel for the same
  * reason; score needs one too.
  */
 export const SCORE_OAUTH_PENDING_KEY = "mcp-oauth-score-pending";
@@ -64,14 +64,14 @@ function normalizeHostedOAuthReturnPath(
   if (trimmed.startsWith("#")) {
     const legacyPath = legacyHashBookmarkToPath(trimmed);
     if (legacyPath) return legacyPath;
-    if (surface === "chatbox") {
+    if (surface === "scenario") {
       const fragment = trimmed.replace(/^#\/?/, "");
       return fragment ? `/${fragment}` : null;
     }
   }
 
   if (
-    surface === "chatbox" &&
+    surface === "scenario" &&
     trimmed.startsWith("/") &&
     !trimmed.startsWith("//")
   ) {
@@ -81,7 +81,7 @@ function normalizeHostedOAuthReturnPath(
   // score.mcpjam.com lives at `/embed/score`, which is not an app-tab segment,
   // so `normalizeReturnTargetPath` would rewrite it to `/servers` and strand
   // the visitor in an app they never asked for — losing the run they had
-  // started. Same carve-out as chatbox, and just as narrow: a same-origin
+  // started. Same carve-out as scenario, and just as narrow: a same-origin
   // absolute path only, never a protocol-relative `//host` that would leave
   // the origin entirely.
   if (
@@ -128,7 +128,7 @@ export function writeHostedOAuthPendingMarker(
         serverUrl: marker.serverUrl ?? null,
         sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
-        chatboxId: marker.chatboxId ?? null,
+        scenarioId: marker.scenarioId ?? null,
         returnPath: normalizeHostedOAuthReturnPath(
           marker.returnPath,
           marker.surface
@@ -181,7 +181,7 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
-      chatboxId: typeof parsed.chatboxId === "string" ? parsed.chatboxId : null,
+      scenarioId: typeof parsed.scenarioId === "string" ? parsed.scenarioId : null,
       returnPath: normalizeHostedOAuthReturnPath(
         typeof parsed.returnPath === "string"
           ? parsed.returnPath
@@ -203,7 +203,7 @@ export function clearHostedOAuthPendingMarker(): void {
 }
 
 export function clearHostedOAuthLegacyPendingKeys(): void {
-  localStorage.removeItem(CHATBOX_OAUTH_PENDING_KEY);
+  localStorage.removeItem(SCENARIO_OAUTH_PENDING_KEY);
   localStorage.removeItem(SCORE_OAUTH_PENDING_KEY);
 }
 
@@ -216,19 +216,19 @@ function inferHostedOAuthSurfaceFromSessions(
   serverName: string,
   serverUrl: string | null
 ): HostedOAuthSurface | null {
-  const hasChatboxLegacyPending = !!localStorage.getItem(
-    CHATBOX_OAUTH_PENDING_KEY
+  const hasScenarioLegacyPending = !!localStorage.getItem(
+    SCENARIO_OAUTH_PENDING_KEY
   );
-  if (hasChatboxLegacyPending) {
-    return "chatbox";
+  if (hasScenarioLegacyPending) {
+    return "scenario";
   }
 
-  const chatboxSession = readChatboxSession();
-  if (!chatboxSession) {
+  const scenarioSession = readScenarioSession();
+  if (!scenarioSession) {
     return null;
   }
 
-  const chatboxMatch = chatboxSession.payload.servers.some((server) =>
+  const scenarioMatch = scenarioSession.payload.servers.some((server) =>
     matchesHostedOAuthServerIdentity(
       {
         serverName: server.serverName,
@@ -238,7 +238,7 @@ function inferHostedOAuthSurfaceFromSessions(
     )
   );
 
-  return chatboxMatch ? "chatbox" : null;
+  return scenarioMatch ? "scenario" : null;
 }
 
 export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | null {
@@ -295,7 +295,7 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     serverUrl,
     sessionId: null,
     accessScope: undefined,
-    chatboxId: null,
+    scenarioId: null,
     returnPath: normalizeHostedOAuthReturnPath(storedReturnTarget, surface),
     startedAt: Date.now(),
   };
@@ -311,12 +311,12 @@ export function resolveHostedOAuthReturnPath(
     );
   }
 
-  if (context.surface === "chatbox") {
-    const chatboxSession = readChatboxSession();
+  if (context.surface === "scenario") {
+    const scenarioSession = readScenarioSession();
     // No session to return to: land on the User Testing surface rather than a
     // code name the visitor would read in their address bar.
-    return chatboxSession
-      ? `/${slugify(chatboxSession.payload.name)}`
+    return scenarioSession
+      ? `/${slugify(scenarioSession.payload.name)}`
       : routePaths.userTesting;
   }
 

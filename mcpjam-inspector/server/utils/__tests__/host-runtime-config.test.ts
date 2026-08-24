@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchHostRuntimeConfig } from "../host-runtime-config";
 
 // Unit coverage for the inspector → Convex host runtime-config client. Mirrors
-// the chatbox runtime-config contract: POST /web/host/runtime-config with a
+// the scenario runtime-config contract: POST /web/host/runtime-config with a
 // bearer + { hostId }, mapping ok/err shapes the chat-v2 routes branch on.
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -51,6 +51,47 @@ describe("fetchHostRuntimeConfig", () => {
       ok: true,
       config: { hostId: "h1", harness: "claude-code" },
     });
+  });
+
+  it("rejects a blank bearer as 401 without hitting the network", async () => {
+    // Regression: an unauthenticated local Playground turn on a host-bound
+    // conversation sent `Bearer ` (empty), Convex threw "Invalid
+    // authentication header", the backend answered 500 and the route
+    // collapsed it to a 502 the client reported as MCPJam's fault.
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    for (const bearer of ["", "   ", "Bearer "]) {
+      const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer });
+      expect(result.ok).toBe(false);
+      expect(result).toMatchObject({ status: 401 });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("forwards a token that merely STARTS with the letters Bearer", async () => {
+    // Regression: a `^Bearer\s*` strip (zero-or-more) mangled an opaque token
+    // like `Bearerabc123` into `abc123` — a different credential.
+    let auth = "";
+    mockFetch((_url, init) => {
+      auth = (init.headers as Record<string, string>).authorization;
+      return Response.json({ ok: true, config: { hostId: "h1" } });
+    });
+    await fetchHostRuntimeConfig({ hostId: "h1", bearer: "Bearerabc123" });
+    expect(auth).toBe("Bearer Bearerabc123");
+  });
+
+  it("answers a blank bearer as 401 even when the endpoint is unconfigured", async () => {
+    // The caller being unauthenticated is a 401, and must not inherit the 500
+    // that missing CONVEX_HTTP_URL returns.
+    delete process.env.CONVEX_HTTP_URL;
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "" });
+
+    expect(result).toMatchObject({ ok: false, status: 401 });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("does not double-prefix an already-Bearer token", async () => {

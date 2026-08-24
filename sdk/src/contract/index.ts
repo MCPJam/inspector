@@ -18,6 +18,22 @@
  * The hashing is pinned cross-runtime (canonical JSON + SHA-256 over RESOLVED
  * definitions) because four runtimes that share no code must agree on it, and
  * the backend re-derives it to verify score integrity at ingest.
+ *
+ * Alongside the score contract, this entry point is the canonical home of the
+ * shapes every eval surface authors against:
+ *
+ *   - {@link testStepSchema} — the authored step union (relocated here from the
+ *     inspector's `shared/steps.ts`, which now re-exports it, so there is one
+ *     definition rather than a copy per repo).
+ *   - {@link evalSuiteFileSchema} — the versioned suite FILE, plus its
+ *     generated JSON Schema ({@link evalSuiteFileJsonSchema}).
+ *   - {@link opaqueIdSchema} / {@link mintCaseId} — declared, opaque identity.
+ *   - {@link USER_VALUE_STAGES} and the other chain enums — the shared
+ *     vocabulary the reporting and import surfaces mirror.
+ *   - {@link deriveStageResults} — the pure, versioned derivation that turns
+ *     one iteration's authored case plus captured evidence into those stages'
+ *     states, and {@link stageDerivationSchema}, the validator every write
+ *     boundary checks a reported derivation against.
  */
 
 export type {
@@ -89,3 +105,223 @@ export {
   scoreResultFromPredicateResult,
   toolMatchScoreDefinition,
 } from "./adapters.js";
+
+// ── identity ─────────────────────────────────────────────────────────────────
+export type { OpaqueId } from "./identity.js";
+export {
+  CASE_ID_PREFIX,
+  MAX_OPAQUE_ID_LENGTH,
+  MINTED_ID_ENTROPY_CHARS,
+  SUITE_ID_PREFIX,
+  isOpaqueId,
+  mintCaseId,
+  mintSuiteId,
+  opaqueIdSchema,
+} from "./identity.js";
+
+// ── the user-value chain vocabulary ──────────────────────────────────────────
+export type {
+  FailureCategory,
+  ImportMappingStatus,
+  IterationStatus,
+  StageState,
+  UserValueStage,
+} from "./chain.js";
+export {
+  FAILURE_CATEGORIES,
+  IMPORT_MAPPING_STATUSES,
+  ITERATION_STATUSES,
+  STAGE_STATES,
+  USER_VALUE_STAGES,
+  failureCategorySchema,
+  importMappingStatusSchema,
+  iterationStatusSchema,
+  stageStateSchema,
+  userValueStageSchema,
+} from "./chain.js";
+
+// ── deriving a stage's state from a run ──────────────────────────────────────
+export type {
+  StageAuthoredCase,
+  StageDerivation,
+  StageDerivationInput,
+  StageEvidence,
+  StageEvidenceRefs,
+  StagePredicateResultLike,
+  StagePromptSummaryLike,
+  StageReason,
+  StageRenderObservationLike,
+  StageResultRow,
+  StageSetupPhaseSignal,
+  StageSetupSignals,
+  StageSpanLike,
+  StageToolErrorLike,
+} from "./stage-derivation.js";
+export {
+  MAX_EVIDENCE_REASONS,
+  MAX_EVIDENCE_REASON_CHARS,
+  STAGE_ANALYZER_VERSION,
+  STAGE_METADATA_KEYS,
+  STAGE_REASONS,
+  deriveStageResults,
+  stageDerivationSchema,
+  stageDerivationToMetadata,
+  stageReasonSchema,
+  stageResultRowSchema,
+} from "./stage-derivation.js";
+
+// ── the authored step union ──────────────────────────────────────────────────
+export type {
+  AssertStep,
+  ElementLocator,
+  InteractAction,
+  InteractStep,
+  PromptStep,
+  StepAssertionPayload,
+  TestStep,
+  TestStepKind,
+  ToolCallStep,
+  WidgetAssertion,
+} from "./steps.js";
+export {
+  MAX_PROBE_ARGS_CHARS,
+  MAX_PROBE_RENDER_TIMEOUT_MS,
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+  MAX_TEST_STEPS,
+  TEST_STEP_KINDS,
+  assertStepSchema,
+  elementLocatorSchema,
+  interactActionSchema,
+  interactStepSchema,
+  isAssertStep,
+  isInteractStep,
+  isPromptStep,
+  isToolCallStep,
+  isWidgetAssertion,
+  promptStepSchema,
+  stepAssertionPayloadSchema,
+  stepsSchema,
+  testStepSchema,
+  toolCallStepSchema,
+  widgetAssertionSchema,
+} from "./steps.js";
+
+// ── the suite file ───────────────────────────────────────────────────────────
+export type {
+  EvalSuiteFile,
+  EvalSuiteFileCase,
+  EvalSuiteFileCaseImport,
+  EvalSuiteFileDefaults,
+  EvalSuiteFileHost,
+  EvalSuiteFileProvenance,
+  EvalSuiteFileServer,
+  EvalSuiteFileTarget,
+  EvalSuiteFileToolPolicy,
+  EvalSuiteFileValidity,
+} from "./suite-file.js";
+export type {
+  ToolPolicyDecision,
+  ToolPolicyDecisionReason,
+  ToolPolicySnapshot,
+  ToolSafetyClassification,
+} from "./tool-policy.js";
+export {
+  TOOL_POLICY_DECISION_REASONS,
+  buildToolPolicySnapshot,
+  classifyToolSafety,
+  decideToolPolicy,
+  decideToolPolicyFromSnapshot,
+  isToolPolicyDecisionReason,
+} from "./tool-policy.js";
+export {
+  EVAL_SUITE_SCHEMA_ID,
+  EVAL_SUITE_SCHEMA_VERSION,
+  MAX_BATCH_CREATE_CASES,
+  MAX_CASE_ASSERTIONS,
+  MAX_REPETITIONS,
+  MAX_SUITE_FILE_CASES,
+  MAX_SUITE_FILE_TITLE_CHARS,
+  RESERVED_CAPTURE_LEVELS,
+  RESERVED_MODES,
+  RESERVED_REPORTING_MODES,
+  evalSuiteFileCaseImportSchema,
+  evalSuiteFileCaseSchema,
+  evalSuiteFileDefaultsSchema,
+  evalSuiteFileHostSchema,
+  evalSuiteFileProvenanceSchema,
+  evalSuiteFileSchema,
+  evalSuiteFileServerSchema,
+  evalSuiteFileStructuralSchema,
+  evalSuiteFileTargetSchema,
+  evalSuiteFileToolPolicySchema,
+  evalSuiteFileValiditySchema,
+} from "./suite-file.js";
+
+/**
+ * The generated JSON Schema (draft 2020-12) for the suite file.
+ *
+ * Re-exported from the generated `.ts` twin rather than the `.json` artifact:
+ * the contract subpath is consumed by three toolchains and only Node-only code
+ * in this repo uses JSON import attributes. The `.json` file is the artifact
+ * published at the schema's `$id`; the two are byte-identical documents and a
+ * test proves it.
+ */
+export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
+
+// ── the run verdict policy (v2) ──────────────────────────────────────────────
+export type {
+  EvalCaseVerdictAggregation,
+  EvalRateMeasurement,
+  EvalRateMeasurementState,
+  EvalRunVerdict,
+  EvalTaskDecisionReason,
+  EvalTrialExclusionReason,
+  EvalTrialExclusions,
+  EvalValidityCoverage,
+  EvalValidityDecisionReason,
+  EvalVerdictDecision,
+  EvalVerdictDecisionReason,
+  EvalVerdictPolicyVersion,
+  EvalVerdictValidity,
+  ResolvedEvalValidityPolicy,
+} from "./verdict-policy.js";
+export {
+  EVAL_RATE_MEASUREMENT_STATES,
+  EVAL_RUN_VERDICTS,
+  EVAL_TASK_DECISION_REASONS,
+  EVAL_TRIAL_EXCLUSION_REASONS,
+  EVAL_VALIDITY_DECISION_REASONS,
+  EVAL_VERDICT_DECISION_REASONS,
+  EVAL_VERDICT_POLICY_SCHEMA_ID,
+  EVAL_VERDICT_POLICY_VERSION,
+  evalCaseVerdictAggregationSchema,
+  evalCaseVerdictAggregationStructuralSchema,
+  evalFractionSchema,
+  evalRateMeasurementSchema,
+  evalRateMeasurementStateSchema,
+  evalRateMeasurementStructuralSchema,
+  evalRunVerdictSchema,
+  evalTrialExclusionReasonSchema,
+  evalTrialExclusionsSchema,
+  evalValidityCoverageSchema,
+  evalVerdictDecisionReasonSchema,
+  evalVerdictDecisionSchema,
+  evalVerdictDecisionStructuralSchema,
+  evalVerdictPolicyVersionSchema,
+  isEvalRunVerdict,
+  isEvalTrialExclusionReason,
+  isEvalValidityDecisionReason,
+  isEvalVerdictDecisionReason,
+  isEvalVerdictPolicyV2,
+  resolvedEvalValidityPolicySchema,
+} from "./verdict-policy.js";
+
+/**
+ * The generated JSON Schema (draft 2020-12) for a v2 verdict decision.
+ *
+ * STRUCTURAL only, for the reason its own docblock gives: the arithmetic and
+ * phase-ordering rules are zod refinements. Same `.ts`-twin rule as the suite
+ * file above.
+ */
+export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";

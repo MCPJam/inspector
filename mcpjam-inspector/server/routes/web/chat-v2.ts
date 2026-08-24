@@ -61,12 +61,12 @@ import {
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import {
-  fetchChatboxRuntimeConfig,
-  planChatboxSandbox,
-  readChatboxEnvironment,
+  fetchScenarioRuntimeConfig,
+  planScenarioSandbox,
+  readScenarioEnvironment,
   readComputerSandboxMode,
-  type ChatboxEnvironmentRuntime,
-} from "../../utils/chatbox-runtime-config.js";
+  type ScenarioEnvironmentRuntime,
+} from "../../utils/scenario-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   applyHostConformanceKnobs,
@@ -106,10 +106,10 @@ import {
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
 import {
-  ackChatboxSandboxNotices,
-  isChatboxSandboxNotice,
+  ackScenarioSandboxNotices,
+  isScenarioSandboxNotice,
   isComputersDataPlaneConfigured,
-  provisionChatboxSandbox,
+  provisionScenarioSandbox,
 } from "../../utils/computers/control-plane-client.js";
 import {
   isSandboxNoticeReason,
@@ -184,22 +184,22 @@ chatV2.post("/", async (c) => {
       projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
-      // Clients call /api/web/chatboxes/redeem on mount and pass the
-      // resolved `chatboxId` + `accessVersion` on every chatbox-aware
+      // Clients call /api/web/scenarios/redeem on mount and pass the
+      // resolved `scenarioId` + `accessVersion` on every scenario-aware
       // request thereafter. The link token is never forwarded on the
       // read path.
-      chatboxId?: string;
+      scenarioId?: string;
       accessVersion?: number;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
       // Saved host being previewed (Playground / host-bound direct chat). When
-      // present and NOT a chatbox session, the server re-fetches the host's
+      // present and NOT a scenario session, the server re-fetches the host's
       // authoritative runtime config (incl. harness/computer) by this id — the
       // opaque pointer the client may forward; `harness` itself is never trusted
       // from the body.
       hostId?: string;
       // Phase 1.1 execution target. Normalized (together with the legacy
-      // `hostId` and the access-bearing `chatboxId`) into one closed internal
+      // `hostId` and the access-bearing `scenarioId`) into one closed internal
       // union below; ambiguous combinations are rejected, never shadowed.
       executionTarget?: unknown;
       environmentOverrides?: unknown;
@@ -214,18 +214,18 @@ chatV2.post("/", async (c) => {
       respectToolVisibility: bodyRespectToolVisibility,
       selectedServerIds,
       selectedServerNames,
-      chatboxId,
+      scenarioId,
       accessVersion,
       surface,
       hostId,
     } = body;
-    // ONE closed execution target, resolved at ingress. `chatboxId` + an
+    // ONE closed execution target, resolved at ingress. `scenarioId` + an
     // explicit `executionTarget` (and `hostId` + `executionTarget`) are
     // REJECTED rather than resolved by branch precedence — see
     // `shared/execution-target.ts` for why silent shadowing is the failure mode
     // this normalizer exists to prevent.
     const normalizedTarget = normalizeExecutionTarget({
-      chatboxId,
+      scenarioId,
       executionTarget: body.executionTarget,
       environmentOverrides: body.environmentOverrides,
       hostId,
@@ -239,12 +239,12 @@ chatV2.post("/", async (c) => {
       );
     }
     const executionTarget = normalizedTarget.target;
-    // True when this turn flows through a chatbox surface. sourceType +
+    // True when this turn flows through a scenario surface. sourceType +
     // accessScope decisions hinge on this.
-    const isChatboxSession = executionTarget.kind === "chatbox";
+    const isScenarioSession = executionTarget.kind === "scenario";
     // True when the execution context was RESOLVED SERVER-SIDE, so its host
     // config — not the request body — is authoritative for capability
-    // declarations. Chatbox (a share-link visitor controls the body) and
+    // declarations. Scenario (a share-link visitor controls the body) and
     // Project Environment (the server decides what the environment resolves
     // to) both qualify.
     //
@@ -254,7 +254,7 @@ chatV2.post("/", async (c) => {
     // declaration is not a preference — it changes what the SDK advertises on
     // the initialize wire — so it follows the resolved host either way.
     const isHostAuthoritative =
-      isChatboxSession || executionTarget.kind === "environment";
+      isScenarioSession || executionTarget.kind === "environment";
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -273,11 +273,11 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    // Host config is owned by the chatbox's host, not the request body.
-    // When this turn is chatbox-bound, re-resolve the live values from
+    // Host config is owned by the scenario's host, not the request body.
+    // When this turn is scenario-bound, re-resolve the live values from
     // Convex so a stale client snapshot or tampered body can't route the
     // session through a different model or skip tool approval. The
-    // helper is a no-op (returns body values) for non-chatbox surfaces.
+    // helper is a no-op (returns body values) for non-scenario surfaces.
     //
     // PR 4c of the engine consolidation: this merge is now owned by the
     // shared `resolveExecutionContext` helper alongside `mcp/chat-v2.ts`
@@ -290,12 +290,12 @@ chatV2.post("/", async (c) => {
     // source for this turn's host config, server set, and skills — nothing
     // downstream may fall back to the body's `selectedServerIds`.
     let environmentSpec: ResolvedEnvironmentRuntime | null = null;
-    // Phase 5: set ONLY for an environment-backed chatbox turn — the additive
-    // `environment` payload on the chatbox runtime config (mcpjam-backend
+    // Phase 5: set ONLY for an environment-backed scenario turn — the additive
+    // `environment` payload on the scenario runtime config (mcpjam-backend
     // #805). Once present it is authoritative for the turn's server set and
     // skills exactly like `environmentSpec` is for an environment target;
-    // absent ⇒ host-backed chatbox, today's behavior byte-identical.
-    let chatboxEnvironment: ChatboxEnvironmentRuntime | null = null;
+    // absent ⇒ host-backed scenario, today's behavior byte-identical.
+    let scenarioEnvironment: ScenarioEnvironmentRuntime | null = null;
     // INS-3: the turn's one answer to "what may this run reach?" — the split
     // explicit/plugin server sets, ref-addressed skills, and plugin origin.
     // Derived from `environmentSpec`, never from the body or a HostConfig
@@ -374,9 +374,9 @@ chatV2.post("/", async (c) => {
       rpcCollector?.setPluginOriginByServerId(
         pluginOriginByServerId(effectiveCapabilities)
       );
-    } else if (isChatboxSession && chatboxId) {
-      const runtime = await fetchChatboxRuntimeConfig({
-        chatboxId,
+    } else if (isScenarioSession && scenarioId) {
+      const runtime = await fetchScenarioRuntimeConfig({
+        scenarioId,
         bearer: bearerToken,
         // Opt this turn into backend version enforcement. A caller whose
         // cached version is behind the row's is running against a config
@@ -385,27 +385,27 @@ chatV2.post("/", async (c) => {
         accessVersion,
       });
       if (runtime.ok) {
-        // Environment-backed chatbox (live-follow): the backend resolved the
+        // Environment-backed scenario (live-follow): the backend resolved the
         // environment FRESH and projected its closed server set + skill union
         // onto the config. A present-but-malformed payload is an UNKNOWN
-        // environment, not a host-backed chatbox — stop the turn (same
+        // environment, not a host-backed scenario — stop the turn (same
         // fail-closed rationale as the fetch-error branch below) rather than
         // fall through to the body's server list.
-        const environmentRead = readChatboxEnvironment(runtime.config);
+        const environmentRead = readScenarioEnvironment(runtime.config);
         if (environmentRead.kind === "invalid") {
           logger.warn(
-            "[chat-v2] chatbox environment payload malformed; failing closed",
-            { chatboxId, detail: environmentRead.detail }
+            "[chat-v2] scenario environment payload malformed; failing closed",
+            { scenarioId, detail: environmentRead.detail }
           );
           throw new WebRouteError(
             502,
             ErrorCode.INTERNAL_ERROR,
-            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration."
+            "Couldn't load this scenario's environment, so the turn was stopped to avoid running with the wrong configuration."
           );
         }
         if (environmentRead.kind === "present") {
-          chatboxEnvironment = environmentRead.environment;
-          // Phase 6.1: attribution for chatbox turns, from the payload's own
+          scenarioEnvironment = environmentRead.environment;
+          // Phase 6.1: attribution for scenario turns, from the payload's own
           // pinned plugin versions. Guarded on their presence — a backend
           // that predates `pluginVersions` (or an environment pinning none)
           // costs zero extra reads — and FAIL-OPEN like the environment
@@ -414,7 +414,7 @@ chatV2.post("/", async (c) => {
           // degrades to "origin unknown" rather than stopping the send.
           let attribution: PluginRuntimeAttribution | null = null;
           const pinnedVersionIds = (
-            chatboxEnvironment.pluginVersions ?? []
+            scenarioEnvironment.pluginVersions ?? []
           ).map((plugin) => plugin.pluginVersionId);
           if (pinnedVersionIds.length > 0) {
             try {
@@ -430,9 +430,9 @@ chatV2.post("/", async (c) => {
               // failures; this catches client construction (missing
               // CONVEX_URL on a deployment that never configured it).
               logger.warn(
-                "[chat-v2] chatbox attribution unavailable; running without plugin origin",
+                "[chat-v2] scenario attribution unavailable; running without plugin origin",
                 {
-                  chatboxId,
+                  scenarioId,
                   error: error instanceof Error ? error.message : String(error),
                 }
               );
@@ -442,14 +442,14 @@ chatV2.post("/", async (c) => {
           // engine advertises the environment's skills (skillsSource:
           // "resolved") instead of silently delivering zero.
           effectiveCapabilities = resolveEffectiveCapabilities(
-            chatboxEnvironment,
+            scenarioEnvironment,
             attribution
           );
           if (effectiveCapabilities.problems.length > 0) {
             // Codes and ids only — same redaction rationale as the
             // environment-target log above.
             logger.warn("[chat-v2] effective capability problems", {
-              environmentId: chatboxEnvironment.environmentRef.environmentId,
+              environmentId: scenarioEnvironment.environmentRef.environmentId,
               codes: effectiveCapabilities.problems.map(
                 (problem) => problem.code
               ),
@@ -474,12 +474,12 @@ chatV2.post("/", async (c) => {
         // config is the ONLY source of `harness`/`computer` (deliberately
         // excluded from ExecutionOverrides so the body can't set them) and of
         // every host-wins protection. Falling back to body values would (a)
-        // silently run a harness-published chatbox on the emulated engine —
+        // silently run a harness-published scenario on the emulated engine —
         // misrepresenting the runtime — and (b) let client-supplied
         // model/approval/server values govern a share-link-reachable turn,
         // the exact tampered-body window this fetch exists to close.
         logger.warn("[chat-v2] runtime-config fetch failed; failing closed", {
-          chatboxId,
+          scenarioId,
           status: runtime.status,
           error: runtime.error,
         });
@@ -488,18 +488,18 @@ chatV2.post("/", async (c) => {
         // transparently), DENIED means "you cannot run this turn".
         // Everything else keeps the generic classification (>=500 collapses
         // to a 502 upstream failure).
-        const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
-        if (runtime.code === "CHATBOX_ACCESS_STALE") {
+        const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+        if (runtime.code === "SCENARIO_ACCESS_STALE") {
           throw new WebRouteError(
             409,
-            ErrorCode.CHATBOX_ACCESS_STALE,
+            ErrorCode.SCENARIO_ACCESS_STALE,
             failClosedMessage
           );
         }
         throw new WebRouteError(
           runtime.status >= 500 ? 502 : runtime.status,
           runtime.status === 403
-            ? ErrorCode.CHATBOX_ACCESS_DENIED
+            ? ErrorCode.SCENARIO_ACCESS_DENIED
             : ErrorCode.INTERNAL_ERROR,
           failClosedMessage
         );
@@ -508,7 +508,7 @@ chatV2.post("/", async (c) => {
       const targetHostId = executionTarget.hostId;
       // Host-bound direct session (Playground). The host config — including the
       // server-authoritative `harness`/`computer` — is the source of truth for
-      // execution shaping. Unlike the chatbox path, FAIL CLOSED here: if we
+      // execution shaping. Unlike the scenario path, FAIL CLOSED here: if we
       // can't resolve the authoritative config we must not silently run the
       // emulated engine, because the host may be a harness host and running
       // emulated would misrepresent it as the real Claude Code runtime.
@@ -540,14 +540,14 @@ chatV2.post("/", async (c) => {
     }
 
     // ── The turn's effective server set ─────────────────────────────────────
-    // For an environment target — or an environment-backed chatbox turn — this
+    // For an environment target — or an environment-backed scenario turn — this
     // REPLACES the body's `selectedServerIds`
     // everywhere below — manager authorization/connection, name mapping and
     // elicitation, prepareChatV2, persistence/resume config, telemetry and the
     // tool snapshot. Resolving an environment and then still handing the raw
     // body list to the manager would connect a set the environment never
     // authorized, which is precisely the hole the atomic resolution closes.
-    const environmentServers = environmentSpec ?? chatboxEnvironment;
+    const environmentServers = environmentSpec ?? scenarioEnvironment;
     const effectiveServerIds = environmentServers
       ? runtimeServerIds(environmentServers)
       : selectedServerIds;
@@ -566,17 +566,17 @@ chatV2.post("/", async (c) => {
     // The environment's composed skill union, in the shape both engines
     // consume. Presence — not length — is what makes it authoritative, so an
     // environment that resolves zero skills delivers zero, and never falls back
-    // to the project-wide pool. For an env-backed chatbox an ABSENT skills
+    // to the project-wide pool. For an env-backed scenario an ABSENT skills
     // array (older backend) also stays authoritative-empty: the environment
     // decided the channel set, not the project-wide pool.
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
-      : chatboxEnvironment
-      ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
+      : scenarioEnvironment
+      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
       : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
-    // a backend host config exists (chatbox / host-bound turns above — the
+    // a backend host config exists (scenario / host-bound turns above — the
     // same fail-closed fetch that owns harness/computer): a tampered body
     // can neither add the policy (409 DoS on auto servers) nor drop it
     // (downgrading an unconfigured auto server from xaa to the discover/
@@ -590,7 +590,7 @@ chatV2.post("/", async (c) => {
       : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
 
     // SEP-2243 mirroring, resolved the same way and for the same reason: a
-    // chatbox turn carries no pins in the body (the client never sends the
+    // scenario turn carries no pins in the body (the client never sends the
     // host profile), so reading it from the projected host config is the only
     // way `toolParamHeaderMirroring: "omit"` reaches the connection — and it
     // keeps the published host authoritative over a share-link client.
@@ -627,21 +627,22 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
-        hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
+        hostStyle:
+          body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
-      // Chatbox: the published host wins (a share-link client can't override).
+      // Scenario: the published host wins (a share-link client can't override).
       // Host preview (Playground): the owner's in-session tweaks win, while
       // `harness`/`computer` stay host-only (not in ExecutionOverrides, so
       // precedence can't leak them from the body).
-      precedence: isChatboxSession ? "host-wins" : "override-wins",
+      precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
         logger.warn(
           "[chat-v2] client requireToolApproval differs from host; using host value",
           {
-            chatboxId,
+            scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -650,7 +651,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[chat-v2] client progressiveToolDiscovery differs from host; using host value",
           {
-            chatboxId,
+            scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -659,7 +660,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[chat-v2] client respectToolVisibility differs from host; using host value",
           {
-            chatboxId,
+            scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -671,7 +672,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           `[chat-v2] client ${entry.field} differs from host; using host value`,
           {
-            chatboxId,
+            scenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -686,7 +687,7 @@ chatV2.post("/", async (c) => {
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
     if (
-      isChatboxSession &&
+      isScenarioSession &&
       hostRuntimeConfig &&
       resolvedExecution.modelId &&
       resolvedExecution.modelId !== modelDefinition.id
@@ -695,12 +696,12 @@ chatV2.post("/", async (c) => {
       const hostModel = await resolveHostModelDefinition({
         modelId: hostModelId,
         projectId: hostedBody.projectId ?? null,
-        auth: { bearerToken, chatboxId },
+        auth: { bearerToken, scenarioId },
       });
       logger.warn(
         "[chat-v2] client model differs from host; using host model",
         {
-          chatboxId,
+          scenarioId,
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
@@ -763,7 +764,7 @@ chatV2.post("/", async (c) => {
       }
     }
 
-    // Phase 3: the server-resolved runtime config (chatbox OR host-by-id) carries
+    // Phase 3: the server-resolved runtime config (scenario OR host-by-id) carries
     // an opaque executionScope; thread it into the computer-backed (bash) tool so
     // the reserve call re-resolves live access (per-swarm isolation/caps). Absent
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
@@ -784,9 +785,9 @@ chatV2.post("/", async (c) => {
       typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
 
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
-    // the emulated chat path wires the listSkills/loadSkill tools for any
-    // signed-in member with a project. Gate only on:
-    //   - not a guest (a share-link/chatbox guest gets no skill tools), and
+    // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
+    // tools) for any signed-in member with a project that has skills. Gate only on:
+    //   - not a guest (a share-link/scenario guest gets no skill tools), and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
     //     so advertising the tools here would be a prompt/tool mismatch.
@@ -794,7 +795,7 @@ chatV2.post("/", async (c) => {
     // on such a host is rejected by the availability preflight above, so gate
     // on the actual engine (harness id + canonicalized model), not host config
     // alone.
-    // An environment target — or an environment-backed chatbox — NEVER also
+    // An environment target — or an environment-backed scenario — NEVER also
     // enables the project-wide cloud skill tools: its resolved union is
     // authoritative and is delivered through
     // `runtimeSkillsOverride`. Wiring both would double-deliver — an
@@ -815,7 +816,7 @@ chatV2.post("/", async (c) => {
 
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
-    // `resolveElicitationGate` for why chatbox turns must not read the body.
+    // `resolveElicitationGate` for why scenario turns must not read the body.
     const { effectiveClientCapabilities, enabled: elicitationEnabled } =
       resolveElicitationGate({
         hostAuthoritative: isHostAuthoritative,
@@ -1005,9 +1006,9 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Membership chat (no share/chatbox token) is the default — the backend
+    // Membership chat (no share/scenario token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
-    // accessScope is only set when a token is in play (shared chat / chatbox)
+    // accessScope is only set when a token is in play (shared chat / scenario)
     // since that's an orthogonal access path keyed on the token, not the actor.
     const {
       manager,
@@ -1020,12 +1021,12 @@ chatV2.post("/", async (c) => {
       effectiveServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
-      // Chatbox: advertise the HOST's capabilities, not the body's, so the
+      // Scenario: advertise the HOST's capabilities, not the body's, so the
       // wire matches what we're prepared to honor.
       effectiveClientCapabilities,
       {
-        ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
-        chatboxId,
+        ...(isScenarioSession ? { accessScope: "chat_v2" } : {}),
+        scenarioId,
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
         httpLogger: rpcCollector.httpLogger,
@@ -1133,8 +1134,8 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // ── Phase 4: the chatbox's own EPHEMERAL sandbox ────────────────────────
-    // An env-backed chatbox whose backend says `computerSandbox: 'ephemeral'`
+    // ── Phase 4: the scenario's own EPHEMERAL sandbox ────────────────────────
+    // An env-backed scenario whose backend says `computerSandbox: 'ephemeral'`
     // runs bash on a per-CONVERSATION disposable box booted from the
     // ENVIRONMENT's pinned image — not on the acting member's persistent
     // personal computer, which every conversation that member opened used to
@@ -1149,11 +1150,11 @@ chatV2.post("/", async (c) => {
     //
     // ABSENT marker ⇒ old backend (or an environment with no image pinned) ⇒
     // today's personal-computer behaviour, untouched.
-    // Only a CHATBOX runtime config ever carries the marker (`computerSandbox`
-    // is projected by `buildEnvironmentChatboxRuntimeConfig` alone), so a
+    // Only a SCENARIO runtime config ever carries the marker (`computerSandbox`
+    // is projected by `buildEnvironmentScenarioRuntimeConfig` alone), so a
     // host-bound Playground turn never reads it.
     //
-    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-chatbox is
+    // HARNESS TURNS ARE EXCLUDED, and not merely because harness-on-scenario is
     // Phase 6. `run-harness-turn.ts` resolves its OWN machine through
     // `resolveHarnessSandbox` — the acting member's personal computer — and
     // `prepare.builtInTools` is forwarded to it verbatim alongside the MCP
@@ -1171,7 +1172,7 @@ chatV2.post("/", async (c) => {
     // between here and the `streamWebChatTurn` call reads `builtInTools` or
     // `effectiveSystemPrompt`, which is what makes the late placement free.
     const computerSandboxMode =
-      isChatboxSession && chatboxId && !resolvedExecution.harness
+      isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
         : null;
     let sandboxBinding: TrustedSandboxBinding | undefined;
@@ -1186,7 +1187,7 @@ chatV2.post("/", async (c) => {
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:
     //   - `ephemeral` + no box   → we asked and failed; no fallback.
-    //   - `not_a_data_plane`     → we never ask: `provisionChatboxSandbox` is
+    //   - `not_a_data_plane`     → we never ask: `provisionScenarioSandbox` is
     //     bearer-authed and would SUCCEED from a server that cannot exec in
     //     the box (`sandbox-bash` has no remote delegation), stranding a
     //     billable sandbox whose every command fails. The tester gets a
@@ -1195,8 +1196,8 @@ chatV2.post("/", async (c) => {
     //     but that is its promise, not ours to depend on. Enforcing the marker
     //     locally means a payload that ever carried both (a backend regression,
     //     a proxy that merges configs) still cannot expose the member's
-    //     personal shell to a share-link-reachable chatbox turn.
-    const sandboxPlan = planChatboxSandbox({
+    //     personal shell to a share-link-reachable scenario turn.
+    const sandboxPlan = planScenarioSandbox({
       mode: computerSandboxMode,
       bashRequested: (resolvedExecution.builtInToolIds ?? []).includes(
         BASH_TOOL_NAME
@@ -1207,24 +1208,28 @@ chatV2.post("/", async (c) => {
     let suppressComputerResource = sandboxPlan.action === "suppress";
     if (sandboxPlan.suppressReason === "no_chat_session_id") {
       // The conversation id IS the isolation boundary (`scopeKey =
-      // chatbox:<chatSessionId>`). Without one there is nothing to key a box
+      // scenario:<chatSessionId>`). Without one there is nothing to key a box
       // to, and binding anyway would put every session that omits it on one
       // shared box. No shell beats the wrong shell.
       logger.warn(
-        "[chat-v2] ephemeral chatbox sandbox requested without a chatSessionId; bash suppressed",
-        { chatboxId }
+        "[chat-v2] ephemeral scenario sandbox requested without a chatSessionId; bash suppressed",
+        { scenarioId }
       );
     } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
       logger.warn(
-        "[chat-v2] ephemeral chatbox sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
-        { chatboxId }
+        "[chat-v2] ephemeral scenario sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
+        { scenarioId }
       );
       if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
     }
-    if (sandboxPlan.action === "provision" && chatboxId && body.chatSessionId) {
-      const provisioned = await provisionChatboxSandbox({
+    if (
+      sandboxPlan.action === "provision" &&
+      scenarioId &&
+      body.chatSessionId
+    ) {
+      const provisioned = await provisionScenarioSandbox({
         bearer: bearerToken,
-        chatboxId,
+        scenarioId,
         chatSessionId: body.chatSessionId,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
@@ -1235,7 +1240,7 @@ chatV2.post("/", async (c) => {
             ? { workdir: provisioned.value.workdir }
             : {}),
           // Tell the model the truth about the box's lifetime. The default
-          // (`run`) copy says it is destroyed after this session — a chatbox
+          // (`run`) copy says it is destroyed after this session — a scenario
           // box is not, and a model that believes otherwise won't build work
           // up across turns, which is the whole point of a persistent shell.
           lifetime: "conversation",
@@ -1266,9 +1271,9 @@ chatV2.post("/", async (c) => {
             // Only BACKEND-mintable notices enter the ack protocol —
             // inspector-minted reasons (`sandbox_unavailable`) have no
             // backend row to ack against.
-            const ackable = delivered.filter(isChatboxSandboxNotice);
+            const ackable = delivered.filter(isScenarioSandboxNotice);
             if (ackable.length === 0) return;
-            void ackChatboxSandboxNotices({
+            void ackScenarioSandboxNotices({
               bearer: bearerToken,
               sandboxRowId,
               notices: ackable,
@@ -1280,9 +1285,9 @@ chatV2.post("/", async (c) => {
         // conversation is still useful, and 503 (at capacity / a sibling call
         // still booting) resolves on its own by the next turn.
         logger.warn(
-          "[chat-v2] chatbox sandbox provision failed; running without bash",
+          "[chat-v2] scenario sandbox provision failed; running without bash",
           {
-            chatboxId,
+            scenarioId,
             status: provisioned.status,
             error: provisioned.error,
           }
@@ -1295,7 +1300,7 @@ chatV2.post("/", async (c) => {
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
         // Computer comes exclusively from the server-resolved runtime config —
-        // chatbox OR host-by-id — never the request body.
+        // scenario OR host-by-id — never the request body.
         computer:
           hostRuntimeConfig && !suppressComputerResource
             ? (hostRuntimeConfig as { computer?: unknown }).computer
@@ -1307,11 +1312,11 @@ chatV2.post("/", async (c) => {
         ...(executionScope ? { executionScope } : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
         isGuest: Boolean(c.get("guestId")),
-        isChatboxSession,
-        // Lets a spend inside a shared chatbox bill the chatbox OWNER instead
+        isScenarioSession,
+        // Lets a spend inside a shared scenario bill the scenario OWNER instead
         // of the visitor, who has no wallet to charge. Only web search reads
         // it today; the model turn and voice already send their own.
-        ...(isChatboxSession && chatboxId ? { chatboxId } : {}),
+        ...(isScenarioSession && scenarioId ? { scenarioId } : {}),
         requireToolApproval,
         // Out-of-band and in-process ONLY. Never on `config.computer`:
         // `narrowHostComputer` runs at the top of `resolveHostTools` and
@@ -1363,12 +1368,12 @@ chatV2.post("/", async (c) => {
     );
 
     try {
-      const sourceType = isChatboxSession ? "chatbox" : "direct";
-      // Mirrors the sourceType branch — chatbox surface stays "chatbox", the
-      // non-chatbox case is the inspector playground. The docs agent has its
+      const sourceType = isScenarioSession ? "scenario" : "direct";
+      // Mirrors the sourceType branch — scenario surface stays "scenario", the
+      // non-scenario case is the inspector playground. The docs agent has its
       // own route (mcpjam-agent.ts) and never lands here.
-      const origin = isChatboxSession ? "chatbox" : "playground";
-      const isDirectChat = !isChatboxSession;
+      const origin = isScenarioSession ? "scenario" : "playground";
+      const isDirectChat = !isScenarioSession;
 
       // Server twin of the client's `send_message` — fires even when the
       // browser can't reach PostHog. Identity: guests always resolve (the
@@ -1433,16 +1438,16 @@ chatV2.post("/", async (c) => {
               ).map((problem) => problem.code),
             }
           : {}),
-        // Environment-BACKED CHATBOX turn (live-follow). A deliberately
+        // Environment-BACKED SCENARIO turn (live-follow). A deliberately
         // smaller slice than the environment-target block above: the payload
         // carries no host/plugin provenance (the backend already re-gated
         // plugins before serving it), and `environment_name` is user-authored
         // so it is not emitted from a share-link-reachable turn.
-        ...(chatboxEnvironment
+        ...(scenarioEnvironment
           ? {
-              chatbox_environment_backed: true,
-              environment_id: chatboxEnvironment.environmentRef.environmentId,
-              environment_revision: chatboxEnvironment.environmentRef.revision,
+              scenario_environment_backed: true,
+              environment_id: scenarioEnvironment.environmentRef.environmentId,
+              environment_revision: scenarioEnvironment.environmentRef.revision,
               environment_effective_server_count: effectiveServerIds.length,
               environment_skill_count: environmentSkills?.length ?? 0,
             }
@@ -1505,8 +1510,8 @@ chatV2.post("/", async (c) => {
           projectId: hostedBody.projectId,
           sourceType,
           origin,
-          ...(isChatboxSession && surface ? { surface } : {}),
-          chatboxId,
+          ...(isScenarioSession && surface ? { surface } : {}),
+          scenarioId,
           accessVersion,
           // Phase 3: forward the runtime-config scope into the harness path
           // (alongside the bash-tool path threaded above).
@@ -1528,6 +1533,11 @@ chatV2.post("/", async (c) => {
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
+          // Hosted sessions finally honor the CAS the client already sends.
+          // Read from the SCHEMA-VALIDATED body, not the raw cast one.
+          ...(hostedBody.expectedVersion !== undefined
+            ? { expectedVersion: hostedBody.expectedVersion }
+            : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.

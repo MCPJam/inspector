@@ -144,6 +144,16 @@ describe("workspace tool catalog", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -154,8 +164,12 @@ describe("workspace tool catalog", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
-      "list_chatboxes",
-      "get_chatbox",
+      "request_eval_run_judge",
+      // The GitHub Checks READ. Its connect sibling is in
+      // EXCLUDED_FROM_WORKSPACE: it reaches a shared repository.
+      "list_eval_check_repos",
+      "list_scenarios",
+      "get_scenario",
       "list_chat_sessions",
       "search_sessions",
       // Swarms: reads and the REVERSIBLE half of authoring. Launching,
@@ -193,6 +207,14 @@ describe("workspace tool catalog", () => {
       "get_user_testing_insights",
       "dismiss_user_testing_finding",
       "undismiss_user_testing_finding",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
@@ -321,7 +343,7 @@ describe("workspace input clamps", () => {
     // Defense in depth. The zod schema's `.min(1)` rejects `[]`, but
     // `execute()` can be called raw with no schema in the way — and `[]`
     // serializes to no filter at all, silently widening the search to every
-    // source including chatbox. This is the case that must not regress.
+    // source including scenario. This is the case that must not regress.
     const { builtTool, calls } = searchTool();
 
     await execTool(builtTool, { query: "refund", sourceTypes: [] });
@@ -351,14 +373,14 @@ describe("workspace input clamps", () => {
     expect(sourceTypeParam(sessionsCall.path)).toBe("eval");
   });
 
-  it("REFUSES an explicit chatbox request instead of silently narrowing it", async () => {
+  it("REFUSES an explicit scenario request instead of silently narrowing it", async () => {
     // Narrowing would answer a question the caller did not ask; the model
     // should be told why and pick something else.
     const { builtTool, calls } = searchTool();
 
     const result = (await execTool(builtTool, {
       query: "refund",
-      sourceTypes: ["direct", "chatbox"],
+      sourceTypes: ["direct", "scenario"],
     })) as { error?: string };
 
     expect(result.error).toContain("visitors");
@@ -371,7 +393,7 @@ describe("workspace input clamps", () => {
     const description = (builtTool as { description?: string }).description!;
     // The ambient-project note still leads; the clamp note follows it.
     expect(description).toContain("current chat's project");
-    expect(description).toContain("chatbox");
+    expect(description).toContain("scenario");
   });
 
   it("clamps only operations this surface actually advertises", () => {
@@ -518,5 +540,29 @@ describe("live server operations", () => {
     expect(approval("diagnose_server")).toBe(true);
     expect(approval("read_server_resource")).toBe(true);
     expect(approval("list_project_servers")).toBe(false);
+  });
+
+  it("requires approval for registry installs and uninstall", () => {
+    // install_registry_directory_server is create_project_server with
+    // different spelling — a caller-supplied endpointUrl that ends as a
+    // server row in the user's project — and uninstall is its
+    // delete_project_server sibling. Skipping the approval gate here would
+    // let a prompt-injected chat add or remove servers silently.
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("install_registry_directory_server")).toBe(true);
+    expect(approval("install_registry_server")).toBe(true);
+    expect(approval("uninstall_registry_server")).toBe(true);
+    // The registry reads stay approval-free.
+    expect(approval("search_registry_directory")).toBe(false);
+    expect(approval("list_registry_connections")).toBe(false);
   });
 });

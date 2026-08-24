@@ -34,10 +34,13 @@ import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
 import {
   callbackMatchesPending,
+  HANDOFF_SIGN_IN_STATE_KEY,
   matchHandoffRoute,
   readCallbackParams,
   readPendingAuthorization,
+  takeHandoffSignInReturn,
 } from "./lib/server-connection-handoff";
+import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -126,8 +129,8 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime (a tester
-// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// Exception: same-origin self-embed of the public scenario runtime (a tester
+// link path — `/user-testing/<slug>/<token>`).
 // The User Testing tab's Preview pane iframes the publish link to show a live
 // preview inside the app — that's intentional, not a misrouted-pushState
 // misconfiguration, so we let the normal tree mount. Restricted to a tester
@@ -141,10 +144,10 @@ const isInIframe = (() => {
       // Match the documented `<segment>/<slug>/<token>` shape only; a generic
       // prefix test would let any unrelated future subpath slip past the
       // misrouted-pushState guard. See lib/tester-link-path.ts.
-      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
+      const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
         window.location.pathname
       );
-      if (sameOrigin && isPublicChatboxRuntimePath) {
+      if (sameOrigin && isPublicScenarioRuntimePath) {
         return false;
       }
     } catch {
@@ -230,6 +233,24 @@ if (isInIframe) {
       >
         <ServerConnectionHandoff />
       </AuthKitProvider>
+    </StrictMode>
+  );
+} else if (
+  import.meta.env.DEV &&
+  window.location.pathname.startsWith("/__preview/plan-limit")
+) {
+  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
+  // of AuthKit and Convex, because the states worth reviewing (member who
+  // can't upgrade, org already at its Team ceiling) can't be produced on
+  // demand against a real backend. Renders the real component and the real
+  // stylesheet with dummy data. The DEV guard keeps it out of production
+  // bundles entirely.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <PlanLimitDialogPreview />
     </StrictMode>
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
@@ -342,6 +363,34 @@ if (isInIframe) {
       devMode={WORKOS_DEV_MODE}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+      }}
+      /**
+       * Send a returning sign-in back where it started, when something asked
+       * to come back.
+       *
+       * Only the handoff page does today: it lives on `/connect/server/…`, its
+       * sign-in redirect lands HERE on `/callback`, and without this the user
+       * arrives at the app shell having lost the link they were trying to use.
+       *
+       * The nonce is all that crossed the network — the path itself was kept
+       * in same-origin storage, and `takeHandoffSignInReturn` re-validates it
+       * as same-origin on the way out before anything navigates. AuthKit's
+       * default for this hook is a no-op, so nothing else changes by
+       * supplying it.
+       *
+       * It runs AFTER the session is persisted (authkit-js sets session data,
+       * then calls this), so navigating away here does not race the login.
+       */
+      onRedirectCallback={({ state }) => {
+        const returnTo = takeHandoffSignInReturn(
+          (state as Record<string, unknown> | null)?.[
+            HANDOFF_SIGN_IN_STATE_KEY
+          ],
+          window.location.origin
+        );
+        // `replace`, not `assign`: `/callback` is not somewhere the back
+        // button should return to.
+        if (returnTo) window.location.replace(returnTo);
       }}
       {...workosClientOptions}
     >

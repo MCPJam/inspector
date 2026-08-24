@@ -155,7 +155,7 @@ export interface WebChatTurnPersistContext {
   chatSessionId: string | undefined;
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
-  sourceType: "chatbox" | "direct";
+  sourceType: "scenario" | "direct";
   /**
    * Closed union per backend `chatOriginValidator`. Required at this boundary
    * so a new caller can't skip choosing one — `sourceType` answers the
@@ -163,11 +163,11 @@ export interface WebChatTurnPersistContext {
    * (training-data discriminator).
    */
   origin: ChatOrigin;
-  /** Only set when sourceType === "chatbox". */
+  /** Only set when sourceType === "scenario". */
   surface?: "preview" | "share_link";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
-  /** Phase 3 execution scope (chatbox/host runtime-config). Threaded into the
+  /** Phase 3 execution scope (scenario/host runtime-config). Threaded into the
    *  harness path so the backend re-resolves live access + per-swarm caps. */
   executionScope?: ExecutionScope;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
@@ -178,6 +178,13 @@ export interface WebChatTurnPersistContext {
   directVisibility?: "private" | "project";
   /** Direct-chat lineage when this session was created by message edit. */
   rewind?: ChatRewind;
+  /**
+   * Optimistic-concurrency baseline for a resumed thread: the session version
+   * the client believes it is continuing from. The client has always sent it;
+   * this path used to discard it, leaving hosted sessions with no protection
+   * against a second tab or device overwriting a turn.
+   */
+  expectedVersion?: number;
   /**
    * Direct-chat only. May be a pre-built payload, `null` to opt out (e.g.
    * agent surfaces), or a builder closure that receives the post-prepare
@@ -586,7 +593,7 @@ export async function streamWebChatTurn(
       ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
-      // natively, so advertising `listSkills`/`loadSkill` on top would describe
+      // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
       // a second, different delivery of the same set to the same model.
       ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
         ? {
@@ -780,7 +787,7 @@ export async function streamWebChatTurn(
     await manager.disconnectAllServers();
   };
 
-  const isChatboxSession = persist.sourceType === "chatbox";
+  const isScenarioSession = persist.sourceType === "scenario";
   // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
   // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
   // is supplied. Without it, a bare id fails this check and the turn silently
@@ -814,7 +821,7 @@ export async function streamWebChatTurn(
       turnTrace: PersistedTurnTrace,
       harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
-      const isDirectChat = !isChatboxSession;
+      const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
       // Surfaces with synthetic server ids (mcpjam-agent) opt out via
       // `persist.captureToolSnapshot === false`.
@@ -838,17 +845,20 @@ export async function streamWebChatTurn(
         }
       }
 
-      await persistChatSessionToConvex({
+      // Returned, not discarded: the engine turns this into the turn's
+      // `data-persist-receipt` so the client is TOLD what happened to its save
+      // rather than inferring it from a version poll.
+      return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
         modelId,
         modelSource,
         projectId: persist.projectId,
         sourceType: persist.sourceType,
         origin: persist.origin,
-        ...(isChatboxSession && persist.surface
+        ...(isScenarioSession && persist.surface
           ? { surface: persist.surface }
           : {}),
-        chatboxId: persist.chatboxId,
+        scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
@@ -876,6 +886,9 @@ export async function streamWebChatTurn(
             }
           : {}),
         turnTrace,
+        ...(persist.expectedVersion !== undefined
+          ? { expectedVersion: persist.expectedVersion }
+          : {}),
         // §3: chat-backed harness resume-state commit, applied atomically with
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
@@ -909,7 +922,7 @@ export async function streamWebChatTurn(
           modelId,
           {
             authHeader: runtime.authHeader,
-            chatboxId: persist.chatboxId,
+            scenarioId: persist.scenarioId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
           }
@@ -938,7 +951,7 @@ export async function streamWebChatTurn(
         progressivePlan,
         discoveryState,
         authHeader: runtime.authHeader,
-        chatboxId: persist.chatboxId,
+        scenarioId: persist.scenarioId,
         accessVersion: persist.accessVersion,
         selectedServers: persist.selectedServerIds,
         serverIds: persist.selectedServerIds,
@@ -980,7 +993,7 @@ export async function streamWebChatTurn(
       discoveryState,
       authHeader: runtime.authHeader,
       clientIp: runtime.clientIp ?? getClientIp(c),
-      chatboxId: persist.chatboxId,
+      scenarioId: persist.scenarioId,
       accessVersion: persist.accessVersion,
       mcpClientManager: manager,
       selectedServers: persist.selectedServerIds,
@@ -1053,7 +1066,7 @@ export async function streamWebChatTurn(
     discoveryState,
     authHeader: runtime.authHeader,
     clientIp: runtime.clientIp ?? getClientIp(c),
-    chatboxId: persist.chatboxId,
+    scenarioId: persist.scenarioId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
     // Phase 3: thread the runtime-config execution scope into the harness path

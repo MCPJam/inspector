@@ -35,13 +35,15 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
-  getChatboxOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  getScenarioOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   listEvalRunIterationsOperation,
@@ -57,6 +59,16 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -88,6 +100,14 @@ import {
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -113,6 +133,16 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -123,11 +153,13 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
   // Advertised with its reach NARROWED rather than excluded: see
-  // `WORKSPACE_INPUT_CLAMPS` — chatbox (visitor) sessions stay unsearchable
+  // `WORKSPACE_INPUT_CLAMPS` — scenario (visitor) sessions stay unsearchable
   // here, matching the line the user-testing exclusions below already draw.
   searchSessionsOperation,
 
@@ -182,6 +214,14 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /**
@@ -196,6 +236,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  connect_eval_check_repo:
+    "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
@@ -218,6 +260,24 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
   cancel_wave_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  // Launches a browser and executes the caller's tool. The Apps tab renders
+  // the same widget interactively, with the console and network panes beside
+  // it — a chat tool would hand back a verdict with none of that context.
+  render_server_widget:
+    "The Apps tab renders the widget interactively, with the console and network evidence beside it. Available on REST/CLI/MCP.",
+  // Agent Playground. `send_chat_message` runs an assistant turn, and this
+  // toolset IS an assistant turn — offering it here lets a chat turn spawn
+  // chat turns, which is recursive spend with no natural floor. The two reads
+  // follow it out rather than being split off: their only use in chat is to
+  // read back a session this toolset cannot create, and the Sessions tab
+  // already renders both the transcript and the trace with the context around
+  // them.
+  send_chat_message:
+    "An assistant turn that starts assistant turns — recursive spend with no floor. Available on REST/CLI/MCP, where the caller is not already inside a turn.",
+  get_chat_session:
+    "Reads back a session this toolset cannot create; the Sessions tab renders the transcript with its context.",
+  get_chat_session_trace:
+    "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
@@ -241,6 +301,12 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
   rotate_user_testing_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  rotate_share_link:
+    "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
+  get_share_settings:
+    "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
+  set_share_mode:
+    "Changing who can open a shared resource belongs next to the share link the UI already shows.",
   upsert_user_testing_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
   remove_user_testing_member:
@@ -281,6 +347,7 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   list_eval_cases: "Case-level browsing is the Evaluate tab's job.",
   get_eval_case: "Case-level browsing is the Evaluate tab's job.",
   create_eval_case: "Case authoring belongs to the Evaluate editor.",
+  create_eval_cases: "Case authoring belongs to the Evaluate editor.",
   update_eval_case: "Case authoring belongs to the Evaluate editor.",
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
@@ -301,6 +368,10 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
+  ensure_adhoc_environment:
+    "Environment authoring has its own editor, and the composer is where a workspace user assembles a stack. The RUN path already carries it: run_eval_suite takes a `compose` object and ensures the environment itself.",
+  name_environment:
+    "Promoting a composed environment into the project's permanent list is an editor action, and the composer offers it in place.",
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
@@ -340,11 +411,11 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
 };
 
 const OPERATIONS_BY_ID = new Map(
-  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])
+  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation]),
 );
 
 export const MCPJAM_TOOL_IDS: ReadonlyArray<string> = WORKSPACE_OPERATIONS.map(
-  (operation) => operation.name
+  (operation) => operation.name,
 );
 
 export function isMcpjamToolId(id: string): boolean {
@@ -353,7 +424,7 @@ export function isMcpjamToolId(id: string): boolean {
 
 // Operations that open an ephemeral connection to a user's saved MCP server
 // inherit the host's requireToolApproval. Pure platform API reads (project,
-// eval, chatbox) never need approval.
+// eval, scenario) never need approval.
 const CONNECTION_OPENING_IDS = new Set([
   diagnoseServerOperation.name,
   listServerToolsOperation.name,
@@ -370,6 +441,17 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  // SPENDS the organization's model budget, on a run the chat can name from
+  // a list. Advertised rather than excluded because reading grades is only
+  // useful if you can ask for them — but the spend is the user's to approve,
+  // so it sits here with `cancel_eval_run` rather than executing on request.
+  requestEvalRunJudgeOperation.name,
+  // Dials a third party's server for minutes and, with the opt-in, spends the
+  // organization's credits. Reading grades is only useful if you can ask for
+  // one, so these are advertised rather than excluded — but the asking is the
+  // user's to approve. Cancelling is NOT here: it stops that traffic.
+  startClaudeReadinessRunOperation.name,
+  startOpenAIReadinessRunOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
@@ -377,6 +459,16 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // supplied by whoever is talking to the model, this server dials it, and a
   // completed flow adds a server row to the user's project.
   connectProjectServerOperation.name,
+  // create_project_server with different spelling: the caller supplies
+  // `endpointUrl`, and a completed install adds a server row to the user's
+  // project — so it takes the same approval its sibling does.
+  installRegistryDirectoryServerOperation.name,
+  // Installs a registry card whose config was written by another org member;
+  // the completed flow still adds a server row to the user's project.
+  installRegistryServerOperation.name,
+  // Destructive, same as delete_project_server: removes the installed server
+  // row and its connection.
+  uninstallRegistryServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted
@@ -410,18 +502,18 @@ const AMBIENT_PROJECT_NOTE =
 type WorkspaceInputClamp = {
   descriptionNote: string;
   transform: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => Record<string, unknown> | { error: string };
 };
 
-/** The sourceTypes in-app chat may search. `chatbox` is the omission. */
+/** The sourceTypes in-app chat may search. `scenario` is the omission. */
 const WORKSPACE_SEARCHABLE_SOURCE_TYPES = ["direct", "eval", "swarm"] as const;
 
 export const WORKSPACE_INPUT_CLAMPS: Readonly<
   Record<string, WorkspaceInputClamp>
 > = {
   /**
-   * Keep user-testing (`chatbox`) transcripts out of in-app chat search.
+   * Keep user-testing (`scenario`) transcripts out of in-app chat search.
    *
    * Those are real visitors' conversations with the product, and this surface
    * already draws that line for the listings (`list_user_testing_sessions` and
@@ -436,23 +528,23 @@ export const WORKSPACE_INPUT_CLAMPS: Readonly<
    */
   search_sessions: {
     descriptionNote:
-      " In this chat, user-testing (chatbox) sessions are not searchable — those are real visitors' conversations. Searches direct, eval, and swarm sessions.",
+      " In this chat, user-testing (scenario) sessions are not searchable — those are real visitors' conversations. Searches direct, eval, and swarm sessions.",
     transform: (input) => {
       const requested = input.sourceTypes;
       if (
         Array.isArray(requested) &&
-        requested.some((value) => value === "chatbox")
+        requested.some((value) => value === "scenario")
       ) {
         return {
           error:
-            "User-testing (chatbox) sessions cannot be searched from chat — those are real visitors' conversations. Search direct, eval, or swarm sessions instead, or use the User Testing tab.",
+            "User-testing (scenario) sessions cannot be searched from chat — those are real visitors' conversations. Search direct, eval, or swarm sessions instead, or use the User Testing tab.",
         };
       }
       // Injected when ABSENT and when EMPTY. `[]` is the dangerous spelling:
       // the zod schema's `.min(1)` rejects it, but `execute()` can be called
       // raw with no schema in the way, and an empty array serializes to no
       // filter at all — which would widen the search to every source,
-      // chatbox included. Treating `[]` exactly like omission closes that.
+      // scenario included. Treating `[]` exactly like omission closes that.
       if (!Array.isArray(requested) || requested.length === 0) {
         return {
           ...input,
@@ -505,7 +597,7 @@ export function capForModel(value: unknown): unknown {
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
 export function toToolError(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
@@ -518,7 +610,7 @@ export function toToolError(
  */
 export function buildMcpjamTool(
   id: string,
-  opts: McpjamToolOptions
+  opts: McpjamToolOptions,
 ): ToolSet[string] | null {
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;

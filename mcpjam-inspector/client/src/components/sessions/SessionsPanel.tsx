@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import {
@@ -43,11 +43,12 @@ import {
   useAppNavigate,
   useCurrentSearchParam,
 } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
   SESSION_SOURCE_TYPE_LABELS,
+  sessionOriginChipLabel,
   sessionParentChipLabel,
   type SessionFeedItem,
   type SessionFeedSourceType,
@@ -55,7 +56,7 @@ import {
 
 const SOURCE_TYPE_PILLS: SessionFeedSourceType[] = [
   "direct",
-  "chatbox",
+  "scenario",
   "eval",
   "swarm",
 ];
@@ -303,7 +304,7 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
           <ResizablePanel defaultSize={68} minSize={40}>
             <div className="h-full overflow-hidden">
               {selectedThreadId ? (
-                // The shared detail pane is chatbox/swarm-native; a Playground
+                // The shared detail pane is scenario/swarm-native; a Playground
                 // or eval transcript that trips one of its branches degrades
                 // to the row's own metadata instead of white-screening.
                 <ErrorBoundary
@@ -353,6 +354,7 @@ function SessionFeedRow({
   onSelect: () => void;
 }) {
   const parentChip = sessionParentChipLabel(row.parentRef);
+  const originChip = sessionOriginChipLabel(row.origin);
   const title = row.title?.trim() || row.firstMessagePreview || "Untitled";
 
   return (
@@ -379,6 +381,14 @@ function SessionFeedRow({
         <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {SESSION_SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType}
         </span>
+        {originChip ? (
+          <span
+            data-testid="session-origin-chip"
+            className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            {originChip}
+          </span>
+        ) : null}
         {row.ownedByViewer ? (
           <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
             Yours

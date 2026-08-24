@@ -11,7 +11,7 @@ import {
   selectionChips,
   type InsightsSelection,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 
 /**
  * Sessions behind one selection in the session flow — a node, or a link's two
@@ -31,7 +31,7 @@ type DrilldownRow = {
 };
 
 interface GoalOutcomeDrilldownProps {
-  /** Which surface's sessions to page: a chatbox or a project's swarm. */
+  /** Which surface's sessions to page: a scenario or a project's swarm. */
   scope: InsightsScope;
   /** The open flow selection, or null when nothing is selected. */
   selection: InsightsSelection | null;
@@ -89,7 +89,7 @@ function requestKeyOf(
   const scopeKey =
     scope.kind === "swarm"
       ? `swarm:${scope.projectId}:${(scope.journeyRunIds ?? []).join(",")}`
-      : `chatbox:${scope.chatboxId}`;
+      : `scenario:${scope.scenarioId}`;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
   // The selection is keyed EXPLICITLY rather than relied on to show up in

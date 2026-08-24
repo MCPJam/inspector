@@ -158,17 +158,17 @@ describe("filterByFeatureFlags", () => {
     ]);
   });
 
-  it("keeps Chatboxes behind the existing sandboxes flag", () => {
+  it("keeps Scenarios behind the existing sandboxes flag", () => {
     const sections = [
       {
         id: "connection",
         items: [
           {
-            title: "Chatboxes",
-            url: "#chatboxes",
+            title: "Scenarios",
+            url: "#scenarios",
             icon: FakeIcon,
             featureFlag: "sandboxes-enabled",
-            billingFeature: "chatboxes" as const,
+            billingFeature: "scenarios" as const,
           },
         ],
       },
@@ -178,11 +178,11 @@ describe("filterByFeatureFlags", () => {
       filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items
     ).toEqual([
       {
-        title: "Chatboxes",
-        url: "#chatboxes",
+        title: "Scenarios",
+        url: "#scenarios",
         icon: FakeIcon,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
     ]);
     expect(
@@ -190,24 +190,24 @@ describe("filterByFeatureFlags", () => {
     ).toHaveLength(0);
   });
 
-  it("marks Chatboxes disabled when billing enforcement denies chatboxes", () => {
+  it("marks Scenarios disabled when billing enforcement denies scenarios", () => {
     const result = applyBillingGateNavState(
       [
         {
           id: "connection",
           items: [
             {
-              title: "Chatboxes",
-              url: "/chatboxes",
+              title: "Scenarios",
+              url: "/scenarios",
               icon: FakeIcon,
-              billingFeature: "chatboxes",
+              billingFeature: "scenarios",
             },
           ],
         },
       ],
       {
         billingUiEnabled: true,
-        gateDenied: { chatboxes: true },
+        gateDenied: { scenarios: true },
         enforcementActive: true,
       }
     );
@@ -328,9 +328,9 @@ describe("getHostedNavigationSections", () => {
       {
         id: "others",
         items: [
-          // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Servers tab switcher — so it is dropped here.
-          { title: "Skills", url: "#skills", icon: FakeIcon },
+          // Tracing is the one surface hosted cannot serve (it needs the
+          // local OTLP collector), so it is the one item dropped here.
+          { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
@@ -352,7 +352,8 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      // Tasks are hosted-capable (reconnect-per-poll routes), so the item stays.
+      // Everything else survives: the filter is a block list now, so a tab
+      // nobody thought to list is reachable rather than silently missing.
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",

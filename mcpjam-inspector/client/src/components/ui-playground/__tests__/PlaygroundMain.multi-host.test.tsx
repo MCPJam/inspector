@@ -526,7 +526,7 @@ const seedCatalogFixture = {
         label: "ChatGPT",
         provenance: "assumed",
         rendersMcpApps: false,
-        modelId: "openai/gpt-5-mini",
+        modelId: "openai/gpt-5.6-luna",
         systemPrompt: "",
         temperature: 0.7,
         requireToolApproval: false,
@@ -734,6 +734,8 @@ describe("PlaygroundMain — multi-host render path", () => {
       expect.objectContaining({
         projectId: "default",
         name: "ChatGPT",
+        // Straight from the catalog template — the seed no longer carries a
+        // per-host model override on top of it.
         input: expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
       })
     );

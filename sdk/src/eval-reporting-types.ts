@@ -15,7 +15,13 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
-export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanCategory =
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
@@ -104,6 +110,20 @@ export type EvalResultInput = {
   trace?: EvalTraceInput;
   externalIterationId?: string;
   externalCaseId?: string;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`) — the id an author
+   * committed beside the test.
+   *
+   * The backend resolves by this first (`by_testSuite_declaredCaseId`), falling
+   * back to the content-hash key, and ADOPTS: an id-bearing upload that resolves
+   * by hash to a case with no declared id patches the id on without touching the
+   * immutable `caseKey`. That is what lets a renamed test keep its history.
+   *
+   * Must equal `externalCaseId` when both are present — the SDK enforces that at
+   * construction and the backend rejects a mismatch at ingest. Never a silent
+   * precedence between two identity claims.
+   */
+  caseId?: string;
   /** Extensible per-iteration metadata; predicate verdicts are nested here. */
   metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
