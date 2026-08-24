@@ -84,6 +84,15 @@ function getConvexHttpUrl(): string {
   return convexHttpUrl;
 }
 
+function wasAborted(error: unknown, signal: AbortSignal | undefined): boolean {
+  return (
+    signal?.aborted === true ||
+    (typeof error === "object" &&
+      error !== null &&
+      (error as { name?: unknown }).name === "AbortError")
+  );
+}
+
 export async function fetchHostRuntimeConfig(args: {
   hostId: string;
   bearer: string;
@@ -141,25 +150,46 @@ export async function fetchHostRuntimeConfig(args: {
     };
   }
   const authorization = `Bearer ${bearerToken}`;
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization,
+    },
+    body: JSON.stringify({ hostId: args.hostId }),
+    signal: args.signal,
+  };
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization,
-      },
-      body: JSON.stringify({ hostId: args.hostId }),
-      signal: args.signal,
-    });
+    response = await fetch(url, requestInit);
   } catch (err) {
-    logger.error("[host-runtime-config] network error", err);
-    return {
-      ok: false,
-      status: 502,
-      error: "Failed to reach host runtime-config endpoint",
-    };
+    // This POST is a read-only config lookup. Retrying a single transport
+    // failure is safe and prevents a transient DNS/socket blip from stopping
+    // a turn before it reaches the engine. Never retry a caller cancellation:
+    // the same signal would reject again and Stop must remain immediate.
+    if (wasAborted(err, args.signal)) {
+      logger.error("[host-runtime-config] network error", err);
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
+
+    logger.warn("[host-runtime-config] transient network error; retrying once", {
+      hostId: args.hostId,
+    });
+    try {
+      response = await fetch(url, requestInit);
+    } catch (retryError) {
+      logger.error("[host-runtime-config] network error after retry", retryError);
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
   }
 
   let payload: any = null;
