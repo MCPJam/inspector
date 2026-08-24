@@ -257,6 +257,7 @@ plugin pins whose version no longer exists.
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
 | `POST .../tools` | List the server's tools |
 | `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs` |
+| `POST .../widgets/render` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then return the render verdict, console errors, blocked requests, and the widget as an accessibility tree. Snapshot is on by default; screenshot is off. Refuses tools with no `ui://` resource (422). Capped at a per-replica concurrency limit (429) and a 45 s wall clock (504). Executes the tool. |
 | `POST .../prompts` | List the server's prompts |
 | `POST .../prompts/get` | Render a prompt; returns the MCP `GetPromptResult` verbatim |
 | `POST .../resources` | List the server's resources |
