@@ -36,6 +36,15 @@ export interface HarnessProxyServerInput {
    * tunnel's `?k=` secret is the auth (`adapter-http` is validate-when-present).
    */
   proxyToken?: string;
+  /**
+   * Policy-sealed replacement for `proxyToken` (`mcpjps1.…`, see
+   * `harness-proxy-policy-seal.ts`): the Convex token ENCLOSED by the run's
+   * resolved tool policy. Sent under the same header, so the sandbox cannot
+   * drop the policy without dropping the credential. When present it REPLACES
+   * `proxyToken` — the bare token must never also reach the sandbox, or
+   * stripping the seal would restore unpoliced access.
+   */
+  sealedProxyToken?: string;
   /** Opaque live-turn id used only to route proxy-observed scope challenges. */
   scopeStepUpCorrelationId?: string;
 }
@@ -106,12 +115,16 @@ export function buildHarnessProxyMcpJson(
             server.scopeStepUpCorrelationId,
           )
         : server.proxyUrl,
-      ...(server.proxyToken || server.scopeStepUpCorrelationId
+      ...(server.sealedProxyToken ||
+      server.proxyToken ||
+      server.scopeStepUpCorrelationId
         ? {
             headers: {
-              ...(server.proxyToken
-                ? { "X-MCPJam-Proxy-Token": server.proxyToken }
-                : {}),
+              ...(server.sealedProxyToken
+                ? { "X-MCPJam-Proxy-Token": server.sealedProxyToken }
+                : server.proxyToken
+                  ? { "X-MCPJam-Proxy-Token": server.proxyToken }
+                  : {}),
               ...(server.scopeStepUpCorrelationId
                 ? {
                     [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]:
