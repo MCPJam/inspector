@@ -71,8 +71,10 @@ const HARNESS_CONTROL_STATE: Record<
       enforced: false,
       note: "Not enforced for the Codex harness yet.",
     },
-    // Codex v1 doesn't attach MCP servers through MCPJam, so there's no
-    // visibility boundary to enforce.
+    // Codex DOES reach the host's MCP servers now, but as host-executed tools
+    // MCPJam projects at turn start — and that projection uses the spec default
+    // (app-only tools hidden) rather than reading this knob, so an explicit
+    // opt-out still wouldn't bite.
     respectToolVisibility: {
       enforced: false,
       note: "Not enforced for the Codex harness yet.",

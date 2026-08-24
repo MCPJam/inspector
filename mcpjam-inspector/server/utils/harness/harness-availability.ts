@@ -37,7 +37,6 @@ export type HarnessUnavailableKind =
   | "enterprise-policy"
   | "computers-unconfigured"
   | "tool-approval"
-  | "mcp-servers"
   | "model-not-hosted"
   | "model-unsupported";
 
@@ -51,8 +50,9 @@ export function checkHarnessRuntimeAvailable(args: {
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
-  /** Whether the host has any selected MCP servers. Rejected for a harness that
-   *  can't deliver them (Codex v1). */
+  /** Whether the host has any selected MCP servers. No longer a refusal on its
+   *  own — every harness delivers them — but it still selects which approval
+   *  capability has to hold. */
   hasSelectedMcpServers: boolean;
   /**
    * The host's RESOLVED model — id plus provider, exactly as the turn resolved
@@ -137,11 +137,17 @@ export function checkHarnessRuntimeAvailable(args: {
         "turn off requireToolApproval on this host",
     };
   }
-  if (
-    args.requireToolApproval &&
-    args.hasSelectedMcpServers &&
-    !adapter.supportsMcpToolApproval
-  ) {
+  // MCP-tool approval, gated against the surface this adapter's MCP tools
+  // ACTUALLY run on. Under `native` delivery they run in-sandbox
+  // (`supportsMcpToolApproval`); under `host-executed` they run on MCPJam's
+  // server as ordinary host tools (`supportsHostExecutedToolApproval`). Reading
+  // the wrong capability here would be the silent bypass: Codex's MCP tools are
+  // host-executed, so `supportsMcpToolApproval` says nothing about them.
+  const mcpToolApproval =
+    adapter.mcpDelivery === "native"
+      ? adapter.supportsMcpToolApproval
+      : adapter.supportsHostExecutedToolApproval;
+  if (args.requireToolApproval && args.hasSelectedMcpServers && !mcpToolApproval) {
     return {
       ok: false,
       kind: "tool-approval",
@@ -151,17 +157,12 @@ export function checkHarnessRuntimeAvailable(args: {
     };
   }
 
-  // MCP gate: a harness that can't deliver the host's selected servers (Codex
-  // v1) must not silently run without them.
-  if (args.hasSelectedMcpServers && !adapter.supportsSelectedMcpServers) {
-    return {
-      ok: false,
-      kind: "mcp-servers",
-      reason:
-        `the ${name} harness doesn't support MCP servers yet — remove the ` +
-        "selected servers from this host to run it",
-    };
-  }
+  // There is no MCP gate. Every adapter delivers the host's selected servers
+  // one way or the other (`HarnessMcpDelivery`: `native` config in the sandbox,
+  // or `host-executed` tools MCPJam runs itself), so "this harness can't do MCP
+  // at all" is no longer a representable state — the refusal it produced (kind
+  // `mcp-servers`, which blocked every Codex host with a server attached, and
+  // therefore every Codex eval) is gone with it.
 
   // Model eligibility: harness runtimes authenticate via the MCPJam gateway
   // credential, not org BYOK. A non-eligible model can't run the real runtime,

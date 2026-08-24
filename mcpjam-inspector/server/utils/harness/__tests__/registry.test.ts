@@ -17,10 +17,11 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: no MCP servers (the CLI never makes an MCP tool model-callable in
-    // the mode the SDK drives), no native plugin install, can't pause for tool
-    // approval — but skills ARE delivered (INS-8), under its own root.
-    expect(a.supportsSelectedMcpServers).toBe(false);
+    // Codex: MCP servers arrive as HOST-EXECUTED tools (the CLI never makes an
+    // MCP tool model-callable in the mode the SDK drives), no native plugin
+    // install, can't pause for tool approval — and skills ARE delivered
+    // (INS-8), under its own root.
+    expect(a.mcpDelivery).toBe("host-executed");
     expect(a.supportsSkills).toBe(true);
     expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
@@ -35,8 +36,15 @@ describe("harness registry", () => {
     // CI, for every registered adapter, before a turn is ever attempted.
     for (const id of registeredHarnessIds()) {
       const adapter = getHarnessAdapter(id);
-      if (adapter.supportsSelectedMcpServers) {
+      // The two MCP delivery modes are mutually exclusive BY TYPE (the native
+      // arm requires `deliverMcpServers`, the host-executed arm forbids it), so
+      // this asserts the runtime shape matches the declared mode — the check
+      // the compiler makes for real adapters, made again for a hand-edited one.
+      if (adapter.mcpDelivery === "native") {
         expect(adapter.deliverMcpServers).toBeTypeOf("function");
+      } else {
+        expect(adapter.mcpDelivery).toBe("host-executed");
+        expect(adapter.deliverMcpServers).toBeUndefined();
       }
       if (adapter.supportsPluginBundles) {
         expect(adapter.deliverPluginBundles).toBeTypeOf("function");
@@ -234,7 +242,7 @@ const toUserMessage = (text) => ({
     );
   });
 
-  it("Claude Code attributes mcp__ tool names; Codex passes them through", () => {
+  it("Claude Code attributes mcp__ tool names", () => {
     const keyToServerId = { weather: "srv_123" };
     expect(
       getHarnessAdapter("claude-code").parseToolName(
@@ -242,13 +250,8 @@ const toUserMessage = (text) => ({
         keyToServerId
       )
     ).toEqual({ serverId: "srv_123", toolName: "forecast" });
-    // Codex has no MCP namespacing — names pass through as native tools.
-    expect(
-      getHarnessAdapter("codex").parseToolName(
-        "mcp__weather__forecast",
-        keyToServerId
-      )
-    ).toEqual({ toolName: "mcp__weather__forecast" });
+    // Codex used to pass these through verbatim (it had no MCP tools to name).
+    // It now uses the SAME scheme — see the parity block below.
   });
 
   it("isHarnessId narrows registered ids and rejects junk", () => {
@@ -291,9 +294,56 @@ const toUserMessage = (text) => ({
       expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
     });
 
-    it("Codex declares no MCP delivery (no model-callable MCP tools)", () => {
-      expect(getHarnessAdapter("codex").deliverMcpServers).toBeUndefined();
-      expect(getHarnessAdapter("codex").supportsSelectedMcpServers).toBe(false);
+    it("Codex writes no sandbox MCP config — its servers are host-executed", () => {
+      // The COMP-39 spike proved `~/.codex/config.toml` `[mcp_servers]` merges
+      // cleanly and is still a silent no-op (the model never gets a callable
+      // tool). Writing it anyway would be the trap; the relay is the mechanism.
+      const codex = getHarnessAdapter("codex");
+      expect(codex.mcpDelivery).toBe("host-executed");
+      expect(codex.deliverMcpServers).toBeUndefined();
+    });
+
+    it("Claude Code's tools are NOT projected as host-executed (no double exposure)", () => {
+      // The mutual-exclusion invariant, from the consumer's side: the native
+      // adapter must stay on the `.mcp.json` path, so `runHarnessTurn` never
+      // adds MCP tools to its host-executed tool set and the model never sees
+      // the same tool twice.
+      expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+    });
+  });
+
+  describe("parseToolName (cross-harness attribution parity)", () => {
+    const keyToServerId = { weather: "srv-weather" };
+
+    it("both harnesses resolve mcp__<server>__<tool> to the same identity", () => {
+      // Eval assertions and trace spans key off `{ serverId, toolName }`. A
+      // Codex run must attribute a relayed call exactly as a Claude Code run
+      // attributes the native one, or the same suite scores differently per
+      // harness for reasons that have nothing to do with the server.
+      for (const id of registeredHarnessIds()) {
+        expect(
+          getHarnessAdapter(id).parseToolName(
+            "mcp__weather__get_forecast",
+            keyToServerId
+          )
+        ).toEqual({ serverId: "srv-weather", toolName: "get_forecast" });
+      }
+    });
+
+    it("a harness-native tool name keeps no server attribution", () => {
+      for (const id of registeredHarnessIds()) {
+        expect(getHarnessAdapter(id).parseToolName("bash", keyToServerId)).toEqual(
+          { toolName: "bash" }
+        );
+      }
+    });
+
+    it("an unknown server key is returned verbatim, never fabricated", () => {
+      for (const id of registeredHarnessIds()) {
+        expect(
+          getHarnessAdapter(id).parseToolName("mcp__ghost__do_thing", {})
+        ).toEqual({ toolName: "mcp__ghost__do_thing" });
+      }
     });
   });
 

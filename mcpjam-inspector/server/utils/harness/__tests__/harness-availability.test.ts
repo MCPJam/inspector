@@ -142,13 +142,38 @@ describe("checkHarnessRuntimeAvailable", () => {
     if (!r.ok) expect(r.reason).toMatch(/Codex harness/);
   });
 
-  it("blocks a Codex host that has selected MCP servers (v1: no MCP)", () => {
+  it("allows a Codex host with selected MCP servers (host-executed delivery)", () => {
+    // COMP-39: this used to be the `mcp-servers` refusal, which blocked every
+    // Codex host with a server attached — and therefore every Codex eval, since
+    // an eval suite always has servers. Codex now gets those servers as
+    // host-executed tools, so there is nothing left to refuse.
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "codex",
+          hasSelectedMcpServers: true,
+          model: { id: "openai/gpt-5-nano", provider: "openai" },
+        })
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it("still blocks a Codex approval host with MCP servers (approval can't be honored)", () => {
+    // Advertise = enforce: Codex's MCP tools run on MCPJam's server as
+    // host-executed tools, and Codex declares no host-executed tool approval.
+    // Delivering the servers must NOT quietly turn approval into a no-op.
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ harnessId: "codex", hasSelectedMcpServers: true })
+      args({
+        harnessId: "codex",
+        hasSelectedMcpServers: true,
+        requireToolApproval: true,
+        model: { id: "openai/gpt-5-nano", provider: "openai" },
+      })
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/doesn't support MCP servers/);
+    if (!r.ok) expect(r.kind).toBe("tool-approval");
   });
 
   it("allows a Claude Code host with selected MCP servers (it delivers them)", () => {
