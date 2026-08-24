@@ -12,6 +12,11 @@ import type {
   EvaluationConfigSnapshot,
   ScoreResult,
 } from "../contract/types.js";
+import type {
+  FailureCategory,
+  StageResultRow,
+  UserValueStage,
+} from "../contract/index.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -229,6 +234,182 @@ export interface PlatformChatSession {
   createdAt: number | null;
   isPinned?: boolean;
   isUnread?: boolean;
+}
+
+/**
+ * Tool-effects policy for an agent Playground turn.
+ *
+ * `read_only` advertises only tools the server annotated
+ * `annotations.readOnlyHint === true`; `auto` advertises everything the target
+ * exposes and may therefore cause real external side effects through arbitrary
+ * third-party tools. The hint is SERVER-ASSERTED, so `read_only` is a policy
+ * the host applies, not a guarantee it can verify.
+ */
+export type PlatformToolMode = "read_only" | "auto";
+
+/**
+ * One tool call as the agent Playground reports it.
+ *
+ * `input`/`output` are the RAW wire values — scrubbed of protocol annotations
+ * (`_meta`, `$`-prefixed keys) and bounded, with `truncated` set whenever the
+ * caller is seeing less than the whole payload. That bounding is announced
+ * rather than silent because a shortened tool result an agent believes is
+ * complete sends it debugging the wrong thing.
+ */
+export interface PlatformTurnToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  status: "ok" | "error";
+  output?: unknown;
+  errorMessage?: string;
+  truncated?: true;
+}
+
+/** One turn's execution trace, in the same span shape eval iterations use. */
+export interface PlatformTurnTrace {
+  turnId: string;
+  spanCount: number;
+  spans: unknown[];
+}
+
+/** Token usage for one turn. */
+export interface PlatformTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+/**
+ * The result of one agent Playground turn.
+ *
+ * `sessionId` is the ONE public id — pass it back to continue the
+ * conversation, and to `getChatSession` / `getChatSessionTrace` to read what
+ * happened. It is `null` only when the turn ran but its transcript did not
+ * persist, which `persisted.outcome` reports: a caller must not treat that as
+ * "nothing happened", because the turn already spent.
+ */
+export interface PlatformChatTurn {
+  sessionId: string | null;
+  turnId: string;
+  reply?: string;
+  finishReason?: string | null;
+  toolCalls?: PlatformTurnToolCall[];
+  trace?: PlatformTurnTrace;
+  usage?: PlatformTurnUsage;
+  model?: { id: string; provider: string };
+  toolMode?: PlatformToolMode;
+  advertisedToolCount?: number;
+  excludedToolCount?: number;
+  persisted: { outcome: string; version?: number };
+  origin: string;
+  /** Set when an idempotencyKey replayed an already-completed turn. */
+  replay?: true;
+  message?: string;
+}
+
+/** One message from a session transcript, at its ABSOLUTE transcript index. */
+export interface PlatformChatMessage {
+  /**
+   * Position in the STORED transcript, not in the returned page. Trace spans
+   * reference messages positionally, so renumbering per page would break the
+   * one join the detail read exists to enable.
+   */
+  index: number;
+  role: string;
+  content: unknown;
+  truncated?: true;
+}
+
+/** Session metadata plus a bounded window of raw messages. */
+export interface PlatformChatSessionDetail {
+  sessionId: string;
+  projectId: string | null;
+  origin: string | null;
+  modelId: string | null;
+  version: number | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  toolMode: PlatformToolMode | null;
+  environmentId: string | null;
+  /** `null` — never 0 — when the transcript could not be read. */
+  messageCount: number | null;
+  transcriptUnavailable?: true;
+  messages: PlatformChatMessage[];
+  nextMessageIndex?: number;
+}
+
+/** One turn's entry in a trace read. */
+export interface PlatformChatSessionTraceTurn {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  modelId?: string;
+  usage?: PlatformTurnUsage;
+  spanCount: number;
+  spans?: unknown[];
+  /**
+   * The spans could not be read. DISTINCT from an empty `spans` array, which
+   * means the turn genuinely made no recorded calls — the two lead to opposite
+   * conclusions about a turn.
+   */
+  spansUnavailable?: true;
+  /** Fewer spans came back than the turn recorded. */
+  spansTruncated?: true;
+}
+
+export interface PlatformChatSessionTrace {
+  sessionId: string;
+  origin: string | null;
+  traceVersion: number;
+  turnCount: number;
+  turns: PlatformChatSessionTraceTurn[];
+  latestPromptIndex?: number;
+}
+
+/** One interactive element in a widget snapshot, ready to use as a step target. */
+export interface PlatformSnapshotElement {
+  role?: { role: string; name?: string };
+  testId?: string;
+  text?: string;
+  /** More than one element matched — pass `nth` on a step target to pick one. */
+  ambiguous?: true;
+}
+
+/**
+ * A rendered MCP App widget as TEXT.
+ *
+ * The point is that it is ACTIONABLE, not merely descriptive: the elements come
+ * back in the same role/name/testId vocabulary the interaction steps accept, so
+ * a caller reads a control here and addresses it directly.
+ */
+export interface PlatformWidgetSnapshot {
+  mode: "a11y";
+  tree: string;
+  elements: PlatformSnapshotElement[];
+  truncated?: true;
+  capturedAt: number;
+  note?: string;
+}
+
+/** The verdict and evidence from one headless widget render. */
+export interface PlatformWidgetRender {
+  status: string;
+  resourceUri?: string;
+  bridgeInitialized?: boolean;
+  /**
+   * What the widget logged, and what it was blocked from reaching. Both matter
+   * more than they look: a widget that "renders" while every fetch is blocked
+   * photographs perfectly and is broken.
+   */
+  consoleErrors?: string[];
+  blockedRequests?: string[];
+  snapshot?: PlatformWidgetSnapshot;
+  /** Present only when `includeScreenshot` was explicitly requested. */
+  screenshot?: { mimeType: string; base64: string };
+  timings?: { renderMs?: number; totalMs?: number };
 }
 
 /**
@@ -1486,6 +1667,16 @@ export interface PlatformEvalIteration {
   evaluationConfig?: EvaluationConfigSnapshot | null;
   /** Set when the backend downgraded this iteration's verdict at ingest. */
   scoreIntegrity?: "score_integrity_invalid" | null;
+  /** Verified D1 user-value chain rows, in chain order. */
+  stageResults?: StageResultRow[];
+  /** The first failed stage, when the verified derivation has one. */
+  firstFailedStage?: UserValueStage;
+  /** Coarse failure bucket; it may exist without a failed stage row. */
+  failureCategory?: FailureCategory;
+  /** Analyzer version that produced the stage rows. */
+  stageAnalyzerVersion?: number;
+  /** The server returned stage rows that failed D1 validation. */
+  stageResultsUnverified?: true;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -1496,6 +1687,8 @@ export interface PlatformEvalStepEvidence {
     args: unknown;
     ok: boolean;
     error?: string;
+    /** Wall-clock ms for this widget→host call, when the harness recorded it. */
+    elapsedMs?: number;
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
