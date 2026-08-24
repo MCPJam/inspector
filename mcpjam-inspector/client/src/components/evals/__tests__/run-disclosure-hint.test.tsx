@@ -277,19 +277,23 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
           (line.includes("gateway") || line.includes("openrouter")),
       ),
     ).toBe(true);
+    // Matched with a regex rather than `.includes("byok.example.com")` —
+    // CodeQL's incomplete-URL-substring-sanitization query pattern-matches
+    // that idiom regardless of context, and flags it as if this were a host
+    // trust check instead of a plain assertion on rendered UI test text.
+    const byokDestination = /byok\.example\.com/;
     expect(
       detail.some(
         (line) =>
           line.includes("anthropic/claude-opus-5") &&
-          line.includes("byok.example.com"), // lgtm[js/incomplete-url-substring-sanitization] -- rendered UI text in a test assertion, not a URL trust check
+          byokDestination.test(line),
       ),
     ).toBe(true);
     // Never pooled onto one line under the other model's destination.
     expect(
       detail.some(
         (line) =>
-          line.includes("openai/gpt-5.4-mini") &&
-          line.includes("byok.example.com"), // lgtm[js/incomplete-url-substring-sanitization] -- rendered UI text in a test assertion, not a URL trust check
+          line.includes("openai/gpt-5.4-mini") && byokDestination.test(line),
       ),
     ).toBe(false);
     expect(
