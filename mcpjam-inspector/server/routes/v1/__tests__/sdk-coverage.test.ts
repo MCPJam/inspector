@@ -303,6 +303,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "delete /projects/{projectId}/environments/{environmentId}/scenario":
     "unpublishScenario",
 
+  // MCP App widget render
+  "post /projects/{projectId}/servers/{serverId}/widgets/render":
+    "renderServerWidget",
+
+  // Agent Playground
+  "post /chat-sessions/messages": "sendChatMessage",
+  "get /chat-sessions/{sessionId}": "getChatSession",
+  "get /chat-sessions/{sessionId}/trace": "getChatSessionTrace",
+
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",

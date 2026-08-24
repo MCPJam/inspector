@@ -7,6 +7,7 @@ import {
   readCrossInstanceRpcLogs,
 } from "../../utils/harness/harness-rpc-log-sink.js";
 import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
+import { consumeCrossInstanceHarnessPolicyBlockMessage } from "../../utils/harness/harness-policy-block-channel.js";
 import { nextRpcLogEventId } from "../../services/rpc-log-event-id.js";
 import type {
   HostedHttpLogEvent,
@@ -364,6 +365,11 @@ export function startCrossInstanceRpcLogPoll(
         if (seen.has(e.id)) continue;
         seen.add(e.id);
         if (consumeCrossInstanceHarnessScopeStepUpMessage(e.message)) {
+          continue;
+        }
+        // Same contract for the policy-block control frame: delivered as data,
+        // never rendered as a JSON-RPC frame in the Logs panel.
+        if (consumeCrossInstanceHarnessPolicyBlockMessage(e.message)) {
           continue;
         }
         collector.rpcLogger({

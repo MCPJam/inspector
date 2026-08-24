@@ -486,6 +486,7 @@ export type EvalSuiteRunSummary = {
   passed: number;
   failed: number;
   passRate: number;
+  policyBlockedIterations?: number;
 };
 
 export type EvalSuiteRun = {
