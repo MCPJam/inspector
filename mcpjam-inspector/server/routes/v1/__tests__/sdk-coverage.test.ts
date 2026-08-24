@@ -303,6 +303,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "delete /projects/{projectId}/environments/{environmentId}/scenario":
     "unpublishScenario",
 
+  // Agent Playground
+  "post /chat-sessions/messages": "sendChatMessage",
+  "get /chat-sessions/{sessionId}": "getChatSession",
+  "get /chat-sessions/{sessionId}/trace": "getChatSessionTrace",
+
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",

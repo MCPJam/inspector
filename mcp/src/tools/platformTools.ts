@@ -55,6 +55,9 @@ import {
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -249,6 +252,18 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getScenarioOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  // Agent Playground: drive a conversation against a project's MCP servers
+  // and read the telemetry it produced. `send_chat_message` SPENDS, and is
+  // advertised anyway — this is the one surface where a model debugging its
+  // own server can close the loop (send, read the trace, fix, resend), and an
+  // MCP client already gates a non-read tool through its own approval.
+  //
+  // The two reads are here while `list_chat_sessions`/`search_sessions`
+  // remain deliberately narrow elsewhere, because taking an id the caller
+  // produced is not the same claim as enumerating an org's conversations.
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //

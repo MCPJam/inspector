@@ -2035,6 +2035,15 @@ describe("operation catalog consistency", () => {
     use_sandbox_image: { image: "i" },
     reset_computer: {},
     search_sessions: { query: "q" },
+    send_chat_message: {
+      idempotencyKey: "k",
+      message: "hi",
+      project: "p",
+      modelId: "anthropic/claude-sonnet-5",
+      serverIds: ["srv"],
+    },
+    get_chat_session: { sessionId: "cs_1" },
+    get_chat_session_trace: { sessionId: "cs_1" },
     delete_sandbox_image: { image: "i" },
     search_registry_directory: {},
     get_registry_directory_server: { catalogServerId: "cs" },
@@ -2205,6 +2214,10 @@ describe("operation catalog consistency", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      // One agent Playground turn. A write because it appends to a durable
+      // transcript, and `risk: "spend"` because it runs a model — the two
+      // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
+      "send_chat_message",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -2220,6 +2233,11 @@ describe("operation catalog consistency", () => {
     const destructive = new Set([
       "call_server_tool",
       "archive_project_environment",
+      // Under `toolMode: "auto"` this executes arbitrary third-party tools,
+      // which is `call_server_tool`'s unknowability with a model choosing the
+      // arguments. Softening the destructive default would claim a safety the
+      // host cannot verify, since `readOnlyHint` is server-asserted.
+      "send_chat_message",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(

@@ -237,6 +237,139 @@ export interface PlatformChatSession {
 }
 
 /**
+ * Tool-effects policy for an agent Playground turn.
+ *
+ * `read_only` advertises only tools the server annotated
+ * `annotations.readOnlyHint === true`; `auto` advertises everything the target
+ * exposes and may therefore cause real external side effects through arbitrary
+ * third-party tools. The hint is SERVER-ASSERTED, so `read_only` is a policy
+ * the host applies, not a guarantee it can verify.
+ */
+export type PlatformToolMode = "read_only" | "auto";
+
+/**
+ * One tool call as the agent Playground reports it.
+ *
+ * `input`/`output` are the RAW wire values — scrubbed of protocol annotations
+ * (`_meta`, `$`-prefixed keys) and bounded, with `truncated` set whenever the
+ * caller is seeing less than the whole payload. That bounding is announced
+ * rather than silent because a shortened tool result an agent believes is
+ * complete sends it debugging the wrong thing.
+ */
+export interface PlatformTurnToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  status: "ok" | "error";
+  output?: unknown;
+  errorMessage?: string;
+  truncated?: true;
+}
+
+/** One turn's execution trace, in the same span shape eval iterations use. */
+export interface PlatformTurnTrace {
+  turnId: string;
+  spanCount: number;
+  spans: unknown[];
+}
+
+/** Token usage for one turn. */
+export interface PlatformTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+/**
+ * The result of one agent Playground turn.
+ *
+ * `sessionId` is the ONE public id — pass it back to continue the
+ * conversation, and to `getChatSession` / `getChatSessionTrace` to read what
+ * happened. It is `null` only when the turn ran but its transcript did not
+ * persist, which `persisted.outcome` reports: a caller must not treat that as
+ * "nothing happened", because the turn already spent.
+ */
+export interface PlatformChatTurn {
+  sessionId: string | null;
+  turnId: string;
+  reply?: string;
+  finishReason?: string | null;
+  toolCalls?: PlatformTurnToolCall[];
+  trace?: PlatformTurnTrace;
+  usage?: PlatformTurnUsage;
+  model?: { id: string; provider: string };
+  toolMode?: PlatformToolMode;
+  advertisedToolCount?: number;
+  excludedToolCount?: number;
+  persisted: { outcome: string; version?: number };
+  origin: string;
+  /** Set when an idempotencyKey replayed an already-completed turn. */
+  replay?: true;
+  message?: string;
+}
+
+/** One message from a session transcript, at its ABSOLUTE transcript index. */
+export interface PlatformChatMessage {
+  /**
+   * Position in the STORED transcript, not in the returned page. Trace spans
+   * reference messages positionally, so renumbering per page would break the
+   * one join the detail read exists to enable.
+   */
+  index: number;
+  role: string;
+  content: unknown;
+  truncated?: true;
+}
+
+/** Session metadata plus a bounded window of raw messages. */
+export interface PlatformChatSessionDetail {
+  sessionId: string;
+  projectId: string | null;
+  origin: string | null;
+  modelId: string | null;
+  version: number | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
+  toolMode: PlatformToolMode | null;
+  environmentId: string | null;
+  /** `null` — never 0 — when the transcript could not be read. */
+  messageCount: number | null;
+  transcriptUnavailable?: true;
+  messages: PlatformChatMessage[];
+  nextMessageIndex?: number;
+}
+
+/** One turn's entry in a trace read. */
+export interface PlatformChatSessionTraceTurn {
+  turnId: string;
+  promptIndex: number;
+  startedAt: number;
+  endedAt: number;
+  finishReason?: string;
+  modelId?: string;
+  usage?: PlatformTurnUsage;
+  spanCount: number;
+  spans?: unknown[];
+  /**
+   * The spans could not be read. DISTINCT from an empty `spans` array, which
+   * means the turn genuinely made no recorded calls — the two lead to opposite
+   * conclusions about a turn.
+   */
+  spansUnavailable?: true;
+  /** Fewer spans came back than the turn recorded. */
+  spansTruncated?: true;
+}
+
+export interface PlatformChatSessionTrace {
+  sessionId: string;
+  origin: string | null;
+  traceVersion: number;
+  turnCount: number;
+  turns: PlatformChatSessionTraceTurn[];
+  latestPromptIndex?: number;
+}
+
+/**
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */

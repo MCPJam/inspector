@@ -10350,6 +10350,264 @@
           }
         }
       }
+    },
+    "/chat-sessions/messages": {
+      "post": {
+        "operationId": "sendChatMessage",
+        "tags": [
+          "Chat sessions"
+        ],
+        "summary": "Send one agent Playground message",
+        "description": "Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.\n\n**Spends model credits per call.** `idempotencyKey` is required and must be STABLE for the triggering intent — a fresh key per HTTP attempt deduplicates nothing, so a timeout-and-retry would run and bill the turn twice. With a stable key, a retry replays the completed turn.\n\nOmit `sessionId` to start a session; pass the one this returns to continue it. Configuration (`modelId`, target, `systemPrompt`, `toolMode`) pins on the FIRST turn — a continuation that resends any of it is refused with `details.reason: \"CONFIG_ON_CONTINUATION\"`.\n\nOnly sessions created through this endpoint may be continued through it (`CONTINUATION_NOT_ALLOWED`): appending to a human's live Playground session would interleave two writers on one transcript.\n\n`toolMode` defaults to `read_only`, which advertises only tools the server annotated `readOnlyHint: true`. That hint is server-asserted, so `read_only` is a policy this host applies, not a guarantee it can verify. `auto` advertises everything and **may cause real external side effects** through arbitrary third-party tools.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendChatMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The turn ran. `persisted.outcome` reports whether the transcript landed — a turn that ran but failed to persist still spent, so this is a 200 with an honest `persisted` block rather than an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTurn"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "`details.reason` is one of `TURN_IN_PROGRESS` (another turn holds this session's lease; retry after `details.retryAfterMs`), `CONTINUATION_NOT_ALLOWED`, or `SESSION_VERSION_CONFLICT`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/FeatureNotSupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/chat-sessions/{sessionId}": {
+      "get": {
+        "operationId": "getChatSession",
+        "tags": [
+          "Chat sessions"
+        ],
+        "summary": "Read a chat session's messages",
+        "description": "Session metadata plus a bounded window of its raw messages.\n\n`index` on each message is its ABSOLUTE position in the stored transcript, not its position in the returned page: trace spans reference messages positionally, so this read and `/trace` join on that number.\n\nA transcript that could not be read reports `transcriptUnavailable: true` and a **null** `messageCount` — never 0, which would claim the conversation is empty.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "The chat session's id — the same id `POST /chat-sessions/messages` returns and `GET /chat-sessions` lists.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "Optional project scope. When set, a session in another project answers 404 — the same answer as absence, so this is never an existence oracle.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "afterMessageIndex",
+            "in": "query",
+            "required": false,
+            "description": "Start the window at this absolute transcript index.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Messages to return, 1–200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session and one window of its messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/chat-sessions/{sessionId}/trace": {
+      "get": {
+        "operationId": "getChatSessionTrace",
+        "tags": [
+          "Chat sessions"
+        ],
+        "summary": "Read a chat session's execution trace",
+        "description": "Per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Same span shape as the eval iteration trace.\n\n**Incremental by default** — returns the LATEST turn, not the whole session, because a session's spans are the largest thing this API emits and the turn you just took is the one you are debugging. Reach older turns with `turnId` or `afterPromptIndex`; use `includeSpans=false` for cheap per-turn summaries.\n\nA turn whose spans could not be read reports `spansUnavailable: true` rather than an empty `spans` array: \"made no calls\" and \"could not fetch\" are opposite conclusions.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "The chat session's id — the same id `POST /chat-sessions/messages` returns and `GET /chat-sessions` lists.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "Optional project scope. When set, a session in another project answers 404 — the same answer as absence, so this is never an existence oracle.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "turnId",
+            "in": "query",
+            "required": false,
+            "description": "Return exactly this turn. Mutually exclusive with `afterPromptIndex`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "afterPromptIndex",
+            "in": "query",
+            "required": false,
+            "description": "Page forward from this turn index. Mutually exclusive with `turnId`.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Turns to return, 1–20. Defaults to 1 (the latest).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 1
+            }
+          },
+          {
+            "name": "includeSpans",
+            "in": "query",
+            "required": false,
+            "description": "Set `false` for per-turn summaries without span payloads.",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The selected turns, ascending by promptIndex.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -21848,6 +22106,465 @@
               "created",
               "reconnected"
             ]
+          }
+        }
+      },
+      "SendChatMessageRequest": {
+        "type": "object",
+        "required": [
+          "idempotencyKey",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "STABLE identity for this turn's intent — reuse it when retrying. A fresh key per attempt deduplicates nothing and will bill the turn twice. Printable ASCII only."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000,
+            "description": "The message to send, as the user."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Required to START a session; ignored when continuing one."
+          },
+          "sessionId": {
+            "type": "string",
+            "description": "Continue this session. Omit to start a new one."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+          },
+          "environmentId": {
+            "type": "string",
+            "description": "Target this environment's servers. Mutually exclusive with `serverIds`. First turn only."
+          },
+          "serverIds": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            },
+            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+          },
+          "systemPrompt": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "First turn only."
+          },
+          "temperature": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2,
+            "description": "First turn only — pinned to the session and reused on every continuation."
+          },
+          "maxSteps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "toolMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "auto"
+            ],
+            "default": "read_only",
+            "description": "`read_only` advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and MAY CAUSE REAL EXTERNAL SIDE EFFECTS. First turn only."
+          },
+          "allowedServerIds": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            },
+            "description": "Narrow THIS TURN to a subset of the target's servers. An empty array narrows to none and is rejected — omit the field to use the whole target. Per-turn, not pinned."
+          },
+          "allowedTools": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            },
+            "description": "Advertise only these tool names, for THIS TURN. An empty array advertises no tools at all — the same request as `maxToolCalls: 0`. Per-turn, not pinned."
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16,
+            "description": "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). `0` advertises no tools at all."
+          }
+        }
+      },
+      "ChatTurnToolCall": {
+        "type": "object",
+        "required": [
+          "toolCallId",
+          "toolName",
+          "input",
+          "status"
+        ],
+        "properties": {
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "input": {
+            "description": "The raw arguments sent, scrubbed of protocol annotations (`_meta`, `$`-prefixed keys) and bounded."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error"
+            ]
+          },
+          "output": {
+            "description": "The raw result, scrubbed and bounded. Absent when no result was recorded."
+          },
+          "errorMessage": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The payload was clipped. Always announced — a silently shortened result an agent believes is complete sends it debugging the wrong thing."
+          }
+        }
+      },
+      "TurnUsage": {
+        "type": "object",
+        "properties": {
+          "inputTokens": {
+            "type": "integer"
+          },
+          "outputTokens": {
+            "type": "integer"
+          },
+          "totalTokens": {
+            "type": "integer"
+          }
+        }
+      },
+      "ChatTurn": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "turnId",
+          "persisted",
+          "origin"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The one public session id. Pass it back to continue, and to the trace/detail reads. NULL only when the turn ran but its transcript did not persist — which `persisted.outcome` reports, and which must not be read as \"nothing happened\": the turn already spent."
+          },
+          "turnId": {
+            "type": "string",
+            "description": "Minted by the turn lease and used by the ingest dedupe, so it names the same turn in both."
+          },
+          "reply": {
+            "type": "string"
+          },
+          "finishReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatTurnToolCall"
+            }
+          },
+          "trace": {
+            "type": "object",
+            "description": "This turn's spans, inline.",
+            "properties": {
+              "turnId": {
+                "type": "string"
+              },
+              "spanCount": {
+                "type": "integer"
+              },
+              "spans": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TurnUsage"
+          },
+          "model": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              }
+            }
+          },
+          "toolMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "auto"
+            ]
+          },
+          "advertisedToolCount": {
+            "type": "integer",
+            "description": "Tools the model could see this turn."
+          },
+          "excludedToolCount": {
+            "type": "integer",
+            "description": "Tools the tool policy withheld."
+          },
+          "persisted": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            }
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "api"
+            ]
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "Set when this idempotencyKey replayed an already-completed turn. Nothing was spent."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": [
+          "index",
+          "role",
+          "content"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "ABSOLUTE position in the stored transcript — the number trace spans reference. Never renumbered per page."
+          },
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "description": "Scrubbed and bounded message content."
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ChatSessionDetail": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "projectId",
+          "origin",
+          "modelId",
+          "version",
+          "startedAt",
+          "lastActivityAt",
+          "toolMode",
+          "environmentId",
+          "messageCount",
+          "messages"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastActivityAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "toolMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "read_only",
+              "auto",
+              null
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messageCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "NULL — never 0 — when the transcript could not be read. Zero would claim the conversation is empty."
+          },
+          "transcriptUnavailable": {
+            "type": "boolean"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "nextMessageIndex": {
+            "type": "integer"
+          }
+        }
+      },
+      "ChatSessionTraceTurn": {
+        "type": "object",
+        "required": [
+          "turnId",
+          "promptIndex",
+          "startedAt",
+          "endedAt",
+          "spanCount"
+        ],
+        "properties": {
+          "turnId": {
+            "type": "string"
+          },
+          "promptIndex": {
+            "type": "integer"
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "endedAt": {
+            "type": "integer"
+          },
+          "finishReason": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TurnUsage"
+          },
+          "spanCount": {
+            "type": "integer"
+          },
+          "spans": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Same span shape as the eval iteration trace."
+          },
+          "spansUnavailable": {
+            "type": "boolean",
+            "description": "The spans could not be read. DISTINCT from an empty `spans` array, which means the turn genuinely made no recorded calls."
+          },
+          "spansTruncated": {
+            "type": "boolean",
+            "description": "Fewer spans came back than the turn recorded."
+          }
+        }
+      },
+      "ChatSessionTrace": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "origin",
+          "traceVersion",
+          "turnCount",
+          "turns"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "traceVersion": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "turnCount": {
+            "type": "integer",
+            "description": "Turns the session has in total, so a caller can tell whether the window is the whole story."
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatSessionTraceTurn"
+            }
+          },
+          "latestPromptIndex": {
+            "type": "integer"
           }
         }
       }

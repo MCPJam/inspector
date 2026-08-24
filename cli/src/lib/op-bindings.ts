@@ -220,6 +220,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_scenario: { command: "cloud scenarios get" },
   list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
+  send_chat_message: { command: "cloud sessions send" },
+  get_chat_session: { command: "cloud sessions show" },
+  get_chat_session_trace: { command: "cloud sessions trace" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "cloud tunnel" },
