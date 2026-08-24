@@ -11078,6 +11078,18 @@
             "minimum": 1,
             "maximum": 10
           },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Per-case pass threshold fraction under verdict policy 2."
+          },
           "isNegative": {
             "type": "boolean"
           },
@@ -11466,6 +11478,18 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 10
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+          },
+          "passThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Per-case pass threshold fraction under verdict policy 2."
           },
           "isNegative": {
             "type": "boolean"
@@ -12410,6 +12434,50 @@
                 "type": "number"
               }
             }
+          },
+          "verdictPolicyVersion": {
+            "const": 2,
+            "description": "Verdict policy version used by the suite file. Must be supplied with verdictPolicyDefaults."
+          },
+          "verdictPolicyDefaults": {
+            "type": "object",
+            "required": [
+              "repetitions",
+              "passThreshold"
+            ],
+            "properties": {
+              "repetitions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "passThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "validity": {
+                "type": "object",
+                "properties": {
+                  "minEligibleTrials": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minCompletionRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maxEvaluatorErrorRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
           },
           "minIterations": {
             "type": "integer",

@@ -127,12 +127,12 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
-    // A non-scored judge still declares its scorer, so long as the verdict
-    // carries the threshold that defines it. Without a threshold there is no
-    // definition to resolve against and inventing one would put a fabricated
-    // gate in the snapshot, so that verdict contributes nothing (as before).
+    // Any judge verdict still declares its scorer, so long as the verdict
+    // carries the threshold that defines it. This includes unknown statuses:
+    // they must project as an error row rather than disappearing. Without a
+    // threshold there is no definition to resolve against and inventing one
+    // would put a fabricated scorer in the snapshot.
     ...(judge &&
-    (judgeIsScored(judge) || judgeAbsenceStatus(judge) !== undefined) &&
     isFiniteNumber(judge.threshold)
       ? {
           judge: {
@@ -223,8 +223,15 @@ export function buildHostedScoreRows(
       // `score` is handed over UNCHANGED, including an OUT-OF-RANGE one: the
       // finalizer turns 1.4 into `status: "error"`, and clamping it here would
       // launder a broken judge into a passing row.
-    } else if (typeof judge.score === "number") {
+    } else if (judgeIsScored(judge) && typeof judge.score === "number") {
       rows.push(fromGoalCompletionCase(judgeDefinition, { score: judge.score }));
+    } else if (!judgeIsScored(judge)) {
+      rows.push(
+        errorScoreResult(
+          judgeDefinition,
+          `judge reported unknown status ${JSON.stringify(judge.status)}`,
+        ),
+      );
     } else {
       // A verdict claiming `scored` with no number is malformed, not
       // out-of-range. Projecting the number would fabricate it; dropping the row

@@ -543,6 +543,22 @@ const syncFileOwnedSuiteSchema = z
         temperature: z.number().optional(),
       })
       .optional(),
+    verdictPolicyVersion: z.literal(2).optional(),
+    verdictPolicyDefaults: z
+      .object({
+        repetitions: z.number().int().min(1).max(100),
+        passThreshold: z.number().min(0).max(1),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(0).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     minIterations: z.number().int().min(1).max(10).optional(),
     defaultPassCriteria: z
       .object({
@@ -550,7 +566,19 @@ const syncFileOwnedSuiteSchema = z
       })
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((body, ctx) => {
+    const hasVersion = body.verdictPolicyVersion !== undefined;
+    const hasDefaults = body.verdictPolicyDefaults !== undefined;
+    if (hasVersion !== hasDefaults) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hasVersion ? "verdictPolicyDefaults" : "verdictPolicyVersion"],
+        message:
+          "verdictPolicyVersion and verdictPolicyDefaults must be supplied together.",
+      });
+    }
+  });
 
 /**
  * Expand the ergonomic authoring tests into the full
@@ -1823,6 +1851,8 @@ const publicCaseBodyShape = {
   steps: stepsSchema.min(1).optional(),
   expectedOutput: z.string().optional(),
   iterations: z.number().int().min(1).max(10).optional(),
+  repetitions: z.number().int().min(1).max(100).optional(),
+  passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
   scenario: z.string().optional(),
   models: z
@@ -2081,6 +2111,8 @@ function buildCaseMutationArgs(
   if ("id" in body && body.id !== undefined) args.caseId = body.id;
   if (body.title !== undefined) args.title = body.title;
   if (body.iterations !== undefined) args.runs = body.iterations;
+  if (body.repetitions !== undefined) args.repetitions = body.repetitions;
+  if (body.passThreshold !== undefined) args.passThreshold = body.passThreshold;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
   if (body.scenario !== undefined) args.scenario = body.scenario;
   if (body.expectedOutput !== undefined)
@@ -3363,6 +3395,12 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
         ...(body.provenance ? { provenance: body.provenance } : {}),
         ...(body.environment ? { environment: body.environment } : {}),
         ...(body.defaultConfig ? { defaultConfig: body.defaultConfig } : {}),
+        ...(body.verdictPolicyVersion !== undefined
+          ? { verdictPolicyVersion: body.verdictPolicyVersion }
+          : {}),
+        ...(body.verdictPolicyDefaults
+          ? { verdictPolicyDefaults: body.verdictPolicyDefaults }
+          : {}),
         ...(body.minIterations !== undefined
           ? { minIterations: body.minIterations }
           : {}),

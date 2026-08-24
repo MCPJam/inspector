@@ -53,6 +53,7 @@ import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
+import { isTerminalIterationStatus } from "./run-status.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -591,24 +592,6 @@ export function buildIterationFinishParams(args: {
   };
 }
 
-/**
- * Lifecycle status for a LEGACY caller that supplied none.
- *
- * Named, isolated, and deliberately blind to `passed`: the verdict describes
- * the server under test and the status describes the harness, so deriving one
- * from the other reports a failed answer as a broken run. Execution error
- * presence is the only signal available at this boundary — the same rule the
- * backend's old-SDK adapter uses — and every in-repo caller now passes an
- * explicit status instead.
- */
-export function legacyIterationStatusFromExecutionError(
-  error: string | undefined
-): IterationStatus {
-  return error === undefined || error.trim().length === 0
-    ? "completed"
-    : "failed";
-}
-
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
@@ -646,7 +629,8 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
-  status?: IterationStatus;
+  /** Explicit harness lifecycle status; never infer it from the verdict. */
+  status: IterationStatus;
   startedAt?: number;
   error?: string;
   errorDetails?: string;
@@ -722,16 +706,13 @@ export async function finalizeEvalIteration(
   // Check if the iteration is already in a terminal stop state before trying
   // to update. A timed-out iteration whose original LLM/browser work ignores
   // the abort and completes late must NOT overwrite the `timed_out` row with a
-  // completed/failed result — both `cancelled` and `timed_out` are terminal.
+  // completed/failed result — every terminal lifecycle status is protected.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (
-      iteration?.status === "cancelled" ||
-      iteration?.status === "timed_out"
-    ) {
+    if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
@@ -743,8 +724,7 @@ export async function finalizeEvalIteration(
     // If we can't check status, continue anyway.
   }
 
-  const iterationStatus =
-    status ?? legacyIterationStatusFromExecutionError(error);
+  const iterationStatus = status;
   // The TASK verdict, independent of the lifecycle above: `completed` +
   // `failed` is a run that worked and a case that did not.
   const result = passed ? "passed" : "failed";

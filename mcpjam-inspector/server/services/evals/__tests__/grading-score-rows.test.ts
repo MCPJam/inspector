@@ -362,6 +362,16 @@ describe("shadowVerdictFromScores", () => {
     expect(judgeRow?.status).toBe("error");
   });
 
+  test("an unknown judge status errors even when it carries a numeric score", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { score: 1, threshold: 0.8, status: "mystery" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+    expect(judgeRow?.value).toBeUndefined();
+  });
+
   // Without a threshold there is no definition, so nothing is fabricated.
   test("a thresholdless judge verdict contributes no scorer at all", () => {
     const { scores, evaluationConfig } = buildHostedScoreContract({

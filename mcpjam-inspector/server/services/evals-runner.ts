@@ -206,6 +206,10 @@ export type EvalTestCase = {
   title: string;
   query: string;
   runs: number;
+  /** V2 case override; absent means the suite default. */
+  repetitions?: number;
+  /** V2 case threshold fraction; absent means the suite default. */
+  passThreshold?: number;
   model: string;
   provider: string;
   expectedToolCalls: Array<{
@@ -1182,6 +1186,8 @@ async function createIterationDirectly(
       provider: string;
       model: string;
       runs?: number;
+      repetitions?: number;
+      passThreshold?: number;
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       expectedOutput?: string;
@@ -2987,6 +2993,8 @@ const runLocalIteration = async ({
     provider: test.provider,
     model: test.model,
     runs: test.runs,
+    repetitions: test.repetitions,
+    passThreshold: test.passThreshold,
     expectedToolCalls,
     isNegativeTest: test.isNegativeTest,
     expectedOutput,

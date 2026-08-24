@@ -138,7 +138,8 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
-    status?: IterationStatus;
+    /** Explicit harness lifecycle status; never infer it from the verdict. */
+    status: IterationStatus;
     startedAt?: number;
     error?: string;
     errorDetails?: string;
