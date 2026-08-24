@@ -50,6 +50,7 @@ import {
   type EvalSuiteFileTarget,
   type EvalSuiteFileToolPolicy,
 } from "./contract/suite-file.js";
+import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
 
 // ── the input cap ────────────────────────────────────────────────────────────
 
@@ -70,13 +71,29 @@ export const MAX_SUITE_FILE_BYTES = 1_048_576;
  * The validity defaults the contract documents and deliberately does not
  * materialize. Applied HERE, onto the resolved value, never onto the file.
  *
- * `minEligibleTrials` is absent on purpose: it has no default, and absent means
- * "no minimum" rather than "some number we picked".
+ * `minEligibleTrials` has no NUMBER here on purpose, because its default is not
+ * a number: omitting it selects the coverage RULE in
+ * {@link SUITE_FILE_DEFAULT_COVERAGE} — every configured trial attempted, and
+ * at least one gradeable trial. Picking a numeric stand-in (`1`, say) is the
+ * bug this shape exists to prevent: it would let a suite that graded a single
+ * trial out of thirty report a confident pass.
  */
 export const SUITE_FILE_VALIDITY_DEFAULTS = {
   minCompletionRate: 0.8,
   maxEvaluatorErrorRate: 0.1,
 } as const;
+
+/**
+ * The coverage rule an omitted `minEligibleTrials` resolves to.
+ *
+ * `minGradeableTrials: 1` carries the "at least one gradeable trial" half of
+ * the rule in the value rather than in prose, so a consumer reading the
+ * resolved suite does not have to know this comment exists.
+ */
+export const SUITE_FILE_DEFAULT_COVERAGE = {
+  kind: "allConfiguredTrialsAttempted",
+  minGradeableTrials: 1,
+} as const satisfies EvalValidityCoverage;
 
 /** The only implemented capture level, and therefore the resolved default. */
 export const SUITE_FILE_DEFAULT_CAPTURE_LEVEL = "full" as const;
@@ -157,8 +174,18 @@ export type ResolvedEvalSuiteFileCase = {
 
 /** Suite-level validity with the documented defaults applied. */
 export type ResolvedEvalSuiteFileValidity = {
-  /** Absent when the file declared none: no default, so no minimum. */
-  minEligibleTrials?: number;
+  /**
+   * The resolved coverage rule — ALWAYS present, and a union rather than an
+   * optional number.
+   *
+   * An optional `minEligibleTrials` here would leave every reader to invent the
+   * meaning of absence, and the meaning it invents is `?? 0` or `?? 1`: "no
+   * minimum". The contract says omission is a STRICTER rule, not a weaker one
+   * (all configured trials attempted, at least one gradeable), so the resolved
+   * value names which of the two rules is in force and no defaulting
+   * expression downstream gets to decide.
+   */
+  coverage: EvalValidityCoverage;
   minCompletionRate: number;
   maxEvaluatorErrorRate: number;
 };
@@ -451,9 +478,13 @@ export function resolveEvalSuiteFile(
         ? {}
         : { toolPolicy: defaults.toolPolicy }),
       validity: {
-        ...(defaults.validity.minEligibleTrials === undefined
-          ? {}
-          : { minEligibleTrials: defaults.validity.minEligibleTrials }),
+        coverage:
+          defaults.validity.minEligibleTrials === undefined
+            ? { ...SUITE_FILE_DEFAULT_COVERAGE }
+            : {
+                kind: "minEligibleTrials",
+                minEligibleTrials: defaults.validity.minEligibleTrials,
+              },
         minCompletionRate:
           defaults.validity.minCompletionRate ??
           SUITE_FILE_VALIDITY_DEFAULTS.minCompletionRate,
