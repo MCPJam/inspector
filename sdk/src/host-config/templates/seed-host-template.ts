@@ -900,6 +900,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "chatgpt", version: "0.0.1" },
           },
           mcpAppsOverrides: {
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
             // One directive, one answer: the declared wss endpoint connected
             // while an undeclared one took a real connect-src violation
             // (2026-08-19 probe). The fetch/xhr canary passed because it is in

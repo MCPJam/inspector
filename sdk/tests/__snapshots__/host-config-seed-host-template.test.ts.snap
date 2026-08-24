@@ -147,11 +147,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "openaiApps": true,
         },
         "mcpAppsOverrides": {
+          "cspBaseUriDomains": true,
           "cspConnectDomains": {
             "fetch": true,
             "websocket": true,
             "xhr": true,
           },
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -304,11 +306,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "openaiApps": true,
         },
         "mcpAppsOverrides": {
+          "cspBaseUriDomains": true,
           "cspConnectDomains": {
             "fetch": true,
             "websocket": true,
             "xhr": true,
           },
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,

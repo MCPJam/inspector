@@ -207,6 +207,8 @@ describe("seedHostTemplate", () => {
     // declared wss endpoint connected while an undeclared one took a real
     // violation, so the declared list is honored for fetch and XHR too.
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
     const effective = canonicalizeHostConfigV2(config);
