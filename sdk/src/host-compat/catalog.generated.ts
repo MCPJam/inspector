@@ -833,7 +833,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787097600000,
+      verifiedAt: 1787443200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1071,6 +1071,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               fetch: true,
               xhr: true,
               websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
             },
             resourcePrefersBorder: true,
             downloadFile: false,

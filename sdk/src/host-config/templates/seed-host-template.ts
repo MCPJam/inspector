@@ -909,9 +909,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               xhr: true,
               websocket: true,
             },
-            // cspResourceDomains stays unknown: the declared resource origin
-            // is in that same baseline, so the probe cannot tell honored from
-            // ignored. Re-probe with an origin the baseline misses first.
+            // The 2026-08-23 paired probe (captured 2026-08-24Z) declared
+            // fastly.jsdelivr.net, an
+            // origin outside the baseline above, and every declared resource
+            // subtype loaded in the treatment fixture.
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
           },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
           // OpenAI Apps SDK `window.openai` surface to widget HTML, so

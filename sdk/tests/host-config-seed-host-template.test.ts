@@ -213,11 +213,15 @@ describe("seedHostTemplate", () => {
     expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
-    // Unknown, not false — the probe's declared resource origin is also in
-    // ChatGPT's own baseline allowlist, so it separates nothing.
-    expect(
-      config.mcpProfile?.apps?.mcpAppsOverrides
-    ).not.toHaveProperty("cspResourceDomains");
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
       "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
       "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],

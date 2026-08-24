@@ -152,6 +152,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "websocket": true,
             "xhr": true,
           },
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
         },
         "sandbox": {
           "csp": {
@@ -301,6 +308,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "fetch": true,
             "websocket": true,
             "xhr": true,
+          },
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
           },
         },
         "sandbox": {

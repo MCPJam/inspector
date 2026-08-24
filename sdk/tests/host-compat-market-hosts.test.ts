@@ -5,6 +5,7 @@ import {
   evaluateMarketHosts,
   MCP_APPS_FULL,
   MCP_APPS_CLAUDE,
+  MCP_APPS_CHATGPT,
   type HostCompatToolsInput,
 } from "../src/host-compat/index";
 import {
@@ -66,6 +67,13 @@ describe("buildMarketHostProfiles", () => {
       toolInputPartial: true,
       toolCancelled: true,
       resourceTeardown: true,
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
       downloadFile: false,
     });
   });
@@ -150,6 +158,7 @@ describe("buildMarketHostProfiles", () => {
     expect(Object.isFrozen(MCP_APPS_FULL.availableDisplayModes)).toBe(true);
     expect(Object.isFrozen(MCP_APPS_CLAUDE.cspConnectDomains)).toBe(true);
     expect(Object.isFrozen(MCP_APPS_CLAUDE.cspResourceDomains)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_CHATGPT.cspResourceDomains)).toBe(true);
     expect(() => {
       (MCP_APPS_FULL as { message?: boolean }).message = false;
     }).toThrow();
