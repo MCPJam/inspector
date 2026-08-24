@@ -418,6 +418,28 @@ Apps commands share the same transport inference rules as the rest of the CLI:
 `--url` implies HTTP, `--command` implies stdio, and `--transport` is an
 optional explicit override.
 
+### `apps session snapshot`
+
+Read the mounted widget as an accessibility tree plus addressable controls. A read: it refreshes the session TTL but does not spend the widget's interaction budget.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--session <id>` | Yes | Session id from `apps session start` |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+### `apps session step`
+
+Drive one semantic step addressed by role, name, or test id rather than by pixel coordinate. Use `apps session snapshot` to find the targets.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--session <id>` | Yes | Session id from `apps session start` |
+| `--step <json>` | Yes | The step as a JSON object, e.g. `'{"kind":"click","target":{"role":{"role":"button","name":"Submit"}}}'` |
+| `--prior-tool-calls <json>` | No | The `widgetToolCalls` earlier steps returned, as a JSON array. Required for a `widgetToolCalled` assertion: the server drains its buffer after every step, so history is the caller's to carry. |
+| `--screenshot-out <path>` | No | Write the post-step screenshot to a file |
+| `--screenshot-base64` | No | Include the screenshot inline as base64 in the JSON output |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
 ### `apps conformance`
 
 MCP Apps server-side conformance checks. Uses shared connection flags plus:
