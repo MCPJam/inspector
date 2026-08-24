@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RunDisclosureHint,
   SuiteRunDisclosureHint,
+  describeRunDisclosureDetail,
   formatRunDisclosureSummary,
 } from "../run-disclosure-hint";
 import type { RunDisclosureState } from "@/hooks/use-run-disclosure";
@@ -140,6 +141,32 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       }),
     );
     expect(ingested).not.toBe(unresolved);
+  });
+
+  it("never claims 'no models' when models are unresolved but WILL run", () => {
+    // An empty `models` list with `modelsUnresolved` set is NOT the same
+    // claim as no models running — the plan resolved and will call models,
+    // they just are not derivable here. Silently reading the empty list as
+    // "no models" would hide that a launch calls models at all.
+    const state = stateOf({
+      disclosure: baseDisclosure({
+        execution: {
+          engine: "emulated",
+          sandbox: { engaged: false, because: "no sandbox" },
+          locus: { known: true, hosted: false },
+          models: [],
+          modelsUnresolved: {
+            reason: "models are chosen by the launching client",
+          },
+        },
+      }),
+    });
+    const summary = formatRunDisclosureSummary(state);
+    expect(summary).toMatch(/aren't resolved|not derivable|unresolved/i);
+    const detail = describeRunDisclosureDetail(state);
+    expect(
+      detail.some((line) => /not derivable/i.test(line)),
+    ).toBe(true);
   });
 });
 

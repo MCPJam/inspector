@@ -105,8 +105,14 @@ export function formatRunDisclosureSummary(
   const { disclosure } = state;
   if (disclosure.execution) {
     const modelCount = disclosure.execution.models.length;
-    return modelCount > 0
-      ? `Calls ${modelCount} model${modelCount === 1 ? "" : "s"} via ${disclosure.execution.engine}`
+    if (modelCount > 0) {
+      return `Calls ${modelCount} model${modelCount === 1 ? "" : "s"} via ${disclosure.execution.engine}`;
+    }
+    // An empty `models` list with `modelsUnresolved` set means models WILL
+    // run but are not derivable here — never the same claim as "no models",
+    // which would hide that the launch calls models at all.
+    return disclosure.execution.modelsUnresolved
+      ? `Runs via ${disclosure.execution.engine} — its models aren't resolved yet`
       : `Runs via ${disclosure.execution.engine}`;
   }
   if (disclosure.executionAbsence?.kind === "ingested-run") {
@@ -124,6 +130,11 @@ export function describeRunDisclosureDetail(
   if (state.status !== "ready" || !state.disclosure) return [];
   const { disclosure } = state;
   const lines: string[] = [];
+  if (disclosure.execution?.modelsUnresolved) {
+    lines.push(
+      `Models: not derivable — ${disclosure.execution.modelsUnresolved.reason}`,
+    );
+  }
   const firing = disclosure.analysis.filter(
     (touchpoint) => typeof touchpoint.fires === "string",
   );
