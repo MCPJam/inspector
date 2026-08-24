@@ -1005,6 +1005,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1045,6 +1049,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
             sandboxAttrs: [
               "allow-forms",
               "allow-popups",
@@ -1078,6 +1087,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               image: true,
               font: true,
               media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
             },
             resourcePrefersBorder: true,
             downloadFile: false,
