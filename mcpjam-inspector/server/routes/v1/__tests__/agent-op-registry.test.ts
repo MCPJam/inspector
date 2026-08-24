@@ -1607,6 +1607,17 @@ describe("tier derives from operation.risk", () => {
         "the project may talk to your servers. That is a human decision the " +
         "agent should not even propose.",
     },
+    render_server_widget: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded, but this is `call_server_tool` " +
+        "with a browser attached — and that op is gated, not excluded, " +
+        "because the argument preview turns the approval into a real " +
+        "decision. Excluding the render while gating the bare call would " +
+        "mean an agent may propose running a tool but not propose finding " +
+        "out whether its widget works, which is the weaker of the two " +
+        "capabilities.",
+    },
     start_conformance_run: {
       tier: "gated",
       reason:
@@ -1844,6 +1855,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
   "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
   "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
+  "- `render_server_widget` EXECUTES the tool and then mounts its widget in a browser. It is not a read: use it to find out whether an MCP App actually renders, what it logs, and what it was blocked from fetching — never to 'look at' a tool whose side effects you have not read.",
   "- Before planning anything that authors, launches or publishes, call `get_capabilities` for the project. Your tool list is identical for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the action needs an admin. The `can` block answers both. Finding out from a 403 means you have already told someone you were doing it.",
   "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
   "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
