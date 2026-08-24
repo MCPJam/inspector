@@ -1394,7 +1394,20 @@ export class PlatformApiClient {
    * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
    * `details.reason === "contract_unavailable"` against an inspector
    * deployment too old to compute this — never treat a missing disclosure as
-   * "nothing to disclose".
+   * "nothing to disclose". This is a GUARANTEE only when the deployment's
+   * missing-function error reaches the client unredacted (every non-production
+   * Convex environment, and a production one whose redaction the route can
+   * unambiguously identify as a missing function). Production Convex can
+   * redact that same failure to a generic "Server Error" indistinguishable
+   * from a genuine handler crash; the route disambiguates what it safely can
+   * (a caller who cannot see the suite at all still gets a 404, never this
+   * code), but an ambiguous redacted failure on a suite the caller CAN see
+   * surfaces as a 502 `SERVER_UNREACHABLE` instead — this route has no way to
+   * independently confirm "not deployed yet" over "deployed and broken" in
+   * that one case, and guessing `contract_unavailable` would risk hiding a
+   * real incident. A caller cannot rely on this code alone to detect an
+   * old deployment in production; a 502 does not imply the contract is
+   * available either.
    */
   getEvalRunDisclosure(
     params: {
