@@ -281,7 +281,7 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       detail.some(
         (line) =>
           line.includes("anthropic/claude-opus-5") &&
-          line.includes("byok.example.com"),
+          line.includes("byok.example.com"), // lgtm[js/incomplete-url-substring-sanitization] -- rendered UI text in a test assertion, not a URL trust check
       ),
     ).toBe(true);
     // Never pooled onto one line under the other model's destination.
@@ -289,7 +289,7 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       detail.some(
         (line) =>
           line.includes("openai/gpt-5.4-mini") &&
-          line.includes("byok.example.com"),
+          line.includes("byok.example.com"), // lgtm[js/incomplete-url-substring-sanitization] -- rendered UI text in a test assertion, not a URL trust check
       ),
     ).toBe(false);
     expect(

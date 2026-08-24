@@ -2027,6 +2027,13 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     );
     assert.equal(json.cases[0].error, "Authorization: [REDACTED]");
     assert.equal(jsonRaw.includes("top-secret"), false);
+    // A reporter's stdout output must stay ONE parseable document: the
+    // pre-run disclosure block prints from `onDisclosure` on this same
+    // stream, and if it isn't suppressed for a reporter run it prepends
+    // "Pre-run disclosure:" prose ahead of the JSON, breaking a CI caller
+    // that parses stdout as JSON.
+    assert.equal(jsonRun.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(jsonRun.stdout);
 
     const junitRun = await captureProcessOutput(() =>
       main(
@@ -2055,6 +2062,8 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     assert.match(junit, /failures="1"/);
     assert.match(junit, /<failure message="Authorization: \[REDACTED\]"/);
     assert.equal(junit.includes("top-secret"), false);
+    assert.equal(junitRun.stdout.includes("Pre-run disclosure:"), false);
+    assert.match(junitRun.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   } finally {
     await fixture.close();
   }

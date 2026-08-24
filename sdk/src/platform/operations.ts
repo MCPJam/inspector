@@ -176,7 +176,10 @@ function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
     // earlier best-effort lookup, or a caller-supplied pre-aborted signal.
     // `addEventListener("abort", ...)` alone would never fire for an event
     // that already happened, leaving the fetch to run for the full timeout.
-    controller.abort();
+    // Passing the reason through keeps a caller inspecting the derived
+    // signal's `.reason` from seeing a generic AbortError in place of
+    // whatever actually caused the caller's own cancellation.
+    controller.abort(callerSignal.reason);
     return {
       signal: controller.signal,
       dispose: () => {},
@@ -186,7 +189,7 @@ function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
     () => controller.abort(),
     DISCLOSURE_FETCH_TIMEOUT_MS,
   );
-  const onCallerAbort = () => controller.abort();
+  const onCallerAbort = () => controller.abort(callerSignal!.reason);
   callerSignal?.addEventListener("abort", onCallerAbort);
   return {
     signal: controller.signal,

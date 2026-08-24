@@ -421,10 +421,12 @@ function writeRunDisclosure(
     lines.push(`  Execution: ${execution.engine} · ${locus}`);
     if (execution.models.length > 0) {
       for (const model of execution.models) {
-        lines.push(
-          `  Model: ${model.modelId} — ${model.tenantEgress}` +
-            (model.byok?.baseUrlHost ? ` (${model.byok.baseUrlHost})` : "")
-        );
+        const destination = model.byok?.baseUrlHost
+          ? model.byok.baseUrlHost
+          : model.rail.managed
+            ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
+            : model.tenantEgress;
+        lines.push(`  Model: ${model.modelId} — ${destination}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(`  Models: not derivable — ${execution.modelsUnresolved.reason}`);
@@ -2332,9 +2334,18 @@ export function registerEvalCommands(program: Command): void {
           // pre-run for a human watching the terminal: reading it off the
           // finished receipt afterward would print it only after the run had
           // already been created and had possibly already sent content.
-          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
-            writeRunDisclosure(globalOptions.format, disclosure);
-          };
+          //
+          // SUPPRESSED when a reporter is configured: `--reporter` writes a
+          // single structured document (junit-xml/json-summary) to this same
+          // stdout stream later, and prepending human prose to it would make
+          // that document unparseable. `--format json` without a reporter is
+          // unaffected — `writeRunDisclosure` already no-ops there.
+          const onDisclosure =
+            reporter === undefined
+              ? (disclosure: PlatformEvalRunDisclosure) => {
+                  writeRunDisclosure(globalOptions.format, disclosure);
+                }
+              : undefined;
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(
