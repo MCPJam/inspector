@@ -369,6 +369,10 @@ async function persistProposal(opts: {
         ? await disclosureForProposal({
             operationName: operation.name,
             input,
+            // The project the CLICK will run in: the approval route re-clamps
+            // the stored input to the persisted project, so this — not
+            // `input.project` — is what the run actually uses.
+            projectId,
             client: opts.client,
           })
         : undefined;

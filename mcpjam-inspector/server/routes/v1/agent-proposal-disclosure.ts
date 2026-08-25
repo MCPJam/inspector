@@ -85,8 +85,22 @@ function strList(input: Record<string, unknown>, key: string): string[] {
 export function disclosureInputForProposal(
   operationName: string,
   input: Record<string, unknown>,
+  /**
+   * The project the click will run in — `persistProposal`'s own, which is what
+   * gets persisted on the proposal row.
+   *
+   * NOT `input.project`, deliberately. The approval route executes
+   * `{ ...claim.input, project: claim.projectId }` (`proposed-actions.ts`), so
+   * the stored input's own `project` is overwritten at click time and is not
+   * the authority on where the run lands. Both agree today — the gated tool
+   * clamps `project` before validating — but keying the disclosure off the
+   * value the click actually uses makes that structural rather than incidental,
+   * and removes a refusal branch that would silently drop the disclosure if a
+   * normalizer ever stopped carrying the key.
+   */
+  projectId: string,
 ): Record<string, unknown> | undefined {
-  const project = str(input, "project");
+  const project = projectId.trim();
   const suite = str(input, "suite");
   if (!project || !suite) return undefined;
 
@@ -266,6 +280,8 @@ export async function disclosureForProposal(opts: {
   operationName: string;
   /** The FROZEN input — what the click will execute. Never the raw input. */
   input: Record<string, unknown>;
+  /** The project the click will run in. See `disclosureInputForProposal`. */
+  projectId: string;
   client: PlatformApiClient;
 }): Promise<ProposedActionDisclosure | undefined> {
   try {
@@ -273,7 +289,11 @@ export async function disclosureForProposal(opts: {
     // property reads behind type guards and cannot throw today — but "cannot
     // fail a mint" is the property, and a property that depends on nobody
     // adding a throw to a helper later is not one.
-    const mapped = disclosureInputForProposal(opts.operationName, opts.input);
+    const mapped = disclosureInputForProposal(
+      opts.operationName,
+      opts.input,
+      opts.projectId,
+    );
     if (!mapped) return undefined;
     const disclosure = await getEvalRunDisclosureOperation.execute(
       mapped as Parameters<typeof getEvalRunDisclosureOperation.execute>[0],

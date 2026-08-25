@@ -114,13 +114,16 @@ describe("disclosureInputForProposal", () => {
 
   it("maps a frozen suite run onto the disclosure operation's own vocabulary", () => {
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        environments: ["env_1", "env_2"],
-        cases: ["c1"],
-        repetitions: 3,
-      })
+      disclosureInputForProposal(
+        suite,
+        {
+          suite: "s1",
+          environments: ["env_1", "env_2"],
+          cases: ["c1"],
+          repetitions: 3,
+        },
+        "p1"
+      )
     ).toEqual({
       project: "p1",
       suite: "s1",
@@ -133,12 +136,11 @@ describe("disclosureInputForProposal", () => {
     // The two selector vocabularies overlap but are not the same, and this is
     // the one place they differ by more than a name.
     expect(
-      disclosureInputForProposal(runEvalCaseOperation.name, {
-        project: "p1",
-        suite: "s1",
-        case: "case_7",
-        host: "host_1",
-      })
+      disclosureInputForProposal(
+        runEvalCaseOperation.name,
+        { suite: "s1", case: "case_7", host: "host_1" },
+        "p1"
+      )
     ).toEqual({
       project: "p1",
       suite: "s1",
@@ -149,11 +151,7 @@ describe("disclosureInputForProposal", () => {
 
   it("collapses a single frozen `hosts` entry onto the singular selector", () => {
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        hosts: ["host_1"],
-      })
+      disclosureInputForProposal(suite, { suite: "s1", hosts: ["host_1"] }, "p1")
     ).toEqual({ project: "p1", suite: "s1", host: "host_1" });
   });
 
@@ -162,11 +160,7 @@ describe("disclosureInputForProposal", () => {
     // single engine or model set, and stitching N round trips would be a
     // different contract than the audit stamp records.
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        hosts: ["host_1", "host_2"],
-      })
+      disclosureInputForProposal(suite, { suite: "s1", hosts: ["host_1", "host_2"] }, "p1")
     ).toBeUndefined();
   });
 
@@ -176,11 +170,7 @@ describe("disclosureInputForProposal", () => {
     // contradict. That is the exact "emulated, no sandbox moments before a
     // harness booted" failure G4c refused for the host axis.
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        compose: { models: ["anthropic/claude-x"] },
-      })
+      disclosureInputForProposal(suite, { suite: "s1", compose: { models: ["anthropic/claude-x"] } }, "p1")
     ).toBeUndefined();
   });
 
@@ -188,28 +178,38 @@ describe("disclosureInputForProposal", () => {
     // Still present means the freeze degraded, so the target set is whatever
     // is attached at CLICK time — unknown now, nothing honest to disclose.
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        allAttached: true,
-      })
+      disclosureInputForProposal(suite, { suite: "s1", allAttached: true }, "p1")
     ).toBeUndefined();
   });
 
   it("refuses an incoherent host+environment pair rather than letting the op throw", () => {
     expect(
-      disclosureInputForProposal(suite, {
-        project: "p1",
-        suite: "s1",
-        host: "host_1",
-        environment: "env_1",
-      })
+      disclosureInputForProposal(suite, { suite: "s1", host: "host_1", environment: "env_1" }, "p1")
     ).toBeUndefined();
   });
 
-  it("refuses without a project or a suite", () => {
-    expect(disclosureInputForProposal(suite, { suite: "s1" })).toBeUndefined();
-    expect(disclosureInputForProposal(suite, { project: "p1" })).toBeUndefined();
+  it("refuses without a suite, or without a project to run it in", () => {
+    // The project comes from the CALLER, not the input: the approval route
+    // re-clamps the stored input to the persisted project, so that is what the
+    // click actually uses. An input naming a different one cannot widen it.
+    expect(disclosureInputForProposal(suite, {}, "p1")).toBeUndefined();
+    expect(disclosureInputForProposal(suite, { suite: "s1" }, "")).toBeUndefined();
+    expect(
+      disclosureInputForProposal(suite, { suite: "s1" }, "   ")
+    ).toBeUndefined();
+  });
+
+  it("takes the project from the caller, never from the frozen input", () => {
+    // `input.project` is overwritten at click time
+    // (`proposed-actions.ts`: `{ ...claim.input, project: claim.projectId }`),
+    // so disclosing against it would describe a project the run will not use.
+    expect(
+      disclosureInputForProposal(suite, { project: "p_other", suite: "s1" }, "p1")
+    ).toEqual({ project: "p1", suite: "s1" });
+    // And a frozen input with no `project` at all still discloses.
+    expect(
+      disclosureInputForProposal(suite, { suite: "s1" }, "p1")
+    ).toEqual({ project: "p1", suite: "s1" });
   });
 });
 
@@ -373,7 +373,8 @@ describe("disclosureForProposal", () => {
   // contract — bound the fetch, swallow every failure, never call out for a
   // plan the mapping already refused.
   const client = {} as PlatformApiClient;
-  const FROZEN = { project: "p1", suite: "ts_1" };
+  const FROZEN = { suite: "ts_1" };
+  const PROJECT_ID = "p1";
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -395,6 +396,7 @@ describe("disclosureForProposal", () => {
     const summary = await disclosureForProposal({
       operationName: runEvalCaseOperation.name,
       input: { ...FROZEN, case: "case_7" },
+      projectId: PROJECT_ID,
       client,
     });
     expect(summary).toMatchObject({ digest: "deadbeef", engine: "emulated" });
@@ -422,6 +424,7 @@ describe("disclosureForProposal", () => {
       await disclosureForProposal({
         operationName: runEvalSuiteOperation.name,
         input: FROZEN,
+        projectId: PROJECT_ID,
         client,
       });
       expect(captured).toBeInstanceOf(AbortSignal);
@@ -443,6 +446,7 @@ describe("disclosureForProposal", () => {
       disclosureForProposal({
         operationName: runEvalSuiteOperation.name,
         input: FROZEN,
+        projectId: PROJECT_ID,
         client,
       })
     ).resolves.toBeUndefined();
@@ -458,6 +462,7 @@ describe("disclosureForProposal", () => {
       disclosureForProposal({
         operationName: runEvalSuiteOperation.name,
         input: FROZEN,
+        projectId: PROJECT_ID,
         client,
       })
     ).resolves.toBeUndefined();
@@ -473,6 +478,7 @@ describe("disclosureForProposal", () => {
       disclosureForProposal({
         operationName: runEvalSuiteOperation.name,
         input: FROZEN,
+        projectId: PROJECT_ID,
         client,
       })
     ).resolves.toBeUndefined();
@@ -489,6 +495,7 @@ describe("disclosureForProposal", () => {
       disclosureForProposal({
         operationName: runEvalSuiteOperation.name,
         input: FROZEN,
+        projectId: PROJECT_ID,
         client,
       })
     ).resolves.toBeUndefined();
@@ -508,6 +515,7 @@ describe("disclosureForProposal", () => {
         disclosureForProposal({
           operationName: runEvalSuiteOperation.name,
           input,
+          projectId: PROJECT_ID,
           client,
         })
       ).resolves.toBeUndefined();
@@ -517,21 +525,21 @@ describe("disclosureForProposal", () => {
 
   it("refuses empty and missing selectors without calling out", async () => {
     const spy = mockLookup(async () => baseDisclosure());
-    for (const input of [
-      {},
-      { project: "p1" },
-      { suite: "ts_1" },
-      // Whitespace-only is empty: a selector that trims to nothing cannot
-      // identify a plan, and sending it would just move the failure one hop.
-      { project: "   ", suite: "ts_1" },
-      { project: "p1", suite: "   " },
-      { project: null, suite: "ts_1" },
-      { project: "p1", suite: 42 },
-    ] as Array<Record<string, unknown>>) {
+    // Whitespace-only is empty: a selector that trims to nothing cannot
+    // identify a plan, and sending it would just move the failure one hop.
+    for (const [input, projectId] of [
+      [{}, PROJECT_ID],
+      [{ suite: "   " }, PROJECT_ID],
+      [{ suite: 42 }, PROJECT_ID],
+      [{ suite: null }, PROJECT_ID],
+      [{ suite: "ts_1" }, ""],
+      [{ suite: "ts_1" }, "   "],
+    ] as Array<[Record<string, unknown>, string]>) {
       await expect(
         disclosureForProposal({
           operationName: runEvalSuiteOperation.name,
           input,
+          projectId,
           client,
         })
       ).resolves.toBeUndefined();
