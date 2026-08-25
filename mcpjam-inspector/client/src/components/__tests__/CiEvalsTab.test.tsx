@@ -128,7 +128,7 @@ vi.mock("../evals/create-suite-navigation", () => ({
 }));
 
 vi.mock("../evals/EvalTabGate", () => ({
-  // Mirror the real gate's `header` slot: the Suites | Runs switcher and the
+  // Mirror the real gate's `header` slot: the Evaluate chrome and the
   // breadcrumb render there, above whichever gate state is active.
   EvalTabGate: ({
     header,
@@ -292,6 +292,10 @@ describe("CiEvalsTab first-run NUX", () => {
 
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
     expect(screen.getByTestId("sdk-eval-quickstart")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^runs$/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(
       screen.queryByText("Select a suite or commit")
     ).not.toBeInTheDocument();
@@ -309,6 +313,29 @@ describe("CiEvalsTab first-run NUX", () => {
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
+  });
+
+  it("renders Evaluate / suite-name in the header on suite detail", () => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-1" };
+    mocks.useEvalQueries.mockReturnValue(
+      makeQueries({
+        sortedSuites: [makeEntry()],
+        selectedSuite: makeSuite(),
+        selectedSuiteEntry: makeEntry(),
+      })
+    );
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^evaluate$/i })).toBeInTheDocument();
+    expect(screen.getByText("/")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Greeting suite", current: "page" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^runs$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
   });
 
   it("hides the first-run NUX once any suite has a run", () => {

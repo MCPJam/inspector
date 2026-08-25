@@ -36,6 +36,7 @@ import {
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   type CreateEvalSuiteInput,
+  type PlatformEvalRunDisclosure,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
@@ -46,6 +47,7 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
+  CliError,
   cliError,
   operationalError,
   setProcessExitCode,
@@ -57,11 +59,11 @@ import {
   buildEvalDecisionSummaryFromIterations,
   buildEvalRunReport,
   buildRunCompareReport,
-  calculateLatencyStats,
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
   formatSuiteFileFindings,
+  gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
   MAX_SUITE_FILE_BYTES,
@@ -76,6 +78,7 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -112,15 +115,27 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   TERMINAL_RUN_STATUSES,
   evalGateExitCode,
+  isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  assertRunIdBaseline,
+  baselineNotFoundReason,
+  comparePolicyFromGateOptions,
+  evaluateBaselineComparison,
+  mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
-import { fetchAllIterations } from "../lib/eval-iterations.js";
+import {
+  classifyLaunchErrorExitCode,
+  evalRunWaitExitCode,
+  worstOf,
+  type EvalRunWaitRunOutcome,
+} from "../lib/eval-run-exit-code.js";
+import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -130,11 +145,11 @@ import {
 import {
   parseReporterFormat,
   writeEvalDecisionSummary,
-  writeJsonArtifact,
   writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import { preflightCloudCredentials } from "../lib/cloud-context.js";
 import {
   addProjectOption,
   platformOptionsOf,
@@ -385,6 +400,126 @@ function writeRunGroupSummary(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
   }
+}
+
+/**
+ * Human-format block for the pre-run disclosure `run_eval_suite` fetched for
+ * this launch — the twin of `writeRunGroupSummary`, and printed BEFORE it: a
+ * `--format json` document already carries `disclosure` inside the single
+ * receipt, so appending prose to it would break the one-document rule the
+ * same way a second summary line would. This is the human-only rendering of
+ * exactly that field.
+ *
+ * `execution` vs `executionAbsence` render DIFFERENT copy on purpose — never
+ * collapse them. `'ingested-run'` means MCPJam did not execute this;
+ * `'plan-unresolved'` means a run that WILL execute and WILL call models this
+ * CLI simply cannot name yet. Printing the ingest wording for the second
+ * would tell someone about to launch that nothing leaves, which is the exact
+ * bug g4a fixed on the backend — reintroducing it here at the presentation
+ * layer would be the same bug in a different process.
+ */
+function writeRunDisclosure(
+  format: string,
+  disclosure: PlatformEvalRunDisclosure | undefined,
+  stream: NodeJS.WritableStream = process.stdout
+): void {
+  if (format !== "human" || !disclosure) return;
+  const lines: string[] = ["Pre-run disclosure:"];
+  if (disclosure.execution) {
+    const execution = disclosure.execution;
+    const locus =
+      execution.locus.known === true
+        ? execution.locus.hosted
+          ? "MCPJam-hosted"
+          : "your own machine"
+        : "unknown";
+    lines.push(`  Execution: ${execution.engine} · ${locus}`);
+    if (execution.models.length > 0) {
+      for (const model of execution.models) {
+        const destination = model.byok?.baseUrlHost
+          ? model.byok.baseUrlHost
+          : model.rail.managed
+            ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
+            : model.tenantEgress;
+        lines.push(`  Model: ${model.modelId} — ${destination}`);
+      }
+    } else if (execution.modelsUnresolved) {
+      lines.push(`  Models: not derivable — ${execution.modelsUnresolved.reason}`);
+    }
+    if (execution.sandbox.engaged) {
+      lines.push(`  Sandbox: engaged (${execution.sandbox.vendor ?? "?"})`);
+    }
+  } else if (disclosure.executionAbsence) {
+    const { kind, reason } = disclosure.executionAbsence;
+    lines.push(
+      kind === "ingested-run"
+        ? `  Execution: none — this run was ingested, MCPJam did not execute it (${reason})`
+        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
+    );
+  }
+  // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
+  // — it is what happens to content once it exists, not a fact about whether
+  // this run executed. This is the human's only pre-launch view (the
+  // standalone disclosure command is deliberately excluded), so a
+  // consequential setting like a non-DLP redaction module or a captureLevel
+  // of "full" must not be silently absent from the printed block.
+  lines.push(
+    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`
+  );
+  lines.push(
+    `  Redaction: ${disclosure.capture.redaction.kind}` +
+      (disclosure.capture.redaction.isDlp
+        ? ""
+        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
+  );
+  lines.push(
+    `  Export defaults: ${
+      disclosure.capture.exportDefaults.includeContent
+        ? "includes content"
+        : "excludes content"
+    } (${disclosure.capture.exportDefaults.note})`
+  );
+  const firingAnalysis = disclosure.analysis.filter(
+    (touchpoint) => typeof touchpoint.fires === "string"
+  );
+  if (firingAnalysis.length > 0) {
+    // One line PER touchpoint — different touchpoints can have different
+    // destinations, and pooling them under the first one's would misattribute
+    // where the others' evidence actually goes.
+    for (const touchpoint of firingAnalysis) {
+      // "fires automatically" vs "fires only if asked" are different consent
+      // stories — one sends evidence the moment the run completes, with no
+      // further action from anyone; the other only on request. A surface
+      // whose whole job is telling people what happens before they agree to
+      // it must not flatten that distinction just because both cases "fire".
+      const firesLabel =
+        touchpoint.fires === "auto-on-completion"
+          ? "fires automatically on completion"
+          : "fires only if explicitly requested";
+      lines.push(
+        `  Analysis: ${touchpoint.label} ${firesLabel}, may send evidence to ${touchpoint.destinations.join(", ")}`
+      );
+    }
+  } else {
+    lines.push("  Analysis: no analyzer/judge touchpoint can fire for this run");
+  }
+  lines.push(
+    disclosure.retention.effectiveToday === "kept-indefinitely"
+      ? "  Retention: kept indefinitely"
+      : `  Retention: swept after ${disclosure.retention.policyDays ?? "?"} day(s)`
+  );
+  lines.push(
+    disclosure.region.stated
+      ? `  Region: ${disclosure.region.value}`
+      : "  Region: not stated"
+  );
+  const engaged = disclosure.subprocessors.filter((entry) => entry.engaged);
+  if (engaged.length > 0) {
+    lines.push(
+      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
+    );
+  }
+  stream.write(`${lines.join("\n")}\n`);
 }
 
 /**
@@ -908,13 +1043,27 @@ function launchFailureCases(
   });
 }
 
-function gateReportCase(report: GateReport): StructuredCaseResult {
+function gateReportCase(
+  report: GateReport,
+  baselineProvenance?: Record<string, unknown>
+): StructuredCaseResult {
   const passed = report.outcome === "passed";
   return {
     id: "gate",
     title: "Eval gate",
     category: "gate",
     passed,
+    // Only a real FAILED gate is a confirmed regression. `incomplete` and
+    // `usage_error` still fail this row (nothing was established either
+    // way), but reporting them as `breaking` — the same class a genuine
+    // failure gets — would claim a defect the run never observed. Mirrors
+    // `gateCase` in sdk/src/run-compare.ts.
+    classification:
+      report.outcome === "failed"
+        ? "breaking"
+        : passed
+          ? "non_breaking"
+          : "informational",
     ...(passed
       ? {}
       : {
@@ -923,7 +1072,13 @@ function gateReportCase(report: GateReport): StructuredCaseResult {
             .map((verdict) => verdict.message)
             .join("; "),
         }),
-    details: report,
+    // The baseline provenance rides along on the case row too, not only in
+    // the report's top-level metadata: `--reporter junit-xml` has no other
+    // place to carry it, and a regression visible in the exit code but
+    // absent from the artifact is a reporting bug.
+    details: baselineProvenance
+      ? { ...report, baseline: baselineProvenance }
+      : report,
   };
 }
 
@@ -955,6 +1110,16 @@ async function runEvalGate(
     ...options,
     noGatingScoreErrors: options.gatingScoreErrors === false,
   });
+  // Parsed and validated BEFORE any network call, like `eval compare`'s own
+  // policy: a malformed baseline flag exits 2 without spending a request.
+  // The NORMALIZED value is what travels downstream — the raw one is never
+  // read again, so a whitespace-padded but otherwise valid `--baseline`
+  // cannot slip past validation and then fail to resolve on the wire.
+  const baseline =
+    options.baseline !== undefined
+      ? assertRunIdBaseline(options.baseline, options.run)
+      : undefined;
+  const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
       ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
@@ -970,6 +1135,7 @@ async function runEvalGate(
     iterations?: PlatformEvalIteration[];
     iterationsComplete?: boolean;
     iterationError?: string;
+    baselineProvenance?: Record<string, unknown>;
   };
   try {
     outcome = await runPlatformCommand(
@@ -1052,9 +1218,14 @@ async function runEvalGate(
           }
         }
 
-        if (isNonVerdictRunStatus(run.status)) {
+        if (
+          isNonVerdictRunStatus(run.status) ||
+          isNonVerdictRunResult(run.result)
+        ) {
           // Cancelled / timed out: the run has not told us the server
-          // regressed, it has told us nothing.
+          // regressed, it has told us nothing. Same for a policy-2
+          // `inconclusive` result, where the platform itself declined to
+          // decide and its summary counts are the evidence it rejected.
           return {
             report: {
               outcome: "incomplete" as const,
@@ -1063,7 +1234,9 @@ async function runEvalGate(
                 {
                   gate: "run",
                   status: "non_gateable" as const,
-                  message: `run is ${run.status}; no verdict was established`,
+                  message: isNonVerdictRunResult(run.result)
+                    ? "run is inconclusive; no verdict was established"
+                    : `run is ${run.status}; no verdict was established`,
                 },
               ],
             },
@@ -1085,9 +1258,17 @@ async function runEvalGate(
             }
           );
         }
-        if (iterationError) {
-          return {
-            report: {
+        // A failed LOCAL iteration fetch makes the run's own threshold report
+        // incomplete, but it says nothing about `/compare`: that endpoint
+        // returns its own summary independently, and (absent a latency gate)
+        // `evaluateBaselineComparison` never touches these iterations at all.
+        // So this is an incomplete THRESHOLD report, not an early return —
+        // `--baseline` still gets its chance below, and a real regression
+        // there must still merge to `failed` (exit 1) rather than being
+        // silently downgraded to `incomplete` (exit 3) by an unrelated fetch
+        // hiccup on the other half of the report.
+        const thresholdReport = iterationError
+          ? {
               outcome: "incomplete" as const,
               scoreIntegrity: "unknown" as const,
               verdicts: [
@@ -1097,23 +1278,53 @@ async function runEvalGate(
                   message: `could not read the run: ${iterationError}`,
                 },
               ],
-            },
+            }
+          : reportForRun(
+              run,
+              policyNeedsIterations(policy) ? iterations : undefined,
+              policy
+            );
+
+        // A failed fetch is never "complete", whether or not a report was
+        // requested — `!needsReport` is a default for the "nobody asked"
+        // case, not for "asked and it broke".
+        const iterationsComplete = iterationError
+          ? false
+          : iterations?.complete ?? !needsReport;
+
+        // Baseline regression gating only makes sense once the run being
+        // gated has a verdict of its own; every early return above already
+        // skipped this. `--baseline` is optional, so a threshold-only
+        // invocation never pays for a `/compare` fetch it did not ask for.
+        if (!baseline) {
+          return {
+            report: thresholdReport,
             run,
-            iterations: [],
-            iterationsComplete: false,
-            iterationError,
+            iterations: iterations?.items ?? [],
+            iterationsComplete,
+            ...(iterationError ? { iterationError } : {}),
           };
         }
 
+        const baselineResult = await evaluateBaselineComparison({
+          client,
+          signal,
+          projectId: project.id,
+          runId: options.run,
+          baseline,
+          policy: comparePolicy,
+          compareIterations: iterations,
+        });
+
         return {
-          report: reportForRun(
-            run,
-            policyNeedsIterations(policy) ? iterations : undefined,
-            policy
-          ),
+          report: mergeGateReports(thresholdReport, baselineResult.report),
           run,
           iterations: iterations?.items ?? [],
-          iterationsComplete: iterations?.complete ?? !needsReport,
+          iterationsComplete,
+          ...(iterationError ? { iterationError } : {}),
+          ...(baselineResult.provenance
+            ? { baselineProvenance: baselineResult.provenance }
+            : {}),
         };
       }
     );
@@ -1131,23 +1342,41 @@ async function runEvalGate(
     // 1: a CI job that fails a release on a flaked request, and calls it a
     // regression, teaches people to ignore the gate.
     const detail = error instanceof Error ? error.message : String(error);
-    writeResult(
-      {
-        gate: {
-          outcome: "incomplete",
-          scoreIntegrity: "unknown",
-          verdicts: [
-            {
-              gate: "fetch",
-              status: "non_gateable",
-              message: `could not read the run: ${detail}`,
-            },
-          ],
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: "fetch",
+          status: "non_gateable",
+          message: `could not read the run: ${detail}`,
         },
-        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
-      },
-      globalOptions.format
-    );
+      ],
+    };
+    // `--reporter`/`--out` still need to be honored on an infrastructure
+    // failure: a CI step expecting the reporter-selected artifact must not
+    // find raw JSON on stdout, or find `--out` never written at all.
+    const structured = needsReport
+      ? buildEvalRunReport([], {
+          cases: [gateReportCase(report)],
+          verdict: gateOutcomeVerdict(report.outcome),
+        })
+      : undefined;
+    if (options.out && structured) {
+      await writeReporterArtifact(
+        options.out,
+        reporter ?? "json-summary",
+        structured
+      );
+    }
+    if (reporter && structured) {
+      writeReporterResult(reporter, structured);
+    } else {
+      writeResult(
+        { gate: report, exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE },
+        globalOptions.format
+      );
+    }
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
   }
@@ -1168,8 +1397,12 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(outcome.report)],
+          cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(outcome.report.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
+          ...(outcome.baselineProvenance
+            ? { metadata: { baselineComparison: outcome.baselineProvenance } }
+            : {}),
         }
       )
     : undefined;
@@ -1617,36 +1850,6 @@ const EMPTY_DIFF = {
   percentDelta: null,
 };
 
-/** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
-function p95Of(
-  iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined
-): number | undefined {
-  if (!iterations?.complete) return undefined;
-  const durations = iterations.items
-    .map((iteration) => iteration.durationMs)
-    .filter((ms): ms is number => typeof ms === "number");
-  if (durations.length === 0 || durations.length !== iterations.items.length) {
-    // A single missing duration makes the p95 describe a different set than
-    // the run — absent beats approximate.
-    return undefined;
-  }
-  return calculateLatencyStats(durations).p95;
-}
-
-/**
- * The server says "no baseline" with a 404 carrying
- * `details.reason: "BASELINE_NOT_FOUND"`. Read the machine field, not the
- * prose.
- */
-function baselineNotFoundReason(error: unknown): boolean {
-  const details = (error as { details?: unknown })?.details;
-  return (
-    typeof details === "object" &&
-    details !== null &&
-    (details as { reason?: unknown }).reason === "BASELINE_NOT_FOUND"
-  );
-}
-
 async function writeCompareResult(
   args: {
     report: GateReport;
@@ -1657,7 +1860,10 @@ async function writeCompareResult(
   structured: StructuredRunReport | undefined
 ): Promise<void> {
   if (args.out && structured) {
-    await writeJsonArtifact(args.out, structured);
+    // `--out` and `--reporter` are two terminals for the same artifact: the
+    // file gets whichever format `--reporter` selected (json-summary by
+    // default), same as `eval run`/`eval gate`, not always raw JSON.
+    await writeReporterArtifact(args.out, args.reporter ?? "json-summary", structured);
   }
   if (args.reporter && structured) {
     writeReporterResult(args.reporter, structured);
@@ -2111,7 +2317,12 @@ export function registerEvalCommands(program: Command): void {
         "--all-targets",
         "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
       )
-      .option("--iterations <n>", "Run each case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run each case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -2144,7 +2355,7 @@ export function registerEvalCommands(program: Command): void {
         "Maximum time to wait for completion (default: 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Render the completed run report to stdout"
       )
       .option(
@@ -2195,6 +2406,7 @@ export function registerEvalCommands(program: Command): void {
         environment?: string[];
         host?: string[];
         allTargets?: boolean;
+        repetitions?: number;
         iterations?: number;
         case?: string[];
         excludeSkills?: boolean;
@@ -2217,6 +2429,14 @@ export function registerEvalCommands(program: Command): void {
         throw usageError("Provide --suite <id-or-name> or --file <path>.");
       }
       if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
+      if (
         (options.reporter !== undefined || options.out !== undefined) &&
         !options.wait
       ) {
@@ -2233,15 +2453,74 @@ export function registerEvalCommands(program: Command): void {
           : DEFAULT_RUN_WAIT_TIMEOUT_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
-      const result = await runPlatformCommand(
+      // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
+      // `runPlatformOperation` preflight (below) stays the chokepoint every
+      // other Cloud command relies on, including `eval gate`'s exit 3 =
+      // "incomplete". Calling the same check here first makes a missing
+      // credential unambiguous before the launch even starts; the internal
+      // preflight then passes identically.
+      if (options.wait) {
+        try {
+          preflightCloudCredentials(platformOptionsOf(command));
+        } catch (error) {
+          if (error instanceof CliError && error.exitCode === 2) throw error;
+          if (error instanceof CliError) {
+            throw new CliError(error.code, error.message, 3, error.details);
+          }
+          throw error;
+        }
+      }
+      let result: RunEvalSuiteResult;
+      try {
+        result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          // Fired the moment the operation resolves the disclosure for the
+          // FROZEN launch plan — before it creates the run. Printing here,
+          // synchronously from the callback, is what makes this actually
+          // pre-run for a human watching the terminal: reading it off the
+          // finished receipt afterward would print it only after the run had
+          // already been created and had possibly already sent content.
+          //
+          // REDIRECTED TO STDERR when a reporter is configured: `--reporter`
+          // writes a single structured document (junit-xml/json-summary) to
+          // stdout later, and prepending human prose there would make that
+          // document unparseable. But fully suppressing the block would
+          // leave a CI user — the population most likely to want a record of
+          // what a run discloses — with no route to it at all, despite the
+          // fetch happening either way. Printing to stderr keeps stdout a
+          // single parseable document while still surfacing the disclosure
+          // somewhere a human or a log aggregator can see it. `--format
+          // json` without a reporter is unaffected — `writeRunDisclosure`
+          // already no-ops there regardless of stream.
+          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
+            writeRunDisclosure(
+              globalOptions.format,
+              disclosure,
+              reporter === undefined ? process.stdout : process.stderr
+            );
+          };
+          // The failure counterpart: without this, a fetch that failed and a
+          // build with no disclosure feature at all look IDENTICAL to a
+          // human running this command — no output either way. Same
+          // reporter-stream rule as onDisclosure: stderr under a reporter,
+          // stdout otherwise, never gates or delays the launch.
+          const onDisclosureUnavailable = (reason: string) => {
+            if (globalOptions.format !== "human") return;
+            const stream = reporter === undefined ? process.stdout : process.stderr;
+            stream.write(`Pre-run disclosure unavailable: ${reason}\n`);
+          };
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(
-              { client: context.client, signal: context.signal },
+              {
+                client: context.client,
+                signal: context.signal,
+                onDisclosure,
+                onDisclosureUnavailable,
+              },
               {
                 source,
                 label: options.file === "-" ? "<stdin>" : options.file,
@@ -2253,8 +2532,8 @@ export function registerEvalCommands(program: Command): void {
                     : {}),
                   ...(options.host ? { host: options.host } : {}),
                   ...(options.allTargets ? { allTargets: true } : {}),
-                  ...(options.iterations !== undefined
-                    ? { iterations: options.iterations }
+                  ...(options.repetitions !== undefined || options.iterations !== undefined
+                    ? { repetitions: options.repetitions ?? options.iterations }
                     : {}),
                   ...(options.case?.length ? { case: options.case } : {}),
                   ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -2289,8 +2568,10 @@ export function registerEvalCommands(program: Command): void {
               ...selectorField("environment", "environments", options.environment),
               ...selectorField("host", "hosts", options.host),
               ...(options.allTargets ? { allAttached: true } : {}),
-              ...(options.iterations !== undefined
-                ? { iterations: options.iterations }
+              ...(options.repetitions !== undefined
+                ? { repetitions: options.repetitions }
+                : options.iterations !== undefined
+                  ? { iterations: options.iterations }
                 : {}),
               ...(options.case?.length ? { cases: options.case } : {}),
               ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -2307,14 +2588,39 @@ export function registerEvalCommands(program: Command): void {
                 : {}),
               ...composeField(options),
             },
-            { client: context.client, signal: context.signal }
+            {
+              client: context.client,
+              signal: context.signal,
+              onDisclosure,
+              onDisclosureUnavailable,
+            }
           );
         },
         { projectScope: resolved.projectScope }
-      );
+        );
+      } catch (error) {
+        // Launch-phase remap, --wait only: a thrown CliError whose exitCode
+        // is not already 2 (usage error / invalid suite file — untouched)
+        // gets reclassified by wire code. `toCliError` drops the HTTP
+        // status, so classification reads the code string, not the status.
+        // `details` rides along too: a billing failure the v1 API collapsed
+        // onto the wire code FORBIDDEN is only distinguishable from a real
+        // credential rejection by `details.code`.
+        if (options.wait && error instanceof CliError && error.exitCode !== 2) {
+          throw new CliError(
+            error.code,
+            error.message,
+            classifyLaunchErrorExitCode(error.code, error.details),
+            error.details
+          );
+        }
+        throw error;
+      }
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
-      // stream unparseable for the CI callers that read it.
+      // stream unparseable for the CI callers that read it. The human-mode
+      // block already printed from `onDisclosure`, ahead of the launch
+      // itself — nothing to print again here.
       if (!options.wait) {
         writeResult(result, globalOptions.format);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
@@ -2327,6 +2633,25 @@ export function registerEvalCommands(program: Command): void {
       }
 
       const needsReport = reporter !== undefined || options.out !== undefined;
+      // Re-checked explicitly, same as the launch-phase preflight above and
+      // for the same reason: `runPlatformOperation`'s own internal recheck
+      // is the ONE thing that can fail from this call's outer preamble
+      // (nothing inside the callback below escapes its own per-target
+      // catches), and a credential that died between the launch and here
+      // must read as 3 (auth), not whatever `toCliError` defaults to. The
+      // launch receipt is written first — it is the only record of run ids
+      // already paid for, and nothing else has reached stdout yet.
+      try {
+        preflightCloudCredentials(platformOptionsOf(command));
+      } catch (error) {
+        writeResult({ launch: result, runs: [] }, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        if (error instanceof CliError && error.exitCode === 2) throw error;
+        if (error instanceof CliError) {
+          throw new CliError(error.code, error.message, 3, error.details);
+        }
+        throw error;
+      }
       const completion = await runPlatformCommand(
         platformOptionsOf(command),
         Math.max(globalOptions.timeout, waitTimeoutMs),
@@ -2348,11 +2673,23 @@ export function registerEvalCommands(program: Command): void {
                     )
                   };
                 } catch (error) {
+                  // Capture the WIRE code before stringifying: `errorCode`,
+                  // never `code` — the telemetry redactor treats any key
+                  // normalizing to "code" as a possible OAuth authorization
+                  // code and keeps only SCREAMING_SNAKE values (see
+                  // launchFailureCases above). Only set for a real
+                  // PlatformApiError; a deadline timeout (a CliError from
+                  // waitForEvalRun) carries none, which is fine — the
+                  // classifier's "else" bucket already means "no valid
+                  // verdict observed".
                   return {
                     ok: false as const,
                     runId: target.runId,
                     error:
                       error instanceof Error ? error.message : String(error),
+                    ...(isPlatformApiError(error)
+                      ? { errorCode: error.code }
+                      : {}),
                   };
                 }
               })
@@ -2360,7 +2697,15 @@ export function registerEvalCommands(program: Command): void {
           const runs = waited.flatMap((entry) => (entry.ok ? [entry.run] : []));
           const waitErrors = waited.flatMap((entry) =>
             !entry.ok
-              ? [{ runId: entry.runId, error: entry.error }]
+              ? [
+                  {
+                    runId: entry.runId,
+                    error: entry.error,
+                    ...(entry.errorCode
+                      ? { errorCode: entry.errorCode }
+                      : {}),
+                  },
+                ]
               : []
           );
 
@@ -2377,9 +2722,15 @@ export function registerEvalCommands(program: Command): void {
               runs,
               waitErrors,
               reportInputs: [] as StructuredEvalRunInput[],
+              iterationErrorCodes: new Map<string, string>(),
             };
           }
 
+          // A run's own id, not `StructuredEvalRunInput` (a shared SDK type
+          // report-building also consumes), is what carries a fetch
+          // failure's wire code out of this loop — smuggling a new field
+          // onto that type would leak an eval.ts-only concern into it.
+          const iterationErrorCodes = new Map<string, string>();
           const reportInputs = await Promise.all(
             runs.map(async (run): Promise<StructuredEvalRunInput> => {
               try {
@@ -2395,6 +2746,9 @@ export function registerEvalCommands(program: Command): void {
                   iterationsComplete: iterations.complete,
                 };
               } catch (error) {
+                if (isPlatformApiError(error)) {
+                  iterationErrorCodes.set(run.id, error.code);
+                }
                 return {
                   run,
                   iterations: [],
@@ -2405,7 +2759,7 @@ export function registerEvalCommands(program: Command): void {
               }
             })
           );
-          return { runs, waitErrors, reportInputs };
+          return { runs, waitErrors, reportInputs, iterationErrorCodes };
         },
         {
           projectScope: resolved.projectScope,
@@ -2433,12 +2787,49 @@ export function registerEvalCommands(program: Command): void {
           })
         : undefined;
 
+      // Computed BEFORE the `--out` write: a local write failure must MERGE
+      // into this verdict-derived code (worst-of), never overwrite it — a
+      // run that actually failed (1) or hit a mid-wait auth failure (3)
+      // outranks a plain local I/O problem (4), per the documented severity
+      // order. Assigning the write failure a flat 4 here would silently
+      // mask an already-known verdict failure the moment `--out` also
+      // happened to be unwritable.
+      const reportingErrors = completion.reportInputs.filter(
+        (input) => !input.iterationsComplete || input.iterationError
+      );
+      const reportingFailedRunIds = new Set(
+        reportingErrors.map((input) => input.run.id)
+      );
+      const runOutcomes: EvalRunWaitRunOutcome[] = completion.runs.map(
+        (run) => ({
+          status: run.status,
+          result: run.result,
+          reportingFailed: reportingFailedRunIds.has(run.id),
+          reportingFailedErrorCode: completion.iterationErrorCodes.get(run.id),
+        })
+      );
+      const code = evalRunWaitExitCode({
+        launchOutcome: result.outcome,
+        runs: runOutcomes,
+        waitErrors: completion.waitErrors,
+      });
+
+      // Captured, NOT thrown here: the receipt below (or the reporter
+      // stdout) carries the only copy of the launched run ids, and a local
+      // disk error must not cost the caller those ids the way an early
+      // throw would — same discipline the wait-error path above already
+      // follows, for the same reason.
+      let outWriteError: string | undefined;
       if (options.out && report) {
-        await writeReporterArtifact(
-          options.out,
-          reporter ?? "json-summary",
-          report
-        );
+        try {
+          await writeReporterArtifact(
+            options.out,
+            reporter ?? "json-summary",
+            report
+          );
+        } catch (error) {
+          outWriteError = error instanceof Error ? error.message : String(error);
+        }
       }
       if (reporter && report) {
         writeReporterResult(reporter, report);
@@ -2452,20 +2843,27 @@ export function registerEvalCommands(program: Command): void {
 
       // Everything above has already been written — report file, reporter
       // stdout, or the launch receipt. Only now may this fail.
-      const reportingErrors = completion.reportInputs.filter(
-        (input) => !input.iterationsComplete || input.iterationError
-      );
+      if (outWriteError !== undefined) {
+        // A local `--out` write failure is infrastructure the CLI itself
+        // observed, never a verdict — merged toward 4, not the
+        // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
+        // from `normalizeCliError`, and never allowed to outrank an
+        // already-computed verdict failure (1) or auth failure (3).
+        throw cliError("OUT_WRITE_FAILED", outWriteError, worstOf([code, 4]));
+      }
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
         const affectedRunIds = [
           ...reportingErrors.map((input) => input.run.id),
           ...completion.waitErrors.map((entry) => entry.runId),
         ];
-        throw operationalError(
+        throw cliError(
+          "OPERATIONAL_ERROR",
           needsReport
             ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
                 ", "
               )}.`
             : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
+          code,
           {
             // Machine-readable, because the message is not: a pipeline that
             // needs to resume or cancel these runs should not have to parse
@@ -2478,9 +2876,7 @@ export function registerEvalCommands(program: Command): void {
         );
       }
 
-      if (result.outcome !== "started") {
-        setProcessExitCode(1);
-      }
+      setProcessExitCode(code);
     }
   );
 
@@ -2773,13 +3169,33 @@ export function registerEvalCommands(program: Command): void {
         collectRepeatable,
         [] as string[]
       )
+      .option(
+        "--baseline <runId>",
+        "Baseline run ID to gate a regression delta against (SHA baselines are not supported yet)"
+      )
+      .option(
+        "--min-sample-size <n>",
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline"
+      )
+      .option(
+        "--min-effect-size-percent <0-100>",
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline"
+      )
+      .option(
+        "--gate-deterministic-regressions",
+        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline"
+      )
+      .option(
+        "--max-p95-latency-increase-ms <ms>",
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline"
+      )
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(
         "--wait-timeout <ms>",
         "Give up waiting after this many milliseconds (default 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
       .option(
@@ -2835,10 +3251,13 @@ export function registerEvalCommands(program: Command): void {
         "Fail if p95 end-to-end latency rose by more than this many milliseconds"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
-      .option("--out <path>", "Write the structured report to a JSON file").action(
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
+      ).action(
     async (
       options: PlatformOptions &
         EvalCompareOptions & {
@@ -3478,7 +3897,12 @@ export function registerEvalCommands(program: Command): void {
         "--host <id-or-name>",
         "Attached host to run against, so the run is stamped with that host's config"
       )
-      .option("--iterations <n>", "Run the case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run the case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -3518,11 +3942,20 @@ export function registerEvalCommands(program: Command): void {
         server?: string[];
         environment?: string;
         host?: string;
+        repetitions?: number;
         iterations?: number;
         idempotencyKey?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
       await executeOp(
         runEvalCaseOperation,
         {
@@ -3532,8 +3965,10 @@ export function registerEvalCommands(program: Command): void {
           ...(options.server?.length ? { servers: options.server } : {}),
           ...(options.environment ? { environment: options.environment } : {}),
           ...(options.host ? { host: options.host } : {}),
-          ...(options.iterations !== undefined
-            ? { iterations: options.iterations }
+          ...(options.repetitions !== undefined
+            ? { repetitions: options.repetitions }
+            : options.iterations !== undefined
+              ? { iterations: options.iterations }
             : {}),
           ...(options.idempotencyKey
             ? { idempotencyKey: options.idempotencyKey }
