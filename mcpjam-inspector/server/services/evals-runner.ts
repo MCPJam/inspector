@@ -521,7 +521,23 @@ function delay(ms: number): Promise<void> {
 }
 
 type ToolSet = Record<string, any>;
-type ToolCall = { toolName: string; arguments: Record<string, any> };
+type ToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * The provider's id for this call, when the source part carried one.
+   *
+   * Declared here rather than smuggled in behind a cast: this value is BOTH
+   * read locally (`extractToolCallsExcludingPolicyBlocks` matches blocked
+   * calls by it) and persisted (`updateTestIteration.actualToolCalls`), and
+   * the casts that used to hide it are how it reached a Convex validator that
+   * had never been told about it — an unknown field there is a hard
+   * ArgumentValidationError, so every tool-calling iteration failed to
+   * finalize. Keeping it on the type is what makes the persistence boundary
+   * type-checked again.
+   */
+  toolCallId?: string;
+};
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 function getServerLabelForEvalError(
@@ -972,7 +988,7 @@ function extractToolCallsFromConversation(params: {
             ...(typeof call.toolCallId === "string"
               ? { toolCallId: call.toolCallId }
               : {}),
-          } as ToolCall);
+          });
         }
       }
     }
@@ -999,7 +1015,7 @@ function extractToolCallsFromConversation(params: {
                 ...(typeof item.toolCallId === "string"
                   ? { toolCallId: item.toolCallId }
                   : {}),
-              } as ToolCall);
+              });
             }
           }
         }
@@ -1024,7 +1040,7 @@ function extractToolCallsFromConversation(params: {
               ...(typeof call.toolCallId === "string"
                 ? { toolCallId: call.toolCallId }
                 : {}),
-            } as ToolCall);
+            });
           }
         }
       }
@@ -1041,13 +1057,11 @@ function extractToolCallsExcludingPolicyBlocks(
   },
   blockedToolCallIds: ReadonlySet<string>
 ): ToolCall[] {
-  return extractToolCallsFromConversation(params).filter((toolCall) => {
-    const toolCallId = (toolCall as ToolCall & { toolCallId?: unknown })
-      .toolCallId;
-    return (
-      typeof toolCallId !== "string" || !blockedToolCallIds.has(toolCallId)
-    );
-  });
+  return extractToolCallsFromConversation(params).filter(
+    (toolCall) =>
+      toolCall.toolCallId === undefined ||
+      !blockedToolCallIds.has(toolCall.toolCallId)
+  );
 }
 
 function toolCallIdentity(toolCall: ToolCall): string {
