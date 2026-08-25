@@ -5413,6 +5413,16 @@ export const waiveEvalGateOperation: PlatformOperation<
   description:
     "Override a FAILING eval run's release gate, on the record, until an expiry you name. This does NOT make the run pass: the run keeps its failed result, and every surface that honors the waiver — the GitHub Check Run and the CLI's `eval gate` — says the gate was waived, by whom, why, and until when. Requires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it. `status: \"conflict\"` means a waiver was already in force and returns that EXISTING one rather than granting a second; it is a normal result, not a failure.",
   readOnly: false,
+  // EXPOSURE, not `none`, even though a waiver can be revoked.
+  //
+  // Two things a revoke does not undo. The gate stops blocking a release the
+  // moment this lands, so anything that ships in the meantime has shipped. And
+  // `reason` is published UNREDACTED to everyone who can see the suite, for as
+  // long as the suite exists — revoking ends the override, it does not
+  // unpublish the text. Both halves are about what becomes reachable, which is
+  // what this class names, and `none`'s promise of "reversible and costs
+  // nothing" is false for each of them.
+  risk: "exposure",
   inputSchema: waiveEvalGateInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
@@ -5490,6 +5500,14 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
   description:
     "End a gate waiver early, putting the gate and the GitHub Check Run back where they were. Requires the manage tier. IDEMPOTENT: `status: \"already_revoked\"` means it had already been revoked and reports the ORIGINAL revocation rather than restamping it — that is a success, not an error, and preserves the record of who actually ended the waiver. An already-expired waiver may still be revoked; the audit trail distinguishes 'this was wrong' from 'this ran out'.",
   readOnly: false,
+  // `none`: it destroys no record — the row and its audit event survive, and
+  // the revocation is additive — it spends nothing, and a mistaken revoke is
+  // recovered by waiving again. The gate closing is the SAFE direction.
+  //
+  // The registry still places it at `gated` rather than the `direct` this
+  // derives, and TIER_EXCEPTIONS carries the reason: re-blocking somebody
+  // else's release is a decision a person should make.
+  risk: "none",
   inputSchema: revokeEvalGateWaiverInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(

@@ -1618,6 +1618,17 @@ describe("tier derives from operation.risk", () => {
         "out whether its widget works, which is the weaker of the two " +
         "capabilities.",
     },
+    revoke_eval_gate_waiver: {
+      tier: "gated",
+      reason:
+        "risk is none (nothing spent, no record destroyed — the waiver row " +
+        "and its audit event survive a revoke) but ending a waiver puts a " +
+        "release gate back and blocks whatever it was unblocking. That is " +
+        "somebody else's release, so a person approves it. It also keeps " +
+        "the surface symmetric with waive_eval_gate: an agent that needed " +
+        "approval to grant an override should not be able to withdraw one " +
+        "unasked.",
+    },
     start_conformance_run: {
       tier: "gated",
       reason:
