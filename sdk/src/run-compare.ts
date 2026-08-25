@@ -19,7 +19,11 @@
  * non-gateable policy must not pass it.
  */
 
-import { formatGateReport, type GateReport } from "./gates.js";
+import {
+  formatGateReport,
+  gateOutcomeVerdict,
+  type GateReport,
+} from "./gates.js";
 import type { FlakyCase } from "./compare-stats.js";
 import type {
   PlatformRunCompare,
@@ -147,6 +151,7 @@ export function buildRunCompareReport(
     kind: "run-compare",
     // The GATE decides, not the rows. See the module comment.
     passed: gateReport.outcome === "passed",
+    verdict: gateOutcomeVerdict(gateReport.outcome),
     summary: summarizeStructuredCases(cases),
     cases,
     durationMs: options.durationMs ?? 0,
