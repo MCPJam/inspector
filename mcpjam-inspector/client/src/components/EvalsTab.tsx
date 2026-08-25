@@ -1095,8 +1095,11 @@ function EvalsTabContent({
             onSelectSuite={handleSelectSuite}
             onRerun={handleRerunWithQuota}
             onCancelRun={handlers.handleCancelRun}
+            onDelete={handlers.handleDelete}
+            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
+            deletingSuiteId={deletingSuiteId}
           />
         </div>
       </div>

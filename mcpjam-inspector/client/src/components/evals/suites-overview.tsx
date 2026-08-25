@@ -1,6 +1,6 @@
 import { useMemo, type MouseEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
@@ -14,8 +14,18 @@ interface SuitesOverviewProps {
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
+  /**
+   * Deleting from the landing row is the only path that does not require
+   * opening the suite first. The in-suite path (Edit → settings → Delete)
+   * still exists; this is the one that works for a suite you never want to
+   * look at again, including one that has never run.
+   */
+  onDelete?: (suite: EvalSuite) => void;
+  /** Per-suite: creators and project admins only. Hides the control entirely. */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
   rerunningSuiteId?: string | null;
   cancellingRunId?: string | null;
+  deletingSuiteId?: string | null;
 }
 
 // Shared with User Testing's scenario list so the two landings read as one
@@ -24,7 +34,7 @@ interface SuitesOverviewProps {
 const ROW_PAD = "flex w-full items-center gap-4 px-3";
 const DATA_COLS =
   "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
-const ACTION_COL = "flex w-[4.75rem] shrink-0 justify-end";
+const ACTION_COL = "flex w-[7.5rem] shrink-0 items-center justify-end gap-1";
 
 export function SuitesOverview(props: SuitesOverviewProps) {
   return (
@@ -55,8 +65,11 @@ function OverviewBody({
   onSelectSuite,
   onRerun,
   onCancelRun,
+  onDelete,
+  canDeleteSuite,
   rerunningSuiteId = null,
   cancellingRunId = null,
+  deletingSuiteId = null,
 }: SuitesOverviewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
@@ -138,6 +151,13 @@ function OverviewBody({
                   rerunningSuiteId={rerunningSuiteId}
                   cancellingRunId={cancellingRunId}
                 />
+                {onDelete && (canDeleteSuite?.(entry.suite) ?? true) ? (
+                  <RowDeleteControl
+                    suite={entry.suite}
+                    onDelete={onDelete}
+                    deletingSuiteId={deletingSuiteId}
+                  />
+                ) : null}
               </div>
             </div>
           </li>
@@ -231,6 +251,41 @@ function RowRunControl({
       }}
     >
       Run
+    </Button>
+  );
+}
+
+function RowDeleteControl({
+  suite,
+  onDelete,
+  deletingSuiteId,
+}: {
+  suite: EvalSuite;
+  onDelete: (suite: EvalSuite) => void;
+  deletingSuiteId: string | null;
+}) {
+  const isDeleting = deletingSuiteId === suite._id;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      data-testid="evals-suites-overview-delete"
+      aria-label={`Delete ${suite.name || "Untitled suite"}`}
+      disabled={isDeleting}
+      onClick={(event) => {
+        stopRowClick(event);
+        // Confirmation is the caller's: `EvalsTab` arms `ConfirmationDialogs`,
+        // which is the same dialog every other delete path in evals uses.
+        onDelete(suite);
+      }}
+    >
+      {isDeleting ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      ) : (
+        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+      )}
     </Button>
   );
 }

@@ -270,6 +270,69 @@ describe("SuitesOverview", () => {
     expect(onSelectSuite).not.toHaveBeenCalled();
   });
 
+  it("deletes a suite from the row without opening it", () => {
+    const onDelete = vi.fn();
+    const onSelectSuite = vi.fn();
+    render(
+      <SuitesOverview
+        overview={[entry()]}
+        onSelectSuite={onSelectSuite}
+        {...idleActions}
+        onDelete={onDelete}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("evals-suites-overview-delete"));
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onDelete.mock.calls[0][0]._id).toBe("suite-1");
+    // The row is a sibling button, not an ancestor — deleting must never
+    // navigate into the suite it is about to remove.
+    expect(onSelectSuite).not.toHaveBeenCalled();
+  });
+
+  it("hides delete for a suite this user may not delete", () => {
+    render(
+      <SuitesOverview
+        overview={[entry()]}
+        onSelectSuite={vi.fn()}
+        {...idleActions}
+        onDelete={vi.fn()}
+        canDeleteSuite={() => false}
+      />,
+    );
+
+    expect(screen.queryByTestId("evals-suites-overview-delete")).toBeNull();
+  });
+
+  it("omits delete entirely when the surface passes no handler", () => {
+    render(
+      <SuitesOverview
+        overview={[entry()]}
+        onSelectSuite={vi.fn()}
+        {...idleActions}
+      />,
+    );
+
+    expect(screen.queryByTestId("evals-suites-overview-delete")).toBeNull();
+  });
+
+  it("disables the row delete while that suite is being deleted", () => {
+    render(
+      <SuitesOverview
+        overview={[entry()]}
+        onSelectSuite={vi.fn()}
+        {...idleActions}
+        onDelete={vi.fn()}
+        deletingSuiteId="suite-1"
+      />,
+    );
+
+    expect(
+      screen.getByTestId("evals-suites-overview-delete"),
+    ).toBeDisabled();
+  });
+
   it("shows a spinning Running control while the suite is starting", () => {
     render(
       <SuitesOverview

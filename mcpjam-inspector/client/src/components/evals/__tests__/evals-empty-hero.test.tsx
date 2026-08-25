@@ -54,7 +54,7 @@ describe("EvalsEmptyHero", () => {
     ).toBeTruthy();
   });
 
-  it("replaces the fallback CTAs with project server cards", () => {
+  it("keeps Create suite and Try sample suite alongside project server cards", () => {
     const onCreateSuiteFromServer = vi.fn();
     render(
       <EvalsEmptyHero
@@ -73,12 +73,14 @@ describe("EvalsEmptyHero", () => {
     expect(
       screen.getByRole("button", { name: "Create suite from payments-server" }),
     ).toBeTruthy();
+    // The quickstart has no other entry point in the product, so a project
+    // that already has servers must not lose it.
     expect(
-      screen.queryByRole("button", { name: /^try sample suite$/i }),
-    ).toBeNull();
+      screen.getByRole("button", { name: /^try sample suite$/i }),
+    ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: /^create suite$/i }),
-    ).toBeNull();
+      screen.getByRole("button", { name: /^create suite$/i }),
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Create suite from checkout-server" }),
@@ -112,7 +114,7 @@ describe("EvalsEmptyHero", () => {
     ).toBeNull();
   });
 
-  it("holds the fallback CTAs until project servers finish loading", () => {
+  it("holds the CTAs until project servers finish loading", () => {
     render(
       <EvalsEmptyHero {...defaultProps} servers={[]} serversLoading />,
     );

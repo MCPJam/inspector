@@ -170,12 +170,10 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByTestId("suite-test-case-row-case-2"));
     expect(onTestCaseClick).toHaveBeenCalledWith("case-2");
 
-    const [suiteEdit, casesEdit] = screen.getAllByRole("button", {
-      name: "Edit",
-    });
-    await user.click(suiteEdit);
+    // "Edit" is the SUITE's (→ settings); the cases card says what it does.
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(onEditSuite).toHaveBeenCalledTimes(1);
-    await user.click(casesEdit);
+    await user.click(screen.getByRole("button", { name: "Add case" }));
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Run this suite" }));
@@ -342,6 +340,89 @@ describe("SuiteDetailOverview", () => {
 
     expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Cases" })).toBeTruthy();
+  });
+
+  it("keeps Generate reachable once the suite already has cases", async () => {
+    const user = userEvent.setup();
+    const onGenerateTestCases = vi.fn();
+    const onEditCases = vi.fn();
+
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={onEditCases}
+        onGenerateTestCases={onGenerateTestCases}
+        canGenerateTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+
+    // The empty hero is gone at this point — Generate has to live on the card.
+    expect(screen.queryByTestId("suite-empty-action-generate")).toBeNull();
+
+    await user.click(screen.getByTestId("suite-detail-generate-cases"));
+    expect(onGenerateTestCases).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Add case" }));
+    expect(onEditCases).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the card's Generate while a generation is already running", () => {
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        isGeneratingTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+
+    expect(screen.getByTestId("suite-detail-generate-cases")).toBeDisabled();
+  });
+
+  it("hides both case-authoring controls on a read-only suite", () => {
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        readOnlyConfig
+      />,
+    );
+
+    expect(screen.queryByTestId("suite-detail-generate-cases")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add case" })).toBeNull();
   });
 
   it("disables Generate in the empty state until servers can be discovered", () => {

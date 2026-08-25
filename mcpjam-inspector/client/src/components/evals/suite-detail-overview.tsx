@@ -482,16 +482,32 @@ export function SuiteDetailOverview({
           )}
         >
           <h3 className="text-sm font-semibold text-foreground">Test Cases</h3>
-          {!readOnlyConfig && onEditCases ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onEditCases}
-            >
-              Edit
-            </Button>
+          {!readOnlyConfig ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Generate lives here as well as in the empty hero. Reaching it
+                  only through the hero would mean a suite loses the affordance
+                  the moment it has its first case, which is exactly when
+                  "generate more from live discovery" is most useful. */}
+              {onGenerateTestCases ? (
+                <GenerateCasesButton
+                  onGenerate={onGenerateTestCases}
+                  canGenerate={canGenerateTestCases}
+                  disabledReason={generateTestCasesDisabledReason}
+                  isGenerating={isGeneratingTestCases}
+                />
+              ) : null}
+              {onEditCases ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={onEditCases}
+                >
+                  Add case
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <ul className="divide-y divide-border/40">
@@ -521,6 +537,57 @@ export function SuiteDetailOverview({
       </section>
       )}
     </div>
+  );
+}
+
+function GenerateCasesButton({
+  onGenerate,
+  canGenerate,
+  disabledReason,
+  isGenerating,
+}: {
+  onGenerate: () => void;
+  canGenerate: boolean;
+  disabledReason?: string;
+  isGenerating: boolean;
+}) {
+  const blocked = isGenerating
+    ? "Generating test cases…"
+    : !canGenerate
+      ? (disabledReason ?? "Configure suite servers before generating cases.")
+      : null;
+
+  const button = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-8 gap-1.5"
+      data-testid="suite-detail-generate-cases"
+      disabled={Boolean(blocked)}
+      aria-busy={isGenerating}
+      onClick={onGenerate}
+    >
+      {isGenerating ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+      ) : (
+        <Sparkles className="size-3.5 shrink-0" aria-hidden />
+      )}
+      Generate
+    </Button>
+  );
+
+  if (!blocked) return button;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent variant="muted" side="bottom" className="max-w-[16rem]">
+        {blocked}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -34,7 +34,13 @@ export function EvalsEmptyHero({
 }: EvalsEmptyHeroProps) {
   const visibleServers = servers.slice(0, EVALS_EMPTY_HERO_MAX_SERVERS);
   const showServerCards = visibleServers.length > 0;
-  const showFallbackCtas = !serversLoading && visibleServers.length === 0;
+  // The CTAs are NOT a fallback for "no servers". Starting from a connected
+  // server is the fast path, but a blank suite and the sample suite have to
+  // stay reachable when that path exists — the quickstart in particular has no
+  // other entry point in the product, and "has servers but no suites" is
+  // exactly the state it was built for. Only the LOADING state withholds them,
+  // so the row does not reflow once servers arrive.
+  const showCtas = !serversLoading;
 
   return (
     <div
@@ -80,12 +86,15 @@ export function EvalsEmptyHero({
               </button>
             ))}
           </div>
-        ) : showFallbackCtas ? (
-          <EmptyHeroFallbackCtas
+        ) : null}
+
+        {showCtas ? (
+          <EmptyHeroCtas
             onCreateSuite={onCreateSuite}
             onQuickstart={onQuickstart}
             isQuickstartRunning={isQuickstartRunning}
             showQuickstart={showQuickstart}
+            secondary={showServerCards}
           />
         ) : null}
       </div>
@@ -93,17 +102,60 @@ export function EvalsEmptyHero({
   );
 }
 
-function EmptyHeroFallbackCtas({
+/**
+ * Blank suite + sample suite. `secondary` demotes them to ghost buttons when
+ * server cards are already carrying the primary action above, so the hero
+ * still has one obvious next step.
+ */
+function EmptyHeroCtas({
   onCreateSuite,
   onQuickstart,
   isQuickstartRunning,
   showQuickstart,
+  secondary,
 }: {
   onCreateSuite: () => void;
   onQuickstart: () => void;
   isQuickstartRunning: boolean;
   showQuickstart: boolean;
+  secondary: boolean;
 }) {
+  if (secondary) {
+    return (
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onCreateSuite}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          Create suite
+        </Button>
+        {showQuickstart ? (
+          <>
+            <span aria-hidden className="text-xs text-muted-foreground">
+              ·
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onQuickstart}
+              disabled={isQuickstartRunning}
+              className="gap-1.5 text-muted-foreground hover:text-foreground"
+            >
+              {isQuickstartRunning ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : null}
+              Try sample suite
+            </Button>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
   if (!showQuickstart) {
     return (
       <div className="mt-6">
