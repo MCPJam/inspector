@@ -47,11 +47,18 @@ when `soundcheck/**`, root `package.json`, root `package-lock.json`, or the
 workflow file itself changes. The workflow runs `railway up --ci` against the
 `mcpjam-soundcheck` Railway service with a service-scoped token.
 
-`release.yml` also calls this workflow (as its `deploy-soundcheck` job) so a
-release redeploys Soundcheck alongside the other Railway satellites, ordered
-after the webapp deploy. Soundcheck itself is never *published* — it is not
-part of the customer release surface, and nothing customers receive depends
-on it.
+`release.yml` does **not** call this workflow. It used to, as a
+`deploy-soundcheck` job alongside `deploy-slack-app`, but the two are not
+alike: the Slack bot renders the inspector server's envelope and so must
+deploy after it, whereas Soundcheck talks only to `api.github.com` and has no
+such contract. Being in the release also made it deploy twice — once as the
+job, then again from the release's own version commit, which touches root
+`package-lock.json` and trips the `paths` filter above. That push trigger is
+now the single path: a release still redeploys Soundcheck, just after
+`finalize` rather than before it.
+
+Soundcheck is never *published* — it is not part of the customer release
+surface, and nothing customers receive depends on it.
 
 Note for anyone editing `release.yml`: `src/components/release-progress.tsx`
 hardcodes the job list, and `release-readiness.tsx` / `release-verdict.tsx`
