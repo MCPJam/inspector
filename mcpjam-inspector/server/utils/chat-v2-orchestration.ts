@@ -18,6 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
   describeError,
@@ -989,24 +990,14 @@ export async function prepareChatV2(
     mcpClientManager.hasServer(id)
   );
 
-  const toolOptions =
-    requireToolApproval ||
-    respectToolVisibility === false ||
-    modelVisibleMcpToolResults !== undefined ||
-    tasks !== undefined
-      ? {
-          ...(requireToolApproval
-            ? { needsApproval: requireToolApproval }
-            : {}),
-          ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
-          ...(modelVisibleMcpToolResults !== undefined
-            ? { modelVisibleMcpToolResults }
-            : {}),
-          // Absent for every default turn, which is what keeps those turns on
-          // the pre-existing no-options overload.
-          ...(tasks !== undefined ? { tasks } : {}),
-        }
-      : undefined;
+  // `undefined` for every default turn, which is what keeps those turns on the
+  // pre-existing no-options overload. See `mcpToolOptionsFor`.
+  const toolOptions = mcpToolOptionsFor({
+    needsApproval: requireToolApproval,
+    includeAppOnly: respectToolVisibility === false,
+    modelVisibleMcpToolResults,
+    tasks,
+  });
 
   // 1. Get MCP + skill tools
   let mcpTools;

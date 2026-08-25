@@ -80,6 +80,16 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     methods: ["GET"],
   },
   { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
+  // The pre-run disclosure for a launch plan. A guest can already POST
+  // /eval-suites/:id/runs above, so denying them the read that describes what
+  // that run discloses is the one gap that actually matters — the payload is
+  // org-plan + vendor names + suite-resolved model ids, nothing a guest
+  // cannot already see via GET /eval-suites/:id. GET-only: there is no write
+  // at this path.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+    methods: ["GET"],
+  },
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
