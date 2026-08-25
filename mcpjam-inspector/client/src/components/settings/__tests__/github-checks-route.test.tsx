@@ -648,8 +648,8 @@ describe("GithubChecksRoute connect flow", () => {
 
     expect(
       screen.getByText(
-        /Connecting lets MCPJam build and run this repository's pull requests/,
-      ),
+        /Connecting lets MCPJam build and run this repository's pull requests/
+      )
     ).toBeInTheDocument();
     // Specifics stay BEHIND the expand — the visible surface is one line.
     expect(screen.queryByText(/isolated sandbox/)).not.toBeInTheDocument();
@@ -657,10 +657,10 @@ describe("GithubChecksRoute connect flow", () => {
     await user.click(screen.getByTestId("connect-repo-data-handling-toggle"));
 
     expect(
-      screen.getByText(/builds that pull request's MCP server from its source/),
+      screen.getByText(/builds that pull request's MCP server from its source/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Pull requests from forks are never built/),
+      screen.getByText(/Pull requests from forks are never built/)
     ).toBeInTheDocument();
     // Redaction is named WITH its disclaimer. The module documents its own
     // blind spot, and naming it without the caveat reads as coverage it lacks.
@@ -670,13 +670,13 @@ describe("GithubChecksRoute connect flow", () => {
     // own would promise a mechanism that is not running.
     expect(
       screen.getByText(
-        /once retention enforcement is enabled, and kept until then/,
-      ),
+        /once retention enforcement is enabled, and kept until then/
+      )
     ).toBeInTheDocument();
     // Per-run facts are not knowable at connect time, so the copy points at
     // them rather than inventing them.
     expect(
-      screen.getByText(/are on that run's page in MCPJam/),
+      screen.getByText(/are on that run's page in MCPJam/)
     ).toBeInTheDocument();
   });
 

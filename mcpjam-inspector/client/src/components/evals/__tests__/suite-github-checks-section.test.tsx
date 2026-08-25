@@ -288,6 +288,63 @@ describe("SuiteGithubChecksSection", () => {
       expect(page).not.toMatch(forbidden);
     }
   });
+
+  /**
+   * The DATA half of the connect decision, on THIS surface.
+   *
+   * Asserted here and not only in the settings route's suite because both
+   * mount `ConnectRepoDataHandlingNote` and both are places someone authorizes
+   * PR-triggered runs. A shared component covers the wording; only a test per
+   * surface covers the mounting, and an unmounted disclosure on one of two
+   * connect affordances is exactly the gap the shared module exists to close.
+   */
+  it("says what connecting authorizes, with the specifics behind an expand", async () => {
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+
+    expect(
+      screen.getByText(
+        /Connecting lets MCPJam build and run this repository's pull requests/
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/isolated sandbox/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("connect-repo-data-handling-toggle"));
+
+    expect(
+      screen.getByText(/builds that pull request's MCP server from its source/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pull requests from forks are never built/)
+    ).toBeInTheDocument();
+    // The two sentences a friendlier rewrite would soften first, and the two
+    // that would then be false — redaction is not DLP, and retention is not
+    // enforced yet.
+    expect(screen.getByText(/that is not a DLP system/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /once retention enforcement is enabled, and kept until then/
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("never promises data handling MCPJam does not enforce", async () => {
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await user.click(screen.getByTestId("connect-repo-data-handling-toggle"));
+
+    const page = document.body.textContent ?? "";
+    for (const forbidden of [
+      /automatically deleted/i,
+      /permanently erased/i,
+      /secrets are removed/i,
+      /never stored/i,
+      /nothing leaves/i,
+      /stays on your machine/i,
+    ]) {
+      expect(page).not.toMatch(forbidden);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
