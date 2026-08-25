@@ -90,6 +90,14 @@ curl -X POST \
   -d '{}'
 ```
 
+<Check>
+A `200` with the server's tool list confirms three things at once: the key is
+valid, its organization can reach that project and server, and MCPJam
+connected to the server. `401 UNAUTHORIZED` points at the key;
+`401 OAUTH_REQUIRED` points at the target MCP server instead — see
+[Errors](#errors).
+</Check>
+
 ### Creating a key
 
 1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
@@ -216,6 +224,29 @@ your backoff, so **never** block waiting for a header that may not come.
 Each endpoint is fully documented — request and response schemas, examples,
 and an interactive playground — under **Endpoints** in the sidebar.
 
+### Which part of the API do you need?
+
+<CardGroup cols={2}>
+  <Card title="Discover and configure" icon="folder" href="#discover-and-configure">
+    Find the IDs everything else takes, and manage the hosts and environments your runs execute against.
+  </Card>
+  <Card title="Operate MCP servers" icon="server" href="#operate-mcp-servers">
+    Validate, diagnose, and drive a saved server: tools, prompts, resources, and OAuth tokens.
+  </Card>
+  <Card title="Author and run evals" icon="flask-conical" href="#author-and-run-evals">
+    Create suites, launch runs, poll results, and ingest results produced outside the platform.
+  </Card>
+  <Card title="Swarms and user testing" icon="users" href="#swarms-and-user-testing">
+    Personas, journeys, published scenarios, and what the sessions revealed.
+  </Card>
+</CardGroup>
+
+
+### Discover and configure
+
+Start here: every ID the rest of the API takes is discoverable, and hosts and
+environments define what a run executes against.
+
 **Catalog** — discover the IDs everything else takes:
 
 | Endpoint | What it does |
@@ -248,6 +279,27 @@ Archive and restore are explicit sub-actions rather than a `DELETE` because the
 row is kept and restore has real semantics: it re-checks the name and drops
 plugin pins whose version no longer exists.
 
+**Planning** — one read that answers "may I?" before you try:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+
+<Note>
+  `capabilities` is a **planning aid, not a gate**. Every write still enforces
+  independently, so a `true` here that races a flag flip costs you a clean
+  `403` rather than an incorrect success — and nothing should consult it
+  *instead of* trying. It exists because agent surfaces are static: an MCP tool
+  catalog is built with no organization in hand, so the alternative is
+  attempting the write and reading the failure, by which point the agent has
+  usually already told someone what it was about to do.
+</Note>
+
+### Operate MCP servers
+
+Everything under `/projects/{projectId}/servers/{serverId}/...` — one saved
+server, connected on your behalf for the duration of the call.
+
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
 | Endpoint | What it does |
@@ -263,6 +315,12 @@ plugin pins whose version no longer exists.
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
 | `POST .../oauth/import-tokens` | Store OAuth tokens you obtained yourself; later calls inject + refresh them |
+
+### Author and run evals
+
+Authoring, running, and reading results — plus the ingestion routes the SDK
+uses for runs executed outside the platform, and the headless agent turn that
+can author suites for you.
 
 **Eval runs** (`/projects/{projectId}/...`):
 
@@ -294,12 +352,10 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | --- | --- |
 | `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and ~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
 
-**Scenarios** (`/projects/{projectId}/scenarios...`) — read-only:
+### Swarms and user testing
 
-| Endpoint | What it does |
-| --- | --- |
-| `GET .../scenarios` | List the project's published scenarios: name, access mode, attached servers, share link |
-| `GET .../scenarios/{scenarioId}` | One scenario's settings: model, system prompt, tool-approval policy, resolved servers |
+Synthetic sessions you author and launch, environments you publish to real
+visitors, and the analytics over both.
 
 <Note>
   **Swarms and User Testing are enabled per organization.** Everything in the
@@ -317,6 +373,13 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 
   Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
 </Note>
+
+**Scenarios** (`/projects/{projectId}/scenarios...`) — read-only:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../scenarios` | List the project's published scenarios: name, access mode, attached servers, share link |
+| `GET .../scenarios/{scenarioId}` | One scenario's settings: model, system prompt, tool-approval policy, resolved servers |
 
 **Swarms — authoring** (`/projects/{projectId}/personas...`, `.../journeys...`,
 `.../swarms...`) — the definitions a swarm run executes. A **persona** is a
@@ -502,22 +565,6 @@ violation. Read what you recognize; ignore the rest.
   second time, which is why it is never inferred from anything else.
 </Warning>
 
-**Planning** — one read that answers "may I?" before you try:
-
-| Endpoint | What it does |
-| --- | --- |
-| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
-
-<Note>
-  `capabilities` is a **planning aid, not a gate**. Every write still enforces
-  independently, so a `true` here that races a flag flip costs you a clean
-  `403` rather than an incorrect success — and nothing should consult it
-  *instead of* trying. It exists because agent surfaces are static: an MCP tool
-  catalog is built with no organization in hand, so the alternative is
-  attempting the write and reading the failure, by which point the agent has
-  usually already told someone what it was about to do.
-</Note>
-
 The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.
@@ -579,7 +626,7 @@ suite with no saved selection requires it (`VALIDATION_ERROR` with
 
 ### Running against a project environment
 
-A [project environment](#endpoints) is launchable only through a suite that has
+A [project environment](#discover-and-configure) is launchable only through a suite that has
 it **attached**. Attach them first with
 `PATCH /projects/{projectId}/eval-suites/{suiteId}` and an `environmentIds`
 array (send `null` to detach them all; `[]` is rejected — use `null`), then
