@@ -255,9 +255,22 @@ function deriveIterationPayload(args: {
           })),
         }
       : {}),
+    // REDECLARE the tool-match scorer, from the authored case rather than from
+    // matcher output this pass does not have.
+    //
+    // Forwarding `matchOptions` alone was necessary and not sufficient: the
+    // definition itself is built only when the case authored expectations, and
+    // that was read off `evaluation`, which this pass never supplies. So its
+    // config omitted `toolCalls:match` entirely — while the backend merges
+    // scores by `scorerId` and REPLACES `evaluationConfig` wholesale. The first
+    // pass's tool-match row therefore survived with its definition gone: an
+    // unjoinable row, a per-case `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a
+    // GATING scorer silently dropped from the verdict.
+    toolMatchAuthored:
+      (iteration.authoredCase?.expectedToolCalls?.length ?? 0) > 0,
     // The SAME resolved options and polarity the first pass hashed into
-    // `toolCalls:match`. Omitting them here would rebuild that definition under
-    // a different `implementationHash` and orphan the first pass's row.
+    // `toolCalls:match`. Omitting them would rebuild that definition under a
+    // different `implementationHash` and orphan the first pass's row.
     ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
     ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(verdict && isFiniteNumber(verdict.threshold)

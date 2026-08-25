@@ -571,3 +571,80 @@ describe("a partially fetched run is never reported complete", () => {
     expect(reported[0]?.failed).toBeUndefined();
   });
 });
+
+// =============================================================================
+// THE TOOL-MATCH DEFINITION MUST SURVIVE THE SECOND PASS.
+//
+// The backend merges `scores` by `scorerId` but REPLACES `evaluationConfig`
+// wholesale. So a second-pass config missing `toolCalls:match` does not merely
+// omit a scorer — it leaves the FIRST pass's tool-match row in place with its
+// definition deleted:
+//
+//   - the row becomes unjoinable, so score-integrity marks the run invalid;
+//   - the per-case `evaluationConfigHash` no longer matches, raising
+//     `EVAL_RUN_CONFIG_CONFLICT`;
+//   - and at `enforce`, `allGatingScorersPassed` iterates DEFINITIONS, so a
+//     gating scorer simply vanishes from the verdict — a failing tool match
+//     stops failing the iteration.
+//
+// Forwarding `matchOptions` was necessary and not sufficient: the definition is
+// built only when the case authored expectations, and that was read off
+// `evaluation`, which this pass structurally cannot supply.
+// =============================================================================
+describe("the second pass redeclares the scorers the first pass wrote", () => {
+  function postedConfig(applied: Applied[]) {
+    return applied[0]?.body?.evaluationConfig as
+      | { definitions?: Array<{ scorerId?: string }> }
+      | undefined;
+  }
+
+  test("a case with authored tool calls keeps its toolCalls:match definition", async () => {
+    const { value, applied } = ports();
+    await runJudgeSecondPass("run1", value);
+
+    const ids = (postedConfig(applied)?.definitions ?? []).map(
+      (definition) => definition.scorerId
+    );
+    expect(ids).toContain("toolCalls:match");
+  });
+
+  test("but posts NO tool-match row — it never ran the matcher", async () => {
+    // The definition and the row have different preconditions. Fabricating a
+    // row here would author a verdict for a scorer this pass has no evidence
+    // for; the backend's merge keeps the first pass's real row instead.
+    const { value, applied } = ports();
+    await runJudgeSecondPass("run1", value);
+
+    const scores = (applied[0]?.body?.scores ?? []) as Array<{
+      scorerId?: string;
+    }>;
+    expect(scores.some((row) => row.scorerId === "toolCalls:match")).toBe(false);
+    // The judge's own row is still there — this pass's actual output.
+    expect(scores.some((row) => row.scorerId === "judge:goalCompletion")).toBe(
+      true
+    );
+  });
+
+  test("a case that authored NO tool calls declares no such scorer", async () => {
+    // Absence must stay absence: a vacuously passing tool-match gate would be
+    // invented evidence, and at `enforce` it would be a gating one.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => {
+        const row = runRow();
+        return {
+          ...row,
+          iterations: row.iterations.map((iteration) => ({
+            ...iteration,
+            authoredCase: { expectedOutput: "done" },
+          })),
+        };
+      }),
+    });
+    await runJudgeSecondPass("run1", value);
+
+    const ids = (postedConfig(applied)?.definitions ?? []).map(
+      (definition) => definition.scorerId
+    );
+    expect(ids).not.toContain("toolCalls:match");
+  });
+});

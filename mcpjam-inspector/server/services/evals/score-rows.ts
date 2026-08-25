@@ -71,6 +71,22 @@ export type HostedScoreRowInputs = {
   /** Absent on the first pass; present on the judge second pass. */
   judgeVerdict?: HostedJudgeVerdictLike;
   objectiveScoreCap?: number;
+  /**
+   * "This case authored tool-call expectations", stated WITHOUT the matcher's
+   * evidence for them.
+   *
+   * The definition and the row have genuinely different preconditions, and
+   * coupling them to one field is what made the second pass drop the
+   * `toolCalls:match` DEFINITION from its config: it has the authored case but
+   * not the matcher output, so `evaluation` is absent and the definition went
+   * with it — while the first pass's row, merged by `scorerId` on the backend,
+   * survived and became unjoinable.
+   *
+   * Only the DEFINITION reads this. The row still requires `evaluation`,
+   * because a row is a claim about what the matcher found and this pass has
+   * not run it.
+   */
+  toolMatchAuthored?: boolean;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -119,8 +135,10 @@ export function hostedScoreDefinitionInputs(
         }
       : {}),
     // A case that authored no expectations has no tool-match scorer at all,
-    // rather than a vacuously passing one.
-    ...(inputs.evaluation?.expectedToolCalls?.length
+    // rather than a vacuously passing one. `toolMatchAuthored` says the same
+    // thing for a caller holding the authored case but not the matcher's
+    // output — see the field's note.
+    ...(inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored
       ? {
           toolMatch: {
             ...(inputs.matchOptions
