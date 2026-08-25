@@ -21,10 +21,10 @@ import type { PinnableSkill } from "../../../shared/skill-types.js";
 import { logger } from "../logger.js";
 import {
   CloudSkillsError,
-  getCloudSkillByName,
-  listCloudSkills,
-  listCloudSkillFiles,
-  readCloudSkillFile,
+  getCloudSkillBodyForActor,
+  listCloudSkillsForActor,
+  listCloudSkillFilesForActor,
+  readCloudSkillFileForActor,
   type CloudSkillsContext,
 } from "./cloud-skills.js";
 import {
@@ -61,10 +61,20 @@ export type SkillsFetchFailure = {
  * (or, for skills-incapable runtimes like Codex, not at all) — advertising the
  * emulated tools there would be a prompt/tool mismatch.
  *
- * Guests: a plain share-link/chatbox guest still gets no skill tools, but a
- * guest WITH a computer attached (`hasComputer`) does — they can already run
- * bash in the sandbox, so cloud skills let them drive advanced testing and
- * automation there too. A computer-less guest stays gated out.
+ * Guests (COMP-38): a plain share-link/chatbox guest still gets no skill tools,
+ * but a guest whose turn carries a Phase-3 `executionScope` does. That scope is
+ * the ONLY channel by which a non-member's skill read is authorized — the
+ * project-wide `projectSkills:listSkills` query requires membership, so the
+ * scoped `listSkillsForRuntimeExecution` is what the reads go through (see
+ * `cloud-skills.ts`) and the backend re-resolves the grant on every one of them.
+ * Gating on the scope therefore gates on the same authority that will decide
+ * whether the reads succeed, and a guest the backend declines gets an empty
+ * catalog (`skillsFetchFailed`) rather than tools that error on every call.
+ *
+ * NOT gated on an attached `computer`: the backend omits that field for guest
+ * actors (see `scenario-runtime-config.ts`), and guest `bash` comes either from
+ * an out-of-band ephemeral sandbox binding or from a scope-authorized reserve —
+ * so a computer probe here reads false exactly when a guest has a VM.
  *
  * Two footguns this check must not regress on:
  *  - `provider` is REQUIRED for the model check: bare hosted ids
@@ -80,7 +90,12 @@ export type SkillsFetchFailure = {
  */
 export function shouldEnableCloudSkillTools(args: {
   isGuest: boolean;
-  hasComputer: boolean;
+  /**
+   * Does this turn carry a Phase-3 `executionScope` the skill reads can be
+   * authorized against? Only consulted for a guest, who has no other
+   * authorization channel — a member reads by membership.
+   */
+  hasExecutionScope: boolean;
   harness: string | undefined;
   modelId: string;
   provider?: string;
@@ -89,9 +104,9 @@ export function shouldEnableCloudSkillTools(args: {
   const willRunHarness =
     args.harness !== undefined &&
     isHostedCatalogModel(args.modelId, args.provider);
-  // Guests are allowed only when they have a computer/VM attached (they can
-  // already run bash there); non-guest members are unaffected.
-  const actorAllowed = !args.isGuest || args.hasComputer;
+  // A guest needs the scope grant their reads will be authorized against;
+  // members already read the project-wide catalog by membership.
+  const actorAllowed = !args.isGuest || args.hasExecutionScope;
   return actorAllowed && !willRunHarness && args.hasProjectId;
 }
 
@@ -164,7 +179,7 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
           return `Error: Invalid skill name format "${name}". Skill names contain only lowercase letters, numbers, and hyphens.`;
         }
         try {
-          const skill = await getCloudSkillByName(ctx, name);
+          const skill = await getCloudSkillBodyForActor(ctx, name);
           if (!skill) return `Error: Skill "${name}" not found.`;
           return `# Skill: ${skill.name}\n\n${skill.content}`;
         } catch (err) {
@@ -184,9 +199,9 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
           return `Error: Invalid skill name format "${name}".`;
         }
         try {
-          const skill = await getCloudSkillByName(ctx, name);
+          const skill = await getCloudSkillBodyForActor(ctx, name);
           if (!skill) return `Error: Skill "${name}" not found.`;
-          const files = await listCloudSkillFiles(ctx, skill.skillId);
+          const files = await listCloudSkillFilesForActor(ctx, skill.skillId);
           if (files.length === 0) {
             return `Skill "${name}" has no supporting files.`;
           }
@@ -208,16 +223,22 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
         name: z.string().describe("The skill name."),
         path: z
           .string()
-          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
+          .describe(
+            "Relative path within the skill (e.g., 'scripts/fill.py')."
+          ),
       }),
       execute: async ({ name, path }) => {
         if (!NAME_RE.test(name)) {
           return `Error: Invalid skill name format "${name}".`;
         }
         try {
-          const skill = await getCloudSkillByName(ctx, name);
+          const skill = await getCloudSkillBodyForActor(ctx, name);
           if (!skill) return `Error: Skill "${name}" not found.`;
-          const file = await readCloudSkillFile(ctx, skill.skillId, path);
+          const file = await readCloudSkillFileForActor(
+            ctx,
+            skill.skillId,
+            path
+          );
           if (!file.isText) {
             return `File "${path}" is binary (${file.mimeType}, ${file.size} bytes) and can't be shown as text.`;
           }
@@ -250,9 +271,11 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function skillsFailureFrom(err: unknown, latencyMs: number): SkillsFetchFailure {
-  const errorClass =
-    err instanceof Error ? err.constructor.name : typeof err;
+function skillsFailureFrom(
+  err: unknown,
+  latencyMs: number
+): SkillsFetchFailure {
+  const errorClass = err instanceof Error ? err.constructor.name : typeof err;
   const status = err instanceof CloudSkillsError ? err.status : undefined;
   return {
     errorClass,
@@ -282,7 +305,7 @@ export async function getCloudSkillToolsAndPrompt(
   const started = Date.now();
   try {
     const skills = await raceWithTimeout(
-      listCloudSkills(ctx),
+      listCloudSkillsForActor(ctx),
       CLOUD_SKILLS_FETCH_TIMEOUT_MS
     );
     const latencyMs = Date.now() - started;

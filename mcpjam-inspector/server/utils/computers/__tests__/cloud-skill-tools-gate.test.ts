@@ -13,7 +13,7 @@ import { shouldEnableCloudSkillTools } from "../cloud-skill-tools";
 
 const base = {
   isGuest: false,
-  hasComputer: false,
+  hasExecutionScope: false,
   harness: undefined as string | undefined,
   modelId: "mcpjam/claude",
   hasProjectId: true,
@@ -31,42 +31,42 @@ describe("shouldEnableCloudSkillTools", () => {
     );
   });
 
-  it("disables for a guest without a computer", () => {
+  it("disables for a guest whose turn carries no execution scope", () => {
     expect(shouldEnableCloudSkillTools({ ...base, isGuest: true })).toBe(false);
   });
 
-  it("ENABLES for a guest WITH a computer/VM attached", () => {
-    // COMP-38: a guest with sandbox access gets cloud skills — they can run
-    // bash in the VM, so skills let them drive advanced automation there too.
+  it("ENABLES for a guest whose turn carries an execution scope", () => {
+    // COMP-38: the scope is what authorizes the scoped skill reads, so a guest
+    // the backend granted one gets the tools those reads back.
     expect(
       shouldEnableCloudSkillTools({
         ...base,
         isGuest: true,
-        hasComputer: true,
+        hasExecutionScope: true,
       })
     ).toBe(true);
   });
 
-  it("still disables a guest WITH a computer on a real harness turn", () => {
-    // VM access relaxes the guest gate, not the harness gate: a harness turn
+  it("still disables a scoped guest on a real harness turn", () => {
+    // The scope relaxes the guest gate, not the harness gate: a harness turn
     // delivers skills via the adapter, so the emulated tools stay off.
     expect(
       shouldEnableCloudSkillTools({
         ...base,
         isGuest: true,
-        hasComputer: true,
+        hasExecutionScope: true,
         harness: "claude-code",
         modelId: "mcpjam/claude",
       })
     ).toBe(false);
   });
 
-  it("still disables a guest WITH a computer but no project id", () => {
+  it("still disables a scoped guest with no project id", () => {
     expect(
       shouldEnableCloudSkillTools({
         ...base,
         isGuest: true,
-        hasComputer: true,
+        hasExecutionScope: true,
         hasProjectId: false,
       })
     ).toBe(false);

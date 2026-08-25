@@ -49,6 +49,7 @@ import {
   withServerSkills,
 } from "./server-skill-tools.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
@@ -733,7 +734,17 @@ export interface PrepareChatV2Options {
    * callers whose host actually has a computer, so "advertise == enforce".
    * Takes precedence over the local/HOSTED_MODE skill branches.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
+  cloudSkills?: {
+    authHeader: string;
+    projectId: string;
+    /**
+     * Phase-3 execution scope, set for a guest / swarm-grant turn (COMP-38).
+     * Forwarded so the catalog and `loadSkill` reads issue the scope-authorized
+     * queries the backend re-resolves — a non-member has no other authorization
+     * channel. Absent for a member, whose reads authorize by membership.
+     */
+    executionScope?: ExecutionScope;
+  };
   /**
    * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
    * the legacy paths never set it → the existing precedence is byte-identical.
@@ -1113,6 +1124,9 @@ export async function prepareChatV2(
         {
           authHeader: cloudSkills.authHeader,
           projectId: cloudSkills.projectId,
+          ...(cloudSkills.executionScope
+            ? { executionScope: cloudSkills.executionScope }
+            : {}),
         },
         modelContextTokens
       )

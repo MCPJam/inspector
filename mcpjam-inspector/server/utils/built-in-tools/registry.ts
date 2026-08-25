@@ -106,13 +106,15 @@ export interface BuiltInToolContext {
   chatSessionId?: string;
   /**
    * True when the acting identity is a guest (share-link / chatbox visitor
-   * rather than a project member). This gates the workspace (`mcpjam_*`) tools,
-   * which are NOT advertised to guests. It does NOT gate bash: bash keys off an
-   * attached `computer`, not guest status, so a guest WITH a computer attached
-   * still gets it — the backend accepts guest bearers on `/computers/reserve`
-   * and contains cost via the guest daily start cap and the idle-delete sweep
-   * (see the bash branch in `resolveHostTools`). Defaults to false for surfaces
-   * that pre-authenticate non-guest actors (eval runners, sessionSimulation).
+   * rather than a project member). Workspace (`mcpjam_*`) tools are never
+   * advertised to a guest. Bash is advertised only on a host-funded swarm
+   * grant — `executionScope.kind === "swarm"` — because the backend rejects a
+   * guest reserve on the personal-project path (`assertNonGuestComputerActor`)
+   * and omits `computer` from guest runtime configs; a guest whose shell comes
+   * from an ephemeral sandbox reaches it through `sandboxBinding` instead, which
+   * is checked before any of these gates. See the bash branch in
+   * `resolveHostTools` for all three. Defaults to false for surfaces that
+   * pre-authenticate non-guest actors (eval runners, sessionSimulation).
    */
   isGuest?: boolean;
   /**

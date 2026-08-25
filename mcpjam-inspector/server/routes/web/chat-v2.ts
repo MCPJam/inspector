@@ -102,7 +102,6 @@ import {
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import {
-  narrowHostComputer,
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
@@ -776,6 +775,14 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
+    // COMP-38: the same scope, but for the cloud-skill READS, and only for a
+    // guest. A member's runtime config carries a scope too (`project_member`
+    // resolves one), and the scoped skills query is SHARED-ONLY — routing a
+    // member through it would silently drop their personal skills from the
+    // catalog. A guest has no membership to read by, so the scope is the only
+    // query they can pass.
+    const guestSkillScope = c.get("guestId") ? executionScope : undefined;
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -788,10 +795,11 @@ chatV2.post("/", async (c) => {
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
     // tools) for any signed-in member with a project that has skills. Gate only on:
-    //   - guests need a computer/VM attached (a plain share-link/chatbox guest
-    //     gets no skill tools, but a guest with a sandbox does — they can run
-    //     bash there, and cloud skills let them drive advanced automation too),
-    //     and
+    //   - a guest needs the turn's Phase-3 `executionScope` (COMP-38): a plain
+    //     share-link/chatbox guest gets no skill tools, but a guest whose grant
+    //     the backend serves a scope for does — the scoped skill queries are
+    //     what authorize the reads, so gating here on the scope gates on the
+    //     same authority that will answer them, and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
     //     so advertising the tools here would be a prompt/tool mismatch.
@@ -809,14 +817,10 @@ chatV2.post("/", async (c) => {
       !environmentServers &&
       shouldEnableCloudSkillTools({
         isGuest: Boolean(c.get("guestId")),
-        // A guest's VM access is the same signal that produces the bash tool: a
-        // `computer` resource on the server-resolved runtime config.
-        hasComputer:
-          narrowHostComputer(
-            hostRuntimeConfig
-              ? (hostRuntimeConfig as { computer?: unknown }).computer
-              : undefined,
-          ) != null,
+        // NOT `computer`: the backend omits that field for guest actors, so
+        // probing it reads false exactly when a guest has a VM. The scope is the
+        // signal the skill reads are authorized against — see the helper's doc.
+        hasExecutionScope: guestSkillScope !== undefined,
         harness: resolvedExecution.harness,
         modelId: String(modelDefinition.id),
         // Provider is required so bare hosted ids canonicalize — without it a
@@ -1502,6 +1506,12 @@ chatV2.post("/", async (c) => {
                 cloudSkills: {
                   authHeader: `Bearer ${bearerToken}`,
                   projectId: hostedBody.projectId,
+                  // A guest's bearer can't read the project-wide catalog, so
+                  // their reads go through the scope-authorized queries. Unset
+                  // for a member, who keeps the project-wide ones.
+                  ...(guestSkillScope
+                    ? { executionScope: guestSkillScope }
+                    : {}),
                 },
               }
             : {}),

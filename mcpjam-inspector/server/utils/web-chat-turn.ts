@@ -300,7 +300,16 @@ export interface WebChatTurnPrepareInputs {
    * rather than the local FS. Set by the hosted chat route only when the host
    * actually has a computer. See `chat-v2-orchestration.ts`.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
+  cloudSkills?: {
+    authHeader: string;
+    projectId: string;
+    /**
+     * Phase-3 execution scope for a guest / swarm-grant turn (COMP-38), so the
+     * skill reads go through the scope-authorized queries. See the same field on
+     * `PrepareChatV2Options.cloudSkills`.
+     */
+    executionScope?: ExecutionScope;
+  };
   /**
    * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
    * side. When set (even empty) they are the only skills the emulated engine
