@@ -8,10 +8,16 @@
  * is exactly what an unanswered question must never become, so the tests that
  * matter most are the ones proving a field stays OFF rather than defaulting on.
  */
-import { describe, expect, it } from "vitest";
-import { runEvalCaseOperation, runEvalSuiteOperation } from "@mcpjam/sdk/platform";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getEvalRunDisclosureOperation,
+  runEvalCaseOperation,
+  runEvalSuiteOperation,
+  type PlatformApiClient,
+} from "@mcpjam/sdk/platform";
 import type { PlatformEvalRunDisclosure } from "@mcpjam/sdk/platform";
 import {
+  disclosureForProposal,
   disclosureInputForProposal,
   summarizeDisclosure,
 } from "../agent-proposal-disclosure.js";
@@ -358,5 +364,178 @@ describe("summarizeDisclosure", () => {
       policyDays: 30,
       effectiveToday: "kept-indefinitely",
     });
+  });
+});
+
+describe("disclosureForProposal", () => {
+  // The operation is the only thing this wrapper talks to, so it is the only
+  // thing mocked: everything else under test here is the wrapper's own
+  // contract — bound the fetch, swallow every failure, never call out for a
+  // plan the mapping already refused.
+  const client = {} as PlatformApiClient;
+  const FROZEN = { project: "p1", suite: "ts_1" };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockLookup(
+    implementation: (
+      input: unknown,
+      context: { client: PlatformApiClient; signal?: AbortSignal }
+    ) => Promise<unknown>
+  ) {
+    return vi
+      .spyOn(getEvalRunDisclosureOperation, "execute")
+      .mockImplementation(implementation as never);
+  }
+
+  it("summarizes a successful lookup, asked with the MAPPED input", async () => {
+    const spy = mockLookup(async () => baseDisclosure());
+    const summary = await disclosureForProposal({
+      operationName: runEvalCaseOperation.name,
+      input: { ...FROZEN, case: "case_7" },
+      client,
+    });
+    expect(summary).toMatchObject({ digest: "deadbeef", engine: "emulated" });
+    // The wrapper hands over the disclosure vocabulary, not the run's.
+    expect(spy).toHaveBeenCalledWith(
+      { project: "p1", suite: "ts_1", cases: ["case_7"] },
+      expect.objectContaining({ client })
+    );
+  });
+
+  it(
+    "bounds the fetch with a signal that aborts ON ITS OWN",
+    async () => {
+      // The single most important safety property of this path: a stalled
+      // backend must not be able to hold a mint open indefinitely. Asserting
+      // "an AbortSignal was passed" would pass for a signal nobody ever
+      // aborts, so this waits for the abort to actually fire and checks it
+      // came from a TIMEOUT rather than a caller — there is no caller signal
+      // here, deliberately, so nothing else could have aborted it.
+      let captured: AbortSignal | undefined;
+      mockLookup(async (_input, context) => {
+        captured = context.signal;
+        return baseDisclosure();
+      });
+      await disclosureForProposal({
+        operationName: runEvalSuiteOperation.name,
+        input: FROZEN,
+        client,
+      });
+      expect(captured).toBeInstanceOf(AbortSignal);
+      expect(captured!.aborted).toBe(false);
+      await new Promise<void>((resolve) =>
+        captured!.addEventListener("abort", () => resolve(), { once: true })
+      );
+      expect((captured!.reason as Error | undefined)?.name).toBe("TimeoutError");
+    },
+    10_000
+  );
+
+  it("returns undefined — never throws — when the lookup rejects", async () => {
+    // A transient error, a 5xx, anything. The mint proceeds without a line.
+    mockLookup(async () => {
+      throw new Error("upstream exploded");
+    });
+    await expect(
+      disclosureForProposal({
+        operationName: runEvalSuiteOperation.name,
+        input: FROZEN,
+        client,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns undefined on a backend that predates the contract", async () => {
+    // `422 FEATURE_NOT_SUPPORTED` is the DESIGNED degrade, not a fault — it is
+    // what every mint gets until the backend half is promoted.
+    mockLookup(async () => {
+      throw new Error("FEATURE_NOT_SUPPORTED: contract_unavailable");
+    });
+    await expect(
+      disclosureForProposal({
+        operationName: runEvalSuiteOperation.name,
+        input: FROZEN,
+        client,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns undefined when the fetch is aborted by its own timeout", async () => {
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "TimeoutError";
+    mockLookup(async () => {
+      throw abortError;
+    });
+    await expect(
+      disclosureForProposal({
+        operationName: runEvalSuiteOperation.name,
+        input: FROZEN,
+        client,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns undefined on the operation's own one-plan refusal", async () => {
+    // A suite with several attached targets and no selector, or a group the
+    // contract cannot answer for: the operation throws, and that reaches the
+    // approver as an absent line rather than a failed mint.
+    mockLookup(async () => {
+      throw new Error("Disclosure covers ONE launch plan");
+    });
+    await expect(
+      disclosureForProposal({
+        operationName: runEvalSuiteOperation.name,
+        input: FROZEN,
+        client,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("never calls out for a plan the mapping already refused", async () => {
+    // Not just "returns undefined": a refused mapping must cost ZERO round
+    // trips, because the answer is already known and a mint is waiting on it.
+    const spy = mockLookup(async () => baseDisclosure());
+    for (const input of [
+      { ...FROZEN, hosts: ["h1", "h2"] },
+      { ...FROZEN, compose: { models: ["anthropic/claude-x"] } },
+      { ...FROZEN, allAttached: true },
+      { ...FROZEN, host: "h1", environment: "env_1" },
+    ]) {
+      await expect(
+        disclosureForProposal({
+          operationName: runEvalSuiteOperation.name,
+          input,
+          client,
+        })
+      ).resolves.toBeUndefined();
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("refuses empty and missing selectors without calling out", async () => {
+    const spy = mockLookup(async () => baseDisclosure());
+    for (const input of [
+      {},
+      { project: "p1" },
+      { suite: "ts_1" },
+      // Whitespace-only is empty: a selector that trims to nothing cannot
+      // identify a plan, and sending it would just move the failure one hop.
+      { project: "   ", suite: "ts_1" },
+      { project: "p1", suite: "   " },
+      { project: null, suite: "ts_1" },
+      { project: "p1", suite: 42 },
+    ] as Array<Record<string, unknown>>) {
+      await expect(
+        disclosureForProposal({
+          operationName: runEvalSuiteOperation.name,
+          input,
+          client,
+        })
+      ).resolves.toBeUndefined();
+    }
+    expect(spy).not.toHaveBeenCalled();
   });
 });
