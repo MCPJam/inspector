@@ -114,7 +114,7 @@ function request(
 // The suite the eval-run route reads to decide environment selection. No
 // `environmentIds` = a legacy suite, which is what most of these tests are.
 const SUITE_DOC = {
-  _id: "suite_1",
+  _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   name: "Smoke",
 };
@@ -139,8 +139,8 @@ function mockConvexQueries(
 }
 
 const RUN_DOC = {
-  _id: "run_1",
-  suiteId: "suite_1",
+  _id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: "p1",
   runNumber: 3,
   status: "completed",
@@ -210,7 +210,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", hostIds: ["h1"] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", hostIds: ["h1"] }
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -268,8 +268,8 @@ describe("v1 write routes", () => {
           authenticatedUserId: null,
         });
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -291,13 +291,13 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(202);
         expect(await res.json()).toEqual({
-          runId: "run_1",
-          suiteId: "suite_1",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           status: "running",
           caseUpsert: { committed: [], failed: [] },
           servers: [
@@ -308,7 +308,7 @@ describe("v1 write routes", () => {
         });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
         // The manager connects the derived set, names included.
         expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
@@ -345,7 +345,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
@@ -372,7 +372,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_other" }
+          { suiteId: "suiteotherxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(404);
@@ -389,7 +389,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(404);
@@ -412,7 +412,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
@@ -432,8 +432,8 @@ describe("v1 write routes", () => {
         });
         const execute = vi.fn().mockResolvedValue(undefined);
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute,
@@ -461,12 +461,12 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
         expect(res.status).toBe(202);
         const body = (await res.json()) as any;
-        expect(body.runId).toBe("run_1");
+        expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
         // Reports what the run IS, not what a launch would have made it.
         expect(body.status).toBe("completed");
         expect(body.deduped).toBe(true);
@@ -488,7 +488,7 @@ describe("v1 write routes", () => {
             makeApp(),
             "POST",
             "/api/v1/projects/p1/eval-runs",
-            { suiteId: "suite_1", idempotencyKey: `key_${i}` }
+            { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: `key_${i}` }
           );
           expect(res.status).toBe(202);
         }
@@ -504,7 +504,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
         expect(res.status).toBe(202);
@@ -523,8 +523,8 @@ describe("v1 write routes", () => {
         });
         const execute = vi.fn().mockResolvedValue(undefined);
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute,
@@ -541,7 +541,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
         expect(res.status).toBe(202);
@@ -604,8 +604,8 @@ describe("v1 write routes", () => {
           authenticatedUserId: null,
         });
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -629,7 +629,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
         );
 
         expect(res.status).toBe(202);
@@ -669,7 +669,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1", serverIds: ["s_bogus"] }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1", serverIds: ["s_bogus"] }
         );
 
         expect(res.status).toBe(400);
@@ -711,7 +711,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_other" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_other" }
         );
 
         expect(res.status).toBe(400);
@@ -749,7 +749,7 @@ describe("v1 write routes", () => {
           "POST",
           "/api/v1/projects/p1/eval-runs",
           {
-            suiteId: "suite_1",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             environmentId: "env_other",
             ephemeralEnvironment: true,
           }
@@ -770,7 +770,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(202);
@@ -797,7 +797,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
@@ -820,7 +820,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", serverIds: ["s_bogus"] }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s_bogus"] }
         );
 
         expect(res.status).toBe(400);
@@ -853,7 +853,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
         );
 
         expect(res.status).toBe(409);
@@ -884,7 +884,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
         );
 
         expect(res.status).toBe(404);
@@ -915,8 +915,8 @@ describe("v1 write routes", () => {
           authenticatedUserId: null,
         });
         prepareEvalRunMock.mockResolvedValue({
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn().mockResolvedValue(undefined),
@@ -1014,8 +1014,8 @@ describe("v1 write routes", () => {
         resolveExecute = resolve;
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [{ name: "case" }], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(() => executeGate),
@@ -1025,13 +1025,13 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
 
       expect(res.status).toBe(202);
       expect(await res.json()).toEqual({
-        runId: "run_1",
-        suiteId: "suite_1",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         status: "running",
         caseUpsert: { committed: [{ name: "case" }], failed: [] },
         servers: [{ id: "s1" }],
@@ -1063,8 +1063,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize },
         execute: vi.fn().mockRejectedValue(new Error("provider exploded")),
@@ -1082,7 +1082,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
       await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1));
@@ -1101,8 +1101,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize },
         // runEvalSuiteWithAiSdk semantics: finalize as failed, then rethrow.
@@ -1116,7 +1116,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
       // The teardown still runs, but no second terminal write happens.
@@ -1139,7 +1139,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(500);
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
@@ -1178,8 +1178,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -1189,7 +1189,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] },
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
         "sk_live_secret"
       );
       expect(res.status).toBe(202);
@@ -1217,8 +1217,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -1228,7 +1228,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"], suiteRerun: false }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"], suiteRerun: false }
       );
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
@@ -1247,8 +1247,8 @@ describe("v1 write routes", () => {
         authenticatedUserId: null,
       });
       prepareEvalRunMock.mockResolvedValue({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn().mockResolvedValue(undefined),
@@ -1259,7 +1259,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-runs",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverIds: ["s1"],
           tests: [
             {
@@ -1414,7 +1414,7 @@ describe("v1 write routes", () => {
         },
       });
       authorEvalSuiteMock.mockResolvedValue({
-        suiteId: "suite_new",
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
         suiteName: "Fresh suite",
         caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
       });
@@ -1438,7 +1438,7 @@ describe("v1 write routes", () => {
         name?: string;
         servers?: unknown;
       };
-      expect(body.suiteId).toBe("suite_new");
+      expect(body.suiteId).toBe("suitenewxxxxxxxxxxxxxxxxxxxxxxxx");
       expect(body.name).toBe("Fresh suite");
 
       // The run engine is never invoked — this is author-only.
@@ -1481,8 +1481,8 @@ describe("v1 write routes", () => {
       });
       const releaseGates: Array<() => void> = [];
       prepareEvalRunMock.mockImplementation(async () => ({
-        suiteId: "suite_1",
-        runId: "run_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(
@@ -1494,7 +1494,7 @@ describe("v1 write routes", () => {
           app,
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", serverIds: ["s1"] },
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
           token
         );
 
@@ -1557,8 +1557,8 @@ describe("v1 write routes", () => {
       prepareEvalRunMock.mockImplementation(async () => {
         call += 1;
         return {
-          suiteId: "suite_1",
-          runId: `run_${call}`,
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: `run${call}`.padEnd(32, "x"),
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn(
@@ -1631,7 +1631,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           ephemeralEnvironment: true,
           targets: [{ environmentId: "env_adhoc" }],
         }
@@ -1654,7 +1654,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
@@ -1680,7 +1680,7 @@ describe("v1 write routes", () => {
       expect(body.targets[0].runStatus).toBe("running");
       // Deprecated mirrors of the first started run, for readers written
       // against the single-run receipt.
-      expect(body.runId).toBe("run_1");
+      expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
       expect(body.status).toBe("running");
 
       // Every sibling carries the SAME group id, and each target's own host.
@@ -1706,7 +1706,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
@@ -1719,14 +1719,14 @@ describe("v1 write routes", () => {
       // still fits. Charging per target would have exhausted the cap here,
       // which is what makes a 3-target fan-out unlaunchable.
       const single = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-        suiteId: "suite_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverIds: ["s1"],
       });
       expect(single.status).toBe(202);
 
       // …and the next one is gated, so the group's slot is genuinely held.
       const gated = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-        suiteId: "suite_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverIds: ["s1"],
       });
       expect(gated.status).toBe(429);
@@ -1739,7 +1739,7 @@ describe("v1 write routes", () => {
       expect(
         (
           await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-            suiteId: "suite_1",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
         ).status
@@ -1749,7 +1749,7 @@ describe("v1 write routes", () => {
       expect(
         (
           await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-            suiteId: "suite_1",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
         ).status
@@ -1765,7 +1765,7 @@ describe("v1 write routes", () => {
         expect(
           (
             await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-              suiteId: "suite_1",
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               serverIds: ["s1"],
             })
           ).status
@@ -1775,7 +1775,7 @@ describe("v1 write routes", () => {
         app,
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
-        { suiteId: "suite_1", targets: [{ namedHostId: "host_claude" }] }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", targets: [{ namedHostId: "host_claude" }] }
       );
       expect(res.status).toBe(429);
       expect(await res.json()).toMatchObject({
@@ -1799,8 +1799,8 @@ describe("v1 write routes", () => {
         call += 1;
         if (call === 2) throw new Error("environment revision conflict");
         return {
-          suiteId: "suite_1",
-          runId: "run_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          runId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn(
@@ -1815,7 +1815,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
@@ -1832,7 +1832,7 @@ describe("v1 write routes", () => {
         error: { message: expect.stringContaining("revision conflict") },
       });
       // A runtime per-target failure does NOT abort its siblings.
-      expect(body.runId).toBe("run_1");
+      expect(body.runId).toBe("run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
       // The failed target decremented in the launch loop, so releasing the one
       // started sibling releases the whole group's slot.
@@ -1840,7 +1840,7 @@ describe("v1 write routes", () => {
       expect(
         (
           await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-            suiteId: "suite_1",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
         ).status
@@ -1864,7 +1864,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
@@ -1886,7 +1886,7 @@ describe("v1 write routes", () => {
         expect(
           (
             await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-              suiteId: "suite_1",
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               serverIds: ["s1"],
             })
           ).status
@@ -1903,7 +1903,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_nope" },
@@ -1928,7 +1928,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { environmentId: "env_1" },
@@ -1950,7 +1950,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: Array.from({ length: MAX_RUN_GROUP_TARGETS + 1 }, (_, i) => ({
             namedHostId: `host_${i}`,
           })),
@@ -1979,7 +1979,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
@@ -2033,7 +2033,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [{ environmentId: "env_1" }, { environmentId: "env_2" }],
         }
       );
@@ -2056,7 +2056,7 @@ describe("v1 write routes", () => {
           "POST",
           "/api/v1/projects/p1/eval-run-groups",
           {
-            suiteId: "suite_1",
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             targets: [{ namedHostId: "host_claude" }],
             ...knob,
           }
@@ -2077,7 +2077,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
             { namedHostId: "host_claude" },
             { namedHostId: "host_claude" },
@@ -2098,10 +2098,10 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
         {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [{ namedHostId: "host_claude" }],
           iterationOverride: 3,
-          caseIds: ["case_1"],
+          caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
           matchOptionsOverride: {
             toolCallOrder: "in-order",
             extraToolCalls: "unlimited",
@@ -2115,7 +2115,7 @@ describe("v1 write routes", () => {
       expect(res.status).toBe(202);
       const forwarded = prepareEvalRunMock.mock.calls[0][1];
       expect(forwarded.iterationOverride).toBe(3);
-      expect(forwarded.caseIds).toEqual(["case_1"]);
+      expect(forwarded.caseIds).toEqual(["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"]);
       expect(forwarded.skillsOverride).toBe("exclude");
       expect(forwarded.notes).toBe("nightly");
       expect(forwarded.passCriteria).toEqual({ minimumPassRate: 80 });
@@ -2132,7 +2132,7 @@ describe("v1 write routes", () => {
       const { releaseGates, disconnectAllServers } = mockPendingLaunches();
       const app = makeApp();
       const body = {
-        suiteId: "suite_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         targets: [
           { namedHostId: "host_claude" },
           { namedHostId: "host_chatgpt" },
@@ -2177,7 +2177,7 @@ describe("v1 write routes", () => {
       const app = makeApp();
       const post = () =>
         request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-          suiteId: "suite_1",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           runGroupId: "client-minted",
         });
 
@@ -2208,19 +2208,19 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
         { environmentId: "env_b" }
       );
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        suiteId: "suite_1",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         attached: true,
         environmentIds: ["env_a", "env_b"],
       });
       expect(convexMutationMock).toHaveBeenCalledWith(
         "testSuites:attachEnvironment",
-        { suiteId: "suite_1", environmentId: "env_b" }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_b" }
       );
     });
 
@@ -2234,7 +2234,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
         { environmentId: "env_a" }
       );
       expect(res.status).toBe(200);
@@ -2251,7 +2251,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
         { environmentId: "env_b" }
       );
       expect(res.status).toBe(404);
@@ -2266,7 +2266,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
         { environmentId: "env_b" }
       );
       expect(res.status).toBe(400);
@@ -2282,12 +2282,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        id: "run_1",
-        suiteId: "suite_1",
+        id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         environment: null,
         runNumber: 3,
         status: "completed",
@@ -2335,11 +2335,11 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(200);
       expect((await res.json()) as any).toMatchObject({
-        id: "run_1",
+        id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         executionEngine: "harness:claude-code",
       });
     });
@@ -2349,7 +2349,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
@@ -2362,7 +2362,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
     });
@@ -2371,9 +2371,9 @@ describe("v1 write routes", () => {
       convexQueryMock.mockResolvedValueOnce(RUN_DOC).mockResolvedValueOnce({
         page: [
           {
-            _id: "iter_1",
-            testCaseId: "case_1",
-            suiteRunId: "run_1",
+            _id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            testCaseId: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             iterationNumber: 1,
             status: "completed",
             result: "passed",
@@ -2397,7 +2397,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations?limit=1"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations?limit=1"
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -2406,7 +2406,7 @@ describe("v1 write routes", () => {
       };
       expect(body.nextCursor).toBe("cursor_2");
       expect(body.items[0]).toMatchObject({
-        id: "iter_1",
+        id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         title: "case",
         model: "m",
         provider: "anthropic",
@@ -2420,12 +2420,12 @@ describe("v1 write routes", () => {
     it("returns the trace blob and 404s with TRACE_NOT_AVAILABLE when missing", async () => {
       convexQueryMock
         .mockResolvedValueOnce(RUN_DOC)
-        .mockResolvedValueOnce({ _id: "iter_1", suiteRunId: "run_1" });
+        .mockResolvedValueOnce({ _id: "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx", suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
       convexActionMock.mockResolvedValueOnce(null);
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations/iter_1/trace"
+        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace"
       );
       expect(res.status).toBe(404);
       expect(await res.json()).toMatchObject({

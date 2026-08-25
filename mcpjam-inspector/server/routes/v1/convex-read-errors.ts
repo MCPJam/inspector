@@ -21,6 +21,15 @@ import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
  *   `requireWorkspaceRole`: "Not a member of this workspace"
  *                           "Insufficient workspace permissions: requires <role>"
  *   `resolveAuthorizedChatSession`: "ChatSession not found or unauthorized"
+ *   the rest of that helper family: "<Resource> not found or unauthorized" —
+ *                           "Suite not found or unauthorized", "Test suite run
+ *                           not found or unauthorized". Matched on the COMPOUND
+ *                           phrase with no resource name, which is why the
+ *                           ChatSession entry is no longer special:
+ *                           `routes/mcp/evals.ts:361` already tests the same
+ *                           phrase resource-agnostically, and the alternative is
+ *                           an enumeration that answers 502 — and pages — for
+ *                           every resource nobody remembered to add.
  *
  * The workspace wordings matter because the user-testing reads
  * (`scenarios:getScenario`, `chatSessions:getSession`) authorize at WORKSPACE
@@ -31,10 +40,14 @@ import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
  * Deliberately NOT a loose "unauthorized"/"not found" match. Those words also
  * appear in failures that are OURS — an expired credential, a renamed or
  * undeployed function — and answering 404 to those tells a caller their
- * resource is gone during an outage.
+ * resource is gone during an outage. The compound "not found or unauthorized"
+ * is safe where the bare words are not: no Convex or transport failure phrases
+ * itself that way ("Could not find public function", "Unauthenticated",
+ * "Server Error", "fetch failed"), and only an authorization helper joins the
+ * two.
  */
 const MEMBERSHIP_REFUSAL =
-  /not a member of this (?:project|workspace)|insufficient (?:project|workspace) permissions|chatsession not found or unauthorized/i;
+  /not a member of this (?:project|workspace)|insufficient (?:project|workspace) permissions|not found or unauthorized/i;
 
 /**
  * Convex rejected the ARGUMENTS before the handler ran — a caller-shaped id

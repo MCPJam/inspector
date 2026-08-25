@@ -38,7 +38,7 @@ import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 const PROJECT = "proj_a";
-const RUN = "run_1";
+const RUN = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp(router: Parameters<Hono["route"]>[1]) {
   const app = new Hono();
@@ -59,7 +59,7 @@ function answerQueries(answers: Record<string, unknown>) {
 
 const RUN_ROW = {
   _id: RUN,
-  suiteId: "suite_1",
+  suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
   projectId: PROJECT,
   status: "completed",
   result: "failed",
@@ -577,5 +577,72 @@ describe("guest boundary (default-deny allowlist)", () => {
         `/api/v1/projects/${PROJECT}/journey-runs/${RUN}`,
       ),
     ).toBe(false);
+  });
+});
+
+/**
+ * The incident: a model polling a grouped launch concatenated the run ids it
+ * had been handed and sent them as ONE path segment, `%20`-joined. Convex
+ * rejected the argument before its handler ran, the route could not classify
+ * the rejection, and every retry became a 500 tagged `origin=mcpjam` — Sentry
+ * `CONVEX-1N8`, 21 events, and a paging Axiom monitor. The user cost was a
+ * stall; the cost that mattered was the page.
+ */
+describe("a malformed run id is not an incident", () => {
+  // Verbatim from the production access log, 2026-08-25T01:59:45Z: five run
+  // ids in one segment. Hono has already decoded the `%20` by the time the
+  // handler reads the param, so the fixture is the decoded form.
+  const MULTI_ID = [
+    "mh78djdyf2dqbmxky71sz9y6x58d5p2c",
+    "mh7ck9qd0hzc7a2ckd3546ebq58d4yd3",
+    "mh7d5c3ngvsx6mywf6m1nrv3a98d4p98",
+    "mh708byqn84ke7556kh3gpy7j58d5jqf",
+    "mh7f8dhfnnaazq58p9cmk3a0t98d556e",
+  ].join(" ");
+
+  it("404s the joined id WITHOUT calling Convex", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${encodeURIComponent(MULTI_ID)}`,
+    );
+
+    expect(res.status).toBe(404);
+    // The assertion that pins the fix to the BOUNDARY. Every rejected
+    // alternative — a smarter error translator, a tolerant Convex validator —
+    // passes the status check above and fails this one, because they all let
+    // the bad id become an outbound call and an exception first.
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not leak the upstream text back to the caller", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${encodeURIComponent(MULTI_ID)}`,
+    );
+    const body = await res.text();
+
+    expect(body).not.toContain("ArgumentValidationError");
+    expect(body).not.toContain("Request ID");
+    // The same sentence a genuinely missing run gets: a distinguishable answer
+    // here would be an existence oracle.
+    expect(JSON.parse(body).message).toBe("Eval run not found");
+  });
+
+  it("still reaches Convex for a well-formed id", async () => {
+    // The regression guard for an over-tight gate. `looksLikeConvexId` accepts
+    // 30-36 lowercase alphanumerics, and narrowing it would 404 every caller.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalled();
   });
 });

@@ -29,6 +29,7 @@ import { mapErrorToV1, v1OnError } from "../envelope.js";
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../../web/errors.js";
 import { translateConvexWriteError } from "../convex-errors.js";
 import { translateConvexReadError } from "../convex-read-errors.js";
+import { requireConvexIdShape } from "../convex-id-param.js";
 import { logger } from "../../../utils/logger.js";
 
 const captureException = vi.mocked(Sentry.captureException);
@@ -466,5 +467,56 @@ describe("translateConvexReadError — argument validation is warned, not paged"
 
     expect(result.status).toBe(404);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The eval-run id incident, expressed as what it actually cost: not the 404,
+ * the PAGE. A caller-supplied path segment Convex could not parse produced a
+ * 500 that `mcpjam_internal` promoted to `origin=mcpjam` and captured, once
+ * per retry, from a route a share-link guest can reach.
+ */
+describe("a malformed id parameter must not page", () => {
+  const MULTI_ID =
+    "mh78djdyf2dqbmxky71sz9y6x58d5p2c mh7ck9qd0hzc7a2ckd3546ebq58d4yd3";
+
+  function reject(): unknown {
+    try {
+      requireConvexIdShape(MULTI_ID, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected the id gate to reject");
+  }
+
+  it("captures nothing, even under the internal boundary", () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const result = mapErrorToV1(reject(), INTERNAL);
+
+    expect(result.code).toBe("NOT_FOUND");
+    // The whole point. Before the gate this was INTERNAL_ERROR, the one
+    // combination `effectiveBoundary` promotes to `mcpjam` — so a guest with a
+    // bad id could mint paging Sentry events at will.
+    expect(result.origin).not.toBe("mcpjam");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("counts the rejection in Axiom instead of going silent", () => {
+    // Not silence: the gate's other failure mode is a Convex id-format change,
+    // which would 404 EVERY caller under a status no 5xx monitor watches. The
+    // warn is what makes that visible and rate-alertable.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    reject();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      scope: "v1.evals",
+      param: "runId",
+    });
   });
 });
