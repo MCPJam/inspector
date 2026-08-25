@@ -26,6 +26,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import type { StructuredRunVerdict } from "./structured-reporting.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -698,6 +699,33 @@ const STATUS_LABEL: Record<GateStatus, string> = {
   non_gateable: "N/A ",
   usage_error: "ERR ",
 };
+
+/**
+ * Map a gate's own outcome onto the `StructuredRunReport` verdict vocabulary.
+ *
+ * `incomplete` — a `--wait` timeout, a cancelled run, non-gateable score
+ * integrity, an inconclusive backend result — is the gate's own version of
+ * "not enough was measured", the exact claim `inconclusive` makes for an eval
+ * run. It must map there, never to `failed`: a gate report is `passed: false`
+ * whenever it isn't `passed`, so a renderer that infers the verdict from
+ * `passed` alone (the way `renderStructuredRunHtml` falls back when no
+ * verdict is given) paints an unmeasured gate red — a measured regression
+ * the run never established. `usage_error` is a genuine gate-config defect,
+ * so it reads as a failure like `failed` does.
+ */
+export function gateOutcomeVerdict(
+  outcome: GateReport["outcome"]
+): StructuredRunVerdict {
+  switch (outcome) {
+    case "passed":
+      return "passed";
+    case "incomplete":
+      return "inconclusive";
+    case "failed":
+    case "usage_error":
+      return "failed";
+  }
+}
 
 export function formatGateReport(report: GateReport): string {
   const lines = [
