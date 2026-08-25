@@ -20,6 +20,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import {
   environmentLaunchConflictError,
+  environmentLaunchRejectionError,
   environmentModelRequiredError,
   isEnvironmentLaunchConflict,
 } from "../environments/resolve.js";
@@ -554,6 +555,17 @@ export const startSuiteRunWithRecorder = async ({
       isEnvironmentLaunchConflict(error)
     ) {
       throw environmentLaunchConflictError(error);
+    }
+    // The remaining structured refusals — a bad ephemeralEnvironment request,
+    // a non-member or ambiguous environment, the resolver's cross-project /
+    // archived / missing verdicts. Each aborts BEFORE any run row exists, and
+    // each names something the caller can act on; rethrowing raw handed them
+    // all to the generic handler as `500 "Server Error"`, which is what the
+    // backend raising ConvexError instead of Error was meant to prevent.
+    // Returns null for anything unrecognized, so a real fault stays a 500.
+    const rejection = environmentLaunchRejectionError(error);
+    if (rejection) {
+      throw rejection;
     }
     throw error;
   }
