@@ -2546,6 +2546,12 @@ export function registerEvalCommands(program: Command): void {
         waitErrors: completion.waitErrors,
       });
 
+      // Captured, NOT thrown here: the receipt below (or the reporter
+      // stdout) carries the only copy of the launched run ids, and a local
+      // disk error must not cost the caller those ids the way an early
+      // throw would — same discipline the wait-error path above already
+      // follows, for the same reason.
+      let outWriteError: string | undefined;
       if (options.out && report) {
         try {
           await writeReporterArtifact(
@@ -2554,16 +2560,7 @@ export function registerEvalCommands(program: Command): void {
             report
           );
         } catch (error) {
-          // A local `--out` write failure is infrastructure the CLI itself
-          // observed, never a verdict — merged toward 4, not the
-          // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
-          // from `normalizeCliError`, and never allowed to outrank an
-          // already-computed verdict failure (1) or auth failure (3).
-          throw cliError(
-            "OUT_WRITE_FAILED",
-            error instanceof Error ? error.message : String(error),
-            worstOf([code, 4])
-          );
+          outWriteError = error instanceof Error ? error.message : String(error);
         }
       }
       if (reporter && report) {
@@ -2578,6 +2575,14 @@ export function registerEvalCommands(program: Command): void {
 
       // Everything above has already been written — report file, reporter
       // stdout, or the launch receipt. Only now may this fail.
+      if (outWriteError !== undefined) {
+        // A local `--out` write failure is infrastructure the CLI itself
+        // observed, never a verdict — merged toward 4, not the
+        // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
+        // from `normalizeCliError`, and never allowed to outrank an
+        // already-computed verdict failure (1) or auth failure (3).
+        throw cliError("OUT_WRITE_FAILED", outWriteError, worstOf([code, 4]));
+      }
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
         const affectedRunIds = [
           ...reportingErrors.map((input) => input.run.id),

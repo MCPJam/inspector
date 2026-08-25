@@ -3864,6 +3864,11 @@ test("eval run --wait exits 4 on a local --out write failure", async () => {
     );
 
     assert.equal(run.result.exitCode, 4);
+    // The receipt is the only place the launched run id survives; a local
+    // disk error must not cost the caller that id the way an early throw
+    // would.
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
   } finally {
     process.exitCode = 0;
     await fixture.close();
@@ -3901,6 +3906,9 @@ test("merge: a local --out write failure never masks a real verdict failure", as
     );
 
     assert.equal(run.result.exitCode, 1);
+    // The receipt still reaches stdout even though --out failed.
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
     const stderrLines = run.stderr.trim().split("\n");
     const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
     assert.equal(failure.error.code, "OUT_WRITE_FAILED");
