@@ -73,6 +73,7 @@ import {
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
   SKILL_TOOL_NAMES,
+  resolveMatchOptions,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
@@ -130,6 +131,7 @@ import {
   buildIterationFinishParams,
   buildStageMetadata,
 } from "./evals/finalize-iteration.js";
+import type { GradingEngineMode } from "./evals/grading-mode.js";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
@@ -357,9 +359,55 @@ export function runFrozenSkillOptions(run: {
   };
 }
 
+/**
+ * The match options the `toolCalls:match` score definition hashes over.
+ *
+ * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
+ * whatever the case declared, so hashing the sparse authored object would give
+ * two cases that grade identically two different `implementationHash`es — and
+ * would leave a case that declares nothing hashing `{}` while actually being
+ * graded order-agnostic with partial argument matching. The digest is supposed
+ * to answer "would this scorer decide differently?", and only the resolved
+ * options can answer that.
+ */
+/**
+ * The resolved match options to hash into the `toolCalls:match` definition.
+ *
+ * MUST STAY IN LOCKSTEP with what the matcher is actually handed. Today both
+ * this and `evaluateMultiTurnResults` resolve as
+ * `resolveMatchOptions(undefined, test.matchOptions)` at the same call sites,
+ * so the digest honestly describes the options the verdict was produced under.
+ *
+ * If a future path starts threading suite-level `defaultMatchOptions` into the
+ * matcher without threading them here, the two silently diverge: the scorer's
+ * `implementationHash` would describe options the matcher never applied, and
+ * the second pass would rebuild the definition under a hash the first pass
+ * never wrote. Change both, or neither.
+ */
+function scoreMatchOptionsFor(
+  test: Pick<EvalTestCase, "matchOptions">
+): Record<string, unknown> {
+  return resolveMatchOptions(undefined, test.matchOptions) as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
+  /**
+   * The run's FROZEN grading-engine position, read from
+   * `configSnapshot.gradingEngine` at run start and threaded to every
+   * iteration's finalization.
+   *
+   * ABSENT ⇒ each finalization falls back to the env kill switch alone, which
+   * is `off` unless an operator set it — the pre-B3b behaviour. Threading it
+   * is what makes a per-suite `off` real on the FIRST pass (it was previously
+   * honoured only by the judge second pass, which reads the run row) and what
+   * lets a run reach `enforce` at all.
+   */
+  gradingMode?: GradingEngineMode;
   config: {
     tests: EvalTestCase[];
     environment: {
@@ -1530,6 +1578,8 @@ type RunIterationBaseParams = {
   injectOpenAiCompat?: boolean;
   /** Resolved host execution policy from the run's hostConfig snapshot. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -1935,6 +1985,8 @@ const executeTestCase = async (params: {
   injectOpenAiCompat?: boolean;
   /** Host execution policy for metadata stamping. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
@@ -1981,6 +2033,7 @@ const executeTestCase = async (params: {
     emit,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -2071,6 +2124,7 @@ const executeTestCase = async (params: {
         ...(compareRunId ? { compareRunId } : {}),
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2201,6 +2255,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2260,6 +2315,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2313,6 +2369,7 @@ const executeTestCase = async (params: {
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
+      gradingMode,
       toolSignals,
       setupSignals,
       setupSpans,
@@ -2351,6 +2408,7 @@ const runTestCase = (
 ) => executeTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
+  gradingMode,
   suiteId,
   runId,
   config,
@@ -2586,6 +2644,7 @@ export const runEvalSuiteWithAiSdk = async ({
         abortRun,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
+        ...(gradingMode ? { gradingMode } : {}),
         toolSignals: resolvedToolSignals,
         ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
         ...(resolvedSetupSpans.length
@@ -2922,6 +2981,7 @@ const runLocalIteration = async ({
   precreatedIterationId,
   injectOpenAiCompat,
   hostPolicy,
+  gradingMode,
   toolSignals,
   setupSignals,
   setupSpans,
@@ -3626,6 +3686,12 @@ const runLocalIteration = async ({
       iterationId,
       // Keys shadow-mismatch telemetry only; never read for the verdict.
       ...(runId !== null ? { runId: String(runId) } : {}),
+      // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
+      // THIS pass (it used to be visible only to the judge second pass, which
+      // reads the run row) and so a run can reach `enforce` at all.
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -3706,6 +3772,22 @@ const runLocalIteration = async ({
           }
         : {}),
     });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+    //
+    // At `enforce` the iteration's result is the conjunction of the boolean
+    // pipeline and the gating score rows, computed inside
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+    // against — so a strictness catch would persist `failed` on the iteration
+    // while the run counted it a pass, and the pass rate would be inflated by
+    // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+    // during the soak, so this drift is reachable, not theoretical.
+    //
+    // Assigned AFTER the call, never before: the score rows derive the
+    // `toolCalls:match` row from `evaluation.passed`, which must remain the
+    // MATCHER's answer at derivation time.
+    evaluation.passed = finishParams.passed;
 
     await finalizeIterationWithBrowserArtifacts({
       browser,
@@ -3839,6 +3921,9 @@ const runLocalIteration = async ({
     const failParams = buildIterationFinishParams({
       iterationId,
       ...(runId !== null ? { runId: String(runId) } : {}),
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -3972,6 +4057,7 @@ const runHostedIterationWithBrowser = async (
     precreatedIterationId,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -4690,6 +4776,9 @@ const runHostedIterationWithBrowser = async (
   const finishParams = buildIterationFinishParams({
     iterationId,
     ...(runId !== null ? { runId: String(runId) } : {}),
+    ...(gradingMode ? { gradingMode } : {}),
+    scoreMatchOptions: scoreMatchOptionsFor(test),
+    ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,
@@ -4755,6 +4844,22 @@ const runHostedIterationWithBrowser = async (
       prepared.discoveryState
     ),
   });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+  //
+  // At `enforce` the iteration's result is the conjunction of the boolean
+  // pipeline and the gating score rows, computed inside
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+  // against — so a strictness catch would persist `failed` on the iteration
+  // while the run counted it a pass, and the pass rate would be inflated by
+  // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+  // during the soak, so this drift is reachable, not theoretical.
+  //
+  // Assigned AFTER the call, never before: the score rows derive the
+  // `toolCalls:match` row from `evaluation.passed`, which must remain the
+  // MATCHER's answer at derivation time.
+  evaluation.passed = finishParams.passed;
 
   await finalizeIterationWithBrowserArtifacts({
     browser,
