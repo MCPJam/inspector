@@ -1096,15 +1096,40 @@ describe("PlaygroundMain", () => {
   });
 
   describe("empty state", () => {
-    it("shows welcome message when thread is empty", () => {
+    it("shows the MCPJam logo without a welcome byline when thread is empty", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", {
+        screen.queryByRole("heading", {
           name: /This is your playground for MCP./i,
-        })
-      ).toBeInTheDocument();
+        }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps the logo without a welcome byline when empty compare mode mounts", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = [
+        "gpt-4",
+        "claude-sonnet-4-5",
+      ];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+
+      expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", {
+          name: /This is your playground for MCP./i,
+        }),
+      ).not.toBeInTheDocument();
     });
 
     it("shows sign up prompt when authentication required", () => {

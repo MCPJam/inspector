@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MultiModelStarterPromptsBlock } from "../multi-model-starters-empty";
+import {
+  MultiModelStarterPromptsBlock,
+  MultiModelStartersEmptyLayout,
+} from "../multi-model-starters-empty";
 import { STARTER_PROMPTS } from "../shared/chat-helpers";
 
 // Starter prompts must be answerable from the model's own tool list alone —
@@ -35,5 +38,25 @@ describe("MultiModelStarterPromptsBlock", () => {
       expect(onStarterPrompt).toHaveBeenLastCalledWith(prompt.text);
     }
     expect(onStarterPrompt).toHaveBeenCalledTimes(STARTER_PROMPTS.length);
+  });
+});
+
+describe("MultiModelStartersEmptyLayout", () => {
+  it("keeps its logo slot visible while starter prompts are unavailable", () => {
+    render(
+      <MultiModelStartersEmptyLayout
+        isAuthLoading={true}
+        showStarterPrompts={false}
+        logoSlot={<div data-testid="mcpjam-welcome-hero">MCPJam</div>}
+        authPrimarySlot={null}
+        onStarterPrompt={vi.fn()}
+        chatInputSlot={null}
+      />,
+    );
+
+    expect(screen.getByTestId("mcpjam-welcome-hero")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Try one of these to get started"),
+    ).not.toBeInTheDocument();
   });
 });

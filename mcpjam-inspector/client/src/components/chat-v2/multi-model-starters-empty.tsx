@@ -95,13 +95,15 @@ export function MultiModelStartersEmptyLayout({
       >
         <div className="w-full max-w-4xl shrink-0 space-y-6 py-8">
           {authPrimarySlot}
-          {showStarterPrompts ? (
+          {logoSlot || showStarterPrompts ? (
             <div className="space-y-4">
               {logoSlot}
-              <MultiModelStarterPromptsBlock
-                onStarterPrompt={onStarterPrompt}
-                chipClassName={chipClassName}
-              />
+              {showStarterPrompts ? (
+                <MultiModelStarterPromptsBlock
+                  onStarterPrompt={onStarterPrompt}
+                  chipClassName={chipClassName}
+                />
+              ) : null}
             </div>
           ) : null}
           {!isAuthLoading ? (
