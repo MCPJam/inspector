@@ -13,6 +13,8 @@ import {
   runJudgeSecondPass,
   type JudgeSecondPassPorts,
 } from "../judge-second-pass.js";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import { hostedCriterionId } from "../score-definitions.js";
 
 // =============================================================================
 // The second pass is the only component that WRITES because of a judge, so the
@@ -24,13 +26,39 @@ import {
 const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
 const originalEnv = process.env[ENV_KEY];
 
+/**
+ * The RAW authored case, as the backend's derivation-input route hands it back
+ * (B3b). The pass derives the analyzer's `StageAuthoredCase` from it through
+ * the SDK's `buildStageAuthoredCase` — the same function the runner used on the
+ * first pass — rather than being handed a pre-derived one, so stage
+ * applicability has exactly one implementation.
+ *
+ * This shape is `expectsToolCall: true, assertionCount: 1, model_driven`.
+ */
+const authoredCase = {
+  expectedToolCalls: ["list_files"],
+  expectedOutput: "done",
+};
+
+/**
+ * The DERIVED shape, as the backend also serves it (`stageCase`) for D7's
+ * consumer.
+ *
+ * Both fields ride the same wire row and both paths are exercised: a row with
+ * `authoredCase` is derived here through the SDK, and a row with only
+ * `stageCase` falls back to the backend's. Keeping a fixture for each is what
+ * stops the fallback rotting silently once every hosted row carries the raw
+ * case.
+ */
 const stageCase: StageAuthoredCase = {
   mode: "model_driven",
   expectsToolCall: true,
   assertionCount: 1,
 };
 
-function runRow(over: Partial<JudgeSecondPassRunRow> = {}): JudgeSecondPassRunRow {
+function runRow(
+  over: Partial<JudgeSecondPassRunRow> = {}
+): JudgeSecondPassRunRow {
   return {
     runId: "run1",
     goalCompletionJobId: "job1",
@@ -39,7 +67,7 @@ function runRow(over: Partial<JudgeSecondPassRunRow> = {}): JudgeSecondPassRunRo
       {
         iterationId: "iter1",
         status: "completed",
-        stageCase,
+        authoredCase,
         messages: [{ role: "user", content: "hi" }],
         metadata: {
           judgeVerdict: {
@@ -164,7 +192,12 @@ describe("what it declines to grade", () => {
       fetchRun: vi.fn(async () =>
         runRow({
           iterations: [
-            { iterationId: "iter1", status: "completed", stageCase, metadata: {} },
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase,
+              metadata: {},
+            },
           ],
         })
       ),
@@ -766,5 +799,85 @@ describe("D7: metadata-attribution rides the same second pass", () => {
       const userValueRow = rows.find((r) => r.stage === "userValue");
       expect(userValueRow?.reason).not.toBe("judgeFailed");
     });
+  });
+});
+
+// =============================================================================
+// CodeRabbit review — four findings, each pinned by the case that would have
+// caught it. None of these files are type-checked by any script or by CI
+// (`npm run typecheck` covers the SDK and sibling workspaces, not
+// `mcpjam-inspector`), so two of the four were type errors that shipped green.
+// Tests are the only guard these files actually have.
+// =============================================================================
+describe("the second pass keeps its contract with the run and the first pass", () => {
+  test("an off run returns the FULL result shape, not a partial literal", async () => {
+    // `JudgeSecondPassResult` requires `metadataAttributionOutcomes`. The
+    // off/shadow path built its own literal and omitted it — for most runs.
+    process.env[ENV_KEY] = "dual_write";
+    const { value } = ports({
+      fetchRun: vi.fn(async () => ({
+        ...runRow(),
+        configSnapshot: { gradingEngine: { mode: "off" } },
+      })),
+    });
+
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(result.reason).toBe("mode_off");
+    expect(result.metadataAttributionOutcomes).toEqual([]);
+    expect(result.outcomes).toEqual([]);
+  });
+
+  test("a stampless legacy row still derives, through stageCase", async () => {
+    // The fallback the row type had stopped declaring. A backend row carrying
+    // only the derived shape must still produce a chain.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => {
+        const row = runRow();
+        return {
+          ...row,
+          iterations: row.iterations.map(({ authoredCase: _drop, ...rest }) => ({
+            ...rest,
+            stageCase,
+          })),
+        };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    expect(applied[0]?.body?.stageResults).toBeDefined();
+  });
+
+  test("a legacy widget_probe with no turns stays MODEL-FREE", async () => {
+    // `isPinnedOnly` calls a zero-turn `widget_probe` model-free on the first
+    // pass. `isModelFree(undefined)` is `false`, so deriving from `steps` here
+    // would call it model-driven and invent a `selection` stage — and this
+    // post overwrites `stageResults` wholesale, replacing a correct chain.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => {
+        const row = runRow();
+        return {
+          ...row,
+          iterations: row.iterations.map((iteration) => ({
+            ...iteration,
+            authoredCase: { caseType: "widget_probe", expectedOutput: "done" },
+          })),
+        };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    const stages = (applied[0]?.body?.stageResults ?? []) as Array<{
+      stage?: string;
+      state?: string;
+    }>;
+    const selection = stages.find((row) => row.stage === "selection");
+    // Either absent, or present and explicitly not-applicable — never a real
+    // selection verdict the first pass would not have produced.
+    expect(
+      selection === undefined || selection.state === "notApplicable"
+    ).toBe(true);
   });
 });
