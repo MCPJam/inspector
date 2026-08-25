@@ -764,7 +764,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           422,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`
         );
       }
     }

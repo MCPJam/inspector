@@ -1089,7 +1089,7 @@ chatV2.post("/", async (c) => {
             code: "FEATURE_NOT_SUPPORTED",
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
-          422,
+          422
         );
       }
     }

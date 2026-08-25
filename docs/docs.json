@@ -95,11 +95,7 @@
           {
             "group": "Computer",
             "icon": "monitor",
-            "pages": [
-              "inspector/computer",
-              "inspector/claude-code-host",
-              "inspector/codex-host"
-            ]
+            "pages": ["inspector/computer", "inspector/claude-code-host"]
           },
           {
             "group": "Embedding",

@@ -14,6 +14,7 @@ const {
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   convexQueryMock,
+  checkHarnessRuntimeAvailableMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
@@ -22,6 +23,7 @@ const {
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   convexQueryMock: vi.fn(),
+  checkHarnessRuntimeAvailableMock: vi.fn(() => ({ ok: true })),
 }));
 
 vi.mock("ai", async () => {
@@ -86,15 +88,20 @@ vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/scenario-runtime-config.js")
   >("../../../utils/scenario-runtime-config.js");
-  return { ...actual, fetchScenarioRuntimeConfig: fetchScenarioRuntimeConfigMock };
+  return {
+    ...actual,
+    fetchScenarioRuntimeConfig: fetchScenarioRuntimeConfigMock,
+  };
 });
 
 // The harness preflight checks server-level runtime prerequisites (broker
 // delivery kill switch, computers data plane) that a unit test process has
 // none of. Those gates are covered by harness-availability's own tests; here we
-// only care about which skill set reaches which engine.
+// only care about which skill set reaches which engine — hence the `ok: true`
+// default. Which STATUS a refusal becomes is this route's own decision, so the
+// mock stays overridable for that one case.
 vi.mock("../../../utils/harness/harness-availability.js", () => ({
-  checkHarnessRuntimeAvailable: () => ({ ok: true }),
+  checkHarnessRuntimeAvailable: checkHarnessRuntimeAvailableMock,
 }));
 
 vi.mock("../apps.js", () => ({ default: new Hono() }));
@@ -382,9 +389,13 @@ describe("web chat-v2 — environment execution target", () => {
     // The MODEL-facing prompt for THIS turn carries the injected image block,
     // appended after the resolved host prompt.
     const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(prepareArgs.systemPrompt).toContain("## Computer image: staging-box");
+    expect(prepareArgs.systemPrompt).toContain(
+      "## Computer image: staging-box"
+    );
     expect(prepareArgs.systemPrompt).toContain("Use pnpm, not npm.");
-    expect(prepareArgs.systemPrompt.startsWith("environment prompt")).toBe(true);
+    expect(prepareArgs.systemPrompt.startsWith("environment prompt")).toBe(
+      true
+    );
 
     // The PERSISTED resume config keeps the RAW user prompt — a resumed turn
     // re-injects fresh context, so baking this turn's block in would leave
@@ -614,6 +625,45 @@ describe("web chat-v2 — environment execution target", () => {
         aggregateHash: "agg_env",
       },
     ]);
+  });
+
+  it("refuses an unavailable harness with 422 FEATURE_NOT_SUPPORTED rather than a 5xx", async () => {
+    // A host config the harness can't honor is the user's to fix, so it has to
+    // read as an actionable 4xx. A 5xx reads as a transient outage and invites
+    // the client to retry a turn that can never succeed.
+    convexQueryMock.mockResolvedValue({
+      ...ENV_SPEC,
+      host: {
+        ...ENV_SPEC.host,
+        runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness: "codex" },
+      },
+    });
+    checkHarnessRuntimeAvailableMock.mockReturnValueOnce({
+      ok: false,
+      kind: "tool-approval",
+      reason:
+        "the Codex harness can't pause for approval of MCP-server tools — " +
+        "turn off requireToolApproval on this host",
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(body.message).toMatch(
+      /can't pause for approval of MCP-server tools/
+    );
+    // Pre-stream: the model must never have been invoked.
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("propagates a resolver ENV_* failure as a 409 rather than running the turn", async () => {
