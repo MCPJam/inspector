@@ -490,42 +490,53 @@ describe("every gating definition this pass builds also gets a scored row", () =
 });
 
 describe("the returned params carry the verdict the run must aggregate", () => {
-  test("a strictness catch is visible on the returned params, not just persisted", () => {
-    const { definitions, scores } = (() => {
-      const built = buildHostedScoreContract({
-        predicateResults: [{ predicate: passingPredicate, passed: true }],
-        evaluation: evaluationFor(true),
+  test("no gating row this path builds is unresolvable, so the strictness catch cannot fire here", () => {
+    // The claim this file makes about `enforce` has two halves, and only one of
+    // them is reachable through `buildIterationFinishParams`.
+    //
+    // A gating row that DISAGREES flips a reported pass to failed — pinned
+    // above ("the rows still FAIL an iteration the boolean pipeline passed").
+    //
+    // A gating row that is UNRESOLVABLE — `error` or `skipped` — would too, and
+    // that is the half `enforce` was principally sold on. It cannot happen
+    // here. This path takes no judge verdict, and the only rows it builds
+    // (predicates, the tool matcher) go through `fromCriterionResult`, which
+    // always yields `status: "scored"`. `unresolvedScorerIds` is therefore
+    // structurally empty on the hosted first pass.
+    //
+    // This is worth a test rather than a comment because it sets the
+    // expectation for the ramp: a hosted `enforce` cohort showing ZERO verdict
+    // changes from unresolved rows is the CORRECT result, not evidence that the
+    // flag failed to take effect. The strictness catch lives on SDK-reported
+    // runs and on the judge second pass, which do produce error rows.
+    //
+    // If a future change gives this path an unresolvable gating row, this test
+    // fails — and the soak's baseline has to be re-read, not the test relaxed.
+    for (const entry of CORPUS) {
+      const params = build({
+        passed: entry.reportedPassed,
+        ...(entry.predicateResults
+          ? { predicateResults: entry.predicateResults }
+          : {}),
+        evaluation: evaluationFor(entry.evaluationPassed),
+        ...(entry.isNegativeTest ? { isNegativeTest: true } : {}),
       });
-      const gating = built.evaluationConfig.definitions.find(
-        (definition) => definition.role === "gating"
-      )!;
-      return {
-        definitions: built.evaluationConfig,
-        scores: built.scores.map((row) =>
-          row.scorerId === gating.scorerId
-            ? {
-                ...row,
-                status: "error" as const,
-                error: "scorer threw",
-                value: undefined,
-                passed: undefined,
-              }
-            : row
-        ),
-      };
-    })();
+      const metadata = params.metadata as Record<string, unknown>;
+      const scores = metadata.scores as Array<{ status: string }>;
+      const config = metadata.evaluationConfig as never;
 
-    // The boolean pipeline passed; the rows cannot corroborate it.
-    const derived = allGatingScorersPassed(scores, definitions);
-    expect(derived.passed).toBe(false);
-
-    const params = build({
-      passed: true,
-      predicateResults: [{ predicate: passingPredicate, passed: true }],
-      evaluation: evaluationFor(true),
-    });
-
-    // Whatever the runner aggregates must be THIS, not the `true` it passed in.
-    expect(typeof params.passed).toBe("boolean");
+      expect(
+        scores.length,
+        `${entry.label}: there are rows to make a claim about`,
+      ).toBeGreaterThan(0);
+      expect(
+        allGatingScorersPassed(scores as never, config).unresolvedScorerIds,
+        `${entry.label}: no unresolved gating row is reachable here`,
+      ).toEqual([]);
+      expect(
+        scores.every((row) => row.status === "scored"),
+        `${entry.label}: every row this path builds is scored`,
+      ).toBe(true);
+    }
   });
 });
