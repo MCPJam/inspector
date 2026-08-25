@@ -29,6 +29,7 @@ import {
   OutagePolicyExplainer,
   OutagePolicySelectItems,
 } from "./github-checks-outage-policy";
+import { ConnectRepoDataHandlingNote } from "./github-checks-data-handling";
 import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsPageShell } from "./SettingsPageShell";
 import {
@@ -882,6 +883,11 @@ export function GithubChecksRoute({
         </div>
 
         <OutagePolicyExplainer className="space-y-1 px-4 pb-3 text-xs text-muted-foreground" />
+
+        {/* The DATA half of the same decision, beside the policy half. This is
+            the consent moment for every run a push triggers afterwards — a
+            PR-triggered check has no pre-run human moment of its own. */}
+        <ConnectRepoDataHandlingNote className="px-4 pb-3 text-xs text-muted-foreground" />
 
         {installationReposFailed ? (
           <div className="px-4 pb-4 text-sm text-muted-foreground">

@@ -27,6 +27,7 @@ import {
   OutagePolicyExplainer,
   OutagePolicySelectItems,
 } from "@/components/settings/github-checks-outage-policy";
+import { ConnectRepoDataHandlingNote } from "@/components/settings/github-checks-data-handling";
 
 /**
  * "Run this suite on every pull request", on the suite itself.
@@ -230,6 +231,11 @@ export function SuiteGithubChecksSection({
       </div>
 
       <OutagePolicyExplainer className="space-y-1 text-xs text-muted-foreground" />
+
+      {/* The same authorization is granted here as in Settings → Integrations,
+          so it is described by the same component — two connect affordances
+          wording it differently is what the shared module prevents. */}
+      <ConnectRepoDataHandlingNote className="text-xs text-muted-foreground" />
 
       {installationRepos !== null && connectableRepos.length === 0 ? (
         <p className="text-xs text-muted-foreground">

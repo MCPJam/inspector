@@ -243,7 +243,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   connect_eval_check_repo:
-    "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
+    "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. It is also the consent moment for the data handling of every run it triggers, since a pull-request check has no pre-run human moment of its own. The suite settings sheet has this at the point of intent, next to the repository picker, the policy explainer and the data-handling note, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:

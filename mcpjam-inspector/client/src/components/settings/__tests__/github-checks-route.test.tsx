@@ -635,6 +635,75 @@ describe("GithubChecksRoute connect flow", () => {
       expect(page).not.toMatch(forbidden);
     }
   });
+
+  /**
+   * The DATA half of the connect decision. A pull-request check has no pre-run
+   * human moment, so this is the only place it can be said before the fact —
+   * and the two sentences a friendlier rewrite would soften first are exactly
+   * the two that would become false.
+   */
+  it("says what connecting authorizes, one line visible and the rest behind an expand", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+
+    expect(
+      screen.getByText(
+        /Connecting lets MCPJam build and run this repository's pull requests/,
+      ),
+    ).toBeInTheDocument();
+    // Specifics stay BEHIND the expand — the visible surface is one line.
+    expect(screen.queryByText(/isolated sandbox/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("connect-repo-data-handling-toggle"));
+
+    expect(
+      screen.getByText(/builds that pull request's MCP server from its source/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pull requests from forks are never built/),
+    ).toBeInTheDocument();
+    // Redaction is named WITH its disclaimer. The module documents its own
+    // blind spot, and naming it without the caveat reads as coverage it lacks.
+    expect(screen.getByText(/that is not a DLP system/)).toBeInTheDocument();
+    // Retention is not enforced today: `effectiveToday` is `kept-indefinitely`
+    // until the sweep gate opens, so "retained under your plan's policy" on its
+    // own would promise a mechanism that is not running.
+    expect(
+      screen.getByText(
+        /once retention enforcement is enabled, and kept until then/,
+      ),
+    ).toBeInTheDocument();
+    // Per-run facts are not knowable at connect time, so the copy points at
+    // them rather than inventing them.
+    expect(
+      screen.getByText(/are on that run's page in MCPJam/),
+    ).toBeInTheDocument();
+  });
+
+  it("never promises data handling MCPJam does not enforce", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await user.click(screen.getByTestId("connect-repo-data-handling-toggle"));
+
+    const page = document.body.textContent ?? "";
+    for (const forbidden of [
+      // Retention enforcement is off until the sweep gate opens, so no
+      // categorical deletion promise can be made here.
+      /automatically deleted/i,
+      /deleted after \d/i,
+      /permanently erased/i,
+      // Redaction is credential-shaped pattern matching, not secret removal.
+      /secrets are removed/i,
+      /all secrets/i,
+      /never stored/i,
+      // A run's content does leave. Saying otherwise would be the single most
+      // reassuring false sentence available on this surface.
+      /nothing leaves/i,
+      /stays on your machine/i,
+    ]) {
+      expect(page).not.toMatch(forbidden);
+    }
+  });
 });
 
 /**

@@ -1572,6 +1572,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // repository for everyone who opens a pull request against it, and with
   // `fail_closed` it can block their merges. `kind: "external"` is the honest
   // one: the effect lands on GitHub, where MCPJam cannot describe or undo it.
+  //
+  // It is also the DATA-HANDLING consent moment for every run it triggers. A
+  // pull-request check has no pre-run human moment — nobody approves the run a
+  // push starts — so the prompt note below carries what each of those runs does
+  // with a pull request's contents, and connecting is the last chance to say it
+  // before the fact. Per-run facts stay with `get_eval_run_disclosure`; a note
+  // cannot know which models a run three weeks from now will call.
   {
     operation: connectEvalCheckRepoOperation,
     tier: "gated",
@@ -1592,7 +1599,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "external",
     },
     promptNotes: [
-      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
+      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. Connecting is also the CONSENT MOMENT for the data handling of every run it triggers, because a pull-request check has no pre-run human moment: say so before proposing it — each pull request's server is built from its source in an isolated sandbox (never for forks) and the suite's models are called with what is found there, run content is stored in MCPJam with credential-shaped redaction that is NOT a DLP system, and evidence is retained under the plan's policy once retention enforcement is enabled and kept until then. Per-run facts come from `get_eval_run_disclosure`, never from this note.",
     ],
   },
 
