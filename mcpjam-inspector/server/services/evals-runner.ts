@@ -1516,6 +1516,18 @@ type RunIterationBaseParams = {
   /** The run's frozen skills in harness shape (see
    *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
+   * `"eval"`), or absent for tasks-off.
+   *
+   * Resolved ONCE per run, at the run boundary, because the `await` driver it
+   * carries is bound to the run's own abort signal — a per-iteration
+   * re-derivation would either lose that binding or build a second driver. The
+   * emulated path consumes it indirectly (the tool set is already built under
+   * it); the HARNESS path needs the seam itself, because `runHarnessTurn`
+   * rebuilds its MCP tools and reads `tasks` off the handler options.
+   */
+  tasks?: ToolTaskSeamOptions;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1881,6 +1893,8 @@ const executeTestCase = async (params: {
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
+  tasks?: ToolTaskSeamOptions;
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
@@ -1914,6 +1928,7 @@ const executeTestCase = async (params: {
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
@@ -2133,6 +2148,10 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
@@ -2188,6 +2207,10 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
@@ -2521,6 +2544,12 @@ export const runEvalSuiteWithAiSdk = async ({
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
         ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
+        // built the emulated tool set with, so the harness (which rebuilds its
+        // own MCP tools) cannot end up on a different row of the policy matrix.
+        // Never re-resolved downstream: its `await` driver is bound to THIS
+        // run's abort signal.
+        ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -3836,6 +3865,7 @@ const runHostedIterationWithBrowser = async (
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
@@ -4361,6 +4391,33 @@ const runHostedIterationWithBrowser = async (
     // nowhere else, so supplying only `tools` would hand the runtime a turn
     // with no built-ins and no way to notice.
     ...(builtInTools ? { builtInTools } : {}),
+    // The host's MCP tool-CONSTRUCTION policies, for the same reason and with
+    // the same hazard as `builtInTools` above.
+    //
+    // The `prepareChatV2` call a few dozen lines up builds THIS iteration's
+    // emulated tool set from `hostPolicy`. A harness turn never consumes that
+    // set — `runHarnessTurn` rebuilds the model-facing MCP tools itself — and
+    // reads each policy off these fields and nowhere else, so a policy that
+    // stops here does not exist at all on host-executed delivery.
+    // `driveHostedEvalTurn` gates all three behind `harness`, so an emulated
+    // iteration is unaffected by any of this.
+    //
+    // `tasks` is the run-level seam (`resolveToolTaskSeam`, resolved once in
+    // `runEvalSuiteWithAiSdk` and threaded down) rather than anything derived
+    // here — same object `getEvalToolsForAiSdkOrThrow` built the run's tool set
+    // with. Note the per-iteration `prepareChatV2` above does NOT take it; that
+    // is a pre-existing emulated-path gap, deliberately left alone here because
+    // closing it would change emulated eval behaviour.
+    //
+    // Definedness, not truthiness: `respectToolVisibility: false` IS the
+    // SEP-1865 opt-out.
+    ...(hostPolicy?.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: hostPolicy.modelVisibleMcpToolResults }
+      : {}),
+    ...(hostPolicy?.respectToolVisibility !== undefined
+      ? { respectToolVisibility: hostPolicy.respectToolVisibility }
+      : {}),
+    ...(tasks !== undefined ? { tasks } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),

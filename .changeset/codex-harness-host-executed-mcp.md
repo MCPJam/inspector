@@ -51,6 +51,16 @@ host-executed approval is enforced by the harness agent's own `toolApproval` map
 read only by the emulated loop — passing it would add a second, inert approval
 declaration that reads like enforcement.
 
+Hosted **evals** reach that projection with the same policies as chat. The eval
+runner drives its turns through its own facade rather than the chat routes, and
+that facade forwarded none of the three — so a hosted Codex eval built its MCP
+tools under the SDK's defaults even though the run's own host had chosen
+otherwise, and the run measured a configuration that never existed. All three
+now travel from the run's resolved host policy and its single MCP Tasks seam
+down to the projection. Emulated evals are untouched: the fields ride the
+facade's existing harness gate, and the two the emulated engine never reads
+could not have moved it anyway.
+
 Scope step-up (SEP-2350) is carried on this path too. A host-executed call never
 touches the signed proxy that extracts an `insufficient_scope` challenge on the
 native path, so the projected tools observe it in-process with the same shared
