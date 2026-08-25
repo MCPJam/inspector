@@ -26,6 +26,7 @@ import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
+import { EvaluateTab } from "./components/EvaluateTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
@@ -604,6 +605,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <OrganizationsRoute />;
     case "evals":
       return <EvalsRoute />;
+    case "evaluate":
+      return <EvaluateRoute />;
     case "home":
       return <HomeRoute />;
     case "servers":
@@ -1434,6 +1437,39 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 
   return (
     <EvalsTab
+      projectId={convexProjectId}
+      ensureServersReady={ensureServersReady}
+      onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
+    />
+  );
+}
+
+/**
+ * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
+ *
+ * A separate route rather than a branch inside `EvalsRoute` so the shipped tab
+ * has no new conditional in it at all. Same `evals` billing feature: it is the
+ * same product, only redrawn. No Runs lens — the commit-keyed CI review stays
+ * on `/evals/runs`.
+ */
+export function EvaluateRoute() {
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    ensureServersReady,
+    handleContinueEvalInChat,
+    handleConnect,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <EvaluateTab
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
@@ -4581,7 +4617,7 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals";
+  const isEvalsTab = activeTab === "evals" || activeTab === "evaluate";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&
