@@ -1481,8 +1481,29 @@ export interface PlatformRunCompare {
     policy:
       | "previous_completed"
       | "previous_completed_same_environment"
-      | "run";
+      | "run"
+      | "commit_sha";
     baseRunId: string;
+    /**
+     * The source SHA that was pinned, echoed back for the `commit_sha` policy
+     * only. Recorded alongside `baseRunId` rather than instead of it: a gate's
+     * audit trail needs both the SHA the caller asked for and the run it
+     * actually resolved to.
+     */
+    baseCommitSha?: string;
+    /**
+     * Present ONLY when uniqueness could NOT be established — the SHA matched
+     * several eligible runs, or the bounded lookup saturated so older eligible
+     * ones may exist beyond it. **Absent means unambiguous**; do not default
+     * it to 1.
+     */
+    matchCount?: number;
+    /**
+     * `matchCount` is a FLOOR, not a total — including when it reads 1. Render
+     * it WITH its count or not at all: a truncated count shown alone asserts a
+     * uniqueness nobody checked.
+     */
+    matchCountTruncated?: boolean;
   };
   baseRun: PlatformRunCompareSide;
   compareRun: PlatformRunCompareSide;

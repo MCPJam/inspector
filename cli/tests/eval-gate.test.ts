@@ -297,6 +297,8 @@ test("the gate keeps exactly four exit codes under verdict policy 2", () => {
 // ── --baseline (runId half) ─────────────────────────────────────────────────
 
 const RUN_ID = "run-current";
+/** The resolved run-id baseline these tests pin, post-flag-resolution. */
+const RUN_BASELINE = { kind: "run", runId: "run_base" } as const;
 
 test("assertRunIdBaseline accepts an ordinary run id", () => {
   assert.doesNotThrow(() => assertRunIdBaseline("run_abc123", RUN_ID));
@@ -312,15 +314,20 @@ test("assertRunIdBaseline returns the TRIMMED value, not the raw one", () => {
   assert.equal(assertRunIdBaseline("run-base", RUN_ID), "run-base");
 });
 
-test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => {
+test("assertRunIdBaseline REDIRECTS a 40-hex git SHA to --baseline-sha", () => {
+  // No longer "SHA baselines are unsupported" — they are supported, under
+  // their own flag. `--baseline` still refuses the shape so a caller who
+  // pastes a commit SHA into the run-id flag is told which flag to use,
+  // instead of sending a doomed run lookup that comes back as `incomplete`
+  // (exit 3) and reads as "no baseline exists".
   const sha = "a".repeat(40);
   assert.throws(
     () => assertRunIdBaseline(sha, RUN_ID),
-    /SHA baselines are not supported yet/,
+    /--baseline-sha/,
   );
   assert.throws(
     () => assertRunIdBaseline(sha.toUpperCase(), RUN_ID),
-    /SHA baselines are not supported yet/,
+    /--baseline-sha/,
   );
   // One character short or long is not the SHA shape — a real run id could
   // plausibly look like this, so it must NOT be rejected.
@@ -362,14 +369,14 @@ test("assertRunIdBaseline rejects using the gated run as its own baseline", () =
   assert.doesNotThrow(() => assertRunIdBaseline(`${RUN_ID}-2`, RUN_ID));
 });
 
-test("assertRunIdBaseline rejects a whitespace-padded SHA, not just a bare one", () => {
+test("assertRunIdBaseline redirects a whitespace-padded SHA, not just a bare one", () => {
   // The SHA check runs against the TRIMMED value: `--baseline " <40-hex> "`
-  // is still a doomed run lookup, and the blank check just above already
-  // proved trimming doesn't change what the flag means.
+  // is still the wrong flag, and the blank check just above already proved
+  // trimming doesn't change what the flag means.
   const padded = `  ${"a".repeat(40)}  `;
   assert.throws(
     () => assertRunIdBaseline(padded, RUN_ID),
-    /SHA baselines are not supported yet/,
+    /--baseline-sha/,
   );
 });
 
@@ -573,7 +580,7 @@ test("evaluateBaselineComparison: a real regression evaluates and carries proven
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "failed");
@@ -596,7 +603,7 @@ test("evaluateBaselineComparison: BASELINE_NOT_FOUND folds to incomplete, never 
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "incomplete");
@@ -615,7 +622,7 @@ test("evaluateBaselineComparison: an unfinished side is incomplete, defence in d
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "incomplete");
@@ -637,7 +644,7 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     evaluationConfigChanged: true,
     iterationWeightingEqual: false,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {
     passRateRegression: {},
   });
   assert.deepEqual(provenance.baseline, compare.baseline);
@@ -678,7 +685,7 @@ test("buildBaselineProvenance: an unrequested gate's policy is null, not an impl
     evaluationConfigChanged: false,
     iterationWeightingEqual: true,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {});
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {});
   assert.deepEqual(provenance.policy, {
     passRateRegression: null,
     noDeterministicRegressions: false,
@@ -698,7 +705,7 @@ test("buildBaselineProvenance: an explicit policy is echoed back verbatim, not r
     evaluationConfigChanged: false,
     iterationWeightingEqual: true,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {
     passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
     noDeterministicRegressions: true,
     maximumP95LatencyIncreaseMs: 500,
@@ -776,7 +783,7 @@ test("buildBaselineProvenance: names the added/removed cases behind caseSetChang
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },
@@ -896,7 +903,7 @@ test("buildBaselineProvenance: a case-set-stable case can still be individually 
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },
@@ -987,7 +994,7 @@ test("buildBaselineProvenance: a run-level evaluation config change excludes eve
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },

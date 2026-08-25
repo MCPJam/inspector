@@ -201,8 +201,26 @@ function runSide(value: unknown): Rec {
 }
 
 export type RunCompareBaseline = {
-  policy: "previous_completed" | "previous_completed_same_environment" | "run";
+  policy:
+    | "previous_completed"
+    | "previous_completed_same_environment"
+    | "run"
+    | "commit_sha";
   baseRunId: string;
+  /** Echoed back for the `commit_sha` policy only. */
+  baseCommitSha?: string;
+  /**
+   * Present ONLY when uniqueness could not be established — the SHA matched
+   * several eligible runs, or the bounded lookup saturated so older eligible
+   * ones may exist beyond it. Absent means unambiguous.
+   */
+  matchCount?: number;
+  /**
+   * `matchCount` is a FLOOR, not a total — including when it reads 1. Always
+   * rendered next to its count: a truncated count shown alone claims a
+   * uniqueness nobody checked.
+   */
+  matchCountTruncated?: boolean;
 };
 
 /**

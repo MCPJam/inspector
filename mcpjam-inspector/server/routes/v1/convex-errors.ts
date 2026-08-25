@@ -219,6 +219,42 @@ export function translateConvexWriteError(
     );
   }
 
+  // ── Baseline selection refusals (mcpjam-backend convex/testSuites.ts) ────
+  //
+  // `compareTestSuiteRuns` refuses two malformed baseline selections with
+  // structured codes. Handled HERE, before the generic branches, for the same
+  // reason `FEATURE_UNAVAILABLE` is: an unrecognized code matches none of the
+  // `code === "..."` branches below, so it falls past all of them, past the
+  // prose sniffing (which only inspects STRING `data`, and these carry an
+  // object), and lands on the terminal 500 — where the message is dropped on
+  // purpose and the failure is logged as OUR bug. Both of these are the
+  // caller's malformed input, so that outcome would be wrong twice: a 500 for
+  // a 400, and an on-call page for a usage error.
+  //
+  // The backend's message is forwarded verbatim because it is already
+  // customer-facing and already names which of the two mutually exclusive
+  // selectors was the problem — rewriting it here would create a second place
+  // to keep that copy correct.
+  //
+  // NOT to be confused with a baseline that resolved to nothing: an
+  // unresolvable SHA is the `baseline_not_found` ENVELOPE status, not a throw,
+  // and must keep mapping to 404 + `reason: "BASELINE_NOT_FOUND"` so the CLI
+  // reports exit 3 ("we looked and established nothing") rather than a
+  // regression nobody observed.
+  if (
+    code === "EVAL_COMPARE_BASELINE_CONFLICT" ||
+    code === "EVAL_COMPARE_BASELINE_INVALID"
+  ) {
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      structuredMessage ??
+        (code === "EVAL_COMPARE_BASELINE_CONFLICT"
+          ? "Pass either a baseline run id or a baseline commit SHA, not both."
+          : "The baseline commit SHA must not be blank.")
+    );
+  }
+
   // ── Billing gates (mcpjam-backend lib/entitlements.ts) ──────────────────
   //
   // See `billingDetails` below for what travels with them.
