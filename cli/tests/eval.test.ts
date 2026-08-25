@@ -727,6 +727,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/compare" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      // No baseline configured for this fixture: `eval compare` lands in its
+      // BASELINE_NOT_FOUND path, which is enough to exercise --reporter/--out.
+      res.statusCode = 404;
+      res.end(
+        JSON.stringify({
+          code: "NOT_FOUND",
+          message: "no baseline run to compare against",
+          details: { reason: "BASELINE_NOT_FOUND" },
+        }),
+      );
+      return;
+    }
+    if (
       (url.pathname ===
         "/api/v1/projects/proj-alpha/eval-runs/run-failed" ||
         url.pathname ===
@@ -2192,6 +2208,44 @@ test("eval gate --reporter html --out writes an HTML report before a gate-failur
     assert.match(html, /1\/2 iterations passed/);
     assert.match(html, /goal completion failed/);
     assert.equal(/<script/i.test(html), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// `--out` and `--reporter` are two terminals for the same artifact for every
+// other reporting command (`eval run`, `eval gate`) — `eval compare` must not
+// be the one place `--out` always writes raw JSON regardless of `--reporter`.
+test("eval compare --reporter html --out writes the reporter-selected format to the file", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-compare-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "compare",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    // Incomplete (no baseline), not a regression: exit code says so, but the
+    // point of this test is the file format, not the verdict.
+    assert.match(html, /^<!doctype html>/i);
+    assert.equal(/<script/i.test(html), false);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
   } finally {
     await fixture.close();
   }

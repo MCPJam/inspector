@@ -131,7 +131,6 @@ import {
 import {
   parseReporterFormat,
   writeEvalDecisionSummary,
-  writeJsonArtifact,
   writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
@@ -1665,7 +1664,10 @@ async function writeCompareResult(
   structured: StructuredRunReport | undefined
 ): Promise<void> {
   if (args.out && structured) {
-    await writeJsonArtifact(args.out, structured);
+    // `--out` and `--reporter` are two terminals for the same artifact: the
+    // file gets whichever format `--reporter` selected (json-summary by
+    // default), same as `eval run`/`eval gate`, not always raw JSON.
+    await writeReporterArtifact(args.out, args.reporter ?? "json-summary", structured);
   }
   if (args.reporter && structured) {
     writeReporterResult(args.reporter, structured);
@@ -2862,7 +2864,10 @@ export function registerEvalCommands(program: Command): void {
         "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
-      .option("--out <path>", "Write the structured report to a JSON file").action(
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
+      ).action(
     async (
       options: PlatformOptions &
         EvalCompareOptions & {
