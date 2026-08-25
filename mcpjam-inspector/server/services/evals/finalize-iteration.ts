@@ -395,17 +395,26 @@ function buildSelectionToolCatalogMetadata(args: {
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
-  // The full actual set for the failing turn, not just `unexpected`: under
-  // the default `maxExtraToolCalls: null`, a call the model made instead of
-  // (not in addition to) an expected one stays out of `unexpected` — it only
-  // ever lands there as a flagged extra. `missingToolCall` cases are exactly
-  // the ones where the metadata that mattered belongs to whatever the model
-  // picked instead, so the catalog has to look at what was actually called
-  // on that same turn.
-  const actualToolNames = failingPrompts
+  // `unexpected` names FIRST, then the rest of the turn's actual calls:
+  // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
+  // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
+  // correctly-called expected tools plus one prohibited extra) the extra
+  // that actually caused the failure could otherwise sit last in call order
+  // and get crowded out by the tools that were selected correctly. The full
+  // actual set still matters beyond just `unexpected`, though: under the
+  // default `maxExtraToolCalls: null`, a call the model made INSTEAD of
+  // (not in addition to) an expected one stays out of `unexpected` — it
+  // only ever lands there as a flagged extra — so `missingToolCall` cases
+  // still need the broader `actualToolCalls` set to see what was chosen.
+  const unexpectedToolNames = failingPrompts
+    .flatMap((p) => p.unexpected ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const otherActualToolNames = failingPrompts
     .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
   if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
     return {};
   }

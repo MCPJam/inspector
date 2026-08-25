@@ -429,6 +429,48 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
       expect.arrayContaining(["get_weather", "delete_all_files"])
     );
   });
+
+  test("an unexpected tool is never crowded out of the cap by correctly-called expected tools", () => {
+    // maxExtraToolCalls: 0 style failure — six tools called correctly
+    // (nothing missing) plus one prohibited extra, with the prohibited call
+    // LAST in call order. The cap (6) must not fill entirely on the
+    // correctly-called tools before the one that actually caused
+    // unexpectedToolCall is ever considered.
+    const correctlyCalledNames = Array.from(
+      { length: 6 },
+      (_, i) => `expected_ok_${i}`
+    );
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          unexpected: [{ toolName: "prohibited_tool" }],
+          actualToolCalls: [
+            ...correctlyCalledNames.map((toolName) => ({ toolName })),
+            { toolName: "prohibited_tool" },
+          ],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools: {
+        ...Object.fromEntries(correctlyCalledNames.map((n) => [n, {}])),
+        prohibited_tool: { description: "the tool that caused the failure" },
+      },
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    const names = (
+      metadata.selectionToolCatalog as Array<{ name: string }>
+    ).map((e) => e.name);
+    expect(names).toContain("prohibited_tool");
+  });
 });
 
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
