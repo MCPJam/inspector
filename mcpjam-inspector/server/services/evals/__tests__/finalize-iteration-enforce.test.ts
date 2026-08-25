@@ -4,6 +4,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { allGatingScorersPassed, definitionHash } from "@mcpjam/sdk/contract";
 import { buildIterationFinishParams } from "../finalize-iteration.js";
 import { buildHostedScoreContract } from "../score-rows.js";
+import { hostedCriterionId } from "../score-definitions.js";
 import { resetShadowMismatchStateForTests } from "../shadow-mismatch.js";
 import { logger } from "../../../utils/logger.js";
 
@@ -469,23 +470,45 @@ describe("every gating definition this pass builds also gets a scored row", () =
     // where the value the boolean also read was false. If that projection ever
     // stops being faithful, this fails — and the claim in `buildScoreMetadata`
     // that the two "cannot honestly disagree" stops being true with it.
+    // A MIXED set, so this pins per-criterion faithfulness rather than only
+    // "something failed": with one passing and one failing predicate, exactly
+    // the failing one may disagree.
+    const predicateResults = [
+      { predicate: passingPredicate, passed: true },
+      { predicate: failingPredicate, passed: false },
+    ];
     const { scores, evaluationConfig } = buildHostedScoreContract({
-      predicateResults: [{ predicate: failingPredicate, passed: false }],
+      predicateResults,
       evaluation: evaluationFor(true),
     });
 
     const verdict = allGatingScorersPassed(scores, evaluationConfig);
     expect(verdict.passed).toBe(false);
-    expect(verdict.disagreeingScorerIds.length).toBeGreaterThan(0);
     expect(verdict.unresolvedScorerIds).toEqual([]);
 
-    // Every disagreeing row scored FALSE on the input the boolean gate also
-    // reads — never on evidence the boolean never saw.
-    const disagreeing = new Set(verdict.disagreeingScorerIds);
-    const rows = scores.filter((row) => disagreeing.has(row.scorerId));
-    expect(rows.length).toBe(disagreeing.size);
-    expect(rows.every((row) => row.status === "scored")).toBe(true);
-    expect(rows.every((row) => row.passed === false)).toBe(true);
+    // The projection is IDENTITY on the value the boolean gate reads: each
+    // predicate row's `passed` is the `PredicateResult.passed` that was handed
+    // in, matched back by the same `hostedCriterionId` the definition is keyed
+    // on. Asserting the row is merely `false` would hold even if the projection
+    // had inverted a different criterion; this would not.
+    const byScorerId = new Map(scores.map((row) => [row.scorerId, row]));
+    for (const result of predicateResults) {
+      const row = byScorerId.get(
+        `predicate:${hostedCriterionId(result.predicate)}`
+      );
+      expect(row, "every predicate handed in is projected as a row").toBeDefined();
+      expect(row!.status).toBe("scored");
+      expect(row!.passed).toBe(result.passed);
+    }
+
+    // So exactly the criteria the boolean gate saw fail are the ones that
+    // disagree — never evidence the boolean never saw.
+    expect([...verdict.disagreeingScorerIds].sort()).toEqual(
+      predicateResults
+        .filter((result) => !result.passed)
+        .map((result) => `predicate:${hostedCriterionId(result.predicate)}`)
+        .sort()
+    );
   });
 });
 
