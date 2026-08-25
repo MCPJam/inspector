@@ -34,6 +34,23 @@ relay now carries the projection while the raw result is kept for the UI, the
 trace and the transcript, so a Codex turn still shows what the server actually
 returned.
 
+The projection also runs under the **host's own tool-construction options**, not
+the SDK's defaults. `getToolsForAiSdk` states outright that it will not read a
+host config itself, so anything the caller does not pass is not defaulted — it is
+gone, and a Codex turn was projecting results under a `modelVisibleMcpToolResults`
+policy the host never chose. `respectToolVisibility` (SEP-1865 app-only tools)
+and the resolved MCP Tasks seam were dropped the same way, which made two
+host-level policies mean something different on host-executed delivery than on
+every other engine. All three now travel through one shared builder that the
+emulated engine and both eval runners use as well, so a surface that forgets a
+field forgets it in one visible place rather than silently at its own call site;
+with nothing set it still answers "no options", so a default turn's tools are
+byte-identical. `needsApproval` is deliberately not in that set on this path:
+host-executed approval is enforced by the harness agent's own `toolApproval` map
+(and refused outright for a runtime that cannot pause), while the AI SDK flag is
+read only by the emulated loop — passing it would add a second, inert approval
+declaration that reads like enforcement.
+
 Scope step-up (SEP-2350) is carried on this path too. A host-executed call never
 touches the signed proxy that extracts an `insufficient_scope` challenge on the
 native path, so the projected tools observe it in-process with the same shared

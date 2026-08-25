@@ -576,6 +576,248 @@ describe("projectSelectedMcpServersAsHostTools", () => {
   });
 });
 
+/**
+ * The host's tool-CONSTRUCTION options must reach `getToolsForAiSdk`.
+ *
+ * `getToolsForAiSdk(serverIds?, options = {})` says outright that it will not
+ * read a host config itself — "the mode is resolved by the CALLER". This
+ * projection called it with NO options object, so every host-derived input was
+ * dropped and a Codex turn's MCP tools were built under the SDK's defaults. The
+ * previous fix wired `toModelOutput` through; the tool it ran was still built
+ * with the wrong policy, so the turn projected under a policy the host never
+ * chose.
+ *
+ * Every assertion in this block fails against that behaviour.
+ */
+describe("host-derived tool-construction options reach the SDK conversion", () => {
+  /**
+   * A manager stub that HONORS the options, the way the real one does.
+   *
+   * The point is that the assertions below read the RELAYED VALUE, not the
+   * arguments: `toModelOutput` drops a direct image block unless
+   * `directContent.image` is on — the same gate `model-output.ts` applies — and
+   * an app-only tool is omitted from the set unless `includeAppOnly` is set,
+   * the same gate `tool-converters.ts` applies. A projection that forwards
+   * nothing therefore produces observably different tools and observably
+   * different model-facing output.
+   */
+  function policyHonoringManager(
+    servers: Record<
+      string,
+      Record<string, { appOnly?: boolean; result: unknown }>
+    >
+  ) {
+    const getToolsForAiSdk = vi.fn(
+      async (
+        ids: string[],
+        options?: {
+          includeAppOnly?: boolean;
+          modelVisibleMcpToolResults?: {
+            directContent?: { image?: boolean };
+          };
+          tasks?: unknown;
+          needsApproval?: boolean;
+        }
+      ) => {
+        const id = ids[0]!;
+        const out: Record<string, unknown> = {};
+        for (const [name, spec] of Object.entries(servers[id] ?? {})) {
+          if (spec.appOnly && !options?.includeAppOnly) continue;
+          out[name] = {
+            description: "d",
+            // Presence of a task seam is observable on the built tool, exactly
+            // as the SDK's seam is (it changes what a call sends).
+            ...(options?.tasks !== undefined ? { _tasksSeam: true } : {}),
+            ...(options?.needsApproval !== undefined
+              ? { needsApproval: options.needsApproval }
+              : {}),
+            execute: vi.fn(async () => spec.result),
+            toModelOutput: ({ output }: { output: unknown }) => {
+              const raw = output as { content?: Array<{ type?: string }> };
+              const allowImages =
+                options?.modelVisibleMcpToolResults?.directContent?.image ===
+                true;
+              return {
+                type: "json" as const,
+                value: {
+                  content: (raw.content ?? []).filter(
+                    (block) => allowImages || block.type !== "image"
+                  ),
+                },
+              };
+            },
+          };
+        }
+        return out;
+      }
+    );
+    return {
+      getServerConfig: vi.fn((id: string) =>
+        Object.prototype.hasOwnProperty.call(servers, id)
+          ? { url: "x" }
+          : undefined
+      ),
+      getToolsForAiSdk,
+    } as never as Parameters<
+      typeof projectSelectedMcpServersAsHostTools
+    >[0]["manager"] & { getToolsForAiSdk: typeof getToolsForAiSdk };
+  }
+
+  const withImage = {
+    content: [
+      { type: "text", text: "here is the chart" },
+      { type: "image", data: "iVBOR…", mimeType: "image/png" },
+    ],
+  };
+
+  it("applies the HOST's modelVisibleMcpToolResults to what the relay carries", async () => {
+    // THE REPORTED BUG. Without the option the tool is built under the SDK
+    // default, so the projection runs — with the wrong policy. The image the
+    // host explicitly allowed never reaches the model.
+    const manager = policyHonoringManager({
+      charts: { render: { result: withImage } },
+    });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["charts"],
+      toolOptions: {
+        modelVisibleMcpToolResults: {
+          directContent: { image: true },
+        } as never,
+      },
+    });
+    const relayed = await (
+      projected.tools["mcp__charts__render"] as FakeTool
+    ).execute({}, { toolCallId: "call-1" });
+    expect(relayed).toEqual(withImage);
+  });
+
+  it("omits the image when the host policy disallows it", async () => {
+    // The other direction, so the assertion above cannot pass by accident on a
+    // projection that ignores the policy in a permissive way.
+    const manager = policyHonoringManager({
+      charts: { render: { result: withImage } },
+    });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["charts"],
+      toolOptions: {
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+        } as never,
+      },
+    });
+    const relayed = await (
+      projected.tools["mcp__charts__render"] as FakeTool
+    ).execute({}, { toolCallId: "call-1" });
+    expect(relayed).toEqual({
+      content: [{ type: "text", text: "here is the chart" }],
+    });
+  });
+
+  it("includes SEP-1865 app-only tools when the host opts out of visibility", async () => {
+    // `respectToolVisibility === false` (Cursor/VS Code templates today) is a
+    // host declaring it does not filter app-only tools. Latent on Codex right
+    // now — no harness template sets it — but the same dropped-option class.
+    const manager = policyHonoringManager({
+      gh: {
+        list_issues: { result: { ok: true } },
+        render_widget: { appOnly: true, result: { ok: true } },
+      },
+    });
+    const optedOut = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["gh"],
+      toolOptions: { includeAppOnly: true },
+    });
+    expect(Object.keys(optedOut.tools).sort()).toEqual([
+      "mcp__gh__list_issues",
+      "mcp__gh__render_widget",
+    ]);
+
+    // …and the spec default still hides it.
+    const filtered = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["gh"],
+      toolOptions: { includeAppOnly: false },
+    });
+    expect(Object.keys(filtered.tools)).toEqual(["mcp__gh__list_issues"]);
+  });
+
+  it("carries the resolved task seam into the built tools", async () => {
+    // Dropping the seam degrades MCP Tasks to the pre-existing no-`_meta` path
+    // on this delivery mode only — a host-level policy silently meaning
+    // something different on Codex than on Claude Code.
+    const manager = policyHonoringManager({ srv: { t: { result: {} } } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolOptions: { tasks: { mode: "await" } as never },
+    });
+    expect(projected.tools["mcp__srv__t"]).toMatchObject({
+      _tasksSeam: true,
+    });
+  });
+
+  it("never sets needsApproval — host-executed approval is the agent's own gate", async () => {
+    // Deliberately absent, not forgotten: `HarnessAgent`'s `toolApproval` map
+    // is what gates a host-executed call, and the AI SDK flag is read by the
+    // EMULATED loop, which never runs on this path. A second, inert approval
+    // declaration would read like enforcement.
+    const manager = policyHonoringManager({ srv: { t: { result: {} } } });
+    await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolOptions: {
+        modelVisibleMcpToolResults: {
+          directContent: { image: true },
+        } as never,
+      },
+    });
+    const passed = manager.getToolsForAiSdk.mock.calls[0]![1];
+    // An options object IS built (the host set a policy) — it just never
+    // carries the approval flag.
+    expect(passed).toBeDefined();
+    expect(passed).not.toHaveProperty("needsApproval");
+  });
+
+  it("takes the NO-OPTIONS overload when no host input applies", async () => {
+    // The byte-identity property: a default harness turn must produce exactly
+    // the tools it produced before any of this existed. Passing `{}` would be
+    // behaviorally equal today and would quietly invite a future default in.
+    const manager = policyHonoringManager({ srv: { t: { result: {} } } });
+    await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolOptions: {
+        modelVisibleMcpToolResults: undefined,
+        includeAppOnly: false,
+        tasks: undefined,
+      },
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["srv"]);
+    expect(manager.getToolsForAiSdk.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("builds ONE options object for the whole projection", async () => {
+    // The options are host-level. Two selected servers must not be able to get
+    // different ones.
+    const manager = policyHonoringManager({
+      a: { t: { result: {} } },
+      b: { t: { result: {} } },
+    });
+    await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["a", "b"],
+      toolOptions: { includeAppOnly: true },
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledTimes(2);
+    expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toBe(
+      manager.getToolsForAiSdk.mock.calls[1]![1]
+    );
+  });
+});
+
 describe("harnessMcpToolName", () => {
   it("is the same scheme parseHarnessToolName reverses", () => {
     const name = harnessMcpToolName("weather", "get_forecast");

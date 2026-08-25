@@ -496,6 +496,9 @@ export async function runHarnessTurn(
     failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
+    modelVisibleMcpToolResults,
+    respectToolVisibility,
+    tasks,
     chatSessionId,
     scenarioId,
     sourceType,
@@ -1043,6 +1046,18 @@ export async function runHarnessTurn(
               // shows what the server returned, like every other engine.
               onRawResult: ({ toolCallId, raw }) => {
                 hostExecutedRawResults.set(toolCallId, raw);
+              },
+              // The host's own tool-CONSTRUCTION inputs. Everything the
+              // emulated engine derives for `getToolsForAiSdk` lands here too,
+              // via the same shared builder — this projection is the host's
+              // MCP tool set for a Codex turn, so a policy that changes how a
+              // tool is built has to reach it or it does not exist on this
+              // delivery mode at all. (`needsApproval` is intentionally not in
+              // this set — see `projectSelectedMcpServersAsHostTools`.)
+              toolOptions: {
+                modelVisibleMcpToolResults,
+                includeAppOnly: respectToolVisibility === false,
+                tasks,
               },
             })
           : { tools: {}, keyToServerId: {} };

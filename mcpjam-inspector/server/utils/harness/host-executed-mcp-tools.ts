@@ -24,8 +24,10 @@
  * for. A host-executed tool does not run in the sandbox: it runs in this
  * process, where the authorized `MCPClientManager` connection already lives. So
  * these tools call the manager directly — reusing the SAME projection the
- * emulated engine uses (`getToolsForAiSdk`), not a second hand-rolled
- * converter. Routing them back out through the proxy would add an HTTP hop from
+ * emulated engine uses (`getToolsForAiSdk`), and under the SAME host-derived
+ * options (`mcpToolOptionsFor`, shared with the emulated engine and both eval
+ * runners), not a second hand-rolled converter. Routing them back out through
+ * the proxy would add an HTTP hop from
  * this server to itself and would have to mint a token for it. Going direct is
  * also strictly safer: no proxy token and no server URL ever enters the
  * sandbox, so a compromised sandbox cannot reach the servers off-turn at all.
@@ -69,6 +71,10 @@ import {
   type HarnessPolicyBlockMarker,
 } from "./harness-proxy-policy-enforcement.js";
 import { selectDeliverableServerIds } from "./plugin-delivery.js";
+import {
+  mcpToolOptionsFor,
+  type McpToolOptionsInput,
+} from "../mcp-tool-options.js";
 import { scopeStepUpInfoFromToolError } from "../insufficient-scope-step-up.js";
 import type { HarnessScopeStepUpEvent } from "./harness-scope-step-up.js";
 import type { RuntimePluginVersion } from "../../services/environments/effective-capabilities.js";
@@ -128,6 +134,37 @@ export async function projectSelectedMcpServersAsHostTools(args: {
    * does. Omitted ⇒ the raw result is simply not retained.
    */
   onRawResult?: (args: { toolCallId: string; raw: unknown }) => void;
+  /**
+   * The HOST-DERIVED tool-construction inputs, resolved by the caller.
+   *
+   * `getToolsForAiSdk` states plainly that it will not read a host config
+   * itself, so anything the host decided about how a tool is BUILT has to
+   * arrive here. Omitting them (as this function used to) does not fall back to
+   * the host's intent — it falls back to the SDK's defaults, which is how a
+   * Codex turn came to run `toModelOutput` under a policy the host never chose.
+   *
+   * Two of the four `getToolsForAiSdk` options are deliberately NOT accepted:
+   *
+   *  - `needsApproval` — the AI SDK approval flag is read by MCPJam's EMULATED
+   *    loop, which never runs on this path. Host-executed approval is enforced
+   *    by `HarnessAgent`'s own `toolApproval` map, which `runHarnessTurn`
+   *    builds over every key of `hostExecutedTools` (these projections
+   *    included) whenever the host requires approval and the adapter advertises
+   *    `supportsHostExecutedToolApproval`; unsound combinations are refused
+   *    outright by `harnessToolApprovalRefusalReason`, at the route pre-flight
+   *    AND at the in-turn backstop. Setting `needsApproval` here would add a
+   *    SECOND approval declaration that nothing on this path reads — inert, and
+   *    indistinguishable on inspection from enforcement. So the field is
+   *    absent by construction rather than dropped by omission, and a future
+   *    host-executed adapter that flips `supportsHostExecutedToolApproval` is
+   *    already covered by the map, not by this argument.
+   *  - `schemas` — no harness surface overrides tool schemas.
+   *
+   * Built by the shared {@link mcpToolOptionsFor}, so absent-everything yields
+   * `undefined` and the enumeration takes the no-options overload: a default
+   * harness turn produces exactly the tools it produced before this existed.
+   */
+  toolOptions?: McpToolOptionsInput;
 }): Promise<HostExecutedMcpProjection> {
   const configured = selectDeliverableServerIds({
     selectedServerIds: args.selectedServerIds,
@@ -150,6 +187,12 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     serverIdToKey.set(serverId, key);
   }
 
+  // Built ONCE for the whole projection: the options are host-level, and the
+  // per-server loop below must not be able to hand two servers different ones.
+  const toolOptions = args.toolOptions
+    ? mcpToolOptionsFor(args.toolOptions)
+    : undefined;
+
   const tools: Record<string, unknown> = {};
   for (const serverId of configured) {
     const key = serverIdToKey.get(serverId);
@@ -164,7 +207,13 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     // SEP-1865 app-only visibility filtering, `_serverId` tagging) — the same
     // one the emulated engine runs on. A second converter here would be a
     // second place for the two engines to disagree about a tool.
-    const serverTools = await args.manager.getToolsForAiSdk([serverId]);
+    //
+    // …and reuse it under the HOST's options, not the SDK's defaults. The
+    // no-options overload is kept for a default turn so those tools stay
+    // byte-identical to what this projection produced before.
+    const serverTools = toolOptions
+      ? await args.manager.getToolsForAiSdk([serverId], toolOptions)
+      : await args.manager.getToolsForAiSdk([serverId]);
     const snapshot = args.toolPolicy?.[serverId];
     for (const [toolName, tool] of Object.entries(serverTools)) {
       // Layered inward-out, and the order is load-bearing:

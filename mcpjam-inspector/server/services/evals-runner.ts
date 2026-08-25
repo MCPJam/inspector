@@ -31,6 +31,7 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
   type BaseUrls,
@@ -611,17 +612,14 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   setupObserver?: RunSetupObserver;
 }): Promise<ToolSet> {
-  const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
-  const toolOptions =
-    args.includeAppOnly || hasModelVisiblePolicy || args.tasks !== undefined
-      ? {
-          ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
-          ...(args.modelVisibleMcpToolResults !== undefined
-            ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
-            : {}),
-          ...(args.tasks !== undefined ? { tasks: args.tasks } : {}),
-        }
-      : undefined;
+  // `undefined` ⇒ the no-options overload, keeping a default run byte-identical.
+  // `needsApproval` is deliberately not an input here: an eval run is auto-deny
+  // by construction, so the AI SDK approval flag has nothing to gate.
+  const toolOptions = mcpToolOptionsFor({
+    includeAppOnly: args.includeAppOnly,
+    modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
+    tasks: args.tasks,
+  });
 
   const now = () => Date.now();
   const observer = args.setupObserver;

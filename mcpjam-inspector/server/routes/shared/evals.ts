@@ -3,6 +3,7 @@ import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -3136,18 +3137,20 @@ export async function streamEvalTestCaseWithManager(
     // the run's own teardown, which aborts through this signal.
     await: { signal: streamAbortController.signal },
   });
+  // `includeAppOnly` is tied to the PRESENCE of a host policy, not to
+  // `respectToolVisibility`: eval wants the full set so the visibility gate
+  // below can both filter and COUNT the drops honestly.
+  const singleCaseToolOptions = mcpToolOptionsFor({
+    includeAppOnly: Boolean(suiteHostPolicy),
+    modelVisibleMcpToolResults: suiteHostPolicy?.modelVisibleMcpToolResults,
+    tasks: singleCaseTasksSeam,
+  });
   const tools = (
-    suiteHostPolicy || singleCaseTasksSeam
-      ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          ...(suiteHostPolicy
-            ? {
-                includeAppOnly: true,
-                modelVisibleMcpToolResults:
-                  suiteHostPolicy.modelVisibleMcpToolResults,
-              }
-            : {}),
-          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
-        })
+    singleCaseToolOptions
+      ? await clientManager.getToolsForAiSdk(
+          resolvedServerIds,
+          singleCaseToolOptions
+        )
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
   const streamToolSignals = suiteHostPolicy
