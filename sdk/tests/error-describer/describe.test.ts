@@ -222,6 +222,28 @@ const CASES: Case[] = [
     expectSlug: "oauth/redirect_mismatch",
   },
   {
+    // `OAuthResponseError` keeps the RFC 6749 code on `.code`, not on
+    // `error`/`error_code`, so before it was read here the whole error fell to
+    // `internal/unknown` (origin `ambiguous`) no matter what the authorization
+    // server actually said — the 2026-08-24 incident shape.
+    name: "OAuthResponseError code",
+    build: () =>
+      makeError(
+        "Request context not available — authentication or export lookup failed",
+        { name: "OAuthResponseError", code: "invalid_grant" },
+      ),
+    expectSlug: "oauth/invalid_grant",
+  },
+  {
+    name: "OAuthResponseError with an unrecognized code stays unclassified",
+    build: () =>
+      makeError("Something else", {
+        name: "OAuthResponseError",
+        code: "some_vendor_specific_code",
+      }),
+    expectSlug: "internal/unknown",
+  },
+  {
     name: "oauth well-known unreachable",
     build: () =>
       new Error(".well-known/oauth-authorization-server unreachable"),
