@@ -320,3 +320,71 @@ describe("at enforce the rows may only make a verdict stricter", () => {
     expect(params.passed).toBe(false);
   });
 });
+
+// =============================================================================
+// THE DESIGNED DIVERGENCE — so the soak's "mismatch should be zero" is honest.
+//
+// Below `enforce`, a shadow mismatch means two projections of one evaluation
+// disagreed, which cannot happen honestly, so nonzero is a bug signal. At
+// `enforce` that reading is WRONG, and acting on it would make an operator
+// treat the feature working as an incident.
+//
+// The strict reading fails an iteration whose gating evidence is missing or
+// unscorable (`unresolvedScorerIds`) where the legacy boolean pipeline passed
+// it. That is precisely the safety `enforce` is bought for — zero evidence
+// never passes — so it is a designed divergence, not drift.
+//
+// Pinned here so the claim in `buildScoreMetadata`'s docblock is checkable:
+// an enforce mismatch is triage ("which list is populated?"), not an alarm.
+// =============================================================================
+describe("an unresolved gating row is a strictness catch, not drift", () => {
+  /** A gating definition whose row is an `error` under an `onError: fail` policy. */
+  function erroredGatingConfig() {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults: [{ predicate: passingPredicate, passed: true }],
+      evaluation: evaluationFor(true),
+    });
+    const gating = evaluationConfig.definitions.find(
+      (definition) => definition.role === "gating"
+    )!;
+    // Replace the row with an honest `error` — the scorer RAN and broke.
+    // Matched by `scorerId`: a definition carries no `definitionHash` field
+    // (the hash is DERIVED from it), so joining on that would silently match
+    // nothing and leave every row passing.
+    const errored = scores.map((row) =>
+      row.scorerId === gating.scorerId
+        ? {
+            ...row,
+            status: "error" as const,
+            error: "scorer threw",
+            value: undefined,
+            passed: undefined,
+          }
+        : row
+    );
+    return { definitions: evaluationConfig, scores: errored, gating };
+  }
+
+  test("the derivation reports it as UNRESOLVED, not as a disagreement", () => {
+    const { definitions, scores } = erroredGatingConfig();
+    const verdict = allGatingScorersPassed(scores, definitions);
+
+    // The distinction the docblock tells an operator to check.
+    expect(verdict.passed).toBe(false);
+    expect(verdict.disagreeingScorerIds).toEqual([]);
+    expect(verdict.unresolvedScorerIds.length).toBeGreaterThan(0);
+  });
+
+  test("so legacy PASSED and strict FAILED is a legitimate outcome", () => {
+    // The exact shape an operator will see in the soak: the boolean pipeline
+    // passed the iteration, the rows could not corroborate it, and the
+    // conjunction lands on failed. Nothing here is a bug.
+    const { definitions, scores } = erroredGatingConfig();
+    const reportedPassed = true;
+    const derived = allGatingScorersPassed(scores, definitions);
+
+    expect(reportedPassed).toBe(true);
+    expect(derived.passed).toBe(false);
+    expect(reportedPassed && derived.passed).toBe(false);
+  });
+});

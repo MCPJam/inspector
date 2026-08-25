@@ -283,8 +283,22 @@ function narrowEvaluation(
  * parallel verdict ARITHMETIC, not the evaluation: the matcher, the predicates
  * and the gates all still decide, and the rows report what they decided. That
  * is why a mismatch between `derived.passed` and `passed` is expected to be
- * ZERO by construction — two projections of one evaluation cannot honestly
- * disagree — and why a nonzero rate is a bug signal rather than a finding.
+ * ZERO at `shadow` and `dual_write` — two projections of one evaluation cannot
+ * honestly disagree — and why a nonzero rate there is a bug signal.
+ *
+ * AT `enforce` THAT IS NOT QUITE TRUE, and reading it as though it were would
+ * make the soak dishonest. The comparison switches to the STRICT reading, and
+ * strictness is a DESIGNED divergence: a gating definition that resolved to no
+ * usable verdict — no row at all, or an `error`/`skipped` row whose own
+ * `onError`/`onSkipped` policy says `fail` — fails the derived verdict where
+ * the legacy boolean pipeline may have passed the iteration. That is the
+ * safety `enforce` is bought for (zero evidence never passes), so when it
+ * fires it is the feature working.
+ *
+ * So an enforce-mode `grading_shadow_mismatch` means "legacy and strict
+ * disagree — investigate", not "something is broken". Check
+ * `unresolvedScorerIds`: populated means a designed strictness catch;
+ * `disagreeingScorerIds` alone means a real projection bug.
  */
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;

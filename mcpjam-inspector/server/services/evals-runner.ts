@@ -364,6 +364,20 @@ export function runFrozenSkillOptions(run: {
  * to answer "would this scorer decide differently?", and only the resolved
  * options can answer that.
  */
+/**
+ * The resolved match options to hash into the `toolCalls:match` definition.
+ *
+ * MUST STAY IN LOCKSTEP with what the matcher is actually handed. Today both
+ * this and `evaluateMultiTurnResults` resolve as
+ * `resolveMatchOptions(undefined, test.matchOptions)` at the same call sites,
+ * so the digest honestly describes the options the verdict was produced under.
+ *
+ * If a future path starts threading suite-level `defaultMatchOptions` into the
+ * matcher without threading them here, the two silently diverge: the scorer's
+ * `implementationHash` would describe options the matcher never applied, and
+ * the second pass would rebuild the definition under a hash the first pass
+ * never wrote. Change both, or neither.
+ */
 function scoreMatchOptionsFor(
   test: Pick<EvalTestCase, "matchOptions">
 ): Record<string, unknown> {
