@@ -57,7 +57,14 @@ test("parseReporterFormat validates supported reporters", () => {
   assert.equal(parseReporterFormat(undefined), undefined);
   assert.equal(parseReporterFormat("json-summary"), "json-summary");
   assert.equal(parseReporterFormat("junit-xml"), "junit-xml");
-  assert.throws(() => parseReporterFormat("html"), /Invalid reporter/);
+  assert.equal(parseReporterFormat("html"), "html");
+});
+
+test("parseReporterFormat rejects an unknown reporter, naming all three formats", () => {
+  assert.throws(
+    () => parseReporterFormat("yaml"),
+    /Invalid reporter "yaml"\. Use "json-summary", "junit-xml", or "html"\./
+  );
 });
 
 test("writes decision summaries only for human output", () => {
@@ -273,4 +280,61 @@ test("writeReporterArtifact writes redacted junit atomically", async () => {
   assert.match(raw, /<failure message="Authorization: \[REDACTED\]"/);
   assert.equal(raw.includes("top-secret"), false);
   assert.deepEqual(await readdir(directory), ["report.xml"]);
+});
+
+function makeFailedReport(): StructuredRunReport {
+  const report = makeReport();
+  report.passed = false;
+  report.summary = {
+    total: 1,
+    passed: 0,
+    failed: 1,
+    byCategory: {
+      protocol: { total: 1, passed: 0, failed: 1 },
+    },
+  };
+  report.cases[0] = {
+    ...report.cases[0],
+    passed: false,
+    error: "Authorization: Bearer top-secret",
+  };
+  return report;
+}
+
+test("writeReporterResult emits redacted, self-contained html", () => {
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  let stdout = "";
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    writeReporterResult("html", makeFailedReport());
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.match(stdout, /^<!doctype html>/i);
+  assert.equal(/<script/i.test(stdout), false);
+  assert.equal(/(href|src)\s*=\s*["']https?:\/\//i.test(stdout), false);
+  assert.equal(stdout.includes("top-secret"), false);
+  assert.match(stdout, /Authorization: \[REDACTED\]/);
+});
+
+test("writeReporterArtifact writes redacted html atomically", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-reporting-"));
+  const artifactPath = path.join(directory, "report.html");
+
+  const writtenPath = await writeReporterArtifact(
+    artifactPath,
+    "html",
+    makeFailedReport()
+  );
+  const raw = await readFile(writtenPath, "utf8");
+
+  assert.match(raw, /^<!doctype html>/i);
+  assert.match(raw, /Authorization: \[REDACTED\]/);
+  assert.equal(raw.includes("top-secret"), false);
+  assert.deepEqual(await readdir(directory), ["report.html"]);
 });
