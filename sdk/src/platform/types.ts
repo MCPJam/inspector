@@ -676,6 +676,221 @@ export interface PlatformEvalRunGroundednessCase
   unsupportedClaims: string[];
 }
 
+// ── Pre-run disclosure ───────────────────────────────────────────────────
+//
+// Hand-mirrored from the backend's `RunDisclosure` contract
+// (mcpjam-backend `convex/lib/evalDisclosure.ts`), field names identical on
+// purpose — this is the one copy the SDK keeps in sync by hand rather than
+// importing, since the backend module is server-only. `execution.locus` is
+// the one field the backend cannot fill in itself (see
+// `PlatformEvalRunDisclosureLocus`); everything else here is a direct
+// projection of what `GET /projects/{p}/eval-suites/{id}/run-disclosure`
+// returns.
+
+/** The closed set `resolveChatProvider` can return, named so a surface can
+ * exhaust it. */
+export type PlatformDisclosureRailDestination = "gateway" | "openrouter";
+
+export interface PlatformManagedRailDisclosure {
+  managed: true;
+  possibleDestinations: readonly PlatformDisclosureRailDestination[];
+  /** VOLATILE: the routing mode is read per request, so this can differ from
+   * the destination the run actually uses minutes later. */
+  outcomeIfRunNow: {
+    destination: PlatformDisclosureRailDestination;
+    observedAt: number;
+    volatile: true;
+  };
+  inputs: {
+    mode: string;
+    gatewayEligible: boolean;
+    hasOpenRouterFallback: boolean | null;
+  };
+  ruleLocation: string;
+  authoritativePerRequestRecord: string;
+}
+
+export interface PlatformNotApplicableRailDisclosure {
+  managed: false;
+  notApplicable: true;
+  reason: string;
+  authoritativePerRequestRecord: string;
+}
+
+export type PlatformRailDisclosure =
+  | PlatformManagedRailDisclosure
+  | PlatformNotApplicableRailDisclosure;
+
+export type PlatformDisclosureTenantEgress =
+  | "mcpjam-hosted"
+  | "byok-cloud"
+  | "byok-local"
+  | "unknown";
+
+export interface PlatformByokDisclosure {
+  providerKey: string;
+  runtimeLocation: "cloud" | "local";
+  /** HOST ONLY, never the full configured URL. */
+  baseUrlHost?: string;
+}
+
+export interface PlatformDisclosedModel {
+  modelId: string;
+  /** `null` when the classifier declines to classify. Kept as `string` rather
+   * than a closed union so a newly recognised provider on the backend does
+   * not need a matching SDK release to pass through. */
+  provider: string | null;
+  customProviderName?: string;
+  tenantEgress: PlatformDisclosureTenantEgress;
+  byok?: PlatformByokDisclosure;
+  rail: PlatformRailDisclosure;
+}
+
+/**
+ * The closed value set of `execution.engine`. `'mixed'` is reachable only on
+ * an environment fan-out that resolved more than one distinct engine —
+ * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
+ * a fourth runtime kind.
+ */
+export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
+
+/**
+ * Whether this run executes MCPJam-hosted or on the caller's own machine.
+ *
+ * RESERVED for the inspector to fill in: the backend contract cannot answer
+ * this (only the executing process knows), so the inspector route composes
+ * it onto every `execution` section it returns. `known: false` is kept in
+ * the union defensively — a caller MUST NOT treat it as `hosted: false`.
+ */
+export type PlatformEvalRunDisclosureLocus =
+  | { known: true; hosted: boolean }
+  | { known: false; reason: string };
+
+export interface PlatformExecutionDisclosure {
+  engine: PlatformDisclosureEngine;
+  engines?: readonly PlatformDisclosureEngine[];
+  sandbox: {
+    engaged: boolean;
+    vendor?: "e2b";
+    because: string;
+  };
+  locus: PlatformEvalRunDisclosureLocus;
+  models: readonly PlatformDisclosedModel[];
+  /** Present when the plan resolved but its models did not — the empty list
+   * then reads as "not derivable here" rather than "no model runs". */
+  modelsUnresolved?: { reason: string };
+}
+
+export type PlatformEvalLlmTouchpointId =
+  | "goalCompletion"
+  | "groundedness"
+  | "serverQuality"
+  | "runInsights"
+  | "runGroupQuality";
+
+export type PlatformDisclosureFires =
+  | "auto-on-completion"
+  | "explicit-request-only"
+  | { disabled: true; reason: string };
+
+export interface PlatformAnalysisTouchpointDisclosure {
+  touchpoint: PlatformEvalLlmTouchpointId;
+  label: string;
+  model: string;
+  rail: { fixed: "openrouter"; because: string };
+  destinations: readonly string[];
+  evidenceSent: readonly string[];
+  fires: PlatformDisclosureFires;
+}
+
+export interface PlatformCaptureDisclosure {
+  captureLevel: string;
+  reportingMode: string;
+  tiersImplemented: boolean;
+  redaction: {
+    kind: string;
+    module: string;
+    isDlp: boolean;
+    limitation: string;
+    appliesTo: readonly string[];
+  };
+  exportDefaults: {
+    includeContent: boolean;
+    ruleLocation: string;
+    note: string;
+  };
+}
+
+export interface PlatformRetentionDisclosure {
+  planName: string;
+  /** The POLICY number from plan entitlements. `null` ⇒ uncapped by policy. */
+  policyDays: number | null;
+  source: string;
+  enforced: boolean;
+  enforcementBlockers: readonly string[];
+  /** What actually happens today — never re-derive this from `policyDays`,
+   * an unenforced policy keeps data indefinitely regardless of its number. */
+  effectiveToday: "kept-indefinitely" | "swept-after-policy-days";
+  evidentiaryClasses: readonly string[];
+  backupStatement: {
+    vendor: string;
+    capturedAt: string;
+    sourceUrl: string;
+    statements: readonly string[];
+  };
+}
+
+export type PlatformRegionDisclosure =
+  | { stated: false; reason: string }
+  | { stated: true; value: string; derivedFrom: string };
+
+export interface PlatformSubprocessorDisclosure {
+  vendor: string;
+  role: string;
+  dataCategories: readonly string[];
+  capturedAt: string;
+  sourceUrl: string;
+  statements: readonly string[];
+  engaged: boolean;
+  because: string;
+}
+
+/**
+ * WHY there is no `execution` section. Never interchangeable:
+ *  * `'ingested-run'` — the SDK uploaded a run MCPJam did not execute;
+ *  * `'plan-unresolved'` — a launchable plan whose environments did not
+ *    resolve, so models ARE called, just not derivable at this point.
+ *
+ * A surface that renders `'ingested-run'` copy for a `'plan-unresolved'`
+ * disclosure tells a user about to launch that nothing leaves — that exact
+ * bug was caught and fixed in the backend half (g4a) and must not be
+ * reintroduced at the presentation layer.
+ */
+export type PlatformExecutionAbsenceKind = "ingested-run" | "plan-unresolved";
+
+/**
+ * The pre-run disclosure contract: what happens to a run's content, computed
+ * once by the backend and projected identically by every surface (pre-run
+ * dialog, CLI, MCP tools, the `eval.run.launched` audit row).
+ *
+ * `execution` is present ONLY when a launch plan resolved; `executionAbsence`
+ * exactly when it is absent. `analysis` is ALWAYS present — stored evidence
+ * still reaches the judges even when nothing was executed here — so never
+ * hide it just because `execution` is missing.
+ */
+export interface PlatformEvalRunDisclosure {
+  contractVersion: number;
+  computedAt: number;
+  digest: string;
+  execution?: PlatformExecutionDisclosure;
+  executionAbsence?: { kind: PlatformExecutionAbsenceKind; reason: string };
+  analysis: readonly PlatformAnalysisTouchpointDisclosure[];
+  capture: PlatformCaptureDisclosure;
+  retention: PlatformRetentionDisclosure;
+  region: PlatformRegionDisclosure;
+  subprocessors: readonly PlatformSubprocessorDisclosure[];
+}
+
 /**
  * Identity of the environment revision a run was pinned to. `name`/`revision`
  * are nullable only for tolerance of older snapshots that recorded a partial

@@ -47,8 +47,15 @@ when `soundcheck/**`, root `package.json`, root `package-lock.json`, or the
 workflow file itself changes. The workflow runs `railway up --ci` against the
 `mcpjam-soundcheck` Railway service with a service-scoped token.
 
-This workflow is independent of `release.yml`. Soundcheck is never part of
-the customer release pipeline.
+`release.yml` also calls this workflow (as its `deploy-soundcheck` job) so a
+release redeploys Soundcheck alongside the other Railway satellites, ordered
+after the webapp deploy. Soundcheck itself is never *published* — it is not
+part of the customer release surface, and nothing customers receive depends
+on it.
+
+Note for anyone editing `release.yml`: `src/components/release-progress.tsx`
+hardcodes the job list, and `release-readiness.tsx` / `release-verdict.tsx`
+mirror preflight's gates. All three are hand-synced and will silently drift.
 
 ## Secrets & rotation
 

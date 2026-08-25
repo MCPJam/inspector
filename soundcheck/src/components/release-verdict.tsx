@@ -4,9 +4,13 @@
  *
  * Inputs, in priority order:
  *   1. Is a release.yml run already in flight? → In flight.
- *   2. Is inspector main at a SHA with a green deploy-staging.yml?
- *      + Are there pending changesets?  → Go.
+ *   2. Is inspector main at a SHA with green test.yml + lint.yml + a green
+ *      deploy-staging.yml? + Are there pending changesets?  → Go.
  *   3. Otherwise describe the blocker. → Hold / Caution.
+ *
+ * The CI gates are checked because preflight requires them: it no longer runs
+ * `npm run verify` itself, it demands those two workflows already went green
+ * on the exact SHA.
  *
  * This component does its own fetches rather than reading from the readiness
  * tile, so the verdict renders even if the readiness tile is still streaming.
@@ -92,11 +96,25 @@ export async function ReleaseVerdict() {
     );
   }
 
-  const [stagingRun, changesetsResult] = await Promise.all([
+  const [stagingRun, testRun, lintRun, changesetsResult] = await Promise.all([
     findSuccessfulRunForSha(
       INSPECTOR.owner,
       INSPECTOR.repo,
       "deploy-staging.yml",
+      "main",
+      headSha
+    ).catch(() => null),
+    findSuccessfulRunForSha(
+      INSPECTOR.owner,
+      INSPECTOR.repo,
+      "test.yml",
+      "main",
+      headSha
+    ).catch(() => null),
+    findSuccessfulRunForSha(
+      INSPECTOR.owner,
+      INSPECTOR.repo,
+      "lint.yml",
       "main",
       headSha
     ).catch(() => null),
@@ -117,6 +135,21 @@ export async function ReleaseVerdict() {
         tone="failure"
         headline={`Staging isn't green for ${shortSha(headSha)}.`}
         detail="release.yml preflight will refuse until deploy-staging.yml succeeds on this exact SHA. Wait for it, or investigate recent failures below."
+      />
+    );
+  }
+
+  const missingCi = [
+    testRun ? null : "test.yml",
+    lintRun ? null : "lint.yml"
+  ].filter((name): name is string => name !== null);
+
+  if (missingCi.length > 0) {
+    return (
+      <Verdict
+        tone="failure"
+        headline={`CI isn't green for ${shortSha(headSha)}.`}
+        detail={`release.yml preflight requires ${missingCi.join(" and ")} to have succeeded on this exact SHA. ${missingCi.length === 1 ? "It is" : "They are"} still running, failed, or ${missingCi.length === 1 ? "was" : "were"} cancelled by a newer push — re-run for this SHA, or release the newer HEAD.`}
       />
     );
   }
@@ -149,7 +182,7 @@ export async function ReleaseVerdict() {
     <Verdict
       tone="success"
       headline="All preflight gates are clear."
-      detail={`Staging is green on ${shortSha(headSha)}. ${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Dispatch when ready.`}
+      detail={`CI and staging are green on ${shortSha(headSha)}. ${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Dispatch when ready.`}
     />
   );
 }
