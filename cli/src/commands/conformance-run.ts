@@ -106,7 +106,14 @@ export function registerConformanceRunCommand(program: Command): void {
       engineVersion: packageJson.version,
     });
 
-    if (reporter === "json-summary" || format === "json") {
+    if (reporter === "html") {
+      // Shared parser, different report shape: `conformance run` reports are
+      // a composite of several `ConformanceReport`s, which have no HTML
+      // renderer yet — building one is out of this step's scope.
+      throw usageError(
+        'The "html" reporter is not available for this command yet. Use "json-summary" or "junit-xml".',
+      );
+    } else if (reporter === "json-summary" || format === "json") {
       writeConformanceOutput(JSON.stringify(report, null, 2));
     } else if (reporter === "junit-xml") {
       const { renderConformanceReportJUnitXml } = await import("@mcpjam/sdk");

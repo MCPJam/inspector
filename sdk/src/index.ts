@@ -420,6 +420,7 @@ export {
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
+  renderStructuredRunHtml,
 } from "./structured-reporting.js";
 export {
   buildEvalDecisionSummary,

@@ -2157,7 +2157,7 @@ export function registerEvalCommands(program: Command): void {
         "Maximum time to wait for completion (default: 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Render the completed run report to stdout"
       )
       .option(
@@ -2803,7 +2803,7 @@ export function registerEvalCommands(program: Command): void {
         "Give up waiting after this many milliseconds (default 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
       .option(
@@ -2859,7 +2859,7 @@ export function registerEvalCommands(program: Command): void {
         "Fail if p95 end-to-end latency rose by more than this many milliseconds"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
       .option("--out <path>", "Write the structured report to a JSON file").action(

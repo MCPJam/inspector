@@ -1867,6 +1867,71 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
   }
 });
 
+test("eval run --wait --reporter html writes the artifact atomically and to stdout", async () => {
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(html, /Authorization: \[REDACTED\]/);
+    assert.equal(html.includes("top-secret"), false);
+    assert.equal(/<script/i.test(html), false);
+    // Written to the file AND stdout — `--out` and `--reporter` are two
+    // terminals for the same run.
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --reporter html without --wait is still a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /--reporter and --out require --wait\./);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run writes an error report after a completed-run reporting failure", async () => {
   const fixture = await startEvalFixture({
     runCaseIterationFetchError: true,
@@ -2090,6 +2155,43 @@ test("eval gate writes its JUnit report before a gate-failure exit", async () =>
     assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
     assert.match(junit, /<failure message="1\/2 iterations passed"/);
     assert.match(junit, /goal completion failed/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --reporter html --out writes an HTML report before a gate-failure exit", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    assert.equal(run.result.exitCode, 1);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(html, /1\/2 iterations passed/);
+    assert.match(html, /goal completion failed/);
+    assert.equal(/<script/i.test(html), false);
   } finally {
     await fixture.close();
   }

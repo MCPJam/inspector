@@ -414,7 +414,7 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
-Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead. When `--reporter` is present, the same report is also written to stdout.
+Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only — traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
 <Warning>
 **`eval run --wait` exits 0 even when the evals failed.** Waiting for a run is not the same as judging it: `--wait` keeps `eval run`'s existing exit codes, where `1` means a run never launched, not that a run came back red. The report it writes records the verdict faithfully (`passed: false`, and a JUnit `failures` count above zero), but the process still exits 0.

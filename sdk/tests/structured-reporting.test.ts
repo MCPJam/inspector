@@ -1,10 +1,12 @@
 import {
   buildEvalRunReport,
+  renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
   summarizeStructuredCases,
   type StructuredRunReport,
 } from "../src/structured-reporting";
+import type { EvalDecisionSummary } from "../src/eval-decision-summary";
 import { parseJUnitXmlArtifact } from "../src/artifact-parsers";
 import type {
   PlatformEvalIteration,
@@ -192,6 +194,149 @@ describe("renderStructuredRunJUnitXml", () => {
     expect(xml).toContain('failures="1"');
     expect(xml).toContain('name="failed"');
     expect(xml).toContain("Run failed without individual cases.");
+  });
+});
+
+describe("renderStructuredRunHtml", () => {
+  function baseReport(
+    overrides: Partial<StructuredRunReport> = {}
+  ): StructuredRunReport {
+    return {
+      schemaVersion: 1,
+      kind: "eval-run",
+      passed: true,
+      summary: summarizeStructuredCases([]),
+      cases: [],
+      durationMs: 0,
+      metadata: {},
+      ...overrides,
+    };
+  }
+
+  it("emits a well-formed, self-contained document with no external assets", () => {
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        cases: [
+          {
+            id: "case-1",
+            title: "Case A",
+            category: "eval",
+            passed: false,
+            error: "goal missed",
+          },
+        ],
+        summary: summarizeStructuredCases([
+          {
+            id: "case-1",
+            title: "Case A",
+            category: "eval",
+            passed: false,
+          },
+        ]),
+      })
+    );
+
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toContain("<style>");
+    expect(html).not.toMatch(/<script/i);
+    // No external stylesheets, fonts, images, or scripts: this is a CI
+    // artifact opened from disk, often over file:// with no network.
+    expect(html).not.toMatch(/(href|src)\s*=\s*["']https?:\/\//i);
+    expect(html).not.toContain("<link");
+    expect(html).not.toContain("<img");
+  });
+
+  it("escapes hostile case titles and error text", () => {
+    const hostileTitle = "</td></tr><script>alert(1)</script>";
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        cases: [
+          {
+            id: "case-1",
+            title: hostileTitle,
+            category: "eval",
+            passed: false,
+            error: `<b>bold</b> & "quoted" & 'single'`,
+          },
+        ],
+        summary: summarizeStructuredCases([
+          {
+            id: "case-1",
+            title: hostileTitle,
+            category: "eval",
+            passed: false,
+          },
+        ]),
+      })
+    );
+
+    expect(html).not.toContain(hostileTitle);
+    expect(html).not.toMatch(/<script/i);
+    expect(html).toContain(
+      "&lt;/td&gt;&lt;/tr&gt;&lt;script&gt;alert(1)&lt;/script&gt;"
+    );
+    expect(html).toContain("&lt;b&gt;bold&lt;/b&gt; &amp; &quot;quoted&quot;");
+  });
+
+  it("renders the decision summary when present", () => {
+    const decisionSummary: EvalDecisionSummary = {
+      verdict: "failed",
+      passRate: { total: 4, passed: 3, failed: 1, percent: 75 },
+      iterationWalkComplete: true,
+      cases: [
+        {
+          id: "case-1",
+          title: "Case A",
+          iterationNumber: 1,
+          firstFailedStage: "serverData",
+          failureCategory: "serverData",
+          stageChainStatus: "verified",
+          expected: { toolNames: ["search"] },
+          observed: { toolNames: ["search"], failure: "empty result" },
+          evidence: { spanIds: ["span-1"] },
+          nextAction: "inspect the tool response returned by the server",
+        },
+      ],
+    };
+    const html = renderStructuredRunHtml(
+      baseReport({ passed: false, decisionSummary })
+    );
+
+    expect(html).toContain("Decision summary");
+    expect(html).toContain("3/4 cases passed");
+    expect(html).toContain("75%");
+    expect(html).toContain("serverData");
+    expect(html).toContain("inspect the tool response returned by the server");
+    expect(html).toContain("span-1");
+  });
+
+  it("omits the decision summary section cleanly when absent", () => {
+    const html = renderStructuredRunHtml(baseReport());
+    expect(html).not.toContain("Decision summary");
+  });
+
+  it("renders an inconclusive verdict with the neutral class, never pass or fail", () => {
+    const html = renderStructuredRunHtml(
+      baseReport({ passed: false, verdict: "inconclusive" })
+    );
+
+    expect(html).toContain('badge-neutral">inconclusive');
+    expect(html).not.toContain('badge-pass">inconclusive');
+    expect(html).not.toContain('badge-fail">inconclusive');
+  });
+
+  it("renders a passed verdict as pass and a failed verdict as fail", () => {
+    const passedHtml = renderStructuredRunHtml(
+      baseReport({ passed: true, verdict: "passed" })
+    );
+    expect(passedHtml).toContain('badge-pass">passed');
+
+    const failedHtml = renderStructuredRunHtml(
+      baseReport({ passed: false, verdict: "failed" })
+    );
+    expect(failedHtml).toContain('badge-fail">failed');
   });
 });
 
