@@ -177,7 +177,17 @@
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
-              "sdk/reference/eval-reporting",
+              {
+                "group": "Saving Eval Results",
+                "icon": "book",
+                "root": "sdk/reference/eval-reporting",
+                "pages": [
+                  "sdk/reference/eval-reporting/report-results",
+                  "sdk/reference/eval-reporting/incremental",
+                  "sdk/reference/eval-reporting/predicates",
+                  "sdk/reference/eval-reporting/configuration"
+                ]
+              },
               "sdk/reference/validators",
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",

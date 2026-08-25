@@ -170,7 +170,7 @@ await test.run(agent, {
 });
 ```
 
-See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
+See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting/report-results#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting/incremental#createevalrunreporter) overrides.
 
 ### Predicate gate
 
@@ -195,7 +195,7 @@ The twelve built-in predicate types:
 | `widgetRenderLatencyUnder` | Every rendered widget mounted in strictly under a millisecond budget |
 | `widgetNoConsoleErrors` | No widget render captured console errors |
 
-When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting/predicates#predicate-gate) for the full type definitions and a code example.
 
 ### Suite Results
 

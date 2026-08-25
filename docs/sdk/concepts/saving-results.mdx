@@ -32,7 +32,7 @@ After each successful upload the SDK prints a link to the run it just created, s
 [mcpjam/sdk] View run: https://app.mcpjam.com/evals/suite/jd7.../runs/kn2...?project=jh4...
 ```
 
-One line per run, on by default. See [the printed run URL](/sdk/reference/eval-reporting#the-printed-run-url) for when the `?project=` param is omitted and when nothing prints at all.
+One line per run, on by default. See [the printed run URL](/sdk/reference/eval-reporting/report-results#the-printed-run-url) for when the `?project=` param is omitted and when nothing prints at all.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
@@ -53,7 +53,7 @@ await test.run(agent, {
 });
 ```
 
-**Tool execution:** Auto-saved payloads use the same **pass/fail rules** as the [eval reporting reference](/sdk/reference/eval-reporting#tool-execution-and-passed): failed tool calls default to `passed: false` unless you set `failOnToolError: false` on the `mcpjam` object.
+**Tool execution:** Auto-saved payloads use the same **pass/fail rules** as the [eval reporting reference](/sdk/reference/eval-reporting/report-results#tool-execution-and-passed): failed tool calls default to `passed: false` unless you set `failOnToolError: false` on the `mcpjam` object.
 
 For authenticated HTTP servers:
 
@@ -166,7 +166,7 @@ Most users should pass `agent` or `mcpClientManager` and let the SDK derive repl
 
 When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
 
-**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `HostRunner` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
+**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting/incremental#createevalrunreporter) — not only on `HostRunner` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting/incremental#replay-metadata-for-the-mcpjam-ui).
 
 ## CI Metadata
 

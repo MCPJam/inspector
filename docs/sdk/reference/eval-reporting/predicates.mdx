@@ -1,0 +1,108 @@
+---
+title: "Predicates"
+description: "Deterministic, transcript-based assertions that gate an eval case on top of tool-call matching"
+icon: "list-checks"
+---
+
+Use predicates when tool-call matching alone does not decide whether a case passed — a forbidden tool, a required phrase in the response, a token budget.
+
+## Predicates
+
+Predicates run on top of everything above: the same uploaded iteration, judged against transcript-level assertions.
+
+### Predicate gate
+
+Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
+
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+
+<Note>
+  Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
+</Note>
+
+The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors` — read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
+
+#### Predicate types
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
+| `toolCalledAtLeastOnce` | `toolName` | `toolName` was called at least once (args irrelevant). |
+| `toolNeverCalled` | `toolName` | `toolName` was never called (forbidden-tool check). |
+| `firstToolWas` | `toolName` | The first tool call observed in the transcript was `toolName`. |
+| `responseContains` | `needle`, `caseSensitive?` | The final assistant message contains `needle`. Case-insensitive by default. |
+| `responseMatches` | `pattern` | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
+| `noToolErrors` | — | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
+| `finalAssistantMessageNonEmpty` | — | The final assistant message is a non-empty, non-whitespace string. |
+| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
+| `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
+| `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
+| `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
+
+#### ArgMatcher
+
+Used by `toolCalledWith` to specify expected arguments and matching mode.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `args` | `Record<string, unknown>` | Expected argument shape. |
+| `argumentMatching` | `"partial" \| "exact" \| "ignore"` | Matching mode. `"partial"` (default) checks only the keys present in `args`; `"exact"` requires deep equality; `"ignore"` skips argument comparison. |
+
+#### A predicate never passes by default
+
+A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
+
+#### Example
+
+```typescript
+import type { Predicate } from "@mcpjam/sdk/predicates";
+
+const predicates: Predicate[] = [
+  // Tool was called with the right airline argument
+  {
+    type: "toolCalledWith",
+    toolName: "book_flight",
+    args: { args: { airline: "DL" } },
+  },
+  // Response mentions the booking confirmation
+  { type: "responseContains", needle: "confirmed" },
+  // No tool errors occurred
+  { type: "noToolErrors" },
+  // Token budget respected
+  { type: "tokenBudgetUnder", tokens: 2000 },
+];
+
+// Pass predicates via the per-run override in the Inspector corpus,
+// or use evaluatePredicates() directly in custom pipelines:
+import { evaluatePredicates, buildIterationTranscript } from "@mcpjam/sdk/predicates";
+
+const transcript = buildIterationTranscript({
+  trace: myTrace,
+  toolCalls: myToolCalls,
+  usage: { totalTokens: 1200 },
+});
+
+const results = evaluatePredicates(transcript, predicates);
+const allPassed = results.every((r) => r.passed);
+```
+
+#### Predicate results in metadata
+
+When the Inspector runner evaluates predicates, it persists one row per predicate to `testIteration.metadata.predicates`:
+
+```typescript
+type PredicateResult = {
+  predicate: Predicate;   // The authored predicate (sensitive arg keys are redacted)
+  passed: boolean;
+  reason: string;         // Structured explanation, e.g. "tool "book_flight" called with matching args"
+  scope?: { kind: "turn"; promptIndex: number }; // Absent = case-level; present = authored on one prompt turn
+};
+```
+
+---
+
+## Related
+
+- [Saving Eval Results](/sdk/reference/eval-reporting) - overview and environment variables
+- [EvalTest Reference](/sdk/reference/eval-test) - authoring code-first predicates
+- [EvalSuite Reference](/sdk/reference/eval-suite) - suite-level predicates

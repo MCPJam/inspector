@@ -1,0 +1,144 @@
+---
+title: "Configuration reference"
+description: "Every input field, nested type, and default accepted by the eval reporting APIs"
+icon: "table"
+---
+
+The complete input surface for [`reportEvalResults()`](/sdk/reference/eval-reporting/report-results), [`reportEvalResultsSafely()`](/sdk/reference/eval-reporting/report-results#reportevalresultssafely), and [`createEvalRunReporter()`](/sdk/reference/eval-reporting/incremental).
+
+### ReportEvalResultsInput
+
+```typescript
+type ReportEvalResultsInput = MCPJamReportingConfig & {
+  suiteName: string;
+  results: EvalResultInput[];
+  agent?: {
+    getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
+  };
+  executor?: {
+    getHostSnapshot?: () => HostJson | undefined;
+  };
+  mcpClientManager?: MCPClientManager;
+};
+```
+
+Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJamReportingConfig`](#mcpjamreportingconfig)):
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `suiteName` | `string` | Yes | Suite name for the run |
+| `results` | `EvalResultInput[]` | Yes | The results to upload |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (`HostRunner` / `HostRuntime`) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Field name predates the Stage 4 rename; any `HostExecutor` is accepted. |
+| `executor` | `{ getHostSnapshot?: () => HostJson \| undefined }` | No | Host-snapshot fallback for the run-level host config. Consulted when no per-iteration `hostSnapshot` is available; any object exposing `getHostSnapshot()` (e.g. `HostRunner`, `HostRuntime`) qualifies. See [Run-level host snapshot](#run-level-host-snapshot) |
+| `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
+
+### MCPJamReportingConfig
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `enabled` | `boolean` | No | Enable/disable reporting (default: `true`) |
+| `apiKey` | `string` | No | MCPJam API key (`sk_…`; falls back to `MCPJAM_API_KEY` env var) |
+| `baseUrl` | `string` | No | MCPJam API base URL override (useful for internal development or tests) |
+| `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
+| `suiteName` | `string` | No | Suite name for the run |
+| `suiteDescription` | `string` | No | Description of the suite |
+| `serverNames` | `string[]` | No | MCP server names being tested |
+| `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
+| `notes` | `string` | No | Free-form notes |
+| `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
+| `failOnToolError` | `boolean` | No | When not `false`, results derived from traces treat tool execution failures as failed iterations (default: strict). See [Tool execution and `passed`](/sdk/reference/eval-reporting/report-results#tool-execution-and-passed) |
+| `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
+| `externalRunId` | `string` | No | Custom run ID (auto-generated if omitted) |
+| `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
+| `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
+| `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
+| `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
+| `host` | `Host` | No | Explicit host snapshot override. The reporter prefers `iteration.hostSnapshot` (per-iteration capture from `HostRuntime`) and falls back to `executor.getHostSnapshot?.()`; supply `host` only when neither source is available. See [Run-level host snapshot](#run-level-host-snapshot) below. |
+
+The replay sources `agent` and `mcpClientManager` are fields of [`ReportEvalResultsInput`](#reportevalresultsinput), not of `MCPJamReportingConfig` — pass them on the reporting call itself.
+
+### Run-level host snapshot
+
+When a usable host snapshot is available, the reporter includes a normalized + content-hashed host config alongside the run body (the v1 ingest surface always accepts the pair — the old per-`baseUrl` capability probe is gone):
+
+```jsonc
+POST /api/v1/projects/{projectId}/eval-ingest/runs/start
+{
+  "suiteName": "...",
+  "results": [...],
+  "hostConfig":     {/* canonical HostConfigInputV2 with serverIds stripped */},
+  "hostConfigHash": "sha256(canonical)"
+}
+```
+
+**Source order (highest priority first):**
+
+1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end. Not yet carried by `EvalResultInput`, so today the reporter falls through to 2 and 3.
+2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
+3. `MCPJamReportingConfig.host` — explicit override, compatibility path.
+
+<Accordion title="Homogeneity gate, fail-safe omission, and server-id normalization">
+**Pass-1 homogeneity gate.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Heterogeneous runs (e.g. mutating the bound `Host` between iterations) omit the run-level field — per-iteration wire support is a later stage.
+
+**Fail-safe omission.** Any error while resolving or canonicalizing the snapshot — malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON — logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
+
+**Server-id normalization.** Runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped by `normalizeSdkEvalHostConfigForWire` on both ends so SDK runtime ids like `"everything"` never reach the backend's `validateServerScope` as `Id<'servers'>`. The persisted `hostConfigsV2` row's hash will differ from the wire `hostConfigHash` because suite-resolved Convex server ids are layered on top at storage time — the wire hash is a transport-integrity check, not the storage id.
+</Accordion>
+
+### MCPServerReplayConfig
+
+Advanced replay override. Most users should not construct this manually.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `serverId` | `string` | Yes | MCP server identifier |
+| `url` | `string` | Yes | MCP server URL |
+| `preferSSE` | `boolean` | No | Prefer SSE transport for replay |
+| `accessToken` | `string` | No | Static bearer token for replay |
+| `refreshToken` | `string` | No | Refresh token for replay |
+| `clientId` | `string` | No | OAuth client ID, required with `refreshToken` |
+| `clientSecret` | `string` | No | OAuth client secret when needed for token refresh |
+
+### EvalCiMetadata
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `provider` | `string` | CI provider (e.g., `"github"`, `"gitlab"`) |
+| `pipelineId` | `string` | Pipeline/workflow identifier |
+| `jobId` | `string` | Job identifier |
+| `runUrl` | `string` | URL to the CI run |
+| `branch` | `string` | Git branch name |
+| `commitSha` | `string` | Git commit SHA |
+
+### EvalResultInput
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `caseTitle` | `string` | Yes | Test case title |
+| `passed` | `boolean` | Yes | Whether the test passed |
+| `query` | `string` | No | The prompt/query sent |
+| `durationMs` | `number` | No | Test duration in ms |
+| `provider` | `string` | No | LLM provider name |
+| `model` | `string` | No | Model identifier |
+| `expectedToolCalls` | `EvalExpectedToolCall[]` | No | Expected tool calls |
+| `actualToolCalls` | `EvalExpectedToolCall[]` | No | Actual tool calls made |
+| `tokens` | `{ input?, output?, total? }` | No | Token usage |
+| `error` | `string` | No | Error message |
+| `errorDetails` | `string` | No | Detailed error info |
+| `trace` | `EvalTraceInput` | No | Conversation trace |
+| `externalIterationId` | `string` | No | Custom iteration ID |
+| `externalCaseId` | `string` | No | Custom case ID |
+| `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. The backend resolves by it first and adopts it onto a case that resolved by content hash, which is what lets a renamed test keep its history. Must equal `externalCaseId` when both are present. |
+| `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
+| `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+| `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
+| `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
+| `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `HostRunner` had no `mcpClientManager` |
+
+---
+
+## Related
+
+- [Saving Eval Results](/sdk/reference/eval-reporting) - overview and environment variables
+- [Report results](/sdk/reference/eval-reporting/report-results) - one-shot reporting and reading the output
+- [Incremental reporting](/sdk/reference/eval-reporting/incremental) - buffered reporting and replay sources

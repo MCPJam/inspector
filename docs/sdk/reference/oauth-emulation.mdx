@@ -4,7 +4,16 @@ description: "Run a headless OAuth preflight that emulates a real client's authe
 icon: "user-check"
 ---
 
+Client emulation reproduces how a specific MCP client authenticates — the order it tries mechanisms in, the registration strategy it prefers, the registration body it sends — and runs that sequence against your real server, without running the client itself. Use it to find out whether a given client would get a token from your server, and what your server did at each step if it would not.
+
 Use `runEmulatedOAuthPreflight` to execute an emulated client's authentication ladder against a real MCP server, headlessly. The runner compiles an evidence-backed OAuth profile into ordered attempts, executes each one over the hardened OAuth networking path, and returns a structured result with three independent dimensions: `outcome`, `coverage`, and `comparison`.
+
+```mermaid
+flowchart LR
+    Profile["OAuth profile<br/>authModel + evidence"] -->|deriveOAuthEmulation| Ladder["Attempt ladder<br/>ordered rungs"]
+    Ladder -->|runEmulatedOAuthPreflight| Run["Each rung, in order,<br/>against your server"]
+    Run --> Result["Result<br/>outcome · coverage · comparison"]
+```
 
 <Note>
   `runEmulatedOAuthPreflight` is Node-only. The redirect-planning utilities
@@ -57,6 +66,48 @@ console.log(result.credentials);   // { accessToken, clientId, ... }
 console.log(result.sideEffects);   // { dcrRegistrations: 1, tokensIssued: 1 }
 console.log(result.comparison);    // "not_compared" — always, until step 6
 ```
+
+---
+
+## Reading the result
+
+Four things answer most questions about a run:
+
+- **`outcome`** — the verdict for the whole ladder. `"completed"` means a real token *and* a valid authenticated JSON-RPC response; the other values are in [`EmulatedOAuthPreflightOutcome`](#emulatedoauthpreflightoutcome).
+- **`attempts`** — one entry per rung, in ladder order, each with a `status` and a human-readable `detail`. This is where you see which mechanism the server accepted or rejected, and `httpHistory` carries the redacted trace for that rung.
+- **`divergences`** — every declared difference between what the real client would send and what this run sent, compile-time and runtime.
+- **`coverageSummary`** — `"complete"` only when every profile field is modeled. A `"partial"` run tested less than the real client's behavior.
+
+`comparison` is always `"not_compared"`: a run never implies parity with a golden trace on its own. Check `sideEffects` to see what the run caused on the target — at most two DCR registrations per run.
+
+---
+
+## Attempt ladder
+
+The `authModel` field of an OAuth profile compiles into an ordered attempt ladder. The runner executes each rung in sequence, with these fallback rules:
+
+- **Consecutive `oauth2-*` entries collapse into one OAuth attempt** carrying their relative order as a registration preference. A client that lists `["oauth2-cimd", "oauth2-dcr"]` performs a single OAuth dance preferring CIMD, not two separate dances.
+- **`api-key` and `none` stay in position** as direct MCP probes, so a "static bearer first, OAuth on 401" client reproduces that sequence exactly.
+- A static credential falls through to OAuth **only on a 401**. Any other status stops the ladder.
+- An OAuth attempt falls through to the next strategy **only while nothing has been committed on the wire** — once a registration request has been sent or authorization has begun, failure stops the ladder.
+
+```typescript
+// Profile: try static credential first, fall back to DCR on 401.
+const emulation = deriveOAuthEmulation({
+  profileVersion: 2,
+  authModel: {
+    status: "verified",
+    value: ["api-key", "oauth2-dcr"],
+    source: "...",
+    capturedAt: "2026-01-01",
+  },
+});
+
+// result.attempts will be:
+// [{ kind: "api-key", status: "unauthorized" }, { kind: "oauth", status: "ok" }]
+```
+
+When `authModel` has no evidence, the runner uses MCPJam's own AUTO precedence: `preregistered` → `cimd` → `dcr`, filtered to what the negotiated protocol version supports.
 
 ---
 
@@ -120,35 +171,6 @@ console.log(result.comparison);    // "not_compared" — always, until step 6
 | `plan` | `ResolvedAuthorizationPlan` | The resolved authorization plan, for `oauth` attempts. |
 | `httpHistory` | `HttpHistoryEntry[]` | Redacted HTTP trace. Never carries tokens, codes, secrets, or PKCE values. |
 | `detail` | `string` | Human-readable explanation of the outcome. |
-
----
-
-## Attempt ladder
-
-The `authModel` field of an OAuth profile compiles into an ordered attempt ladder. The runner executes each rung in sequence, with these fallback rules:
-
-- **Consecutive `oauth2-*` entries collapse into one OAuth attempt** carrying their relative order as a registration preference. A client that lists `["oauth2-cimd", "oauth2-dcr"]` performs a single OAuth dance preferring CIMD, not two separate dances.
-- **`api-key` and `none` stay in position** as direct MCP probes, so a "static bearer first, OAuth on 401" client reproduces that sequence exactly.
-- A static credential falls through to OAuth **only on a 401**. Any other status stops the ladder.
-- An OAuth attempt falls through to the next strategy **only while nothing has been committed on the wire** — once a registration request has been sent or authorization has begun, failure stops the ladder.
-
-```typescript
-// Profile: try static credential first, fall back to DCR on 401.
-const emulation = deriveOAuthEmulation({
-  profileVersion: 2,
-  authModel: {
-    status: "verified",
-    value: ["api-key", "oauth2-dcr"],
-    source: "...",
-    capturedAt: "2026-01-01",
-  },
-});
-
-// result.attempts will be:
-// [{ kind: "api-key", status: "unauthorized" }, { kind: "oauth", status: "ok" }]
-```
-
-When `authModel` has no evidence, the runner uses MCPJam's own AUTO precedence: `preregistered` → `cimd` → `dcr`, filtered to what the negotiated protocol version supports.
 
 ---
 
