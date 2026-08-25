@@ -29,7 +29,7 @@
  */
 
 import type { StageEvidence } from "@mcpjam/sdk/contract";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 import { isModelFree } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
@@ -160,6 +160,17 @@ type StoredPredicateRow = {
   predicate: Predicate;
   passed: boolean;
   reason?: string;
+  /**
+   * Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn.
+   *
+   * LOAD-BEARING, and easy to drop. `hostedCriterionId` digests the scope
+   * alongside the predicate, and the scope is a hash input to the definition
+   * too — so rebuilding a turn-scoped predicate WITHOUT it mints a different
+   * `scorerId` and a different `definitionHash` than the first pass wrote. The
+   * result is not a corrected row: it is a second, unscoped gating scorer
+   * beside the original, or an `EVAL_RUN_CONFIG_CONFLICT` outright.
+   */
+  scope?: PredicateScope;
 };
 
 function isPredicateRow(value: unknown): value is StoredPredicateRow {
@@ -237,6 +248,9 @@ function deriveIterationPayload(args: {
             predicate: row.predicate,
             passed: row.passed,
             ...(typeof row.reason === "string" ? { reason: row.reason } : {}),
+            // Forwarded so a turn-scoped predicate rebuilds under the SAME
+            // scorer identity the first pass wrote. See `StoredPredicateRow`.
+            ...(row.scope ? { scope: row.scope } : {}),
           })),
         }
       : {}),
@@ -352,7 +366,16 @@ export async function runJudgeSecondPass(
       mode,
       goalCompletionJobId,
     });
-    if (Object.keys(stage).length === 0) continue;
+    // Skip only when there is genuinely NOTHING to post. The stage chain and
+    // the score rows are independent derivations: the chain needs the trace,
+    // the rows need only `metadata.predicates` and the judge verdict. So an
+    // iteration whose trace could not be served still has a judge row to
+    // project, and suppressing it along with the chain would leave the saved
+    // verdict unprojected AND drop the iteration from the fanout report —
+    // which the backend reads as an incomplete fanout, so the sweep re-drives
+    // it forever and it eventually gives up as `failed`.
+    const hasStageKeys = Object.keys(stage).length > 0;
+    if (!hasStageKeys && !scores) continue;
 
     try {
       const result = await ports.applyDerivation(iteration.iterationId, {
@@ -367,10 +390,18 @@ export async function runJudgeSecondPass(
         ...(typeof stage.failureCategory === "string"
           ? { failureCategory: stage.failureCategory }
           : {}),
-        stageAnalyzerVersion:
-          typeof stage.stageAnalyzerVersion === "number"
-            ? stage.stageAnalyzerVersion
-            : STAGE_ANALYZER_VERSION,
+        // Only when a chain was actually derived. Stamping the analyzer
+        // version beside no `stageResults` would claim a derivation that did
+        // not happen — and this post MERGES into existing metadata, so it
+        // would sit on top of the first pass's chain and misdate it.
+        ...(hasStageKeys
+          ? {
+              stageAnalyzerVersion:
+                typeof stage.stageAnalyzerVersion === "number"
+                  ? stage.stageAnalyzerVersion
+                  : STAGE_ANALYZER_VERSION,
+            }
+          : {}),
         ...(scores ? { scores } : {}),
         ...(config !== undefined ? { evaluationConfig: config } : {}),
       });

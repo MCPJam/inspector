@@ -20,6 +20,7 @@ import {
 import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
+import { resolveFrozenRunGradingMode } from "./grading-mode.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -54,7 +55,7 @@ export type PreparedSuiteReplayFromRunResult = {
  * MCP connections alive while detached execution continues after HTTP response.
  */
 export async function prepareSuiteReplayFromRun(
-  params: ExecuteSuiteReplayFromRunParams,
+  params: ExecuteSuiteReplayFromRunParams
 ): Promise<PreparedSuiteReplayFromRunResult> {
   const {
     convexClient,
@@ -70,7 +71,7 @@ export async function prepareSuiteReplayFromRun(
   const convexHttpUrl = requireConvexHttpUrl();
   const replayMetadata = await convexClient.query(
     "testSuites:getRunReplayMetadata" as any,
-    { runId: sourceRunId },
+    { runId: sourceRunId }
   );
 
   if (!replayMetadata?.hasServerReplayConfig) {
@@ -98,17 +99,24 @@ export async function prepareSuiteReplayFromRun(
   const replayManager = buildReplayManager(replayConfig);
   try {
     await connectReplayManagerServers(replayManager, replayConfig);
-    const replayServerIds = replayConfig.servers.map((server) => server.serverId);
+    const replayServerIds = replayConfig.servers.map(
+      (server) => server.serverId
+    );
     const { toolSnapshot, toolSnapshotDebug } =
-      await captureToolSnapshotForEvalAuthoring(replayManager, replayServerIds, {
-        logPrefix: "evals.replay",
-      });
+      await captureToolSnapshotForEvalAuthoring(
+        replayManager,
+        replayServerIds,
+        {
+          logPrefix: "evals.replay",
+        }
+      );
 
     const {
       runId,
       recorder,
       config,
       hostConfig: runHostConfigSnapshot,
+      gradingEngine: runGradingEngine,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -119,7 +127,7 @@ export async function prepareSuiteReplayFromRun(
       useCurrentSuiteConfig,
       environmentOverride:
         useCurrentSuiteConfig === true
-          ? (replayMetadata.environment ?? { servers: replayServerIds })
+          ? replayMetadata.environment ?? { servers: replayServerIds }
           : undefined,
       toolSnapshot,
       toolSnapshotDebug,
@@ -165,7 +173,7 @@ export async function prepareSuiteReplayFromRun(
           {
             bearerToken: convexAuthToken,
             serverIds: replayServerIds,
-          },
+          }
         );
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config for replay", {
@@ -194,6 +202,14 @@ export async function prepareSuiteReplayFromRun(
           mcpClientManager: replayManager,
           recorder,
           suiteInjectOpenAiCompat,
+          // B3b: a replay is a RUN, and it grades under its own frozen
+          // position like any other. Omitting this let the runner fall back to
+          // the env-only resolver in `buildIterationFinishParams`, so a replay
+          // of an `off` or `shadow` run would grade at whatever the process env
+          // allowed — a replay reaching a different authority than the record
+          // it replays. An absent stamp is the backend's `off`, not an absent
+          // opinion; see the same translation in `routes/shared/evals.ts`.
+          gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
           ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
         });
       },
@@ -209,7 +225,7 @@ export async function prepareSuiteReplayFromRun(
  * Full suite replay used by synchronous `/replay-run` callers and trace repair.
  */
 export async function executeSuiteReplayFromRun(
-  params: ExecuteSuiteReplayFromRunParams,
+  params: ExecuteSuiteReplayFromRunParams
 ): Promise<ExecuteSuiteReplayFromRunResult> {
   const prepared = await prepareSuiteReplayFromRun(params);
   try {

@@ -133,6 +133,32 @@ export function resolveGradingEngineMode(
 }
 
 /**
+ * The mode ONE RUN executes at, from the position the backend FROZE onto it.
+ *
+ * The subtlety this exists to contain: `resolveGradingEngineMode` treats a
+ * position with no opinion as UNCONSTRAINED, so it falls through to the env
+ * ceiling — correct for an org flag nobody resolved, and exactly wrong for a
+ * run snapshot. The backend writes no `gradingEngine` key at all when it
+ * resolved `off`, so that an `off` run's snapshot stays byte-identical to a
+ * pre-B3b one. An ABSENT STAMP IS THEREFORE A DECISION, not a missing opinion —
+ * the suite ceiling, the org flag and the legacy v2 clamp all live upstream of
+ * it, and absence is their combined answer.
+ *
+ * Passing that absence straight through would promote every `off` run to
+ * whatever this process's env var says, the moment an operator raises it — the
+ * precise inverse of the safety the ceilings are for. Every caller that has a
+ * run snapshot goes through here instead of spelling the fallback out, so
+ * there is one place to get it right.
+ */
+export function resolveFrozenRunGradingMode(
+  runSnapshot: ModeCarrier
+): GradingEngineMode {
+  return resolveGradingEngineMode({
+    runSnapshot: runSnapshot ?? { mode: "off" },
+  });
+}
+
+/**
  * True when this mode writes real (non-shadow) score rows.
  *
  * `enforce` writes the same real rows `dual_write` does — the difference

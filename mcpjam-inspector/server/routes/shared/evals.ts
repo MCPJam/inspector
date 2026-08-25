@@ -9,7 +9,7 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
-import { resolveGradingEngineMode } from "../../services/evals/grading-mode.js";
+import { resolveFrozenRunGradingMode } from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
   type SuiteRunRecorder,
@@ -2429,7 +2429,17 @@ export async function prepareEvalRun(
       // ceiling. Threading it makes a per-suite `off` authoritative on the
       // FIRST pass — before, only the judge second pass (which reads the run
       // row) could see it — and is what lets a run reach `enforce` at all.
-      gradingMode: resolveGradingEngineMode({ runSnapshot: runGradingEngine }),
+      //
+      // AN ABSENT STAMP IS A DECISION, NOT A MISSING OPINION. The backend
+      // writes no `gradingEngine` key at all when it resolved `off` — so the
+      // snapshot of an `off` run stays byte-identical to a pre-B3b one — and
+      // this resolver treats a position with no opinion as UNCONSTRAINED,
+      // falling back to the env ceiling. Passing the absence straight through
+      // would therefore promote every `off` run to whatever the process env
+      // says the moment that var is raised, which is exactly backwards: the
+      // suite ceiling, the org flag and the legacy clamp all live upstream of
+      // that stamp, and an absent stamp is their combined answer.
+      gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
       // PR 4d: thread the raw suite hostConfig record into the runner so
       // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`

@@ -10,6 +10,8 @@ import {
   runJudgeSecondPass,
   type JudgeSecondPassPorts,
 } from "../judge-second-pass.js";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import { hostedCriterionId } from "../score-definitions.js";
 
 // =============================================================================
 // The second pass is the only component that WRITES because of a judge, so the
@@ -389,5 +391,136 @@ describe("judgeEvidenceFromVerdict", () => {
 
   test("no verdict at all yields no evidence", () => {
     expect(judgeEvidenceFromVerdict(undefined)).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// B3b review follow-ups. Two independent derivations, two ways to get them
+// wrong — both of which only became reachable once `dual_write` had a cohort.
+// =============================================================================
+describe("the second pass preserves scorer identity and never loses a score row", () => {
+  test("a turn-scoped predicate rebuilds under the SAME scorer identity", async () => {
+    const scopedPredicate = {
+      type: "tool_called",
+      toolName: "list_files",
+    } as unknown as Predicate;
+    const scope = { kind: "turn" as const, promptIndex: 1 };
+
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          iterations: [
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase,
+              metadata: {
+                judgeVerdict: {
+                  status: "scored",
+                  verdict: "fail",
+                  score: 0.2,
+                  threshold: 0.8,
+                },
+                predicates: [
+                  { predicate: scopedPredicate, passed: true, scope },
+                ],
+              },
+            },
+          ],
+        })
+      ),
+    });
+    await runJudgeSecondPass("run1", value);
+
+    const scores = (applied[0]?.body.scores ?? []) as Array<{
+      scorerId: string;
+    }>;
+    const predicateRow = scores.find((row) =>
+      row.scorerId.startsWith("predicate:")
+    );
+    // The identity the FIRST pass would have written for the same scoped
+    // predicate. `hostedCriterionId` digests the scope, so dropping it here
+    // does not correct the original row — it mints a second, unscoped gating
+    // scorer beside it, or conflicts outright.
+    expect(predicateRow?.scorerId).toBe(
+      `predicate:${hostedCriterionId(scopedPredicate, scope)}`
+    );
+  });
+
+  test("an incomplete trace suppresses the CHAIN but still posts the score rows", async () => {
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          iterations: [
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase,
+              // The backend could not serve this iteration's spans.
+              traceComplete: false,
+              metadata: {
+                judgeVerdict: {
+                  status: "scored",
+                  verdict: "fail",
+                  score: 0.2,
+                  threshold: 0.8,
+                },
+                predicates: [
+                  {
+                    predicate: {
+                      type: "tool_called",
+                      toolName: "list_files",
+                    } as unknown as Predicate,
+                    passed: true,
+                  },
+                ],
+              },
+            },
+          ],
+        })
+      ),
+    });
+    const result = await runJudgeSecondPass("run1", value);
+
+    const body = applied[0]?.body;
+    // No chain: re-deriving it without spans would report `traceAbsent` and
+    // overwrite a correct first-pass chain with one saying nothing happened.
+    expect(body?.stageResults).toBeUndefined();
+    // …and no version stamp either, which would claim a derivation that did
+    // not happen and misdate the chain already on the row.
+    expect(body?.stageAnalyzerVersion).toBeUndefined();
+    // But the judge's row IS projected — it needs no trace — and the iteration
+    // is reported, so the fanout can complete instead of being re-driven until
+    // it gives up.
+    expect((body?.scores ?? []).length).toBeGreaterThan(0);
+    expect(result.outcomes).toHaveLength(1);
+  });
+
+  test("an iteration with neither a chain nor scores is still skipped", async () => {
+    // `shadow` produces no score rows, so an incomplete trace leaves nothing
+    // at all to post. Reporting it anyway would mark a fanout complete for an
+    // iteration this pass never graded.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          configSnapshot: { gradingEngine: { mode: "shadow" } },
+          iterations: [
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase,
+              traceComplete: false,
+              metadata: {
+                judgeVerdict: { status: "scored", verdict: "fail" },
+              },
+            },
+          ],
+        })
+      ),
+    });
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(applied).toHaveLength(0);
+    expect(result.noop).toBe(true);
   });
 });
