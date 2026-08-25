@@ -267,6 +267,37 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   return !modelRejectsTemperature(id);
 };
 
+/**
+ * The same question for a catalog row rather than a bare id, so hosted models
+ * can answer from the metadata the backend already sends instead of only from
+ * their id.
+ *
+ * Catalog metadata may only *withdraw* temperature, never restore it: the id
+ * predicate encodes Anthropic families that answer a 400, and a catalog row
+ * claiming `temperature` for one of those is stale, not news. What the metadata
+ * adds is the models no id pattern covers — the reasoning families that reject
+ * sampling for reasons unrelated to being Claude, which today only `gpt-5`
+ * catches by name.
+ *
+ * An absent or empty `supportedParameters` means the catalog said nothing, not
+ * that the model supports nothing: BYOK, org, Ollama and custom rows never
+ * carry it, and hosted rows cached before the field existed arrive without it.
+ * Reading empty as "supports nothing" would strip temperature from every model
+ * on a stale cache.
+ */
+export const modelDefinitionSupportsTemperature = (
+  model: ModelDefinition
+): boolean => {
+  if (!modelSupportsTemperature(model.id)) {
+    return false;
+  }
+  const params = model.supportedParameters;
+  if (!params?.length) {
+    return true;
+  }
+  return params.includes("temperature");
+};
+
 export interface ModelDefinition {
   id: Model | string;
   name: string;
@@ -292,6 +323,14 @@ export interface ModelDefinition {
    * the catalog DTO; absent → treated as guest-gated (locked for guests).
    */
   guestAllowed?: boolean;
+  /**
+   * Request parameters the backend catalog reports this model accepting
+   * (OpenRouter's `supported_parameters`). Only hosted rows carry it — BYOK,
+   * org, Ollama and custom models arrive without it. Read by
+   * {@link modelDefinitionSupportsTemperature}, which treats absent or empty
+   * as "no metadata" rather than "accepts nothing".
+   */
+  supportedParameters?: string[];
 }
 
 export enum Model {
@@ -750,7 +789,9 @@ export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcre
 export function isConcreteOauthProtocolMode(
   value: string
 ): value is ServerFormOAuthProtocolConcreteMode {
-  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(
+    value
+  );
 }
 
 export function isServerFormOAuthProtocolMode(
@@ -833,11 +874,7 @@ export function resolveOAuthProtocolSelection(input: {
 }): {
   mode: ServerFormOAuthProtocolMode;
   protocolVersion: ServerFormOAuthProtocolConcreteMode;
-  source:
-    | "explicit_oauth"
-    | "wire_pin"
-    | "negotiated"
-    | "auth_gated_fallback";
+  source: "explicit_oauth" | "wire_pin" | "negotiated" | "auth_gated_fallback";
 } {
   const mode =
     input.mode ??

@@ -271,7 +271,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("scenario runtime-config gate", () => {
     it("resolves the process guest bearer for a BEARER-LESS scenario turn (config never skipped)", async () => {
-      fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {},
+      });
 
       await postJson(app, "/api/mcp/chat-v2", {
         scenarioId: "cbx_1",
@@ -591,8 +594,9 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("uses default temperature when not provided", async () => {
+    it("omits temperature when the caller does not provide one", async () => {
       const { streamText } = await import("ai");
+      const callsBefore = vi.mocked(streamText).mock.calls.length;
 
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -600,11 +604,12 @@ describe("POST /api/mcp/chat-v2", () => {
         apiKey: "test-key",
       });
 
-      expect(streamText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          temperature: 0.7,
-        })
-      );
+      // No preference means the provider's default, not the 0.7 this route used
+      // to invent. The chat tab always sends its slider value, so the callers
+      // reaching this branch are the SDK, the API and the eval runner.
+      expect(vi.mocked(streamText).mock.calls.length).toBe(callsBefore + 1);
+      const call = vi.mocked(streamText).mock.calls.at(-1)?.[0];
+      expect(call).not.toHaveProperty("temperature");
     });
 
     it("omits temperature entirely for models that reject the field", async () => {
@@ -2020,10 +2025,10 @@ describe("POST /api/mcp/chat-v2", () => {
           // /stream call, not merely resolved — otherwise the guest request
           // would reach Convex unauthenticated.
           const streamHeaders = new Headers(
-            (streamCall?.[1] as RequestInit | undefined)?.headers,
+            (streamCall?.[1] as RequestInit | undefined)?.headers
           );
           expect(streamHeaders.get("authorization")).toBe(
-            "Bearer guest-test-token",
+            "Bearer guest-test-token"
           );
         } finally {
           global.fetch = originalFetch;
@@ -2276,8 +2281,9 @@ describe("POST /api/mcp/chat-v2", () => {
           (args[1] as { tasks?: unknown } | undefined)?.tasks !== undefined
       );
       expect(call).toBeDefined();
-      return (call![1] as { tasks: { onTaskCreated: (e: unknown) => Promise<void> } })
-        .tasks;
+      return (
+        call![1] as { tasks: { onTaskCreated: (e: unknown) => Promise<void> } }
+      ).tasks;
     };
 
     const expectTaskCreatedPartDelivered = () => {

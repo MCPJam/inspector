@@ -9,6 +9,8 @@ import {
   isMCPJamProvidedModel,
   isModelSupported,
   modelSupportsTemperature,
+  modelDefinitionSupportsTemperature,
+  type ModelDefinition,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
   resolveOAuthProtocolSelection,
@@ -290,6 +292,58 @@ describe("modelSupportsTemperature", () => {
     // the field while every shipped Haiku keeps it.
     expect(modelSupportsTemperature("anthropic/claude-haiku-5")).toBe(false);
     expect(modelSupportsTemperature("anthropic/claude-haiku-4.5")).toBe(true);
+  });
+});
+
+describe("modelDefinitionSupportsTemperature", () => {
+  const row = (over: Partial<ModelDefinition>): ModelDefinition =>
+    ({
+      id: "openai/gpt-4o",
+      name: "GPT-4o",
+      provider: "openai",
+      ...over,
+    } as ModelDefinition);
+
+  it("answers from the catalog when it lists parameters", () => {
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: ["tools", "temperature"] })
+      )
+    ).toBe(true);
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ supportedParameters: ["tools", "max_tokens"] })
+      )
+    ).toBe(false);
+  });
+
+  it("treats absent or empty parameters as no metadata", () => {
+    // Every BYOK/org/Ollama row, and any hosted row cached before the field
+    // existed, arrives this way. Reading it as "accepts nothing" would strip
+    // temperature from the whole picker.
+    expect(modelDefinitionSupportsTemperature(row({}))).toBe(true);
+    expect(
+      modelDefinitionSupportsTemperature(row({ supportedParameters: [] }))
+    ).toBe(true);
+  });
+
+  it("never lets the catalog restore temperature to a rejecting id", () => {
+    // The id predicate knows the request 400s; a stale row claiming otherwise
+    // is not new information.
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({
+          id: "anthropic/claude-sonnet-5",
+          provider: "anthropic",
+          supportedParameters: ["temperature"],
+        })
+      )
+    ).toBe(false);
+    expect(
+      modelDefinitionSupportsTemperature(
+        row({ id: "openai/gpt-5", supportedParameters: ["temperature"] })
+      )
+    ).toBe(false);
   });
 });
 
