@@ -79,6 +79,14 @@ export function renderConformanceReporterResult(
       return JSON.stringify(renderConformanceReportJson(report));
     case "junit-xml":
       return renderConformanceReportJUnitXml(report);
+    case "html":
+      // `--reporter` is a shared parser across every CLI surface, so "html"
+      // parses here too, but conformance/OAuth/readiness/apps reports are a
+      // different shape (ConformanceReport, not StructuredRunReport) with no
+      // HTML renderer of their own yet — that's out of this step's scope.
+      throw usageError(
+        'The "html" reporter is not available for this command yet. Use "json-summary" or "junit-xml".',
+      );
   }
 }
 

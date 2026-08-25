@@ -33,6 +33,7 @@ import {
   type StageEvidence,
   type StageResultRow,
   type StageSetupSignals,
+  type IterationStatus as ContractIterationStatus,
 } from "@mcpjam/sdk/contract";
 import {
   resolveGradingEngineMode,
@@ -52,10 +53,36 @@ import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
+import { isTerminalIterationStatus } from "./run-status.js";
+import {
+  buildSelectionToolCatalog,
+  type SelectionCatalogToolLike,
+} from "./selection-tool-catalog.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary, imported rather than re-spelled: this
+ * file used to declare a three-value subset of it, which is what forced a
+ * runner whose ENVIRONMENT never came up to report `failed` — a word that says
+ * something about the server under test.
+ *
+ * Lifecycle is not the verdict. A run that asked the question and got the wrong
+ * answer is `completed` + `result: "failed"`; `failed` is reserved for the
+ * execution itself breaking.
+ */
+type IterationStatus = ContractIterationStatus;
 
-type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type ToolCallRecord = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * Mirrors the runner's `ToolCall.toolCallId`. This type describes exactly
+   * what goes over the wire as `updateTestIteration.actualToolCalls`, so it
+   * has to name every field the runner actually sends — the whole reason
+   * `toolCallId` reached a validator that rejected it is that no type on this
+   * path admitted the field existed.
+   */
+  toolCallId?: string;
+};
 type PolicyBlockRecord = { reason?: unknown };
 
 /**
@@ -100,6 +127,8 @@ function buildStageEvidence(args: {
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /** D7's advisory attribution evidence. Absent on the first pass, same as `judgeEvidence`. */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
 }) {
   const hasSpans = (args.spans?.length ?? 0) > 0;
   const hasPrompts = (args.prompts?.length ?? 0) > 0;
@@ -129,6 +158,9 @@ function buildStageEvidence(args: {
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+    ...(args.metadataAttribution
+      ? { metadataAttribution: args.metadataAttribution }
+      : {}),
     traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
     traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
   };
@@ -170,8 +202,20 @@ export function buildStageMetadata(args: {
    * evidence said nothing.
    */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /**
+   * ABSENT on the first pass, PRESENT on the second. Tier 2, same
+   * subordination as `judgeEvidence`: it can only decide `selection`'s
+   * `failureCategory` where D1 already derived `selection: failed`.
+   */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
   policy?: { blocked: boolean; reason?: string };
-  status: "completed" | "failed";
+  /**
+   * The EXECUTION lifecycle status, forwarded to the analyzer unchanged. The
+   * stopped states (`cancelled`, `timed_out`, `setup_failed`, `skipped`) are
+   * what let it report a stage as `notMeasured` rather than failed, so
+   * narrowing them to `failed` here would file evidence gaps as findings.
+   */
+  status: IterationStatus;
   error?: string;
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
@@ -189,6 +233,9 @@ export function buildStageMetadata(args: {
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+        ...(args.metadataAttribution
+          ? { metadataAttribution: args.metadataAttribution }
+          : {}),
       }),
       iteration: { status, ...(error ? { error } : {}) },
       policy: args.policy,
@@ -326,6 +373,72 @@ function readUserValueRow(
 }
 
 /**
+ * D7's `metadata.selectionToolCatalog` — written ONLY when this pass's own
+ * `stageMetadata` already derived `selection: failed`, so the common
+ * (passing) case costs nothing. Reads `missing` / `unexpected` from the
+ * SAME `prompts` array `deriveSelection` used to reach that verdict — this
+ * never re-derives whether selection failed, it only explains what the
+ * model was choosing between when it did.
+ */
+function buildSelectionToolCatalogMetadata(args: {
+  stageMetadata: Record<string, unknown>;
+  prompts?: PromptTraceSummary[];
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
+}): Record<string, unknown> {
+  if (!args.selectionTools) return {};
+  const rows = args.stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return {};
+  const selectionRow = rows.find(
+    (row): row is Partial<StageResultRow> =>
+      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+  );
+  if (selectionRow?.state !== "failed") return {};
+
+  const prompts = args.prompts ?? [];
+  // Only turns that were PART OF this selection failure — a successful
+  // earlier turn's tool calls have nothing to do with why selection failed,
+  // and folding them in could fill the catalog's cap before the turn that
+  // actually caused the failure is ever considered.
+  const failingPrompts = prompts.filter(
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+  );
+  const expectedToolNames = failingPrompts
+    .flatMap((p) => p.missing ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  // `unexpected` names FIRST, then the rest of the turn's actual calls:
+  // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
+  // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
+  // correctly-called expected tools plus one prohibited extra) the extra
+  // that actually caused the failure could otherwise sit last in call order
+  // and get crowded out by the tools that were selected correctly. The full
+  // actual set still matters beyond just `unexpected`, though: under the
+  // default `maxExtraToolCalls: null`, a call the model made INSTEAD of
+  // (not in addition to) an expected one stays out of `unexpected` — it
+  // only ever lands there as a flagged extra — so `missingToolCall` cases
+  // still need the broader `actualToolCalls` set to see what was chosen.
+  const unexpectedToolNames = failingPrompts
+    .flatMap((p) => p.unexpected ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const otherActualToolNames = failingPrompts
+    .flatMap((p) => p.actualToolCalls ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
+  if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
+    return {};
+  }
+
+  const catalog = buildSelectionToolCatalog({
+    tools: args.selectionTools,
+    expectedToolNames,
+    actualToolNames,
+  });
+  return catalog.length > 0 ? { selectionToolCatalog: catalog } : {};
+}
+
+/**
  * Builds the `finishParams` object every runner passes to
  * {@link finalizeIterationWithBrowserArtifacts} (which adds `videoBytes` +
  * `convexClient` and dispatches to the recorder or `finalizeEvalIteration`).
@@ -354,7 +467,12 @@ export function buildIterationFinishParams(args: {
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   browserInteractionSteps?: RunnerBrowserInteractionStep[];
-  status: "completed" | "failed";
+  /**
+   * REQUIRED and explicit. Callers classify their own path — a graded task
+   * failure is `completed`, a setup abort `setup_failed`, a budget expiry
+   * `timed_out` — because `passed` cannot distinguish them and never could.
+   */
+  status: IterationStatus;
   startedAt: number;
   error?: string;
   errorDetails?: string;
@@ -447,6 +565,13 @@ export function buildIterationFinishParams(args: {
    * which is why a quick run with no run row stays silent.
    */
   runId?: string;
+  /**
+   * D7: the live tool registry, keyed by name, as the runner had it in
+   * scope THIS iteration. Absent ⇒ no `selectionToolCatalog` is written,
+   * same honest-default reasoning `stageCase` follows for the stage chain
+   * itself — a caller with no live registry cannot say what the model saw.
+   */
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -482,6 +607,7 @@ export function buildIterationFinishParams(args: {
     injectOpenAiCompat,
     scoreMatchOptions,
     isNegativeTest,
+    selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
   const persistedSpans = [
@@ -522,6 +648,19 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
+  // Gated on the same `gradingMode` that decides whether `scoreMetadata`
+  // above writes anything — D7 changes nothing outside `dual_write` (see the
+  // plan's §15 disclosure note), and that includes not capturing server tool
+  // descriptions/schemas into iteration metadata for a suite that never
+  // opted in.
+  const selectionToolCatalogMetadata =
+    gradingMode === "dual_write"
+      ? buildSelectionToolCatalogMetadata({
+          stageMetadata,
+          prompts,
+          selectionTools,
+        })
+      : {};
   return {
     iterationId,
     passed,
@@ -556,6 +695,7 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...scoreMetadata,
+      ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
@@ -569,13 +709,11 @@ export function buildIterationFinishParams(args: {
   };
 }
 
-const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
-
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
   passed: boolean;
-  toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
+  toolsCalled: ToolCallRecord[];
   usage: UsageTotals;
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
@@ -608,7 +746,8 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
-  status?: IterationStatus;
+  /** Explicit harness lifecycle status; never infer it from the verdict. */
+  status: IterationStatus;
   startedAt?: number;
   error?: string;
   errorDetails?: string;
@@ -684,16 +823,13 @@ export async function finalizeEvalIteration(
   // Check if the iteration is already in a terminal stop state before trying
   // to update. A timed-out iteration whose original LLM/browser work ignores
   // the abort and completes late must NOT overwrite the `timed_out` row with a
-  // completed/failed result — both `cancelled` and `timed_out` are terminal.
+  // completed/failed result — every terminal lifecycle status is protected.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (
-      iteration?.status === "cancelled" ||
-      iteration?.status === "timed_out"
-    ) {
+    if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
@@ -705,8 +841,9 @@ export async function finalizeEvalIteration(
     // If we can't check status, continue anyway.
   }
 
-  const iterationStatus =
-    status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
+  const iterationStatus = status;
+  // The TASK verdict, independent of the lifecycle above: `completed` +
+  // `failed` is a run that worked and a case that did not.
   const result = passed ? "passed" : "failed";
 
   // PR-2 eval→chatSessions fanout: write the transcript as per-turn rows
@@ -738,7 +875,10 @@ export async function finalizeEvalIteration(
   // error transcript with the wrong reason. Presence of `error` is the
   // cycle-failure signal we already have in scope.
   const isCycleFailure =
-    iterationStatus === "failed" || (error !== undefined && error !== "");
+    iterationStatus === "failed" ||
+    iterationStatus === "setup_failed" ||
+    iterationStatus === "timed_out" ||
+    (error !== undefined && error !== "");
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"
