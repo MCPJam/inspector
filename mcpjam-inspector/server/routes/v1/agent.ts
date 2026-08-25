@@ -62,6 +62,7 @@ import {
   runEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
 import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
+import { disclosureForProposal } from "./agent-proposal-disclosure.js";
 import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
@@ -223,6 +224,10 @@ function toWireProposal(proposal: ProposedAction): PublicProposedAction {
       ? { confirmSeverity: proposal.confirmSeverity }
       : {}),
     ...(proposal.target ? { target: proposal.target } : {}),
+    // Additive like the two above, and dropped the same way when absent —
+    // a spread that forgot this field would lose the disclosure silently
+    // between the mint and the wire.
+    ...(proposal.disclosure ? { disclosure: proposal.disclosure } : {}),
   };
 }
 
@@ -349,6 +354,24 @@ async function persistProposal(opts: {
   // control per entry would otherwise show two for a single spend — the exact
   // duplicate the derived id exists to prevent.
   if (!proposed.some((existing) => existing.actionId === actionId)) {
+    // BEST-EFFORT, and deliberately here: after the row is persisted (so a
+    // stalled fetch cannot cost the proposal), and gated on the dedupe above
+    // (so a re-proposed action does not pay for a line it already has).
+    //
+    // FROZEN INPUT, never `opts.input` — `input` is what the click will
+    // execute, so what this discloses is what will run. Bounded and swallowed
+    // inside `disclosureForProposal`: it returns `undefined` for every failure
+    // there is, and an absent field means UNKNOWN to every renderer, never
+    // "nothing leaves". Skipped without a client for the same reason the
+    // freeze degrades without one.
+    const disclosure =
+      meta.carriesDisclosure && opts.client
+        ? await disclosureForProposal({
+            operationName: operation.name,
+            input,
+            client: opts.client,
+          })
+        : undefined;
     proposed.push({
       actionId,
       operation: operation.name,
@@ -368,6 +391,11 @@ async function persistProposal(opts: {
       // What the proposal is about, so a host can correlate it with the turn's
       // created resources instead of guessing from the operation name.
       ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
+      // What a run of this would disclose, as of the mint. NOT persisted with
+      // the proposal: the click executes from the stored `input`, and a
+      // disclosure that round-tripped through a host would be a claim the host
+      // could author. Rendering data, one direction only.
+      ...(disclosure ? { disclosure } : {}),
     });
   }
   return { actionId, description: meta.description(input) };

@@ -18,6 +18,17 @@ export const PROPOSAL_ACTION_ID = 'mcpjam_approve_action';
  * Slack allows 50 blocks per message and this reply already carries suite
  * blocks and feedback blocks. Leave room rather than letting the post reject
  * and take the whole answer down with it.
+ *
+ * THE MESSAGE BUDGET IS EXACTLY FULL, which is why the pre-run disclosure
+ * (`disclosureLine`) rides INSIDE a proposal's own section rather than in a
+ * `context` block after it. Worst case on the replay path
+ * (`events/run-and-reply.js`): 1 reply section + 40 created-resource blocks +
+ * 1 resource overflow + 5 proposal sections + 1 proposal overflow + 1 replay
+ * note + 1 feedback = 50, dead on Slack's ceiling. One extra block per
+ * disclosed proposal would make that 55 and reject the post — losing the
+ * answer, the suite links and every approval button, to add a hint. So the
+ * disclosure costs zero blocks and spends section characters instead, of
+ * which there are 3,000 and roughly 2,200 spare.
  */
 const MAX_PROPOSAL_BLOCKS = 5;
 
@@ -147,6 +158,79 @@ function confirmCopy(severity, description) {
 }
 
 /**
+ * Budget for the pre-run disclosure line, in ESCAPED characters.
+ *
+ * Shares the section's 3,000-character ceiling with the description (400) and
+ * the severity note, so this is generous headroom rather than a tight fit. It
+ * exists because the disclosure is SERVER-derived text entering mrkdwn, and an
+ * unbounded string in a section is how one long provider list takes down a
+ * whole reply.
+ */
+const MAX_DISCLOSURE_CHARS = 300;
+
+/**
+ * One line saying what a run of this proposal would disclose.
+ *
+ * ABSENT MEANS UNKNOWN, NEVER SAFE — the whole point of the field. Every
+ * clause below is emitted only from a field that is actually PRESENT: a
+ * proposal with no `disclosure` gets no line at all, and one whose disclosure
+ * could not name an engine says nothing about the engine rather than
+ * "emulated". A default line here would be the one failure mode a disclosure
+ * must not have, because the reassuring reading is exactly the one absence
+ * would become.
+ *
+ * `sandbox.engaged: false` IS rendered ("no sandbox"): the field is present,
+ * so that is a fact the contract answered, not a guess standing in for one.
+ *
+ * Wording tracks `run-disclosure-hint.tsx` / the CLI's disclosure block, so a
+ * person who has seen this in the app reads the same claims here.
+ *
+ * @param {{ engine?: string, sandbox?: { engaged?: boolean, vendor?: string },
+ *   runProviders?: string[], judgeProviders?: string[], byok?: boolean,
+ *   retention?: { policyDays?: number | null, effectiveToday?: string } } | undefined} disclosure
+ * @returns {string} escaped mrkdwn, or '' when there is nothing honest to say
+ */
+export function disclosureLine(disclosure) {
+  if (!disclosure || typeof disclosure !== 'object') return '';
+  /** @type {string[]} */
+  const parts = [];
+  if (typeof disclosure.engine === 'string' && disclosure.engine) {
+    parts.push(`runs via ${disclosure.engine}`);
+  }
+  const sandbox = disclosure.sandbox;
+  if (sandbox && typeof sandbox === 'object' && typeof sandbox.engaged === 'boolean') {
+    parts.push(sandbox.engaged ? `sandboxed${sandbox.vendor ? ` (${sandbox.vendor})` : ''}` : 'no sandbox');
+  }
+  // Only when TRUE. `false` is the managed rail every approver already assumes,
+  // and a clause restating the default would crowd out the ones that do not.
+  if (disclosure.byok === true) parts.push("on your organization's own API key");
+  const runProviders = Array.isArray(disclosure.runProviders) ? disclosure.runProviders : [];
+  if (runProviders.length > 0) parts.push(`models reach ${runProviders.join(', ')}`);
+  const judgeProviders = Array.isArray(disclosure.judgeProviders) ? disclosure.judgeProviders : [];
+  if (judgeProviders.length > 0) {
+    // The surprise worth stating: the server already subtracted the run's own
+    // providers, so anything left is somewhere the approver did not choose.
+    parts.push(`judges also send evidence to ${judgeProviders.join(', ')}`);
+  }
+  const retention = disclosure.retention;
+  if (retention && typeof retention === 'object') {
+    // Straight from `effectiveToday` — NEVER re-derived from `policyDays`, an
+    // unenforced policy keeps data indefinitely whatever its number says.
+    if (retention.effectiveToday === 'kept-indefinitely') {
+      parts.push('kept indefinitely');
+    } else if (retention.effectiveToday === 'swept-after-policy-days') {
+      parts.push(
+        typeof retention.policyDays === 'number'
+          ? `swept after ${retention.policyDays} day${retention.policyDays === 1 ? '' : 's'}`
+          : 'swept after the plan policy',
+      );
+    }
+  }
+  if (parts.length === 0) return '';
+  return capEscaped(parts.join(' · '), MAX_DISCLOSURE_CHARS);
+}
+
+/**
  * The line under the description, chosen by the SAME severity the confirm
  * dialog reads.
  *
@@ -216,13 +300,20 @@ export function buildProposalBlocks(proposals) {
         BUTTON_LABELS[/** @type {keyof typeof BUTTON_LABELS} */ (proposal.operation)] ||
         'Approve',
     ).slice(0, MAX_BUTTON_LABEL);
+    // Already escaped and capped. Empty for a proposal the server did not
+    // disclose — an older server, an operation that carries no disclosure, or
+    // a fetch that failed — and an empty string renders NOTHING, never a
+    // stand-in line.
+    const disclosure = disclosureLine(proposal.disclosure);
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
         // Capped, then escaped: raw `<`/`>` in mrkdwn can forge a mention or a
         // link, and an uncapped section fails the whole post.
-        text: `:hourglass_flowing_sand: *${toDescription(String(proposal.description || 'Action'))}*\n${sectionNote(proposal.confirmSeverity)}`,
+        text: `:hourglass_flowing_sand: *${toDescription(String(proposal.description || 'Action'))}*\n${sectionNote(proposal.confirmSeverity)}${
+          disclosure ? `\n_${disclosure}_` : ''
+        }`,
       },
       accessory: {
         type: 'button',

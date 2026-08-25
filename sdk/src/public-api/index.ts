@@ -285,6 +285,84 @@ export interface ProposedAction {
    * unknown" and fall back to its coarser behavior.
    */
   target?: ProposedActionTarget;
+  /**
+   * What a run of this proposal would disclose, as of MINT TIME.
+   *
+   * Populated only for the eval-run proposals, and only when the pre-run
+   * disclosure contract answered for the FROZEN input the click will execute
+   * — so what was disclosed is what will run, not a second, independently
+   * resolved target that could name different models.
+   *
+   * A SUMMARY, never the contract: it carries the facts a person did not
+   * choose and cannot infer from the description, plus the `digest` that ties
+   * it back to the full payload (`get_eval_run_disclosure`, which a host that
+   * wants everything should call).
+   *
+   * ABSENT MEANS UNKNOWN, NEVER SAFE. The fetch is best-effort and bounded —
+   * a timeout, a deployment predating the contract, or a plan the contract
+   * cannot answer for all leave the field off, and a host must then render
+   * NOTHING rather than a reassuring default. Rendering only; a host that
+   * echoed it back would be re-opening the hole `actionId` closes.
+   *
+   * Describes the plan as of the mint. An attachment edit between the mint
+   * and the click is not re-disclosed here — the launch receipt's own
+   * disclosure is the authoritative at-click answer.
+   */
+  disclosure?: ProposedActionDisclosure;
+}
+
+/**
+ * The pre-run disclosure summary a proposal carries, projected from
+ * `PlatformEvalRunDisclosure`.
+ *
+ * SMALL ON PURPOSE. An approval card is not a compliance document: it states
+ * what a person did not choose and cannot infer, and links the rest by
+ * digest. Every field but `digest` is optional, and every absence means
+ * UNKNOWN — never the reassuring reading. Absent `sandbox` is not "no
+ * sandbox"; absent `engine` is not "emulated"; absent `judgeProviders` is not
+ * "no judge egress".
+ */
+export interface ProposedActionDisclosure {
+  /**
+   * Digest of the full contract payload this summarizes — the join key that
+   * lets a host or an auditor line this summary up with the whole disclosure
+   * and with the run's own audit record. The one always-present field.
+   */
+  digest: string;
+  /**
+   * `'emulated'`, `'mixed'`, or `harness:<id>`. Absent ⇒ the contract did not
+   * resolve an execution section, which is UNKNOWN — never `'emulated'`, the
+   * value that reads as reassuring.
+   */
+  engine?: string;
+  /**
+   * Whether a sandbox is engaged for this plan, and whose. Absent ⇒ unknown;
+   * a host must not render "no sandbox" for it.
+   */
+  sandbox?: { engaged: boolean; vendor?: string };
+  /**
+   * The providers the run's OWN models egress to, deduped. Absent when the
+   * plan's models did not resolve, or when any of them declined
+   * classification — a partial list would understate where content goes.
+   */
+  runProviders?: readonly string[];
+  /**
+   * Providers reached by analysis/judge touchpoints that CAN fire, minus the
+   * run's own — the surprise worth stating on an approval card. Absent ⇒
+   * nothing extra to state, or not derivable; never "no judge egress".
+   */
+  judgeProviders?: readonly string[];
+  /**
+   * `policyDays` is the POLICY number (`null` ⇒ uncapped by policy);
+   * `effectiveToday` is what actually happens — never re-derive one from the
+   * other, an unenforced policy keeps data indefinitely whatever its number.
+   */
+  retention?: { policyDays: number | null; effectiveToday: string };
+  /**
+   * True when any of the run's models runs on an org-configured key (BYOK)
+   * rather than the managed rail. Absent ⇒ unknown, not `false`.
+   */
+  byok?: boolean;
 }
 
 /**

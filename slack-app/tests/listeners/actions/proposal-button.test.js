@@ -5,6 +5,7 @@ import { purgeChannelBindings } from '../../../agent/turn-target.js';
 import { announcementFor, handleProposalButton } from '../../../listeners/actions/proposal-button.js';
 import {
   buildProposalBlocks,
+  disclosureLine,
   PROPOSAL_ACTION_ID,
   rendersRunProposalFor,
 } from '../../../listeners/views/proposal-builder.js';
@@ -14,6 +15,71 @@ const PROPOSAL = {
   operation: 'run_eval_suite',
   description: 'Run eval suite ts_1',
 };
+
+describe('disclosureLine', () => {
+  it('is empty when there is no disclosure at all', () => {
+    // The whole absence rule in one assertion: nothing known, nothing said.
+    assert.strictEqual(disclosureLine(undefined), '');
+    assert.strictEqual(disclosureLine(null), '');
+    assert.strictEqual(disclosureLine({ digest: 'd1' }), '');
+  });
+
+  it('states only the fields the contract actually answered', () => {
+    // A disclosure that could not name an engine says nothing about the
+    // engine — never "emulated", the value that reads as reassuring.
+    assert.strictEqual(
+      disclosureLine({ digest: 'd1', retention: { policyDays: null, effectiveToday: 'kept-indefinitely' } }),
+      'kept indefinitely',
+    );
+    assert.strictEqual(disclosureLine({ digest: 'd1', engine: 'emulated' }), 'runs via emulated');
+  });
+
+  it('states "no sandbox" only when the contract SAID so', () => {
+    // `engaged: false` is a fact the contract answered, not a guess standing
+    // in for one — the difference between a present false and an absent field.
+    assert.match(disclosureLine({ digest: 'd1', sandbox: { engaged: false } }), /no sandbox/);
+    assert.ok(!/sandbox/.test(disclosureLine({ digest: 'd1', engine: 'emulated' })));
+  });
+
+  it('mentions BYOK only when it is true', () => {
+    assert.match(disclosureLine({ digest: 'd1', byok: true }), /own API key/);
+    assert.strictEqual(disclosureLine({ digest: 'd1', byok: false }), '');
+  });
+
+  it('pluralises the retention window and falls back without a number', () => {
+    assert.match(
+      disclosureLine({ digest: 'd1', retention: { policyDays: 1, effectiveToday: 'swept-after-policy-days' } }),
+      /swept after 1 day$/,
+    );
+    assert.match(
+      disclosureLine({ digest: 'd1', retention: { policyDays: null, effectiveToday: 'swept-after-policy-days' } }),
+      /swept after the plan policy/,
+    );
+  });
+
+  it('escapes server-derived text entering mrkdwn', () => {
+    // The values come from a trusted server, but they pass through model- and
+    // user-influenced names (a custom provider, a harness id). Raw `<`/`>` in
+    // mrkdwn can forge a mention, and a failed block takes the whole post down.
+    const line = disclosureLine({ digest: 'd1', engine: 'harness:<!channel>' });
+    assert.ok(!line.includes('<!channel>'));
+    assert.match(line, /&lt;!channel&gt;/);
+  });
+
+  it('stays inside its character budget however long the providers are', () => {
+    const line = disclosureLine({
+      digest: 'd1',
+      runProviders: Array.from({ length: 200 }, (_, index) => `provider-${index}`),
+    });
+    assert.ok(line.length <= 300, `disclosure line was ${line.length} chars`);
+  });
+
+  it('keeps an ESCAPE-EXPANDING value inside the budget, entities intact', () => {
+    const line = disclosureLine({ digest: 'd1', engine: '&'.repeat(500) });
+    assert.ok(line.length <= 300, `disclosure line was ${line.length} chars`);
+    assert.strictEqual(line.split('&').length - 1, line.split('&amp;').length - 1);
+  });
+});
 
 describe('buildProposalBlocks', () => {
   it('renders one confirming button carrying only the action id', () => {
@@ -32,6 +98,47 @@ describe('buildProposalBlocks', () => {
     const text = /** @type {any} */ (blocks[0]).text.text;
     assert.ok(!text.includes('<!channel>'), 'a forged mention must not survive');
     assert.ok(text.includes('&lt;!channel&gt;'));
+  });
+
+  it('states what a disclosed run would do, under the description', () => {
+    const blocks = buildProposalBlocks([
+      {
+        ...PROPOSAL,
+        disclosure: {
+          digest: 'digest_1',
+          engine: 'harness:claude-code',
+          sandbox: { engaged: true, vendor: 'e2b' },
+          runProviders: ['anthropic'],
+          judgeProviders: ['openai'],
+          retention: { policyDays: 30, effectiveToday: 'swept-after-policy-days' },
+        },
+      },
+    ]);
+    // ZERO extra blocks: the message budget is exactly full (see
+    // MAX_PROPOSAL_BLOCKS), so the disclosure spends section characters.
+    assert.strictEqual(blocks.length, 1);
+    const text = /** @type {any} */ (blocks[0]).text.text;
+    assert.match(text, /runs via harness:claude-code/);
+    assert.match(text, /sandboxed \(e2b\)/);
+    assert.match(text, /models reach anthropic/);
+    assert.match(text, /judges also send evidence to openai/);
+    assert.match(text, /swept after 30 days/);
+    // The description and the severity note are untouched.
+    assert.match(text, /Run eval suite ts_1/);
+    assert.match(text, /This one costs/);
+  });
+
+  it('renders NOTHING for a proposal the server did not disclose', () => {
+    // Absence is UNKNOWN, never safe. The reassuring reading ("emulated, no
+    // sandbox") is exactly what an absent disclosure must never become, so a
+    // default line here would be the one failure mode this feature must not
+    // have.
+    const blocks = buildProposalBlocks([PROPOSAL]);
+    const text = /** @type {any} */ (blocks[0]).text.text;
+    assert.ok(!/runs via/.test(text));
+    assert.ok(!/sandbox/.test(text));
+    assert.ok(!/retention|swept|indefinitely/i.test(text));
+    assert.strictEqual(text.split('\n').length, 2);
   });
 
   it('returns nothing for an empty or missing list', () => {

@@ -18055,6 +18055,76 @@
                     }
                   },
                   "description": "What the proposal is about, for correlating it with other turn output (e.g. suppressing a duplicate run affordance on the created suite it already offers to run). Display/dedup only — never an instruction. Absent means match-unknown; fall back to coarser behavior."
+                },
+                "disclosure": {
+                  "type": "object",
+                  "required": [
+                    "digest"
+                  ],
+                  "properties": {
+                    "digest": {
+                      "type": "string",
+                      "description": "Digest of the full disclosure contract this summarizes — the join key for correlating it with `GET /projects/{projectId}/eval-suites/{suiteId}/run-disclosure` and with the run's own audit record."
+                    },
+                    "engine": {
+                      "type": "string",
+                      "description": "`emulated`, `mixed`, or `harness:<id>`. Absent means UNKNOWN — never `emulated`, which is the reassuring reading."
+                    },
+                    "sandbox": {
+                      "type": "object",
+                      "required": [
+                        "engaged"
+                      ],
+                      "properties": {
+                        "engaged": {
+                          "type": "boolean"
+                        },
+                        "vendor": {
+                          "type": "string"
+                        }
+                      },
+                      "description": "Whether a sandbox is engaged for this plan, and whose. Absent means unknown — do not render \"no sandbox\" for it."
+                    },
+                    "runProviders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Providers the run's own models egress to, deduped. Absent when the plan's models did not resolve, or when any declined classification — a partial list would understate where content goes."
+                    },
+                    "judgeProviders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Providers reached by analysis/judge touchpoints that can fire, minus the run's own — the egress an approver did not choose. Absent means nothing extra to state or not derivable; never \"no judge egress\"."
+                    },
+                    "retention": {
+                      "type": "object",
+                      "required": [
+                        "policyDays",
+                        "effectiveToday"
+                      ],
+                      "properties": {
+                        "policyDays": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "The POLICY number from plan entitlements; `null` means uncapped by policy."
+                        },
+                        "effectiveToday": {
+                          "type": "string",
+                          "description": "What actually happens today (`kept-indefinitely` / `swept-after-policy-days`). Never re-derive it from `policyDays` — an unenforced policy keeps data indefinitely whatever its number."
+                        }
+                      }
+                    },
+                    "byok": {
+                      "type": "boolean",
+                      "description": "True when any of the run's models runs on an org-configured key rather than the managed rail. Absent means unknown, not `false`."
+                    }
+                  },
+                  "description": "What a run of this proposal would disclose, as of MINT TIME — present only on the eval-run proposals, and only when the pre-run disclosure contract answered for the frozen input the click will execute. A SUMMARY, not the contract: call `get_eval_run_disclosure` for the whole payload, joined by `digest`. ABSENT MEANS UNKNOWN, NEVER SAFE — render nothing for a missing field rather than a reassuring default. Describes the plan at mint; the launch receipt's own disclosure is the authoritative at-click answer."
                 }
               }
             }

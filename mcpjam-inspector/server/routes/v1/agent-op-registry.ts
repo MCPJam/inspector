@@ -247,6 +247,22 @@ export interface GatedProposalMeta {
    * depth against rows minted before this contract existed.
    */
   requiredFrozenKeys?: readonly string[];
+  /**
+   * Mint this proposal with a PRE-RUN DISCLOSURE attached, when the contract
+   * can answer for its frozen input.
+   *
+   * A registry FLAG rather than a name check at the mint site: `persistProposal`
+   * stays generic, and an operation that starts spending on models later
+   * declares it here instead of being special-cased in the route. Only the
+   * eval-run entries carry it today — they are the ones whose click sends
+   * content to models the approver never chose.
+   *
+   * Purely additive and BEST-EFFORT: the fetch is bounded by its own timeout
+   * and swallowed on any failure, so a proposal that declares this still mints
+   * normally with the field simply absent. Absence is UNKNOWN, never "nothing
+   * leaves" — see `ProposedActionDisclosure`.
+   */
+  carriesDisclosure?: boolean;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -1491,6 +1507,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       resource: evalRunResource,
       target: evalSuiteTarget,
       normalizeProposalArgs: freezeEvalRunTargets,
+      // The click sends this suite's content to models the approver did not
+      // choose. Disclose the plan on the card, from the FROZEN input above.
+      carriesDisclosure: true,
     },
   },
   {
@@ -1510,6 +1529,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // the minted cell to the suite, a persistent edit the old one-line
       // describe never mentioned.
       normalizeProposalArgs: freezeEvalRunTargets,
+      // Same reason as the suite run: one case is a smaller spend, not a
+      // different disclosure story.
+      carriesDisclosure: true,
     },
   },
   {
@@ -2242,6 +2264,12 @@ export function proposalMetaFor(operationName: string): {
   hashInput: (input: Record<string, unknown>) => Record<string, unknown>;
   /** Keys the frozen input must carry, or the proposal is refused. */
   requiredFrozenKeys: readonly string[];
+  /**
+   * Whether this proposal should carry a pre-run disclosure. `false` for
+   * every operation this build does not gate — a disclosure attached to an
+   * unknown operation would be a claim about a plan nobody resolved.
+   */
+  carriesDisclosure: boolean;
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -2254,6 +2282,7 @@ export function proposalMetaFor(operationName: string): {
       normalizeArgs: async (input) => input,
       hashInput: proposalInputForIdempotency,
       requiredFrozenKeys: [],
+      carriesDisclosure: false,
     };
   }
   const severity = entry.proposal.confirmSeverity;
@@ -2295,6 +2324,7 @@ export function proposalMetaFor(operationName: string): {
     },
     hashInput: proposalInputForIdempotency,
     requiredFrozenKeys: entry.proposal.requiredFrozenKeys ?? [],
+    carriesDisclosure: entry.proposal.carriesDisclosure === true,
   };
 }
 

@@ -54,6 +54,15 @@ const DEFAULT_BASE_URL = 'https://app.mcpjam.com';
  *   about, in the operation's own selector vocabulary (id or name — match
  *   both). Absent on older servers and unTargeted operations: treat as
  *   match-unknown.
+ * @property {{ digest: string, engine?: string,
+ *   sandbox?: { engaged: boolean, vendor?: string },
+ *   runProviders?: string[], judgeProviders?: string[],
+ *   retention?: { policyDays: number | null, effectiveToday: string },
+ *   byok?: boolean }} [disclosure] what a run of this proposal would disclose,
+ *   as of mint time — only on the eval-run proposals, and only when the
+ *   contract answered for the frozen input. ABSENT MEANS UNKNOWN, NEVER SAFE:
+ *   render nothing for a missing field rather than a reassuring default. Every
+ *   inner field is optional for the same reason and follows the same rule.
  */
 
 /**

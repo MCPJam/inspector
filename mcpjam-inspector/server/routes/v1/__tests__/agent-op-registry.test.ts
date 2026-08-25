@@ -198,6 +198,26 @@ describe("agent op registry", () => {
     }
   });
 
+  it("declares the pre-run disclosure hook on exactly the two eval-run entries", () => {
+    // A REGISTRY FLAG, not a name check at the mint site. The two run
+    // operations are the ones whose click sends content to models the
+    // approver never chose; every other gated op either spends without
+    // egressing content the approver can be surprised by, or has no launch
+    // plan to disclose at all. A disclosure attached to one of those would be
+    // a claim about a plan nobody resolved.
+    const declaring = AGENT_API_GATED_OPERATIONS.map((op) => op.name).filter(
+      (name) => proposalMetaFor(name).carriesDisclosure
+    );
+    expect(declaring.sort()).toEqual(
+      [runEvalSuiteOperation.name, runEvalCaseOperation.name].sort()
+    );
+    // An operation this build does not gate must never carry one either — the
+    // neutral fallback is what a caller that should have refused already gets.
+    expect(proposalMetaFor("not_a_registered_operation").carriesDisclosure).toBe(
+      false
+    );
+  });
+
   it("describes each gated proposal by its TARGET, not its cost", () => {
     // Any number here would be an estimate, and an estimate rendered next to
     // an approval button reads as a promise.

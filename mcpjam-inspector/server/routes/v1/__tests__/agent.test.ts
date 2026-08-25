@@ -132,6 +132,7 @@ import {
   cancelEvalRunOperation,
   createEvalSuiteOperation,
   getEvalIterationTraceOperation,
+  getEvalRunDisclosureOperation,
   getEvalRunOperation,
   installRegistryDirectoryServerOperation,
   listProjectServersOperation,
@@ -185,6 +186,92 @@ const VALID_CREATE_INPUT = {
       ],
     },
   ],
+};
+
+/**
+ * A pre-run disclosure as `get_eval_run_disclosure` answers it, trimmed to the
+ * sections the proposal summary actually reads. The projection's own branches
+ * (absent execution, unresolved models, unclassified providers) are covered in
+ * `agent-proposal-disclosure.test.ts`; here it only has to be a plausible
+ * success so the ENVELOPE plumbing is what is under test.
+ */
+const RUN_DISCLOSURE = {
+  contractVersion: 1,
+  computedAt: 0,
+  digest: "digest_1",
+  execution: {
+    engine: "harness:claude-code",
+    sandbox: { engaged: true, vendor: "e2b", because: "harness" },
+    locus: { known: true, hosted: true },
+    models: [
+      {
+        modelId: "anthropic/claude-x",
+        provider: "anthropic",
+        tenantEgress: "mcpjam-hosted",
+        rail: {
+          managed: true,
+          possibleDestinations: ["gateway"],
+          outcomeIfRunNow: {
+            destination: "gateway",
+            observedAt: 0,
+            volatile: true,
+          },
+          inputs: {
+            mode: "auto",
+            gatewayEligible: true,
+            hasOpenRouterFallback: null,
+          },
+          ruleLocation: "resolveChatProvider",
+          authoritativePerRequestRecord: "the run's own record",
+        },
+      },
+    ],
+  },
+  analysis: [
+    {
+      touchpoint: "goalCompletion",
+      label: "Goal-completion judge",
+      model: "openai/gpt-5.4-mini",
+      rail: { fixed: "openrouter", because: "fixed" },
+      destinations: ["OpenRouter (openrouter.ai)"],
+      evidenceSent: ["case prompt"],
+      fires: "auto-on-completion",
+    },
+  ],
+  capture: {
+    captureLevel: "summary",
+    reportingMode: "standard",
+    tiersImplemented: false,
+    redaction: {
+      kind: "regex",
+      module: "redact.ts",
+      isDlp: false,
+      limitation: "patterns only",
+      appliesTo: ["prompts"],
+    },
+    exportDefaults: {
+      includeContent: false,
+      ruleLocation: "export.ts",
+      note: "content excluded by default",
+    },
+  },
+  retention: {
+    planName: "pro",
+    policyDays: 30,
+    source: "entitlements",
+    enforced: true,
+    enforcementBlockers: [],
+    effectiveToday: "swept-after-policy-days",
+    evidentiaryClasses: ["runs"],
+    backupStatement: {
+      vendor: "convex",
+      capturedAt: "2026-01-01",
+      sourceUrl: "https://example.invalid",
+      statements: [],
+    },
+  },
+  region: { stated: false, reason: "not derivable" },
+  subprocessors: [],
 };
 
 function okTurnResult(overrides: Record<string, unknown> = {}) {
@@ -1108,6 +1195,222 @@ describe("gated proposal tools", () => {
       })
     );
     executeSpy.mockRestore();
+  });
+
+  it("carries the pre-run disclosure on a run proposal, from the FROZEN input", async () => {
+    // ONE RESOLUTION: the fetch is keyed by the input the CLICK will execute,
+    // so "what was disclosed" is "what will run" — never a second,
+    // independently resolved target that could name different models.
+    const app = makeApp();
+    const disclosureSpy = vi
+      .spyOn(getEvalRunDisclosureOperation, "execute")
+      .mockResolvedValue(RUN_DISCLOSURE as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![runEvalSuiteOperation.name]!.execute(
+        { suite: "smoke", cases: ["case_a"] },
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    const body = (await res.json()) as {
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]!.disclosure).toEqual({
+      digest: "digest_1",
+      engine: "harness:claude-code",
+      sandbox: { engaged: true, vendor: "e2b" },
+      runProviders: ["anthropic"],
+      byok: false,
+      judgeProviders: ["openai"],
+      retention: { policyDays: 30, effectiveToday: "swept-after-policy-days" },
+    });
+    // Asked in the DISCLOSURE operation's own vocabulary, about the same
+    // project/suite/cases the stored proposal carries.
+    expect(disclosureSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "p1",
+        suite: "smoke",
+        cases: ["case_a"],
+      }),
+      expect.anything()
+    );
+    // The disclosure is ENVELOPE data. `createProposedAction` stores the
+    // frozen input and nothing else — a disclosure that round-tripped through
+    // a host would be a claim the host could author.
+    expect(createProposedActionMock).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ disclosure: expect.anything() })
+    );
+    // And the input still never leaves the server.
+    expect(body.proposedActions[0]).not.toHaveProperty("input");
+    disclosureSpy.mockRestore();
+  });
+
+  it("mints the run proposal anyway when the disclosure fetch fails", async () => {
+    // BEST-EFFORT: a timeout, a backend predating the contract, a transient
+    // error — none of them may cost the user the button. The field is simply
+    // absent, and every renderer's rule for absent is "render nothing".
+    const app = makeApp();
+    const disclosureSpy = vi
+      .spyOn(getEvalRunDisclosureOperation, "execute")
+      .mockRejectedValue(new Error("FEATURE_NOT_SUPPORTED"));
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![runEvalSuiteOperation.name]!.execute(
+        { suite: "smoke" },
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]).toMatchObject({
+      operation: runEvalSuiteOperation.name,
+      buttonLabel: "Run it",
+    });
+    expect(body.proposedActions[0]).not.toHaveProperty("disclosure");
+    disclosureSpy.mockRestore();
+  });
+
+  it("does not disclose for a proposal whose operation launches nothing", async () => {
+    // The hook is a registry flag, and only the two eval-run entries declare
+    // it. A disclosure on a cancellation would be a claim about a launch plan
+    // nobody resolved.
+    const app = makeApp();
+    const disclosureSpy = vi
+      .spyOn(getEvalRunDisclosureOperation, "execute")
+      .mockResolvedValue(RUN_DISCLOSURE as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![cancelEvalRunOperation.name]!.execute(
+        { runId: "run_1" },
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    const body = (await res.json()) as {
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]).not.toHaveProperty("disclosure");
+    expect(disclosureSpy).not.toHaveBeenCalled();
+    disclosureSpy.mockRestore();
+  });
+
+  it("discloses the post-create run offer too, without special-casing it", async () => {
+    // The offer path mints through the SAME `persistProposal`, so it gets the
+    // suite-base disclosure for free. Asserted rather than assumed — "for
+    // free" is exactly the kind of claim that stops being true silently.
+    const app = makeApp();
+    const disclosureSpy = vi
+      .spyOn(getEvalRunDisclosureOperation, "execute")
+      .mockResolvedValue(RUN_DISCLOSURE as never);
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke" },
+        servers: [],
+      } as never);
+    let captured: Record<string, GatedTool> | undefined;
+    prepareChatV2Mock.mockImplementation(async (opts: any) => {
+      captured = opts.builtInTools;
+      return {
+        allTools: opts.builtInTools ?? {},
+        enhancedSystemPrompt: opts.systemPrompt,
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementation(async () => {
+      await captured![createEvalSuiteOperation.name]!.execute(
+        VALID_CREATE_INPUT,
+        {}
+      );
+      return okTurnResult();
+    });
+
+    const res = await app.request("/api/v1/projects/p1/agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SLACK_TOKEN}`,
+        "x-mcpjam-slack-team-id": "T1",
+        "x-mcpjam-slack-user-id": "U1",
+      },
+      body: JSON.stringify({ ...OK_BODY, conversationId: "C1" }),
+    });
+    const body = (await res.json()) as {
+      proposedActions: Array<Record<string, unknown>>;
+    };
+    expect(body.proposedActions).toHaveLength(1);
+    expect(body.proposedActions[0]).toMatchObject({
+      operation: runEvalSuiteOperation.name,
+      disclosure: { digest: "digest_1", engine: "harness:claude-code" },
+    });
+    // The offer selects by suite ID, and that is what gets disclosed.
+    expect(disclosureSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "p1", suite: "ts_1" }),
+      expect.anything()
+    );
+    executeSpy.mockRestore();
+    disclosureSpy.mockRestore();
   });
 
   it("does not offer a SECOND run button when the model already proposed one", async () => {
