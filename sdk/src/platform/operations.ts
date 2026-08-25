@@ -57,6 +57,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
@@ -5149,21 +5150,76 @@ const evalRunScopedInput = z.object({
 
 export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
+/**
+ * Statuses at which a run has stopped changing.
+ *
+ * Mirrors the CLI's `TERMINAL_RUN_STATUSES`. A decision summary is fetched only
+ * for a terminal run: while a run is still going its verdict does not exist
+ * yet, so the extra request would buy a `notEstablished` a poller already knows
+ * from `status`.
+ */
+const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+/**
+ * The diagnostics page size this operation asks for.
+ *
+ * Small on purpose. Each diagnostic carries a six-row chain plus evidence, and
+ * a model that spent its window on page one of a 200-trial run has no room left
+ * to act on it. A caller that wants more pages the cursor.
+ */
+const DEFAULT_MCP_DIAGNOSTICS_LIMIT = 20;
+
+const getEvalRunInput = evalRunScopedInput.extend({
+  diagnosticsCursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque cursor from a previous response's decisionSummary.diagnostics.nextCursor, to read the next page of failure diagnostics.",
+    ),
+  diagnosticsLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      `Failure diagnostics per page (default ${DEFAULT_MCP_DIAGNOSTICS_LIMIT}).`,
+    ),
+});
+
+export type GetEvalRunInput = z.infer<typeof getEvalRunInput>;
+
 export type GetEvalRunResult = {
   project: SelectedProjectInfo;
   run: PlatformEvalRun;
+  /**
+   * The canonical decision summary, for a terminal run.
+   *
+   * ABSENT while the run is still going, and absent on an API deployment that
+   * predates the endpoint. Never synthesized locally: a summary assembled from a
+   * different reading of the same run is the drift this contract removes, so
+   * "the server could not give me one" is reported as absence rather than
+   * papered over.
+   */
+  decisionSummary?: PlatformEvalRunDecisionSummary;
 };
 
 export const getEvalRunOperation: PlatformOperation<
-  EvalRunScopedInput,
+  GetEvalRunInput,
   GetEvalRunResult
 > = {
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
-  inputSchema: evalRunScopedInput,
+  inputSchema: getEvalRunInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
@@ -5174,7 +5230,30 @@ export const getEvalRunOperation: PlatformOperation<
       { projectId: project.id, runId: input.runId },
       { signal },
     );
-    return { project: toSelectedProjectInfo(project), run };
+    if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
+      return { project: toSelectedProjectInfo(project), run };
+    }
+    // Best-effort: an API deployment that predates the endpoint answers 404,
+    // and the run itself is the resource here. Returning the run without a
+    // summary is a smaller loss than failing a read that succeeded.
+    const decisionSummary = await client
+      .getEvalRunDecisionSummary(
+        {
+          projectId: project.id,
+          runId: input.runId,
+          ...(input.diagnosticsCursor
+            ? { cursor: input.diagnosticsCursor }
+            : {}),
+          limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
+        },
+        { signal },
+      )
+      .catch(() => undefined);
+    return {
+      project: toSelectedProjectInfo(project),
+      run,
+      ...(decisionSummary ? { decisionSummary } : {}),
+    };
   },
 };
 

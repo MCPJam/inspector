@@ -89,6 +89,7 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessSubmissionMode,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
   PlatformRunCompare,
   PlatformRunCompareCase,
   PlatformRunCompareCaseSide,

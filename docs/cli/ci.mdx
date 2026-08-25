@@ -434,28 +434,42 @@ Either `eval run --wait` or `eval gate` already fails the job on its own — the
 `eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
-#### Decision summary in human format
+#### Decision summary
 
-When `eval status` runs in `--format human` and the run has finished with a failed result, it prints a decision summary block to stdout after the status payload. The block lists the overall pass rate and, for each failed case, the first stage that failed, the failure category, any recorded evidence (span IDs, prompt indexes, predicate reasons), and a suggested next action:
+`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. In `--format human` it is printed as a block; in `--format json` and in `--out`/`--reporter` artifacts it rides on the report as `decisionSummary`, verbatim.
 
 ```text
-Decision summary: failed — 0/3 cases passed (0%)
-  Fetch order (iteration-1, iteration 1)
-    first failed stage call
-    failure category arguments
-    expected tool calls: fetch_order
-    observed failure: server rejected arguments
-    evidence: span ids span-abc; reasons wrong argument type
-    next action: review the authored arguments against the tool input schema
-  Setup failure (iteration-2, iteration 2)
-    no first failed stage — did not reach the server's stages
-    failure category setup
-    next action: check the server connection and environment configuration
+Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 failed
+  Why: a case did not meet its pass threshold
+  Diagnostics: 2 non-passing of 9 trials examined (the complete set)
+  Fetch order (c_orders, iteration 2) — failed
+    First failed stage: Tool call — the call arguments did not match what the case expects
+    Failure category: call arguments
+    Expected tool calls: fetch_order
+    Observed failure: server rejected arguments
+    Evidence at Tool call: span ids span-call-2; reasons order_id must be a string
+    Trace: /projects/prj_1/eval-runs/run_7/iterations/it_2/trace
+    Next action: review the authored arguments against the tool input schema
+  Setup abort (c_setup, iteration 5) — failed
+    First failed stage: none was established — the run never reached the server's stages
+    Failure category: setup
+    Trace: /projects/prj_1/eval-runs/run_7/iterations/it_5/trace
+    Next action: check the server connection and environment configuration
 ```
 
-The block is only emitted in `--format human` — `--format json` output is byte-identical to before. If the iteration data cannot be fetched (for example, a network error), the block is silently omitted rather than failing the status read.
+Four things about it are worth knowing before you script against it.
 
-`eval gate` and `eval compare` also emit a decision summary in `--format human`, written to stderr alongside their existing gate report.
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+
+**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit *underneath* that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
+
+**`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which *is* a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
+
+**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed trials are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
+
+Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
+
+`eval status` prints the block only when a terminal run did not pass, and `eval gate` and `eval compare` write theirs to stderr alongside the gate report. `--format json` is unaffected in every case: it stays exactly one parseable document. If the summary cannot be fetched, the block is omitted rather than failing the command.
 
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 

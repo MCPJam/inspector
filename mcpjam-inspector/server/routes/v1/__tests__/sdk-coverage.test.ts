@@ -197,6 +197,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-suites/{suiteId}/environments":
     "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/decision-summary":
+    "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":

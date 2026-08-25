@@ -6,7 +6,35 @@ import {
   summarizeStructuredCases,
   type StructuredRunReport,
 } from "../src/structured-reporting";
-import type { EvalDecisionSummary } from "../src/eval-decision-summary";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import type { EvalRunDecisionSummary } from "../src/contract/index.js";
+
+/**
+ * The shared golden corpus — the same file the contract test, the API route
+ * test and the CLI reporter tests read.
+ *
+ * The claim these renderers are part of is that JSON, JUnit and HTML restate
+ * ONE object. A hand-written summary here would let this file drift away from
+ * the thing the API actually returns while every test still passed.
+ */
+const decisionCorpus = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        "./fixtures/eval-run-decision-summary-fixtures.json",
+        import.meta.url
+      )
+    ),
+    "utf8"
+  )
+) as { cases: Array<{ __name: string; expected: unknown }> };
+
+function corpusCase(name: string): { __name: string; expected: unknown } {
+  const row = decisionCorpus.cases.find((entry) => entry.__name === name);
+  if (!row) throw new Error(`no decision-summary fixture named "${name}"`);
+  return row;
+}
 import { parseJUnitXmlArtifact } from "../src/artifact-parsers";
 import type {
   PlatformEvalIteration,
@@ -312,36 +340,83 @@ describe("renderStructuredRunHtml", () => {
     expect(html).toContain("&lt;b&gt;bold&lt;/b&gt; &amp; &quot;quoted&quot;");
   });
 
-  it("renders the decision summary when present", () => {
-    const decisionSummary: EvalDecisionSummary = {
-      verdict: "failed",
-      passRate: { total: 4, passed: 3, failed: 1, percent: 75 },
-      iterationWalkComplete: true,
-      cases: [
-        {
-          id: "case-1",
-          title: "Case A",
-          iterationNumber: 1,
-          firstFailedStage: "serverData",
-          failureCategory: "serverData",
-          stageChainStatus: "verified",
-          expected: { toolNames: ["search"] },
-          observed: { toolNames: ["search"], failure: "empty result" },
-          evidence: { spanIds: ["span-1"] },
-          nextAction: "inspect the tool response returned by the server",
-        },
-      ],
-    };
+  it("renders the canonical decision summary when present", () => {
+    // Taken from the SHARED corpus rather than hand-written: HTML is one of
+    // four terminals for this object, and a fixture that only this test knows
+    // about would let the page drift away from the JSON beside it.
+    const decisionSummary = corpusCase("measured-failure-at-every-stage")
+      .expected as unknown as EvalRunDecisionSummary;
     const html = renderStructuredRunHtml(
       baseReport({ passed: false, decisionSummary })
     );
 
     expect(html).toContain("Decision summary");
-    expect(html).toContain("3/4 cases passed");
-    expect(html).toContain("75%");
-    expect(html).toContain("serverData");
+    // The unit ships with the counts. "1/1" alone means different things under
+    // caseVariant and trial, and there is nothing in the digits that says which.
+    expect(html).toContain("case variant");
+    expect(html).toContain("Failure category: server data");
+    expect(html).toContain("First failed stage: User value");
     expect(html).toContain("inspect the tool response returned by the server");
-    expect(html).toContain("span-1");
+    expect(html).toContain("span-response-failed");
+    // The trace pointer is API-relative, so it resolves against any deployment.
+    expect(html).toContain("/iterations/it-5/trace");
+  });
+
+  it("never prints a raw wire enum on the page", () => {
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        decisionSummary: corpusCase("measured-failure-at-every-stage")
+          .expected as unknown as EvalRunDecisionSummary,
+      })
+    );
+    expect(html).not.toContain("userValue");
+    expect(html).not.toContain("argumentMismatch");
+  });
+
+  it("says so when the diagnostics page is partial", () => {
+    // An empty or short list from a partial page is not "these are the
+    // failures", and a reader who cannot tell the two apart will read it as one.
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        decisionSummary: corpusCase("partial-diagnostics-page")
+          .expected as unknown as EvalRunDecisionSummary,
+      })
+    );
+    expect(html).toContain("PARTIAL");
+  });
+
+  it("paints notEstablished neutral, never as a failure", () => {
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        decisionSummary: corpusCase("non-terminal-run-is-notEstablished")
+          .expected as unknown as EvalRunDecisionSummary,
+      })
+    );
+    expect(html).toContain('badge-neutral">no verdict established');
+    expect(html).not.toContain('badge-fail">no verdict established');
+  });
+
+  it("carries the decision summary into JUnit rather than dropping it", () => {
+    // JUnit has no field for the chain, so it goes in `<system-out>`. What it
+    // may not do is omit it while JSON and HTML show it — a team whose CI reads
+    // JUnit would then be the only audience that cannot see why a run failed.
+    const xml = renderStructuredRunJUnitXml(
+      baseReport({
+        passed: false,
+        decisionSummary: corpusCase("measured-failure-at-every-stage")
+          .expected as unknown as EvalRunDecisionSummary,
+      })
+    );
+    expect(xml).toContain("<system-out>");
+    expect(xml).toContain("First failed stage: User value");
+    expect(xml).toContain("Next action: review whether the response answered");
+  });
+
+  it("omits the JUnit system-out entirely when there is no summary", () => {
+    expect(renderStructuredRunJUnitXml(baseReport())).not.toContain("<system-out>");
   });
 
   it("omits the decision summary section cleanly when absent", () => {

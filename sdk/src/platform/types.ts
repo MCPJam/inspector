@@ -13,11 +13,25 @@ import type {
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  EvalRunDecisionSummary,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
   UserValueStage,
 } from "../contract/index.js";
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical,
+ * versioned run decision contract.
+ *
+ * An ALIAS, not a second declaration. The shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunDecisionSummarySchema`), which is what makes
+ * the API's response and a client-side assembly the same object rather than two
+ * hand-mirrored descriptions of one; re-declaring it here as an interface would
+ * recreate exactly the drift this lane removed.
+ */
+export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -1944,7 +1958,27 @@ export interface PlatformEvalCasesGenerated {
 
 export interface PlatformEvalIteration {
   id: string;
+  /**
+   * The STORED case row's database id. Distinct from `caseId` below and never
+   * interchangeable with it: this one exists for every case the platform
+   * persisted, changes if the case is recreated, and means nothing outside this
+   * deployment.
+   */
   testCaseId: string | null;
+  /**
+   * The case's SDK-DECLARED id, when the run recorded one.
+   *
+   * Read from the iteration's frozen `testCaseSnapshot`, so it is the id the
+   * suite declared AT RUN TIME — the durable, author-chosen identity that
+   * survives a case being recreated. ABSENT on a UI-authored case (which never
+   * declared one) and on runs predating declared ids; absence is not an error.
+   *
+   * NOT a join key into `verdictSummary.cases[].caseId`, which is a separately
+   * ENCODED identity the platform mints from whichever spelling a given run
+   * knew. Matching one against the other attaches a trial to the wrong case
+   * aggregate.
+   */
+  caseId?: string;
   title: string | null;
   iterationNumber: number;
   /**

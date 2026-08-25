@@ -425,10 +425,30 @@ export {
 export {
   buildEvalDecisionSummary,
   buildEvalDecisionSummaryFromIterations,
+  buildEvalRunDecisionSummary,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
 } from "./eval-decision-summary.js";
+/**
+ * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
+ *
+ * Mirrored onto the main entry because the CLI and the reporters consume it
+ * beside the platform types, and making them import one shape from two subpaths
+ * is how a consumer ends up with two copies of the type at different versions.
+ */
+export {
+  assembleEvalRunDecisionSummary,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  evalRunDecisionSummarySchema,
+} from "./contract/index.js";
+export type {
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionSummary,
+  EvalRunDecisionVerdict,
+} from "./contract/index.js";
 export type {
   EvalDecisionSummary,
   EvalDecisionSummaryCase,

@@ -11,6 +11,7 @@ import type {
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -1548,6 +1549,41 @@ export class PlatformApiClient {
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical run
+   * decision contract: the verdict, the unit its counts are in, the run's own
+   * `EvalVerdictDecision` when it has one, and one page of per-trial
+   * diagnostics.
+   *
+   * ADDITIVE, and newer than most deployments: an API that predates it answers
+   * `404`. A caller that must work against both should fall back to
+   * `assembleEvalRunDecisionSummary` over `getEvalRun` + `listEvalRunIterations`
+   * rather than to a summary of its own — the fallback produces the SAME object
+   * from the same inputs, and a hand-rolled one would not.
+   *
+   * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
+   * `listEvalRunIterations` issues. The response says whether the page it
+   * returned is the whole non-passing set.
+   */
+  getEvalRunDecisionSummary(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDecisionSummary> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
+      { query: { cursor: params.cursor, limit: params.limit } },
       options,
     );
   }

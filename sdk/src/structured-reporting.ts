@@ -1,8 +1,17 @@
 import { redactForTelemetry } from "./telemetry-redaction.js";
-import type {
-  EvalDecisionSummary,
-  EvalDecisionSummaryCase,
-} from "./eval-decision-summary.js";
+import { formatEvalRunDecisionSummary } from "./eval-decision-summary.js";
+import {
+  EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+  EVAL_RUN_DECISION_VERDICT_LABELS,
+  EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
+  EVAL_VERDICT_DECISION_REASON_LABELS,
+  FAILURE_CATEGORY_LABELS,
+  STAGE_REASON_LABELS,
+  USER_VALUE_STAGE_LABELS,
+  measurementUnitLabel,
+  type EvalRunDecisionDiagnostic,
+  type EvalRunDecisionSummary,
+} from "./contract/index.js";
 import type {
   PlatformEvalIteration,
   PlatformEvalRun,
@@ -57,7 +66,17 @@ export interface StructuredRunReport {
   cases: StructuredCaseResult[];
   durationMs: number;
   metadata: Record<string, unknown>;
-  decisionSummary?: EvalDecisionSummary;
+  /**
+   * The canonical run decision contract, VERBATIM.
+   *
+   * Carries its own `schemaVersion`, so a consumer identifies the shape from
+   * the object rather than from this report's version. It replaced an
+   * unversioned per-case summary whose verdict was computed by counting
+   * iterations — see the release note; a reader of the old shape looked for
+   * `passRate.percent` and `cases[]`, and now reads `counts` (with its
+   * `measurementUnit`) and `diagnostics.items[]`.
+   */
+  decisionSummary?: EvalRunDecisionSummary;
 }
 
 export type StructuredRunVerdict = "passed" | "failed" | "inconclusive";
@@ -100,7 +119,7 @@ export function buildEvalRunReport(
   options: {
     cases?: StructuredCaseResult[];
     metadata?: Record<string, unknown>;
-    decisionSummary?: EvalDecisionSummary;
+    decisionSummary?: EvalRunDecisionSummary;
     /**
      * Overrides the verdict this would otherwise compute from `inputs`.
      *
@@ -328,7 +347,21 @@ export function renderStructuredRunJUnitXml(
     .map((caseResult) => renderJUnitTestCase(redactedReport.kind, caseResult))
     .join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n${casesXml}\n  </testsuite>\n</testsuites>\n`;
+  // The decision summary as `<system-out>` on the suite.
+  //
+  // JUnit has no field for "here is the chain that explains these failures", so
+  // it goes in the one place every parser surfaces verbatim. What it may NOT do
+  // is omit the chain while the JSON and HTML terminals show it: a team whose CI
+  // reads JUnit would then be the only audience that cannot see why a run
+  // failed, and they are the audience most likely to be looking.
+  const systemOut =
+    redactedReport.decisionSummary === undefined
+      ? ""
+      : `\n    <system-out>${escapeXml(
+          formatEvalRunDecisionSummary(redactedReport.decisionSummary)
+        )}</system-out>`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n${casesXml}${systemOut}\n  </testsuite>\n</testsuites>\n`;
 }
 
 /**
@@ -426,13 +459,17 @@ function isDiagnosticCase(entry: StructuredCaseResult): boolean {
   return entry.classification === "informational";
 }
 
+/**
+ * `inconclusive` and `notEstablished` are both NEUTRAL, for the same reason the
+ * report's own status is: neither is a measured failure. Painting either red
+ * reports a defect the run did not observe — and `notEstablished` has not even
+ * reached the validity phase that withholds an `inconclusive`.
+ */
 function decisionVerdictHtmlStatus(
-  verdict: EvalDecisionSummary["verdict"]
+  verdict: EvalRunDecisionSummary["verdict"]
 ): StructuredRunHtmlStatus {
   if (verdict === "passed") return "pass";
   if (verdict === "failed") return "fail";
-  // "incomplete" is the decision-summary analog of `inconclusive`: the
-  // iteration walk never finished, so this is not a measured failure either.
   return "neutral";
 }
 
@@ -500,49 +537,140 @@ function renderHtmlBucketTable(
 </table>`;
 }
 
-function renderHtmlDecisionSummary(summary: EvalDecisionSummary): string {
+/**
+ * The decision summary, rendered from the canonical contract.
+ *
+ * Every enum goes through the label maps beside the contract, so this page and
+ * the CLI's human output say the same words about the same run — `User value`,
+ * not `userValue`. HTML and JSON are two terminals for ONE object: whatever
+ * this section omits, `decisionSummary` in the JSON still carries, and the two
+ * must not disagree about the verdict, the unit, the first failed stage, the
+ * category or the next action.
+ */
+function renderHtmlDecisionSummary(summary: EvalRunDecisionSummary): string {
   const status = decisionVerdictHtmlStatus(summary.verdict);
-  const rate =
-    summary.passRate.percent === null
-      ? "no cases"
-      : `${summary.passRate.percent}%`;
-  const partial = summary.iterationWalkComplete
-    ? ""
-    : ' <span class="note">(partial iteration walk)</span>';
+  const verdict = EVAL_RUN_DECISION_VERDICT_LABELS[summary.verdict];
+  const source = EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS[summary.verdictSource];
+  const counts = summary.counts;
+  // The unit is printed WITH the numbers. A policy-v2 run counts case
+  // execution variants and a legacy one counts trials, so a bare "2/3" is a
+  // different claim in each and there is nothing in the digits that says which.
+  const countLine =
+    counts === undefined
+      ? ""
+      : counts.measurementUnit === "caseVariant"
+      ? `${counts.passed}/${counts.total} ${escapeHtml(
+          measurementUnitLabel("caseVariant", counts.total)
+        )} passed, ${counts.failed} failed${
+          counts.inconclusive > 0 ? `, ${counts.inconclusive} inconclusive` : ""
+        }`
+      : [
+          counts.total !== undefined && counts.passed !== undefined
+            ? `${counts.passed}/${counts.total} ${escapeHtml(
+                measurementUnitLabel("trial", counts.total)
+              )} passed`
+            : "",
+          counts.failed !== undefined ? `${counts.failed} failed` : "",
+        ]
+          .filter((part) => part.length > 0)
+          .join(", ");
 
-  const cases = summary.cases
-    .map((item) => renderHtmlDecisionCase(item))
-    .join("\n");
+  const why = [
+    ...(summary.undecided
+      ? [
+          `<p class="note">${escapeHtml(
+            decisionUndecidedText(summary.undecided)
+          )}</p>`,
+        ]
+      : []),
+    ...(summary.decision?.reasons ?? []).map(
+      (reason) =>
+        `<p class="note">${escapeHtml(
+          EVAL_VERDICT_DECISION_REASON_LABELS[reason]
+        )}</p>`
+    ),
+  ].join("\n  ");
+
+  const { items, scannedIterations, complete } = summary.diagnostics;
+  // Stated rather than implied: an empty list from a partial page is not "no
+  // failures", and a reader who cannot tell the two apart will read it as one.
+  const scope = complete
+    ? ""
+    : ' <span class="note">(PARTIAL — more trials were not examined)</span>';
+  const diagnosticsLine = `<p class="totals">${items.length} non-passing of ${scannedIterations} ${escapeHtml(
+    measurementUnitLabel("trial", scannedIterations)
+  )} examined${scope}</p>`;
+
+  const cases = items.map((item) => renderHtmlDecisionCase(item)).join("\n");
 
   return `<section class="decision-summary">
   <h2>Decision summary</h2>
   <p>
-    <span class="badge badge-${status}">${escapeHtml(summary.verdict)}</span>
-    ${summary.passRate.passed}/${
-    summary.passRate.total
-  } cases passed (${escapeHtml(rate)})${partial}
+    <span class="badge badge-${status}">${escapeHtml(verdict)}</span>
+    <span class="note">${escapeHtml(source)}</span>${
+    countLine.length > 0 ? `\n    ${countLine}` : ""
+  }
   </p>
+  ${why}
+  ${diagnosticsLine}
   ${cases}
 </section>`;
 }
 
-function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
-  const firstFailedStageLine =
-    item.stageChainStatus === "verified"
-      ? item.firstFailedStage
-        ? `First failed stage: ${escapeHtml(item.firstFailedStage)}`
-        : "No first failed stage — did not reach the server's stages"
-      : item.stageChainStatus === "unverified"
-      ? "First failed stage not established because the stage chain was unverified"
-      : "No stage metadata was recorded for this run";
+function decisionUndecidedText(
+  undecided: NonNullable<EvalRunDecisionSummary["undecided"]>
+): string {
+  const reason = EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS[undecided.reason];
+  return undecided.detail ? `${reason} — ${undecided.detail}` : reason;
+}
+
+function renderHtmlDecisionCase(item: EvalRunDecisionDiagnostic): string {
+  const chain = item.chain;
+  const failedRow =
+    chain.status === "verified" && chain.firstFailedStage !== undefined
+      ? chain.stages.find((entry) => entry.stage === chain.firstFailedStage)
+      : undefined;
+
+  const stageLine =
+    chain.status === "verified"
+      ? chain.firstFailedStage !== undefined
+        ? `First failed stage: ${escapeHtml(
+            USER_VALUE_STAGE_LABELS[chain.firstFailedStage]
+          )}${
+            failedRow?.reason
+              ? ` — ${escapeHtml(STAGE_REASON_LABELS[failedRow.reason])}`
+              : ""
+          }`
+        : "First failed stage: none was established — the run never reached the server's stages"
+      : chain.status === "unverified"
+      ? "First failed stage: not established — the recorded stage chain did not validate, so it is withheld"
+      : "First failed stage: not established — this run recorded no stage chain";
+
+  const category =
+    chain.status === "verified" && chain.failureCategory !== undefined
+      ? `Failure category: ${escapeHtml(
+          FAILURE_CATEGORY_LABELS[chain.failureCategory]
+        )}`
+      : "Failure category: not reported";
+
+  const evidenceParts = [
+    ...(item.evidence.spanIds
+      ? [`span ids ${item.evidence.spanIds.join(", ")}`]
+      : []),
+    ...(item.evidence.promptIndexes
+      ? [`prompt indexes ${item.evidence.promptIndexes.join(", ")}`]
+      : []),
+    ...(item.evidence.reasons
+      ? [`reasons ${item.evidence.reasons.join(", ")}`]
+      : []),
+  ];
 
   const parts = [
-    `<p class="stage-line">${firstFailedStageLine}</p>`,
-    `<p>${
-      item.failureCategory
-        ? `Failure category: ${escapeHtml(item.failureCategory)}`
-        : "Failure category not reported"
-    }</p>`,
+    `<p class="stage-line">${stageLine}</p>`,
+    `<p>${category}</p>`,
+    chain.status !== "absent" && chain.analyzerVersionAhead
+      ? `<p class="note">Stage chain came from a newer analyzer (version ${chain.analyzerVersionAhead.reported}; this build knows ${chain.analyzerVersionAhead.known})</p>`
+      : "",
     item.expected
       ? `<p>Expected tool calls: ${escapeHtml(
           item.expected.toolNames.join(", ")
@@ -556,30 +684,33 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
     item.observed?.failure
       ? `<p>Observed failure: ${escapeHtml(item.observed.failure)}</p>`
       : "",
-    item.evidence
-      ? `<p>Evidence: ${escapeHtml(
-          [
-            ...(item.evidence.spanIds
-              ? [`span ids ${item.evidence.spanIds.join(", ")}`]
-              : []),
-            ...(item.evidence.promptIndexes
-              ? [`prompt indexes ${item.evidence.promptIndexes.join(", ")}`]
-              : []),
-            ...(item.evidence.predicateReasons
-              ? [`reasons ${item.evidence.predicateReasons.join(", ")}`]
-              : []),
-          ].join("; ")
-        )}</p>`
+    // Named with the stage it was read from, because that is the only stage it
+    // is evidence ABOUT. The passing stages have spans of their own and they
+    // do not explain this failure.
+    evidenceParts.length > 0
+      ? `<p>Evidence${
+          item.evidence.stage
+            ? ` at ${escapeHtml(USER_VALUE_STAGE_LABELS[item.evidence.stage])}`
+            : ""
+        }: ${escapeHtml(evidenceParts.join("; "))}</p>`
       : "",
+    `<p class="note">Trace: ${escapeHtml(item.evidence.tracePath)}</p>`,
     `<p class="next-action">Next action: ${escapeHtml(item.nextAction)}</p>`,
   ]
     .filter((part) => part.length > 0)
     .join("\n  ");
 
+  const identity = [
+    item.caseId ?? item.testCaseId ?? undefined,
+    `iteration ${item.iterationNumber}`,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(", ");
+
   return `<article class="decision-case">
-  <h3>${escapeHtml(item.title)} <span class="note">(iteration ${
-    item.iterationNumber
-  })</span></h3>
+  <h3>${escapeHtml(
+    item.title ?? item.iterationId
+  )} <span class="note">(${escapeHtml(identity)})</span></h3>
   ${parts}
 </article>`;
 }
