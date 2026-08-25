@@ -39,6 +39,7 @@ import {
   listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
+  getEvalRunDisclosureOperation,
   compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
@@ -145,6 +146,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // Read-only, checked BEFORE a launch decision — placed ahead of the two run
+  // operations it exists to inform. `run_eval_suite` already fetches and
+  // returns its own disclosure on the receipt, so this is for when a caller
+  // needs the answer before committing to launch, not after.
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
