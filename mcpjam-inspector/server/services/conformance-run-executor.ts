@@ -67,6 +67,111 @@ export type ExecutePersistedConformanceResult = {
   score?: number | null;
 };
 
+/**
+ * Deep-copy a report into plain JSON-safe data before it crosses the Convex
+ * boundary. The SDK's check helpers already sanitize what they attach, but
+ * this write is where one stray class instance (a live run put a raw
+ * `MCPAuthError` into `details.errorDetails`) turned a FINISHED report into a
+ * "not a supported Convex type" rejection — and the failure handler then
+ * replaced the whole report with a could-not-run skip. Kept local on purpose:
+ * the persistence boundary must hold no matter which SDK version produced the
+ * payload.
+ */
+function jsonSafeReport(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (value === null) return null;
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return value;
+    case "number":
+      return Number.isFinite(value) ? value : String(value);
+    case "bigint":
+      return value.toString();
+    case "undefined":
+    case "function":
+    case "symbol":
+      return undefined;
+    default:
+      break;
+  }
+  const obj = value as object;
+  if (seen.has(obj)) return "[circular]";
+  if (depth >= 16) return "[max-depth]";
+  if (obj instanceof Date) return obj.toISOString();
+  seen.add(obj);
+  try {
+    if (Array.isArray(obj)) {
+      return obj.map((entry) => jsonSafeReport(entry, depth + 1, seen) ?? null);
+    }
+    const out: Record<string, unknown> = {};
+    if (obj instanceof Error) {
+      out.name = obj.name;
+      out.message = obj.message;
+      const coded = obj as Error & { code?: unknown; statusCode?: unknown };
+      if (coded.code !== undefined) {
+        out.code = jsonSafeReport(coded.code, depth + 1, seen);
+      }
+      if (coded.statusCode !== undefined) {
+        out.statusCode = jsonSafeReport(coded.statusCode, depth + 1, seen);
+      }
+    }
+    for (const [key, entry] of Object.entries(obj)) {
+      const safe = jsonSafeReport(entry, depth + 1, seen);
+      if (safe !== undefined) out[key] = safe;
+    }
+    return out;
+  } finally {
+    seen.delete(obj);
+  }
+}
+
+/**
+ * When persisting the full report body still fails, the run must keep the
+ * finished suite's VERDICT — outcome, score, pass/fail — rather than
+ * fabricating a could-not-run skip that erases real results. Only the group
+ * detail is degraded, with one case naming the persistence failure.
+ */
+function summaryFallbackReport(
+  report: ConformanceReport,
+  kind: ConformanceSuiteKind,
+  persistError: string
+): ConformanceReport {
+  return {
+    schemaVersion: report.schemaVersion,
+    kind: report.kind,
+    name: report.name,
+    passed: report.passed,
+    ...(report.outcome !== undefined ? { outcome: report.outcome } : {}),
+    ...(report.incompleteReason !== undefined
+      ? { incompleteReason: report.incompleteReason }
+      : {}),
+    ...(report.score !== undefined
+      ? { score: jsonSafeReport(report.score) as ConformanceReport["score"] }
+      : {}),
+    durationMs: report.durationMs,
+    groups: [
+      {
+        id: "execution",
+        title: "Execution",
+        target: "",
+        passed: report.passed,
+        durationMs: report.durationMs,
+        cases: [
+          {
+            id: `${kind}-report-not-persisted`,
+            title: "Suite finished but its detailed report could not be saved",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+            category: "execution",
+            error: persistError,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function syntheticIncompleteReport(
   kind: ConformanceSuiteKind,
   error: string
@@ -200,16 +305,56 @@ export async function executePersistedConformanceRun(
                   event.suiteKind,
                   event.error ?? "suite did not produce a report"
                 );
-              await client.action(
-                "conformanceRuns:upsertReportAction" as never,
-                {
-                  runId: started.runId,
-                  suiteKind: event.suiteKind,
-                  report: body,
-                  status: event.status === "completed" ? "completed" : "failed",
-                  durationMs: body.durationMs,
-                } as never
-              );
+              const status =
+                event.status === "completed" ? "completed" : "failed";
+              try {
+                await client.action(
+                  "conformanceRuns:upsertReportAction" as never,
+                  {
+                    runId: started.runId,
+                    suiteKind: event.suiteKind,
+                    report: jsonSafeReport(body),
+                    status,
+                    durationMs: body.durationMs,
+                  } as never
+                );
+              } catch (persistError) {
+                // A persistence failure must not rewrite a FINISHED suite as
+                // could-not-run: throwing here would bubble into the SDK's
+                // suite catch, which reports the suite failed with the
+                // serialization complaint as its error. Keep the verdict and
+                // degrade only the detail.
+                if (event.status !== "completed" || !event.report) {
+                  throw persistError;
+                }
+                const message =
+                  persistError instanceof Error
+                    ? persistError.message
+                    : String(persistError);
+                logger.warn(
+                  "[conformance-run] report body could not be persisted; keeping suite summary",
+                  {
+                    runId: started.runId,
+                    suiteKind: event.suiteKind,
+                    error: message,
+                  }
+                );
+                const fallback = summaryFallbackReport(
+                  event.report,
+                  event.suiteKind,
+                  message
+                );
+                await client.action(
+                  "conformanceRuns:upsertReportAction" as never,
+                  {
+                    runId: started.runId,
+                    suiteKind: event.suiteKind,
+                    report: jsonSafeReport(fallback),
+                    status,
+                    durationMs: fallback.durationMs,
+                  } as never
+                );
+              }
             },
           })
         : null;

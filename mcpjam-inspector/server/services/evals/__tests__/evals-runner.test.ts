@@ -2106,13 +2106,15 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         ])
       );
 
-      // And the failure must still be persisted (status:"failed").
+      // And the failure must still be persisted — as a SETUP failure: the
+      // environment never came up, so `failed` (which claims the run happened
+      // and the server under test lost) would be the wrong word.
       const updateCall = convexClient.action.mock.calls.find(
         (c) => c[0] === "testSuites:updateTestIteration"
       );
       expect(updateCall).toBeDefined();
       const payload = updateCall![1] as Record<string, unknown>;
-      expect(payload.status).toBe("failed");
+      expect(payload.status).toBe("setup_failed");
       expect(payload.result).toBe("failed");
 
       // The runner must NOT have hit the backend — failure happens before
