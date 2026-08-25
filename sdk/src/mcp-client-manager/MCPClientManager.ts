@@ -2947,9 +2947,18 @@ export class MCPClientManager {
     const pin = config.mcpProtocolVersion;
     if (!pin) return undefined;
     const negotiation = resolveVersionNegotiation(pin);
-    // `undefined` is a legacy pin (exact `initialize`, no discover probe) and
-    // `"auto"` falls back on its own. Only an explicit modern pin refuses.
-    if (!negotiation || negotiation.mode === "auto") return undefined;
+    // `"auto"` falls back on its own, so it can never refuse — and a config
+    // with no pin already returned above.
+    //
+    // A legacy pin (`undefined` here: exact `initialize`, no discover probe)
+    // DOES refuse, and used to be excluded. It narrows the accept-list to the
+    // pinned version, so a server whose `initialize` reply names anything else
+    // — e.g. a 2025-11-25 pin against a server that answers 2025-06-18 — fails
+    // the connect just as a modern pin does. Excluding it sent that failure to
+    // the generic connection patterns, which report the user's own version
+    // setting as "the server appears to be down". The verdict below is what
+    // keeps a real outage out: it only matches a version refusal.
+    if (negotiation?.mode === "auto") return undefined;
     for (const error of errors) {
       // NOT "is this an era-negotiation error": that code also covers a probe
       // that hit an HTTP status, a network failure, or a closed transport —
