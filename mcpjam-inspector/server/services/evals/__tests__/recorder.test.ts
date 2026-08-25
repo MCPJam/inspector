@@ -430,6 +430,7 @@ describe("createSuiteRunRecorder", () => {
     await recorder.finishIteration({
       iterationId: "iter1",
       passed: true,
+      status: "completed",
       toolsCalled: [],
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       messages: [{ role: "user", content: "hi" } as ModelMessage],
