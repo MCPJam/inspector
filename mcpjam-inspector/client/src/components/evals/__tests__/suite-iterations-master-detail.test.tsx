@@ -35,10 +35,6 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
 
-vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
-  useProjectEnvironmentsEnabled: () => false,
-}));
-
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({
     runTrendData: [],
@@ -246,7 +242,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
   });
 
-  it("opens test edit from the suite-detail case list when run actions are hidden", async () => {
+  it("opens test edit with compare deep link from the cases list when run actions are hidden", async () => {
     const user = userEvent.setup();
     const navigation = {
       ...noopNav,
@@ -295,20 +291,21 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    await user.click(screen.getByTestId("suite-test-case-row-case-1"));
+    await user.click(screen.getByTestId("test-cases-overview"));
 
     expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
 
-  it("renders the Evaluate suite-detail identity row when run actions are hidden", () => {
+  it("preserves the clicked iteration when opening compare from the cases list", async () => {
+    const user = userEvent.setup();
     const navigation = {
       ...noopNav,
-      toSuiteEdit: vi.fn(),
+      toTestEdit: vi.fn(),
     };
 
     render(
       <SuiteIterationsView
-        suite={{ ...baseSuite, name: "checkout-flow" }}
+        suite={baseSuite}
         cases={[
           {
             _id: "case-1",
@@ -348,11 +345,12 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    expect(screen.getByTestId("suite-detail-overview")).toBeInTheDocument();
-    expect(screen.getByTestId("suite-detail-identity")).toHaveTextContent(
-      "checkout-flow",
-    );
-    expect(screen.queryByTestId("suite-header")).toBeNull();
+    await user.click(screen.getByTestId("test-cases-open-last-run"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-1",
+    });
   });
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {
