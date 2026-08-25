@@ -100,7 +100,7 @@ export function formatRunDisclosureSummary(
     return "Checking what this run discloses…";
   }
   if (state.status === "error" || !state.disclosure) {
-    if (state.error?.hostAxisUnavailable) {
+    if (state.error?.multiTargetUnavailable) {
       // The recovery instruction rides in the SUMMARY, not in `error.message`:
       // `describeRunDisclosureDetail` bails to `[]` for every non-ready state
       // and never receives `error` at all, so this line is the only text a
@@ -333,7 +333,7 @@ function MultiTargetDisclosureHint({
       message:
         "Run all fans out across several hosts — the disclosure covers one launch plan, so there is no single set of models or engine to describe here.",
       contractUnavailable: false,
-      hostAxisUnavailable: true,
+      multiTargetUnavailable: true,
     },
     open,
     setOpen,

@@ -393,6 +393,35 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(args.runnerCapabilities).toEqual([...RUNNER_CAPABILITIES]);
   });
 
+  it("answers 404 — not a 502 incident page — for a host that is not attached", async () => {
+    // The backend refuses this with a STRUCTURED code precisely so it can be
+    // told apart here. A plain `Error` would redact to "Server Error" in
+    // production, survive the preflight below (the caller CAN see the suite),
+    // and land on the incident path: a 502 plus a Sentry capture for every
+    // stale or detached host id a client still holds.
+    queryMock.mockRejectedValue(
+      new Error(
+        'Uncaught ConvexError: {"code":"DISCLOSURE_HOST_NOT_ATTACHED","message":"That host is not attached to this suite, so it is not a plan this suite could launch."}'
+      )
+    );
+    const res = await get("?host=host_1");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("NOT_FOUND");
+    expect(body.message).toMatch(/not attached/i);
+  });
+
+  it("reads the structured refusal off err.data too, not only the message", async () => {
+    // `err.data` does not survive every Convex client boundary intact, so the
+    // route matches both shapes — this pins the one the message match misses.
+    const structured = Object.assign(new Error("Server Error"), {
+      data: { code: "DISCLOSURE_HOST_NOT_ATTACHED", message: "nope" },
+    });
+    queryMock.mockRejectedValue(structured);
+    const res = await get("?host=host_1");
+    expect(res.status).toBe(404);
+  });
+
   it("rejects host together with either environment spelling — one axis per plan", async () => {
     for (const query of [
       "?host=host_1&environmentId=env_1",

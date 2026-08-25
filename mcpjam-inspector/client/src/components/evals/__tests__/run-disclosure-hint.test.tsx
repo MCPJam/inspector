@@ -636,7 +636,7 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
       error: {
         message: "n/a",
         contractUnavailable: false,
-        hostAxisUnavailable: true,
+        multiTargetUnavailable: true,
       },
     });
     expect(summary).toMatch(/covers one target/);

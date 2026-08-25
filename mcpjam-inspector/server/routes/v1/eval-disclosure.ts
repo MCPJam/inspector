@@ -165,6 +165,25 @@ function isMissingConvexFunctionError(error: unknown): boolean {
   );
 }
 
+/**
+ * True when `testSuites:getRunDisclosure` refused because the named host is
+ * not attached to the suite (`DISCLOSURE_HOST_NOT_ATTACHED`).
+ *
+ * Read off the serialized payload rather than `err.data`, which does not
+ * survive every Convex client boundary intact — the same reason the backend's
+ * own tests fall back to matching the JSON. A structured code is what makes
+ * this distinguishable at all: the refusal would otherwise redact to the
+ * generic "Server Error" and be indistinguishable from a genuine incident.
+ */
+function isHostNotAttachedError(error: unknown): boolean {
+  const data = (error as { data?: { code?: unknown } } | null)?.data;
+  if (data && data.code === "DISCLOSURE_HOST_NOT_ATTACHED") return true;
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error ?? ""
+  );
+  return message.includes("DISCLOSURE_HOST_NOT_ATTACHED");
+}
+
 /** `caseIds`/`environmentIds` as `?a=1,2,3` — the convention `catalog.ts` uses for `sourceTypes`. */
 function csvQuery(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
@@ -247,6 +266,25 @@ evalDisclosure.get(
         runnerCapabilities: RUNNER_CAPABILITIES,
       } as never)) as Record<string, unknown> | null;
     } catch (error) {
+      // A host that is not attached to this suite. STRUCTURED on the backend
+      // precisely so it can be read here: a plain `Error` would redact to
+      // "Server Error" in production, survive the preflight below (the caller
+      // CAN see the suite), and land on the incident path — a 502 plus a
+      // Sentry capture for every stale or detached host id a client still
+      // holds. Matched on the payload rather than `err.data`, which does not
+      // survive every Convex client boundary intact.
+      //
+      // 404, not 400: the backend answers the same code for "no such host",
+      // "another tenant's host" and "this project's host, not attached", so
+      // neither status leaks more than the other — and "the target you named
+      // is not available here" is the 404 shape this route already uses.
+      if (isHostNotAttachedError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "That host is not attached to this eval suite, so there is no plan to disclose for it. Attach it to the suite first, or name one that is attached."
+        );
+      }
       // The missing-function branch: unambiguous, no redaction risk — Convex
       // reports this the same way in every environment.
       if (isMissingConvexFunctionError(error)) {

@@ -29,21 +29,22 @@ export interface RunDisclosureErrorInfo {
    */
   contractUnavailable: boolean;
   /**
-   * True when this state describes a launch whose plan the contract cannot
-   * answer for, never a fetch failure.
-   *
-   * Since G4c this is NOT the single-host case — `getRunDisclosure` takes
-   * `namedHostId`, so one attached host is fetched and disclosed like any
-   * environment. What remains is the MULTI-TARGET case: the contract answers
-   * for one launch plan, so a "Run all" fanning out across several hosts has
-   * no single engine or model set to disclose. Mirrors the SDK's
+   * True when the launch fans out across SEVERAL targets, so the contract has
+   * no single plan to answer for — never a fetch failure. The disclosure
+   * covers one launch plan, and a "Run all" spanning hosts has no single
+   * engine or model set to describe. Mirrors the SDK's
    * `isMultiTargetHostLaunch` skip in `runEvalSuiteOperation`.
+   *
+   * Named for the multi-target limit rather than the host axis: a SINGLE
+   * attached host is fetched and disclosed like any environment since G4c
+   * (`getRunDisclosure` takes `namedHostId`), so the old `hostAxisUnavailable`
+   * spelling named a case that no longer refuses.
    *
    * Optional — every REAL fetch failure (the only place this hook itself
    * constructs one) sets it explicitly to `false`; only the static
    * multi-target state in `run-disclosure-hint.tsx` sets it `true`.
    */
-  hostAxisUnavailable?: boolean;
+  multiTargetUnavailable?: boolean;
 }
 
 export interface RunDisclosureState {
@@ -143,7 +144,7 @@ export function useRunDisclosure({
         setError({
           message: err instanceof Error ? err.message : String(err),
           contractUnavailable: isContractUnavailableError(err),
-          hostAxisUnavailable: false,
+          multiTargetUnavailable: false,
         });
         setStatus("error");
       }
