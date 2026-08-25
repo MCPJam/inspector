@@ -17,6 +17,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import type { ExecutionScope } from "../execution-scope.js";
 import type { PinnableSkill } from "../../../shared/skill-types.js";
 import { logger } from "../logger.js";
 import {
@@ -108,6 +109,30 @@ export function shouldEnableCloudSkillTools(args: {
   // members already read the project-wide catalog by membership.
   const actorAllowed = !args.isGuest || args.hasExecutionScope;
   return actorAllowed && !willRunHarness && args.hasProjectId;
+}
+
+/**
+ * The scope the cloud-skill READS should run under, or `undefined` for the
+ * membership-authorized queries.
+ *
+ * ONE value for two decisions — the gate above and the read context — because
+ * they must not be able to disagree. Deriving them separately let a config that
+ * carries `executionScope: null` open the gate (`null !== undefined`) while the
+ * reads fell back to the member query, which is precisely the guest-403 this
+ * change exists to prevent.
+ *
+ * Returns undefined for a member: their runtime config carries a scope too, and
+ * the scoped query is shared-only, so routing them through it would drop their
+ * personal skills. No structural validation of the scope itself — it is opaque
+ * and the backend re-resolves it (see `execution-scope.ts`); a malformed one is
+ * rejected there and the turn degrades to no skills.
+ */
+export function resolveGuestCloudSkillScope(args: {
+  isGuest: boolean;
+  executionScope: ExecutionScope | null | undefined;
+}): ExecutionScope | undefined {
+  if (!args.isGuest) return undefined;
+  return args.executionScope ?? undefined;
 }
 
 function errMessage(err: unknown): string {

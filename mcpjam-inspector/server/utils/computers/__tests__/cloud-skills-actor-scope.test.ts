@@ -31,6 +31,7 @@ import {
 } from "../convex-skills-client.js";
 import {
   CloudSkillsError,
+  SKILL_FILE_MAX_READ_BYTES,
   getCloudSkillBodyForActor,
   listCloudSkillFilesForActor,
   listCloudSkillsForActor,
@@ -151,6 +152,45 @@ describe("readCloudSkillFileForActor", () => {
     await expect(
       readCloudSkillFileForActor(guest, "sk_1", "missing.md")
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("404s an entry the scoped listing minted no URL for", async () => {
+    vi.mocked(convexListSkillFilesForRuntimeExecution).mockResolvedValue([
+      { skillId: "sk_1", path: "notes.md", size: 5, url: null },
+    ]);
+    await expect(
+      readCloudSkillFileForActor(guest, "sk_1", "notes.md")
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("413s past the read cap, before fetching a single byte", async () => {
+    vi.mocked(convexListSkillFilesForRuntimeExecution).mockResolvedValue([
+      {
+        skillId: "sk_1",
+        path: "big.bin",
+        size: SKILL_FILE_MAX_READ_BYTES + 1,
+        url: "https://blob/big",
+      },
+    ]);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await expect(
+      readCloudSkillFileForActor(guest, "sk_1", "big.bin")
+    ).rejects.toMatchObject({ status: 413 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("502s a storage response that isn't ok", async () => {
+    vi.mocked(convexListSkillFilesForRuntimeExecution).mockResolvedValue([
+      { skillId: "sk_1", path: "notes.md", size: 5, url: "https://blob/1" },
+    ]);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("nope", { status: 500 }));
+    await expect(
+      readCloudSkillFileForActor(guest, "sk_1", "notes.md")
+    ).rejects.toMatchObject({ status: 502 });
+    fetchMock.mockRestore();
   });
 
   it("keeps the member read on the member query", async () => {

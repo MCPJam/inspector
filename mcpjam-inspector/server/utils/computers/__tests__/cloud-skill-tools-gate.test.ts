@@ -9,7 +9,11 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
     id.startsWith("mcpjam/") || (provider === "mcpjam" && !id.includes("/")),
 }));
 
-import { shouldEnableCloudSkillTools } from "../cloud-skill-tools";
+import {
+  resolveGuestCloudSkillScope,
+  shouldEnableCloudSkillTools,
+} from "../cloud-skill-tools";
+import type { ExecutionScope } from "../../execution-scope.js";
 
 const base = {
   isGuest: false,
@@ -121,6 +125,55 @@ describe("shouldEnableCloudSkillTools", () => {
         ...base,
         harness: "codex",
         modelId: "mcpjam/gpt-5",
+      })
+    ).toBe(false);
+  });
+});
+
+describe("resolveGuestCloudSkillScope", () => {
+  const scope: ExecutionScope = {
+    kind: "swarm",
+    swarmId: "swarm_1",
+    accessVersion: 2,
+    projectId: "proj_1",
+    workspaceId: "ws_1",
+  };
+
+  it("returns the scope for a guest turn that carries one", () => {
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: scope })
+    ).toBe(scope);
+  });
+
+  it("returns undefined for a member, scope or not", () => {
+    // A member's config carries a scope too, and the scoped query is
+    // shared-only — it would drop their personal skills.
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: false, executionScope: scope })
+    ).toBeUndefined();
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: false, executionScope: undefined })
+    ).toBeUndefined();
+  });
+
+  it("normalizes a null/omitted scope to undefined so the gate and the reads agree", () => {
+    // The gate reads `!== undefined`; a raw `null` from a malformed config would
+    // have opened it while the reads fell back to the membership-only query.
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: null })
+    ).toBeUndefined();
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: undefined })
+    ).toBeUndefined();
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasExecutionScope:
+          resolveGuestCloudSkillScope({
+            isGuest: true,
+            executionScope: null,
+          }) !== undefined,
       })
     ).toBe(false);
   });

@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  resolveGuestCloudSkillScope,
+  shouldEnableCloudSkillTools,
+} from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
 import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
@@ -775,13 +778,14 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
-    // COMP-38: the same scope, but for the cloud-skill READS, and only for a
-    // guest. A member's runtime config carries a scope too (`project_member`
-    // resolves one), and the scoped skills query is SHARED-ONLY — routing a
-    // member through it would silently drop their personal skills from the
-    // catalog. A guest has no membership to read by, so the scope is the only
-    // query they can pass.
-    const guestSkillScope = c.get("guestId") ? executionScope : undefined;
+    // COMP-38: the same scope, narrowed to the cloud-skill READS. One value
+    // feeds both the gate and the read context so they cannot disagree — see
+    // `resolveGuestCloudSkillScope` for why that matters, and why a member gets
+    // undefined here even though their config carries a scope.
+    const guestSkillScope = resolveGuestCloudSkillScope({
+      isGuest: Boolean(c.get("guestId")),
+      executionScope,
+    });
 
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
