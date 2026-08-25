@@ -368,7 +368,14 @@ export function useUsageInsights({
           ...(args?.tuning ? { tuning: args.tuning } : {}),
         });
       }
-      return rebuildScenario({ scenarioId: effectiveScope.scenarioId, ...args });
+      // Pick the knobs rather than spreading `args`, so a caller that passes
+      // something wider (BB-107: a click event) cannot push unserializable
+      // properties into the mutation payload. Mirrors the swarm branch above.
+      return rebuildScenario({
+        scenarioId: effectiveScope.scenarioId,
+        ...(args?.force !== undefined ? { force: args.force } : {}),
+        ...(args?.tuning ? { tuning: args.tuning } : {}),
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [
