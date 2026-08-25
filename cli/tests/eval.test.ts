@@ -2441,7 +2441,10 @@ test("eval run --wait --reporter html writes the artifact atomically and to stdo
     );
     const html = await readFile(htmlPath, "utf8");
 
-    assert.equal(run.result.exitCode, 0);
+    // A completed run with a failed verdict is the sole producer of exit 1
+    // under --wait's six-code contract (E1) — unrelated to this test's own
+    // concern (whether the html reporter/artifact wiring works).
+    assert.equal(run.result.exitCode, 1);
     assert.match(html, /^<!doctype html>/i);
     assert.match(html, /Authorization: \[REDACTED\]/);
     assert.equal(html.includes("top-secret"), false);
@@ -2451,6 +2454,9 @@ test("eval run --wait --reporter html writes the artifact atomically and to stdo
     assert.match(run.stdout, /^<!doctype html>/i);
     assert.equal(run.stdout, html);
   } finally {
+    // A nonzero exit code otherwise leaks into `process.exitCode` for
+    // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
     await fixture.close();
   }
 });
