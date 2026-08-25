@@ -4,7 +4,7 @@ description: "API reference for LLM provider configuration"
 icon: "book"
 ---
 
-The SDK supports 10 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
+The SDK supports 11 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
 
 ## Model String Format
 
@@ -293,7 +293,33 @@ const agent = new HostRunner({
 
 ---
 
-### xAI (Grok)
+### OrcaRouter
+
+| Property | Value |
+|----------|-------|
+| Prefix | `orcarouter/` |
+| Environment Variable | `ORCAROUTER_API_KEY` |
+| Default Base URL | `https://api.orcarouter.ai/v1` |
+
+[OrcaRouter](https://www.orcarouter.ai) is an AI gateway that fronts many upstream models (Anthropic, OpenAI, and more) behind a single OpenAI-compatible Chat Completions endpoint. Model ids stay namespaced, e.g. `orcarouter/anthropic/claude-sonnet-5`. Requests route through the OpenAI adapter's Chat Completions API (the gateway does not implement the newer `/v1/responses` API). Override the endpoint with `baseUrls.orcarouter`.
+
+| Model ID | Description |
+|----------|-------------|
+| `anthropic/claude-sonnet-5` | Claude Sonnet 5 via OrcaRouter |
+| `anthropic/claude-haiku-4.5` | Claude Haiku 4.5 via OrcaRouter |
+| `openai/gpt-4o` | GPT-4o via OrcaRouter |
+
+#### Example
+
+```typescript
+const agent = new HostRunner({
+  tools,
+  model: "orcarouter/anthropic/claude-sonnet-5",
+  apiKey: process.env.ORCAROUTER_API_KEY,
+});
+```
+
+---
 
 | Property | Value |
 |----------|-------|
@@ -485,6 +511,7 @@ const provider = createCustomProvider({
 | Mistral | `MISTRAL_API_KEY` |
 | DeepSeek | `DEEPSEEK_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
+| OrcaRouter | `ORCAROUTER_API_KEY` |
 | xAI | `XAI_API_KEY` |
 
 ---

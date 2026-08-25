@@ -28,6 +28,11 @@ export interface BaseUrls {
   anthropic?: string;
   openai?: string;
   /**
+   * OrcaRouter OpenAI-compatible gateway endpoint. When omitted, the
+   * well-known default https://api.orcarouter.ai/v1 is used.
+   */
+  orcarouter?: string;
+  /**
    * Amazon Bedrock regional runtime endpoint, e.g.
    * https://bedrock-runtime.us-east-1.amazonaws.com.
    * When omitted, the provider derives it from the AWS_REGION env var.
@@ -58,6 +63,7 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
   "ollama",
   "mistral",
   "openrouter",
+  "orcarouter",
   "xai",
 ];
 
@@ -249,6 +255,18 @@ export function createModelFromString(
     case "openrouter": {
       const openrouter = createOpenRouter({ apiKey });
       return openrouter(model) as unknown as ProviderLanguageModel;
+    }
+
+    case "orcarouter": {
+      // OrcaRouter is an OpenAI-compatible gateway. Route through Chat
+      // Completions (.chat()) — like the LiteLLM custom preset — since the
+      // gateway does not implement the newer /v1/responses API. Model ids stay
+      // namespaced ("orcarouter/anthropic/claude-sonnet-5" → "anthropic/claude-sonnet-5").
+      const orcarouter = createOpenAI({
+        apiKey,
+        baseURL: baseUrls?.orcarouter ?? "https://api.orcarouter.ai/v1",
+      });
+      return orcarouter.chat(model) as ProviderLanguageModel;
     }
 
     case "xai": {
@@ -490,6 +508,14 @@ export function buildOrgModelFromResolvedConfig(
         "X-Title": "MCPJam",
       },
     })(m) as unknown as LanguageModel;
+  }
+  if (providerKey === "orcarouter") {
+    const openai = createOpenAI({
+      apiKey: requireOrgSecret(config, "OrcaRouter"),
+      baseURL: config.baseUrl ?? "https://api.orcarouter.ai/v1",
+    });
+    // Chat Completions (.chat()), matching createModelFromString.
+    return openai.chat(m) as unknown as LanguageModel;
   }
   if (providerKey === "bedrock") {
     return createAmazonBedrock({

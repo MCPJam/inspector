@@ -40,6 +40,7 @@ export type LLMProvider =
   | "ollama"
   | "mistral"
   | "openrouter"
+  | "orcarouter"
   | "xai";
 
 /**

@@ -172,6 +172,7 @@ describe("model-factory", () => {
         "ollama",
         "mistral",
         "openrouter",
+        "orcarouter",
         "xai",
       ];
 
@@ -431,6 +432,50 @@ describe("model-factory", () => {
       });
     });
 
+    describe("orcarouter provider", () => {
+      it("should route via OpenAI adapter to the default endpoint", () => {
+        createModelFromString(
+          "orcarouter/anthropic/claude-sonnet-5",
+          defaultOptions
+        );
+
+        expect(createOpenAI).toHaveBeenCalledWith({
+          apiKey: "test-api-key",
+          baseURL: "https://api.orcarouter.ai/v1",
+        });
+      });
+
+      it("should pass namespaced model id to Chat Completions", () => {
+        const model = createModelFromString(
+          "orcarouter/anthropic/claude-sonnet-5",
+          defaultOptions
+        );
+
+        expect(model).toEqual({
+          provider: "openai-chat",
+          modelId: "anthropic/claude-sonnet-5",
+          type: "mock-model",
+        });
+      });
+
+      it("should use custom base URL when provided", () => {
+        const options: CreateModelOptions = {
+          apiKey: "test-api-key",
+          baseUrls: { orcarouter: "https://orcarouter.example.com/v1" },
+        };
+
+        createModelFromString(
+          "orcarouter/openai/gpt-4o",
+          options
+        );
+
+        expect(createOpenAI).toHaveBeenCalledWith({
+          apiKey: "test-api-key",
+          baseURL: "https://orcarouter.example.com/v1",
+        });
+      });
+    });
+
     describe("xai provider", () => {
       it("should create xai model with api key", () => {
         createModelFromString("xai/grok-1", defaultOptions);
@@ -526,9 +571,10 @@ describe("model-factory", () => {
         azure: "https://azure.openai.com",
         anthropic: "https://anthropic.com",
         openai: "https://openai.com",
+        orcarouter: "https://api.orcarouter.ai/v1",
       };
 
-      expect(Object.keys(baseUrls)).toHaveLength(4);
+      expect(Object.keys(baseUrls)).toHaveLength(5);
     });
   });
 });
@@ -599,6 +645,46 @@ describe("buildOrgModelFromResolvedConfig", () => {
         "X-Title": "MCPJam",
       },
     });
+  });
+
+  it("orcarouter: routes via OpenAI adapter to default endpoint", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "orcarouter",
+      apiKey: "orca-key",
+    };
+    const model = buildOrgModelFromResolvedConfig(
+      config,
+      "anthropic/claude-sonnet-5"
+    );
+    expect(createOpenAI).toHaveBeenCalledWith({
+      apiKey: "orca-key",
+      baseURL: "https://api.orcarouter.ai/v1",
+    });
+    expect(model).toEqual({
+      provider: "openai-chat",
+      modelId: "anthropic/claude-sonnet-5",
+      type: "mock-model",
+    });
+  });
+
+  it("orcarouter: uses org-provided baseUrl when present", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "orcarouter",
+      apiKey: "orca-key",
+      baseUrl: "https://orcarouter.example.com/v1",
+    };
+    buildOrgModelFromResolvedConfig(config, "openai/gpt-4o");
+    expect(createOpenAI).toHaveBeenCalledWith({
+      apiKey: "orca-key",
+      baseURL: "https://orcarouter.example.com/v1",
+    });
+  });
+
+  it("orcarouter: throws provider_not_configured without apiKey", () => {
+    const config: OrgProviderResolvedConfig = { providerKey: "orcarouter" };
+    expect(() =>
+      buildOrgModelFromResolvedConfig(config, "anthropic/claude-sonnet-5")
+    ).toThrow(OrgProviderConfigError);
   });
 
   it("bedrock: calls createAmazonBedrock with apiKey and baseURL", () => {
@@ -729,6 +815,15 @@ describe("assertOrgModelAllowed", () => {
     };
     expect(() =>
       assertOrgModelAllowed(config, "anything/model")
+    ).not.toThrow();
+  });
+
+  it("orcarouter: passes through without allowlist check", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "orcarouter",
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "anthropic/claude-sonnet-5")
     ).not.toThrow();
   });
 
