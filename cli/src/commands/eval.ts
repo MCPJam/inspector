@@ -58,7 +58,6 @@ import {
   buildEvalDecisionSummaryFromIterations,
   buildEvalRunReport,
   buildRunCompareReport,
-  calculateLatencyStats,
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
@@ -117,12 +116,17 @@ import {
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  assertRunIdBaseline,
+  baselineNotFoundReason,
+  comparePolicyFromGateOptions,
+  evaluateBaselineComparison,
+  mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
-import { fetchAllIterations } from "../lib/eval-iterations.js";
+import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -1030,7 +1034,10 @@ function launchFailureCases(
   });
 }
 
-function gateReportCase(report: GateReport): StructuredCaseResult {
+function gateReportCase(
+  report: GateReport,
+  baselineProvenance?: Record<string, unknown>
+): StructuredCaseResult {
   const passed = report.outcome === "passed";
   return {
     id: "gate",
@@ -1045,7 +1052,13 @@ function gateReportCase(report: GateReport): StructuredCaseResult {
             .map((verdict) => verdict.message)
             .join("; "),
         }),
-    details: report,
+    // The baseline provenance rides along on the case row too, not only in
+    // the report's top-level metadata: `--reporter junit-xml` has no other
+    // place to carry it, and a regression visible in the exit code but
+    // absent from the artifact is a reporting bug.
+    details: baselineProvenance
+      ? { ...report, baseline: baselineProvenance }
+      : report,
   };
 }
 
@@ -1077,6 +1090,10 @@ async function runEvalGate(
     ...options,
     noGatingScoreErrors: options.gatingScoreErrors === false,
   });
+  // Parsed and validated BEFORE any network call, like `eval compare`'s own
+  // policy: a malformed baseline flag exits 2 without spending a request.
+  if (options.baseline !== undefined) assertRunIdBaseline(options.baseline);
+  const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
       ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
@@ -1092,6 +1109,7 @@ async function runEvalGate(
     iterations?: PlatformEvalIteration[];
     iterationsComplete?: boolean;
     iterationError?: string;
+    baselineProvenance?: Record<string, unknown>;
   };
   try {
     outcome = await runPlatformCommand(
@@ -1234,15 +1252,43 @@ async function runEvalGate(
           };
         }
 
-        return {
-          report: reportForRun(
+        const thresholdReport = reportForRun(
+          run,
+          policyNeedsIterations(policy) ? iterations : undefined,
+          policy
+        );
+
+        // Baseline regression gating only makes sense once the run being
+        // gated has a verdict of its own; every early return above already
+        // skipped this. `--baseline` is optional, so a threshold-only
+        // invocation never pays for a `/compare` fetch it did not ask for.
+        if (!options.baseline) {
+          return {
+            report: thresholdReport,
             run,
-            policyNeedsIterations(policy) ? iterations : undefined,
-            policy
-          ),
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? !needsReport,
+          };
+        }
+
+        const baselineResult = await evaluateBaselineComparison({
+          client,
+          signal,
+          projectId: project.id,
+          runId: options.run,
+          baseline: options.baseline,
+          policy: comparePolicy,
+          compareIterations: iterations,
+        });
+
+        return {
+          report: mergeGateReports(thresholdReport, baselineResult.report),
           run,
           iterations: iterations?.items ?? [],
           iterationsComplete: iterations?.complete ?? !needsReport,
+          ...(baselineResult.provenance
+            ? { baselineProvenance: baselineResult.provenance }
+            : {}),
         };
       }
     );
@@ -1297,8 +1343,11 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(outcome.report)],
+          cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
           ...(decisionSummary ? { decisionSummary } : {}),
+          ...(outcome.baselineProvenance
+            ? { metadata: { baselineComparison: outcome.baselineProvenance } }
+            : {}),
         }
       )
     : undefined;
@@ -1745,36 +1794,6 @@ const EMPTY_DIFF = {
   delta: null,
   percentDelta: null,
 };
-
-/** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
-function p95Of(
-  iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined
-): number | undefined {
-  if (!iterations?.complete) return undefined;
-  const durations = iterations.items
-    .map((iteration) => iteration.durationMs)
-    .filter((ms): ms is number => typeof ms === "number");
-  if (durations.length === 0 || durations.length !== iterations.items.length) {
-    // A single missing duration makes the p95 describe a different set than
-    // the run — absent beats approximate.
-    return undefined;
-  }
-  return calculateLatencyStats(durations).p95;
-}
-
-/**
- * The server says "no baseline" with a 404 carrying
- * `details.reason: "BASELINE_NOT_FOUND"`. Read the machine field, not the
- * prose.
- */
-function baselineNotFoundReason(error: unknown): boolean {
-  const details = (error as { details?: unknown })?.details;
-  return (
-    typeof details === "object" &&
-    details !== null &&
-    (details as { reason?: unknown }).reason === "BASELINE_NOT_FOUND"
-  );
-}
 
 async function writeCompareResult(
   args: {
@@ -2964,6 +2983,26 @@ export function registerEvalCommands(program: Command): void {
         "Minimum mean score for one scorer (repeatable)",
         collectRepeatable,
         [] as string[]
+      )
+      .option(
+        "--baseline <runId>",
+        "Baseline run ID to gate a regression delta against (SHA baselines are not supported yet)"
+      )
+      .option(
+        "--min-sample-size <n>",
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline"
+      )
+      .option(
+        "--min-effect-size-percent <0-100>",
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline"
+      )
+      .option(
+        "--gate-deterministic-regressions",
+        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline"
+      )
+      .option(
+        "--max-p95-latency-increase-ms <ms>",
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline"
       )
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(

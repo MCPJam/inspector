@@ -1,0 +1,33 @@
+---
+"@mcpjam/cli": minor
+---
+
+`eval gate` gains `--baseline <runId>`: gate a run against a regression delta
+from an earlier one, not just an absolute threshold.
+
+Passing `--baseline` fetches the same run comparison `eval compare` uses,
+evaluates it with the existing comparative gate engine, and folds the result
+into the run's threshold `GateReport` with the established outcome precedence
+(`usage_error > failed > incomplete > passed`) — one report, one exit code,
+verdicts from both families visible. The comparative tuning flags
+`eval compare` already has (`--min-sample-size`,
+`--min-effect-size-percent`, `--gate-deterministic-regressions`,
+`--max-p95-latency-increase-ms`) work here too; `--baseline` itself implies
+regression gating, so none of them need a separate enabling flag, and passing
+one without `--baseline` is a usage error rather than a silent no-op.
+
+A changed, added, removed, or unequally-weighted case set makes the
+comparison `non_gateable` (exit 3), never a silent pass and never
+misread as a regression (exit 1) — the same population rule `eval compare`
+already enforces. A missing baseline is the existing `BASELINE_NOT_FOUND` →
+incomplete → exit 3 path. `eval gate`'s four-code contract is unchanged.
+
+The report (`--reporter`/`--out`) carries baseline provenance — both run
+ids, the resolved baseline policy, and every compatibility signal that was
+evaluated. Dimensions the comparison wire does not carry yet (model/provider,
+host/harness, server/environment identity, config hashes beyond the
+evaluation config hash) are recorded explicitly as `"notRecorded"` rather
+than omitted.
+
+SHA baselines are not supported yet — a 40-hex `--baseline` argument is
+rejected with a usage error naming the follow-up; only run ids resolve today.

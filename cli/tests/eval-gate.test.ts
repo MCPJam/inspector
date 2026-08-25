@@ -8,11 +8,17 @@ import {
   isNonVerdictRunStatus,
 } from "../src/lib/eval-gate-exit-code.js";
 import {
+  assertRunIdBaseline,
+  buildBaselineProvenance,
+  comparePolicyFromGateOptions,
+  evaluateBaselineComparison,
+  mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
 } from "../src/lib/eval-gate.js";
 import type { GateReport } from "@mcpjam/sdk";
+import type { PlatformRunCompare } from "@mcpjam/sdk/platform";
 
 function report(outcome: GateReport["outcome"]): GateReport {
   return { outcome, verdicts: [], scoreIntegrity: "unknown" };
@@ -285,4 +291,305 @@ test("the gate keeps exactly four exit codes under verdict policy 2", () => {
     ),
   );
   assert.deepEqual([...codes].sort(), [0, 1, 2, 3]);
+});
+
+// ── --baseline (runId half) ─────────────────────────────────────────────────
+
+test("assertRunIdBaseline accepts an ordinary run id", () => {
+  assert.doesNotThrow(() => assertRunIdBaseline("run_abc123"));
+  assert.doesNotThrow(() => assertRunIdBaseline("run-1"));
+});
+
+test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => {
+  const sha = "a".repeat(40);
+  assert.throws(
+    () => assertRunIdBaseline(sha),
+    /SHA baselines are not supported yet/,
+  );
+  assert.throws(
+    () => assertRunIdBaseline(sha.toUpperCase()),
+    /SHA baselines are not supported yet/,
+  );
+  // One character short or long is not the SHA shape — a real run id could
+  // plausibly look like this, so it must NOT be rejected.
+  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(39)));
+  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(41)));
+  // Not all-hex: also not the SHA shape.
+  assert.doesNotThrow(() => assertRunIdBaseline("g".repeat(40)));
+});
+
+test("comparePolicyFromGateOptions: --baseline alone implies regression gating", () => {
+  // No `--gate-regressions` flag exists on `eval gate` — `--baseline` itself
+  // enables the pass-rate regression gate with the SDK's defaults.
+  const policy = comparePolicyFromGateOptions({ baseline: "run_1" });
+  assert.deepEqual(policy.passRateRegression, {});
+});
+
+test("comparePolicyFromGateOptions: no --baseline produces an empty policy", () => {
+  assert.deepEqual(comparePolicyFromGateOptions({}), {});
+});
+
+test("comparePolicyFromGateOptions: every comparative flag requires --baseline", () => {
+  for (const options of [
+    { minSampleSize: "10" },
+    { minEffectSizePercent: "5" },
+    { gateDeterministicRegressions: true },
+    { maxP95LatencyIncreaseMs: "100" },
+  ]) {
+    assert.throws(
+      () => comparePolicyFromGateOptions(options),
+      /pass --baseline/,
+      JSON.stringify(options),
+    );
+  }
+});
+
+test("comparePolicyFromGateOptions: tuning flags apply once --baseline is set", () => {
+  const policy = comparePolicyFromGateOptions({
+    baseline: "run_1",
+    minSampleSize: "10",
+    minEffectSizePercent: "1",
+    gateDeterministicRegressions: true,
+    maxP95LatencyIncreaseMs: "250",
+  });
+  assert.equal(policy.passRateRegression?.minSampleSize, 10);
+  // Percent -> fraction at the boundary, same conversion `eval compare` uses.
+  assert.equal(policy.passRateRegression?.minEffectSize, 0.01);
+  assert.equal(policy.noDeterministicRegressions, true);
+  assert.equal(policy.maximumP95LatencyIncreaseMs, 250);
+});
+
+function gateReport(
+  outcome: GateReport["outcome"],
+  verdicts: GateReport["verdicts"] = [],
+): GateReport {
+  return { outcome, verdicts, scoreIntegrity: "unknown" };
+}
+
+test("mergeGateReports: outcome follows usage_error > failed > incomplete > passed", () => {
+  const cases: Array<
+    [GateReport["outcome"], GateReport["outcome"], GateReport["outcome"]]
+  > = [
+    ["passed", "passed", "passed"],
+    ["failed", "passed", "failed"],
+    ["passed", "failed", "failed"],
+    ["passed", "incomplete", "incomplete"],
+    ["failed", "incomplete", "failed"],
+    ["incomplete", "failed", "failed"],
+    ["usage_error", "failed", "usage_error"],
+    ["failed", "usage_error", "usage_error"],
+  ];
+  for (const [threshold, comparative, expected] of cases) {
+    assert.equal(
+      mergeGateReports(gateReport(threshold), gateReport(comparative)).outcome,
+      expected,
+      `${threshold} + ${comparative}`,
+    );
+  }
+});
+
+test("mergeGateReports: every verdict from both halves survives, neither buries the other", () => {
+  const threshold = gateReport("failed", [
+    { gate: "minimumPassRate", status: "failed", message: "1/2 passed" },
+  ]);
+  const comparative = gateReport("failed", [
+    { gate: "passRateRegression", status: "failed", message: "regressed" },
+  ]);
+  const merged = mergeGateReports(threshold, comparative);
+  assert.deepEqual(
+    merged.verdicts.map((v) => v.gate),
+    ["minimumPassRate", "passRateRegression"],
+  );
+});
+
+test("mergeGateReports: scoreIntegrity carries the RUN's own value, not the comparison's", () => {
+  const threshold = gateReport("passed");
+  const merged = mergeGateReports(
+    { ...threshold, scoreIntegrity: "valid" },
+    { ...gateReport("passed"), scoreIntegrity: "invalid" },
+  );
+  assert.equal(merged.scoreIntegrity, "valid");
+});
+
+const ZERO_DIFF = {
+  base: null,
+  compare: null,
+  delta: null,
+  percentDelta: null,
+};
+
+function compareWire(
+  overrides: Partial<PlatformRunCompare> = {},
+): PlatformRunCompare {
+  return {
+    suite: { id: "s1", name: "Suite" },
+    baseline: { policy: "run", baseRunId: "run_base" },
+    baseRun: {
+      id: "run_base",
+      runNumber: 1,
+      result: "passed",
+      createdAt: 1,
+      completedAt: 2,
+      summary: { total: 70, passed: 56, failed: 14, passRate: 0.8 },
+    },
+    compareRun: {
+      id: "run_compare",
+      runNumber: 2,
+      result: "failed",
+      createdAt: 3,
+      completedAt: 4,
+      summary: { total: 80, passed: 48, failed: 32, passRate: 0.6 },
+    },
+    passSummary: {
+      passRatePercent: ZERO_DIFF,
+      total: ZERO_DIFF,
+      passed: ZERO_DIFF,
+      failed: ZERO_DIFF,
+    },
+    metrics: {
+      wallDurationMs: ZERO_DIFF,
+      totalTokens: ZERO_DIFF,
+      estimatedCostUsd: ZERO_DIFF,
+    },
+    scoreContract: {
+      base: {
+        evaluationConfigHash: "cfg",
+        scoreIntegrity: "valid",
+        scoredIterations: 70,
+        quarantinedIterations: 0,
+      },
+      compare: {
+        evaluationConfigHash: "cfg",
+        scoreIntegrity: "valid",
+        scoredIterations: 80,
+        quarantinedIterations: 0,
+      },
+      evaluationConfigChanged: false,
+      scorers: [],
+    },
+    cases: [
+      {
+        caseKey: "ck_a",
+        title: "Case A",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b1"],
+          representativeIterationId: "b1",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c1"],
+          representativeIterationId: "c1",
+          error: null,
+        },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/** Minimal `PlatformApiClient` slice `evaluateBaselineComparison` needs. */
+function stubClient(
+  compare:
+    | PlatformRunCompare
+    | (() => Promise<PlatformRunCompare>)
+    | { reject: unknown },
+) {
+  return {
+    async compareEvalRun() {
+      if (typeof compare === "function") return compare();
+      if ("reject" in compare) throw compare.reject;
+      return compare;
+    },
+    async listEvalRunIterations() {
+      return { items: [], nextCursor: undefined };
+    },
+  };
+}
+
+test("evaluateBaselineComparison: a real regression evaluates and carries provenance", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(compareWire()) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: "run_base",
+    policy: { passRateRegression: {} },
+  });
+  assert.equal(result.report.outcome, "failed");
+  assert.equal(result.provenance?.baseRunId, "run_base");
+  assert.equal(result.provenance?.compareRunId, "run_compare");
+  const notRecorded = result.provenance?.notRecorded as Record<string, string>;
+  assert.equal(notRecorded.modelProvider, "notRecorded");
+  assert.equal(notRecorded.hostHarness, "notRecorded");
+  assert.equal(notRecorded.serverEnvironmentIdentity, "notRecorded");
+  assert.equal(notRecorded.configHashesBeyondEvaluationConfigHash, "notRecorded");
+});
+
+test("evaluateBaselineComparison: BASELINE_NOT_FOUND folds to incomplete, never failed", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient({
+      reject: Object.assign(new Error("no baseline"), {
+        details: { reason: "BASELINE_NOT_FOUND" },
+      }),
+    }) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: "run_base",
+    policy: { passRateRegression: {} },
+  });
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.gate, "baseline");
+  assert.match(result.report.verdicts[0]?.message ?? "", /no baseline to compare against/);
+  assert.equal(result.provenance, undefined);
+});
+
+test("evaluateBaselineComparison: an unfinished side is incomplete, defence in depth", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(
+      compareWire({
+        compareRun: { ...compareWire().compareRun, completedAt: null },
+      }),
+    ) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: "run_base",
+    policy: { passRateRegression: {} },
+  });
+  assert.equal(result.report.outcome, "incomplete");
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /must be completed before they can be compared/,
+  );
+});
+
+test("buildBaselineProvenance: records every evaluated compatibility signal", () => {
+  const compare = compareWire();
+  const input = {
+    base: { iterations: { total: 70, passed: 56 } },
+    compare: { iterations: { total: 80, passed: 48 } },
+    deterministicScoreRegressions: [],
+    scoreDeltasAvailable: false,
+    caseSetChanged: true,
+    scenarioConfigChanged: false,
+    evaluationConfigChanged: true,
+    iterationWeightingEqual: false,
+  };
+  const provenance = buildBaselineProvenance("run_base", compare, input);
+  assert.deepEqual(provenance.baseline, compare.baseline);
+  assert.deepEqual(provenance.compatibility, {
+    caseSetChanged: true,
+    scenarioConfigChanged: false,
+    evaluationConfigChanged: true,
+    iterationWeightingEqual: false,
+    baseScoreIntegrity: "valid",
+    compareScoreIntegrity: "valid",
+  });
 });
