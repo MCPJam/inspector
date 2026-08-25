@@ -23,15 +23,24 @@ are not included.
 
 `@mcpjam/cli`'s `--reporter` flag accepts `html` alongside `json-summary` and
 `junit-xml` everywhere the flag writes a `StructuredRunReport` — `eval run`,
-`eval gate`, `eval compare`, `server diff`, and `tools call`. `--out` writes the
-HTML atomically; when both `--reporter html` and `--out` are given, the report
-is written to the file and to stdout, same as the other reporters. Commands that
-report a different shape (`ConformanceReport` — `apps conformance`,
-`protocol conformance`, `oauth conformance`, `readiness`, `conformance run`,
-`tasks conformance`) now parse `--reporter html` as syntactically valid, since
-the parser is shared, but reject it at render time with a clear usage error:
-those surfaces have no HTML renderer yet, and building one is out of scope for
-this change.
+`eval gate`, `eval compare`, `server diff`, and `tools call`.
+
+For `eval run`, `eval gate`, and `eval compare`, `--out` writes whatever
+`--reporter` selected, atomically, to the file — the same content as stdout.
+`server diff --out` is the one exception: it has its own, unrelated,
+pre-existing contract — it always writes the **raw** diff JSON (the full
+change list, not the reporter's summarized cases), regardless of
+`--reporter`, same as before this change. `--reporter` on `server diff`
+governs stdout only. `tools call` has no `--out` at all — `--reporter`
+there is stdout-only too, same as `--debug-out`'s separate, unrelated
+artifact.
+
+Commands that report a different shape (`ConformanceReport` — `apps
+conformance`, `protocol conformance`, `oauth conformance`, `readiness`,
+`conformance run`, `tasks conformance`) now parse `--reporter html` as
+syntactically valid, since the parser is shared, but reject it at render
+time with a clear usage error: those surfaces have no HTML renderer yet,
+and building one is out of scope for this change.
 
 Also fixes `eval compare --out`, which wrote the file through the raw JSON
 path regardless of `--reporter` — so `--reporter junit-xml --out report.xml`
