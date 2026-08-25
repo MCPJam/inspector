@@ -201,7 +201,11 @@ function normalizeFixtures(
 export function normalizeMCPConformanceConfig(
   config: MCPConformanceConfig,
 ): NormalizedMCPConformanceConfig {
-  const serverUrl = config.serverUrl.trim();
+  // A caller that forgot the field entirely must get the clear configuration
+  // error below, not a `Cannot read properties of undefined (reading 'trim')`
+  // TypeError recorded as the run's failure reason.
+  const serverUrl =
+    typeof config.serverUrl === "string" ? config.serverUrl.trim() : "";
   if (!serverUrl) {
     throw new Error("MCP conformance config requires serverUrl");
   }
