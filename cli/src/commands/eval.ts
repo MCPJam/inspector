@@ -46,6 +46,7 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
+  CliError,
   cliError,
   operationalError,
   setProcessExitCode,
@@ -76,6 +77,7 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -116,6 +118,11 @@ import {
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  classifyLaunchErrorExitCode,
+  evalRunWaitExitCode,
+  type EvalRunWaitRunOutcome,
+} from "../lib/eval-run-exit-code.js";
+import {
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
@@ -136,6 +143,7 @@ import {
   writeReporterResult,
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import { preflightCloudCredentials } from "../lib/cloud-context.js";
 import {
   addProjectOption,
   platformOptionsOf,
@@ -2255,7 +2263,26 @@ export function registerEvalCommands(program: Command): void {
           : DEFAULT_RUN_WAIT_TIMEOUT_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
-      const result = await runPlatformCommand(
+      // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
+      // `runPlatformOperation` preflight (below) stays the chokepoint every
+      // other Cloud command relies on, including `eval gate`'s exit 3 =
+      // "incomplete". Calling the same check here first makes a missing
+      // credential unambiguous before the launch even starts; the internal
+      // preflight then passes identically.
+      if (options.wait) {
+        try {
+          preflightCloudCredentials(platformOptionsOf(command));
+        } catch (error) {
+          if (error instanceof CliError && error.exitCode === 2) throw error;
+          if (error instanceof CliError) {
+            throw new CliError(error.code, error.message, 3, error.details);
+          }
+          throw error;
+        }
+      }
+      let result: RunEvalSuiteResult;
+      try {
+        result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
@@ -2335,7 +2362,22 @@ export function registerEvalCommands(program: Command): void {
           );
         },
         { projectScope: resolved.projectScope }
-      );
+        );
+      } catch (error) {
+        // Launch-phase remap, --wait only: a thrown CliError whose exitCode
+        // is not already 2 (usage error / invalid suite file — untouched)
+        // gets reclassified by wire code. `toCliError` drops the HTTP
+        // status, so classification reads the code string, not the status.
+        if (options.wait && error instanceof CliError && error.exitCode !== 2) {
+          throw new CliError(
+            error.code,
+            error.message,
+            classifyLaunchErrorExitCode(error.code),
+            error.details
+          );
+        }
+        throw error;
+      }
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
       // stream unparseable for the CI callers that read it.
@@ -2372,11 +2414,23 @@ export function registerEvalCommands(program: Command): void {
                     )
                   };
                 } catch (error) {
+                  // Capture the WIRE code before stringifying: `errorCode`,
+                  // never `code` — the telemetry redactor treats any key
+                  // normalizing to "code" as a possible OAuth authorization
+                  // code and keeps only SCREAMING_SNAKE values (see
+                  // launchFailureCases above). Only set for a real
+                  // PlatformApiError; a deadline timeout (a CliError from
+                  // waitForEvalRun) carries none, which is fine — the
+                  // classifier's "else" bucket already means "no valid
+                  // verdict observed".
                   return {
                     ok: false as const,
                     runId: target.runId,
                     error:
                       error instanceof Error ? error.message : String(error),
+                    ...(isPlatformApiError(error)
+                      ? { errorCode: error.code }
+                      : {}),
                   };
                 }
               })
@@ -2384,7 +2438,15 @@ export function registerEvalCommands(program: Command): void {
           const runs = waited.flatMap((entry) => (entry.ok ? [entry.run] : []));
           const waitErrors = waited.flatMap((entry) =>
             !entry.ok
-              ? [{ runId: entry.runId, error: entry.error }]
+              ? [
+                  {
+                    runId: entry.runId,
+                    error: entry.error,
+                    ...(entry.errorCode
+                      ? { errorCode: entry.errorCode }
+                      : {}),
+                  },
+                ]
               : []
           );
 
@@ -2458,11 +2520,22 @@ export function registerEvalCommands(program: Command): void {
         : undefined;
 
       if (options.out && report) {
-        await writeReporterArtifact(
-          options.out,
-          reporter ?? "json-summary",
-          report
-        );
+        try {
+          await writeReporterArtifact(
+            options.out,
+            reporter ?? "json-summary",
+            report
+          );
+        } catch (error) {
+          // A local `--out` write failure is infrastructure the CLI itself
+          // observed, never a verdict — 4, not the INTERNAL_ERROR default of
+          // 1 a bare fs error would otherwise get from `normalizeCliError`.
+          throw cliError(
+            "OUT_WRITE_FAILED",
+            error instanceof Error ? error.message : String(error),
+            4
+          );
+        }
       }
       if (reporter && report) {
         writeReporterResult(reporter, report);
@@ -2479,17 +2552,34 @@ export function registerEvalCommands(program: Command): void {
       const reportingErrors = completion.reportInputs.filter(
         (input) => !input.iterationsComplete || input.iterationError
       );
+      const reportingFailedRunIds = new Set(
+        reportingErrors.map((input) => input.run.id)
+      );
+      const runOutcomes: EvalRunWaitRunOutcome[] = completion.runs.map(
+        (run) => ({
+          status: run.status,
+          result: run.result,
+          reportingFailed: reportingFailedRunIds.has(run.id),
+        })
+      );
+      const code = evalRunWaitExitCode({
+        launchOutcome: result.outcome,
+        runs: runOutcomes,
+        waitErrors: completion.waitErrors,
+      });
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
         const affectedRunIds = [
           ...reportingErrors.map((input) => input.run.id),
           ...completion.waitErrors.map((entry) => entry.runId),
         ];
-        throw operationalError(
+        throw cliError(
+          "OPERATIONAL_ERROR",
           needsReport
             ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
                 ", "
               )}.`
             : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
+          code,
           {
             // Machine-readable, because the message is not: a pipeline that
             // needs to resume or cancel these runs should not have to parse
@@ -2502,9 +2592,7 @@ export function registerEvalCommands(program: Command): void {
         );
       }
 
-      if (result.outcome !== "started") {
-        setProcessExitCode(1);
-      }
+      setProcessExitCode(code);
     }
   );
 
