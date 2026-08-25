@@ -285,6 +285,20 @@ export function environmentLaunchRejectionError(
   if (!code) return null;
   const status = LAUNCH_REJECTION_STATUS[code];
   if (!status) return null;
+  // The 404s collapse ENTIRELY — one message, one code, one reason, no backend
+  // details — because collapsing only the STATUS does not collapse anything a
+  // caller reads. Forwarding "Environment belongs to a different project"
+  // under `ENV_CROSS_PROJECT` next to "Environment not found" under
+  // `ENV_NOT_FOUND` lets someone submit an arbitrary id and learn which
+  // project it lives in, which is the enumeration answering 404 was meant to
+  // prevent, reintroduced one field lower. Matches how the shared Convex
+  // translator answers every 404: the resource noun, and nothing else.
+  if (status === 404) {
+    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found", {
+      code: "ENV_NOT_FOUND",
+      reason: "env_not_found",
+    });
+  }
   const message =
     typeof record.message === "string" && record.message.trim()
       ? record.message
@@ -295,12 +309,11 @@ export function environmentLaunchRejectionError(
     !Array.isArray(record.details)
       ? (record.details as Record<string, unknown>)
       : {};
-  return new WebRouteError(
-    status,
-    status === 404 ? ErrorCode.NOT_FOUND : ErrorCode.VALIDATION_ERROR,
-    message,
-    { code, ...details, reason: code.toLowerCase() }
-  );
+  return new WebRouteError(status, ErrorCode.VALIDATION_ERROR, message, {
+    code,
+    ...details,
+    reason: code.toLowerCase(),
+  });
 }
 
 export function environmentModelRequiredError(

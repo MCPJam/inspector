@@ -281,13 +281,34 @@ describe("environmentLaunchRejectionError", () => {
     expect((err.details as Record<string, unknown>).reason).toBe("validation");
   });
 
-  it("answers 404 for cross-project and missing, so the route cannot be used to probe", () => {
-    for (const code of ["ENV_CROSS_PROJECT", "ENV_NOT_FOUND"]) {
-      const err = environmentLaunchRejectionError(
-        new ConvexError({ code, message: "nope" })
-      )!;
+  it("makes cross-project and missing INDISTINGUISHABLE, not merely both 404", () => {
+    // Deliberately distinct backend messages: if either reached the caller,
+    // submitting an arbitrary id would reveal which project it lives in — the
+    // enumeration answering 404 exists to prevent. A shared status with a
+    // differing body collapses nothing, so the whole payload is compared.
+    const crossProject = environmentLaunchRejectionError(
+      new ConvexError({
+        code: "ENV_CROSS_PROJECT",
+        message: "Environment belongs to a different project.",
+        details: { environmentId: "env_someone_elses" },
+      })
+    )!;
+    const missing = environmentLaunchRejectionError(
+      new ConvexError({
+        code: "ENV_NOT_FOUND",
+        message: "Environment not found.",
+        details: { environmentId: "env_never_existed" },
+      })
+    )!;
+
+    for (const err of [crossProject, missing]) {
       expect(err.status).toBe(404);
     }
+    expect(crossProject.message).toBe(missing.message);
+    expect(crossProject.details).toEqual(missing.details);
+    // And neither leaks the backend's wording or the originating code.
+    expect(JSON.stringify(crossProject)).not.toMatch(/different project/i);
+    expect(JSON.stringify(crossProject)).not.toMatch(/CROSS_PROJECT/);
   });
 
   it("keeps a non-member or ambiguous selection a 400 the caller can act on", () => {
@@ -306,5 +327,16 @@ describe("environmentLaunchRejectionError", () => {
     ).toBeNull();
     expect(environmentLaunchRejectionError(new Error("boom"))).toBeNull();
     expect(environmentLaunchRejectionError(null)).toBeNull();
+  });
+
+  it("returns null for structured payloads carrying no usable code", () => {
+    // These reach the guards rather than the code lookup, and each is a shape
+    // a backend can actually produce. Falling through to a 500 is right: we
+    // cannot name a reason we were not given.
+    expect(environmentLaunchRejectionError({ data: {} })).toBeNull();
+    expect(environmentLaunchRejectionError({ data: { code: "" } })).toBeNull();
+    expect(environmentLaunchRejectionError({ data: { code: 42 } })).toBeNull();
+    expect(environmentLaunchRejectionError({ data: [] })).toBeNull();
+    expect(environmentLaunchRejectionError({ data: null })).toBeNull();
   });
 });
