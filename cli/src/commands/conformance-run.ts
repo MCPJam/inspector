@@ -80,6 +80,16 @@ export function registerConformanceRunCommand(program: Command): void {
     const reporter = parseReporterFormat(
       (options as { reporter?: string }).reporter,
     );
+    if (reporter === "html") {
+      // Shared parser, different report shape: `conformance run` reports are
+      // a composite of several `ConformanceReport`s, which have no HTML
+      // renderer yet — building one is out of this step's scope. Rejected
+      // here, before anything runs: this option is invalid regardless of
+      // what the suite would find, so it must not cost a real run first.
+      throw usageError(
+        'The "html" reporter is not available for this command yet. Use "json-summary" or "junit-xml".',
+      );
+    }
     const format = resolveConformanceOutputFormatForCli(
       globalOptions.format,
       process.stdout.isTTY,
@@ -106,14 +116,7 @@ export function registerConformanceRunCommand(program: Command): void {
       engineVersion: packageJson.version,
     });
 
-    if (reporter === "html") {
-      // Shared parser, different report shape: `conformance run` reports are
-      // a composite of several `ConformanceReport`s, which have no HTML
-      // renderer yet — building one is out of this step's scope.
-      throw usageError(
-        'The "html" reporter is not available for this command yet. Use "json-summary" or "junit-xml".',
-      );
-    } else if (reporter === "json-summary" || format === "json") {
+    if (reporter === "json-summary" || format === "json") {
       writeConformanceOutput(JSON.stringify(report, null, 2));
     } else if (reporter === "junit-xml") {
       const { renderConformanceReportJUnitXml } = await import("@mcpjam/sdk");
