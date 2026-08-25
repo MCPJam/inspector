@@ -29,7 +29,7 @@ import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import {
   EnvironmentComposer,
-  type EnvironmentComposerSlot,
+  type ComposerSlot,
 } from "@/components/environment-composer/environment-composer";
 import {
   composerHasTarget,
@@ -71,12 +71,10 @@ export type CreateSuitePayload = {
 };
 
 /** Servers as its own required field — one pill, matching the evals mock. */
-export const EVALS_CREATE_SERVER_SLOTS: readonly EnvironmentComposerSlot[] = [
-  "servers",
-];
+export const EVALS_CREATE_SERVER_SLOTS: readonly ComposerSlot[] = ["servers"];
 
 /** Where it runs: client + model side by side on the shared lego strip. */
-export const EVALS_CREATE_RUNS_SLOTS: readonly EnvironmentComposerSlot[] = [
+export const EVALS_CREATE_RUNS_SLOTS: readonly ComposerSlot[] = [
   "clients",
   "models",
 ];
@@ -206,11 +204,7 @@ export function CreateSuitePage({
         ? current
         : {
             ...current,
-            stack: {
-              ...current.stack,
-              hostIds: [preferred.hostId],
-              modelId: current.stack.modelId ?? preferred.modelId ?? null,
-            },
+            stack: { ...current.stack, hostIds: [preferred.hostId] },
             customized: true,
           },
     );
@@ -222,24 +216,13 @@ export function CreateSuitePage({
     target.environmentIds.length,
   ]);
 
-  const seededModelForHostRef = useRef<string | null>(null);
-  useEffect(() => {
-    const hostId = target.stack.hostIds[0];
-    if (!hostId) return;
-    if (seededModelForHostRef.current === hostId) return;
-    if (target.stack.modelId) {
-      seededModelForHostRef.current = hostId;
-      return;
-    }
-    const host = hosts.find((h) => h.hostId === hostId);
-    if (!host?.modelId) return;
-    seededModelForHostRef.current = hostId;
-    setTarget((current) => ({
-      ...current,
-      stack: { ...current.stack, modelId: host.modelId },
-      customized: true,
-    }));
-  }, [hosts, target.stack.hostIds, target.stack.modelId]);
+  // NO model seeding. The stack's model axis defaults to
+  // `includeClientDefaults: true` — one inherit cell per client, which IS
+  // "run the client's own model". Writing the previewed host's `modelId` in as
+  // an EXPLICIT pick would look identical on screen and resolve differently:
+  // the environment fingerprint treats explicit-equals-default as its own row,
+  // so seeding here would mint a duplicate ad-hoc environment for every suite
+  // created from this page. The user opts into an override via the models pill.
 
   const attachmentsRequired = hostsEnabled && projectId !== null;
   const composeHasTarget = composerHasTarget(target);

@@ -62,6 +62,12 @@ vi.mock("@/hooks/useSkillsEnabled", () => ({
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useComputersEnabled: () => false,
 }));
+// The models pill is capability-gated as well as slot-gated: without the
+// backend matrix the slot stays hidden, which is the correct product
+// behavior but would make this file's slot assertions vacuous.
+vi.mock("@/hooks/use-model-matrix-capability", () => ({
+  useModelMatrixCapability: () => true,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],

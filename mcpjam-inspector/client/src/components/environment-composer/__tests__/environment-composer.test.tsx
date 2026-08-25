@@ -31,6 +31,11 @@ vi.mock("@/hooks/useClients", () => ({
     isLoading: false,
   }),
 }));
+// Capability ON, so "models is absent" below is proven by the SLOT list and
+// not by an unavailable backend matrix.
+vi.mock("@/hooks/use-model-matrix-capability", () => ({
+  useModelMatrixCapability: () => true,
+}));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
