@@ -20,7 +20,24 @@ vi.mock("../../../utils/mcp-app-widget-capture.js", () => ({
   uploadVideoBlob,
 }));
 
-import { finalizeEvalIteration } from "../finalize-iteration.js";
+import {
+  finalizeEvalIteration as finalizeEvalIterationWithStatus,
+  type FinalizeEvalIterationParams,
+} from "../finalize-iteration.js";
+
+// Keep the historical fixtures compact while making the production API require
+// an explicit lifecycle status. Individual tests override this default when
+// they exercise a terminal or failed lifecycle.
+function finalizeEvalIteration(
+  params: Omit<FinalizeEvalIterationParams, "status"> & {
+    status?: FinalizeEvalIterationParams["status"];
+  },
+): Promise<void> {
+  return finalizeEvalIterationWithStatus({
+    ...params,
+    status: params.status ?? "completed",
+  });
+}
 
 type Call = { ref: string; args: Record<string, unknown> };
 
@@ -125,6 +142,23 @@ describe("finalizeEvalIteration", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
   });
+
+  test.each(["setup_failed", "skipped"] as const)(
+    "skips update when the iteration is already %s (keeps it terminal)",
+    async (iterationStatus) => {
+      const { client, calls } = makeClient({ iterationStatus });
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
+    },
+  );
 
   test("W1 fallback includes systemPrompt when set (regression: systemPrompt-slot)", async () => {
     // Fanout fails before any turn lands → W1 fallback path. systemPrompt
