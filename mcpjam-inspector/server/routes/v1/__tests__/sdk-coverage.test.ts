@@ -199,6 +199,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
+    "createGateWaiver",
+  "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
+  "delete /projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}":
+    "revokeGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace":

@@ -11,10 +11,12 @@ import {
   evaluateCompareGates,
   evaluateGates,
   gateInputFromPlatformRun,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
   type CompareGateInput,
   type GatePolicy,
   type GateReport,
+  type GateWaiver,
 } from "@mcpjam/sdk";
 import type {
   PlatformApiClient,
@@ -305,6 +307,15 @@ export function baselineNotFoundReason(error: unknown): boolean {
  */
 const OUTCOME_RANK: Record<GateReport["outcome"], number> = {
   passed: 0,
+  // UNREACHABLE by construction: a waiver is folded in by `applyGateWaiver`
+  // AFTER the two halves are merged, so no input to this function can carry
+  // it. Ranked with `passed` rather than left to a lookup miss (`undefined`,
+  // whose every comparison is false, would silently pin the merged outcome to
+  // whichever side was evaluated first) — and ranked LOWEST deliberately: if
+  // one half were ever waived, an unwaived failure on the other half must
+  // still win. A waiver granted over the threshold gate is not consent to
+  // ship a baseline regression.
+  waived: 0,
   incomplete: 1,
   failed: 2,
   usage_error: 3,
@@ -578,4 +589,92 @@ export async function evaluateBaselineComparison(input: {
       input.policy
     ),
   };
+}
+
+// ── Gate waivers ────────────────────────────────────────────────────────────
+
+/**
+ * Read the waiver in force over a run, as `eval gate` should honor it.
+ *
+ * TWO INDEPENDENT CHECKS, and the second one is the point.
+ *
+ * The platform already filters to active waivers, so `active` should always be
+ * true here. It is checked anyway, together with `expiresAt`, because of a
+ * measured weakness on the other side: a Convex query is cached against the
+ * DOCUMENTS it read, and the passage of time is not a document — so a waiver
+ * that lapses between two reads can keep being served as active until
+ * something writes to its row. The platform schedules a write at exactly
+ * `expiresAt` to force that invalidation, and its own tests cannot observe
+ * whether it works (a mutant deleting the write still passes them).
+ *
+ * `eval gate` computes its verdict independently of the platform by design.
+ * Re-deciding the waiver's validity here keeps that independence at the one
+ * place where trusting the server would silently turn a time-boxed waiver into
+ * a permanent one — the exact property this workflow exists to hold, failing
+ * in the exact way nothing on the other side can detect.
+ *
+ * ABSENT (rather than `null`) means an API deployment that predates the field.
+ * That is "we do not know", not "not waived", and it is handled the same way
+ * either produces the same behaviour here: no waiver is applied. What it must
+ * NOT do is throw or warn, because every run gated against an older deployment
+ * would then be noisy about a feature nobody asked for.
+ */
+export function activeWaiverForRun(
+  run: PlatformEvalRun | undefined,
+  now: number = Date.now()
+): GateWaiver | undefined {
+  const waiver = run?.gateWaiver;
+  if (!waiver) return undefined;
+  if (waiver.active !== true) return undefined;
+  if (waiver.revokedAt !== null) return undefined;
+  if (!isGateWaiverInForce(waiver, now)) return undefined;
+  return {
+    id: waiver.id,
+    reason: waiver.reason,
+    expiresAt: waiver.expiresAt,
+    createdAt: waiver.createdAt,
+    createdBy: waiver.createdBy,
+    createdByEmail: waiver.createdByEmail,
+    policySnapshot: waiver.policySnapshot,
+  };
+}
+
+const DURATION_UNIT_MS: Readonly<Record<string, number>> = {
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/**
+ * Parse `--expires-in` into an absolute instant.
+ *
+ * A DURATION at the boundary, not a timestamp, because the thing a human knows
+ * is "give me three days", and hand-computing an epoch-millisecond deadline is
+ * an invitation to typo a waiver into the wrong month.
+ *
+ * Deliberately does NOT enforce the platform's 30-day ceiling. That refusal
+ * (`gate_waiver_expiry_too_far`) carries copy the platform wrote, naming the
+ * cap and what to do instead; a local check firing first would replace it with
+ * a message this file invented, and would then be a second copy of a limit
+ * that can change on the other side of the wire.
+ *
+ * Bare numbers are rejected rather than assumed to be anything: `--expires-in
+ * 7` is ambiguous between seven minutes and seven days, and the difference is
+ * a gate that reopens before lunch or three weeks later.
+ */
+export function parseWaiverExpiry(
+  raw: string,
+  now: number = Date.now()
+): number {
+  const match = /^(\d+)\s*([mhd])$/i.exec(raw.trim());
+  if (!match) {
+    throw usageError(
+      `--expires-in must be a duration like 30m, 12h, or 7d, got "${raw}".`
+    );
+  }
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw usageError(`--expires-in must be greater than zero, got "${raw}".`);
+  }
+  return now + amount * DURATION_UNIT_MS[match[2]!.toLowerCase()]!;
 }
