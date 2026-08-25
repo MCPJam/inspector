@@ -29,6 +29,7 @@ import { mapErrorToV1, v1OnError } from "../envelope.js";
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../../web/errors.js";
 import { translateConvexWriteError } from "../convex-errors.js";
 import { translateConvexReadError } from "../convex-read-errors.js";
+import { requireConvexIdShape } from "../convex-id-param.js";
 import { logger } from "../../../utils/logger.js";
 
 const captureException = vi.mocked(Sentry.captureException);
@@ -466,5 +467,120 @@ describe("translateConvexReadError — argument validation is warned, not paged"
 
     expect(result.status).toBe(404);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The eval-run id incident, expressed as what it actually cost: not the 404,
+ * the PAGE. A caller-supplied path segment Convex could not parse produced a
+ * 500 that `mcpjam_internal` promoted to `origin=mcpjam` and captured, once
+ * per retry, from a route a share-link guest can reach.
+ */
+describe("a malformed id parameter must not page", () => {
+  const MULTI_ID =
+    "mh78djdyf2dqbmxky71sz9y6x58d5p2c mh7ck9qd0hzc7a2ckd3546ebq58d4yd3";
+
+  function reject(): unknown {
+    try {
+      requireConvexIdShape(MULTI_ID, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected the id gate to reject");
+  }
+
+  it("captures nothing, even under the internal boundary", () => {
+    vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const result = mapErrorToV1(reject(), INTERNAL);
+
+    expect(result.code).toBe("NOT_FOUND");
+    // The whole point. Before the gate this was INTERNAL_ERROR, the one
+    // combination `effectiveBoundary` promotes to `mcpjam` — so a guest with a
+    // bad id could mint paging Sentry events at will.
+    expect(result.origin).not.toBe("mcpjam");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("counts the rejection in Axiom instead of going silent", () => {
+    // Not silence: the gate's other failure mode is a Convex id-format change,
+    // which would 404 EVERY caller under a status no 5xx monitor watches. The
+    // warn is what makes that visible and rate-alertable.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    reject();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      scope: "v1.evals",
+      param: "runId",
+    });
+  });
+});
+
+/**
+ * The gate logs the value it rejected, and the value is whatever a client put
+ * in an id slot — including what a MIS-BUILT URL puts there. This line is
+ * designed to fire on high-volume retry loops, so anything it forwards
+ * verbatim accumulates in Axiom.
+ */
+describe("the id gate redacts before it truncates", () => {
+  // Assembled at runtime, and NOT with a real provider's prefix. A literal
+  // `sk_live_…` in a fixture is indistinguishable from a leaked Stripe key to
+  // GitHub's push protection, which blocks the push — so the fixture uses this
+  // repo's own service-credential prefix (`slk_`, `surface-service-auth.ts`)
+  // and builds it from parts. `CREDENTIAL_PATTERN` covers `sk|slk|dsc|api`
+  // identically, so the assertion is unchanged.
+  const FAKE_SECRET = ["notareal", "servicekey", "fixture", "0123456789"].join(
+    ""
+  );
+  const FAKE_CREDENTIAL = `slk${"_"}${FAKE_SECRET}`;
+
+  it("does not put a caller-supplied credential in the log line", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      requireConvexIdShape(FAKE_CREDENTIAL, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch {
+      // expected
+    }
+
+    const detail = String(
+      (warn.mock.calls[0]?.[1] as Record<string, unknown> | undefined)?.detail ??
+        ""
+    );
+    expect(detail).not.toContain(FAKE_SECRET);
+    // Still says WHICH credential shape was rejected — that is the diagnostic
+    // value, and it is what makes a mis-built client identifiable at all.
+    expect(detail).toContain("redacted");
+  });
+
+  it("redacts BEFORE the 64-character cut, not after", () => {
+    // Order is the whole finding. Slicing first can cut a secret in half and
+    // leave a fragment `CREDENTIAL_PATTERN` no longer recognizes — which is how
+    // a scrubber silently stops scrubbing. The padding here pushes the secret
+    // across the 64-character boundary so the wrong order is observable.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      requireConvexIdShape(`${"p".repeat(50)} ${FAKE_CREDENTIAL}`, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch {
+      // expected
+    }
+
+    const detail = String(
+      (warn.mock.calls[0]?.[1] as Record<string, unknown> | undefined)?.detail ??
+        ""
+    );
+    expect(detail).not.toContain(FAKE_SECRET.slice(0, 12));
   });
 });
