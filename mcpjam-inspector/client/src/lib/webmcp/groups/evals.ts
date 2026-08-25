@@ -1,6 +1,6 @@
 /**
  * Evals-screen tools: run/cancel/generate/delete existing suites, and open
- * the create-suite dialog with an optional name prefill.
+ * the create-suite page with an optional name prefill.
  *
  * Mount-scoped like the registry group: `EvalsTab` owns the command handlers
  * and the suites they resolve against, so the tools exist exactly while
@@ -40,13 +40,13 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
     {
       name: "ui_open_eval_suite_form",
       description:
-        "Open the create-suite dialog on the Evaluate screen for the user to fill in and submit. Optionally prefills the suite name — nothing else. This only prepares the form; it never creates the suite (the user picks servers/hosts and submits). To act on an existing suite, use the run/generate/delete eval tools instead.",
+        "Open the create-suite page on the Evaluate screen for the user to fill in and submit. Optionally prefills the suite name — nothing else. This only prepares the form; it never creates the suite (the user picks servers/hosts and submits). To act on an existing suite, use the run/generate/delete eval tools instead.",
       inputSchema: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "Optional suite name to prefill in the dialog.",
+            description: "Optional suite name to prefill on the create page.",
           },
         },
         additionalProperties: false,
@@ -58,7 +58,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
-      // Opens the /evals/create route (the dialog) on the Evaluate screen.
+      // Opens the /evals/create route (the create page) on the Evaluate screen.
       mayNavigate: true,
       execute: async (args) => {
         const name = asOptionalString(args.name);

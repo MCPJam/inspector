@@ -72,6 +72,7 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformEvalRunDisclosure,
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
@@ -130,6 +131,159 @@ import type {
 export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
+  /**
+   * Fired by `runEvalSuiteOperation` with the pre-run disclosure it fetched
+   * for the frozen launch plan, ONE resolution before it calls
+   * `createEvalRun`/`createEvalRunGroup` — so "what was disclosed" is
+   * literally "what will run", not a second, independently-resolved target
+   * that could drift from it. A caller that wants to show or log the
+   * disclosure passes this rather than resolving targets a second time to
+   * fetch it separately.
+   *
+   * Best-effort: a disclosure fetch failure (a backend that predates the
+   * contract, a transient error) never blocks or fails the launch — this
+   * callback simply does not fire, and the receipt's `disclosure` field is
+   * absent. Never called for `runEvalCaseOperation`, which shares no target
+   * resolution with the suite op. See `onDisclosureUnavailable` for the
+   * failure counterpart.
+   *
+   * SYNCHRONOUS BY CONTRACT — the "ONE resolution before the create call"
+   * ordering guarantee only holds for code that runs to completion before
+   * this function returns. It is not awaited: a caller who ignores the type
+   * and hands back an async function anyway gets its rejections swallowed
+   * defensively, but only its SYNCHRONOUS prefix is guaranteed to run before
+   * `createEvalRun`/`createEvalRunGroup`.
+   */
+  onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+  /**
+   * Fired INSTEAD of `onDisclosure` when the fetch for the frozen launch
+   * plan failed — a backend predating the contract, a timeout, a transient
+   * error. Still never blocks or fails the launch (the same best-effort
+   * guarantee `onDisclosure` carries); this exists so a caller can say
+   * something was ATTEMPTED and failed, rather than rendering nothing at
+   * all. An absent disclosure with no signal at all is indistinguishable
+   * from "this build has no disclosure feature" — the same failure class
+   * the backend's `executionAbsence.kind` exists to prevent one layer up.
+   *
+   * Never fired for a caller-initiated cancellation (the operation's own
+   * `signal` aborting) — that is not a disclosure failure to report, it is
+   * the whole launch being cancelled, and mislabeling it as "the disclosure
+   * fetch timed out" would misdescribe an unrelated abort. Synchronous by
+   * contract, same as `onDisclosure`.
+   */
+  onDisclosureUnavailable?: (reason: string) => void;
+}
+
+/**
+ * Ceiling on the pre-run disclosure fetch, independent of whatever deadline
+ * the caller's own signal carries.
+ *
+ * Deliberately SHORT, not generous: this fetch is awaited BEFORE
+ * `createEvalRun(Group)`, sequentially, sharing the SAME caller-supplied
+ * deadline signal (`runPlatformOperation` in the CLI creates one
+ * `AbortController` for the whole operation and threads its signal through
+ * both calls). A bound anywhere near the caller's own timeout risks the
+ * disclosure fetch alone consuming most or all of it — `boundedDisclosureSignal`
+ * still forwards a genuine caller abort into this fetch to cut it short, but
+ * by the time that forwarded abort lands, the caller's signal is ALREADY
+ * aborted, and `createEvalRun` — sharing that same signal — then fails
+ * immediately with zero chance to run, turning a best-effort read into a
+ * failed launch. A single lightweight GET to our own backend has no business
+ * needing more than a few seconds under normal conditions, so this stays
+ * short enough to leave the launch call a fair remaining share of any
+ * realistic `--timeout` (the CLI default is 30s), while still catching a
+ * genuine stall. Not a complete fix for a pathologically small caller
+ * timeout (e.g. `--timeout 500`) — that would need the operation to know its
+ * OWN remaining budget, which `PlatformOperationContext` does not carry
+ * today.
+ */
+const DISCLOSURE_FETCH_TIMEOUT_MS = 3_000;
+
+/**
+ * A signal for the best-effort disclosure fetch that is bounded by ITS OWN
+ * short timeout, so a stalled request cannot silently consume the caller's
+ * launch deadline — see the `onDisclosure` doc above. Still aborts when the
+ * caller signal does (a genuine cancellation should stop this fetch too); it
+ * just never runs the other direction, and its own timer never touches the
+ * caller's signal.
+ */
+function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  if (callerSignal?.aborted) {
+    // Already aborted before this helper ran — e.g. propagated from an
+    // earlier best-effort lookup, or a caller-supplied pre-aborted signal.
+    // `addEventListener("abort", ...)` alone would never fire for an event
+    // that already happened, leaving the fetch to run for the full timeout.
+    // Passing the reason through keeps a caller inspecting the derived
+    // signal's `.reason` from seeing a generic AbortError in place of
+    // whatever actually caused the caller's own cancellation.
+    controller.abort(callerSignal.reason);
+    return {
+      signal: controller.signal,
+      dispose: () => {},
+    };
+  }
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    DISCLOSURE_FETCH_TIMEOUT_MS,
+  );
+  const onCallerAbort = () => controller.abort(callerSignal!.reason);
+  callerSignal?.addEventListener("abort", onCallerAbort);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+/**
+ * Invokes a `PlatformOperationContext` disclosure callback (`onDisclosure` /
+ * `onDisclosureUnavailable`) — SYNCHRONOUS by contract, never awaited, so its
+ * failure can never delay the launch that follows. This exists only as a
+ * runtime safety net for a caller who ignores the sync-only type and hands
+ * back an async function anyway (TypeScript permits it structurally): the
+ * returned value is wrapped so a later rejection is swallowed rather than
+ * surfacing as an unhandled rejection. A synchronous throw is caught the
+ * same way. Either way, only the callback's SYNCHRONOUS prefix is guaranteed
+ * to have run by the time this returns.
+ */
+function invokeDisclosureCallback(run: () => void | Promise<void>): void {
+  try {
+    void Promise.resolve(run()).catch(() => {
+      // The callback's own async failure is the caller's concern.
+    });
+  } catch {
+    // The callback's own synchronous failure is likewise the caller's
+    // concern.
+  }
+}
+
+/**
+ * A short, human-readable reason a disclosure fetch failed — for
+ * `onDisclosureUnavailable`, so a caller can say something was ATTEMPTED and
+ * failed rather than rendering nothing at all. Deliberately coarse: this is
+ * a best-effort planning aid's failure message, not a diagnostic surface.
+ */
+function disclosureUnavailableReason(error: unknown): string {
+  if (error instanceof PlatformApiError) {
+    if (
+      error.code === "FEATURE_NOT_SUPPORTED" &&
+      (error.details as Record<string, unknown> | undefined)?.reason ===
+        "contract_unavailable"
+    ) {
+      return "this deployment predates the pre-run disclosure contract";
+    }
+    return error.message;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return "the disclosure fetch timed out";
+  }
+  return "the disclosure fetch failed";
 }
 
 export const getMeOperation: PlatformOperation<
@@ -1972,6 +2126,30 @@ function assertRunTargetSelectorsCoherent(input: {
  * mode this replaces was an agent guessing a target because the error did not
  * say which ones existed.
  */
+/**
+ * `getEvalRunDisclosureOperation`'s own TARGET_REQUIRED refusal — deliberately
+ * NOT `targetRequiredMessage`, whose closing sentence names `host` and
+ * `allAttached` and calls each target "one PAID RUN". This operation's input
+ * schema has neither selector (see the HOST-axis comment above its plan),
+ * and it is `readOnly: true` — nothing it does spends anything. Naming a
+ * fix a caller cannot apply would send an agent retrying with a flag that
+ * fails validation the same way twice.
+ */
+function disclosureTargetRequiredMessage(plan: {
+  attachedEnvironments: RunTarget[];
+}): string {
+  const named = plan.attachedEnvironments
+    .map((target) =>
+      target.name ? `"${target.name}" (${target.id})` : target.id,
+    )
+    .join(", ");
+  return (
+    "TARGET_REQUIRED — this suite has several attached environments, so which one to disclose for is ambiguous. " +
+    `Attached environments: ${named}. ` +
+    "Name one with environment, or several with environments."
+  );
+}
+
 function targetRequiredMessage(plan: {
   attachedEnvironments: RunTarget[];
   attachedHosts: RunTarget[];
@@ -2898,6 +3076,15 @@ export type RunEvalSuiteResult = {
   /** One entry per target, in launch order. */
   targets: RunEvalTargetResult[];
   /**
+   * The pre-run disclosure fetched for this launch's frozen target plan — the
+   * SAME resolution `onDisclosure` (see `PlatformOperationContext`) already
+   * received, carried on the receipt so a caller that only reads the return
+   * value (rather than passing a callback) still sees it. Absent when the
+   * fetch failed — a backend that predates the contract, a transient error —
+   * which never blocks the launch itself.
+   */
+  disclosure?: PlatformEvalRunDisclosure;
+  /**
    * @deprecated Mirrors of the FIRST started run, kept so callers written
    * against the single-run shape keep working. Read `targets` instead — on a
    * grouped launch these describe one run out of several.
@@ -2924,7 +3111,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onDisclosure, onDisclosureUnavailable }) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3081,6 +3268,105 @@ export const runEvalSuiteOperation: PlatformOperation<
       );
     }
 
+    // THE ONE RESOLUTION. The plan is now frozen — this is the exact target
+    // set `createEvalRun`/`createEvalRunGroup` are about to launch below — so
+    // fetching the disclosure here, keyed off that SAME frozen plan, is what
+    // makes "what was disclosed" identical to "what will run". Deliberately
+    // NOT re-resolved from `input`'s raw selectors a second time: a second
+    // resolution could race an attachment edit and disclose a different plan
+    // than the one that launches a moment later.
+    //
+    // BEST EFFORT. A disclosure fetch failure — a backend that predates the
+    // contract, a transient network error — must never block or fail a
+    // launch: this is a planning aid, not a gate. `onDisclosure` simply does
+    // not fire, and the receipt's `disclosure` field is absent.
+    let disclosure: PlatformEvalRunDisclosure | undefined;
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
+    // A HOST-axis frozen plan has no query this fetch could send: the backend
+    // contract (testSuites:getRunDisclosure) takes only
+    // caseIds/environmentId(s), never a host selector. Sending none would
+    // silently return the suite-BASE disclosure and attach it to the receipt
+    // as if it described this launch — but a host config can pin its own
+    // model and harness, so a host-targeted run can be disclosed as
+    // "emulated, no sandbox" while it actually boots a different engine on a
+    // different model. An honest absence beats a confident wrong answer,
+    // which is the whole principle this contract is built on — so this skips
+    // the fetch entirely for a host target and reports it as unavailable,
+    // rather than presenting the suite-base derivation as authoritative.
+    // (A plan with NOTHING attached is unaffected: `plan.target` is
+    // undefined there, not host-kind, and that bare-rerun case is exactly
+    // what the suite-base derivation already answers correctly for.)
+    const isHostAxisLaunch =
+      (plan.kind === "single" && plan.target?.kind === "host") ||
+      (plan.kind === "group" &&
+        plan.targets.some((target) => target.kind === "host"));
+    let disclosureFailureReason: string | undefined;
+    if (isHostAxisLaunch) {
+      disclosureFailureReason =
+        "not derivable for a host-targeted launch — the pre-run disclosure contract has no host selector yet";
+    } else {
+      // BOUNDED INDEPENDENTLY of the caller's own signal/deadline. This
+      // request is awaited BEFORE the launch, so sharing the caller's signal
+      // would let a stalled disclosure fetch burn through the launch's own
+      // timeout budget — and once that deadline fires, the shared signal is
+      // already aborted for the createEvalRun(Group) call a moment later,
+      // turning a best-effort read into a failed launch.
+      // `boundedDisclosureSignal` still aborts on a genuine caller
+      // cancellation; it just cannot itself abort anything but this one
+      // fetch.
+      const disclosureBound = boundedDisclosureSignal(signal);
+      try {
+        disclosure = await client.getEvalRunDisclosure(
+          {
+            projectId: project.id,
+            suiteId: suite.id,
+            ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+            ...(disclosureEnvironmentIds.length === 1
+              ? { environmentId: disclosureEnvironmentIds[0]! }
+              : disclosureEnvironmentIds.length > 1
+                ? { environmentIds: disclosureEnvironmentIds }
+                : {}),
+          },
+          { signal: disclosureBound.signal },
+        );
+      } catch (error) {
+        disclosure = undefined;
+        // A caller-initiated cancellation (the launch's OWN signal aborting,
+        // forwarded through `boundedDisclosureSignal`) is not a disclosure
+        // failure — the whole operation is being cancelled, and labeling it
+        // "the disclosure fetch timed out" would misdescribe an unrelated
+        // abort right before the launch itself fails the same way.
+        disclosureFailureReason = signal?.aborted
+          ? undefined
+          : disclosureUnavailableReason(error);
+      } finally {
+        disclosureBound.dispose();
+      }
+    }
+    // OUTSIDE the fetch's try/catch on purpose: `onDisclosure`/
+    // `onDisclosureUnavailable` are caller code we do not control, and a
+    // callback that throws must not be able to erase a disclosure that was
+    // already fetched successfully — only a FETCH failure may leave
+    // `disclosure` unset.
+    if (disclosure) {
+      invokeDisclosureCallback(() => onDisclosure?.(disclosure!));
+    } else if (disclosureFailureReason) {
+      // An absent disclosure with NO signal at all is indistinguishable from
+      // "this build has no disclosure feature" — a caller that wants to say
+      // "attempted, failed" rather than rendering nothing gets the chance to
+      // here. Still never blocks or fails the launch.
+      invokeDisclosureCallback(() =>
+        onDisclosureUnavailable?.(disclosureFailureReason!),
+      );
+    }
+
     const knobs = runKnobBody(input, caseIds);
     const projectInfo = toSelectedProjectInfo(project);
     const suiteInfo = { id: suite.id, name: suite.name };
@@ -3126,6 +3412,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         outcome: "started",
         startedCount: 1,
         failedCount: 0,
+        ...(disclosure ? { disclosure } : {}),
         ...(composed ? { composed: composed.report } : {}),
         targets: [
           {
@@ -3221,6 +3508,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
+      ...(disclosure ? { disclosure } : {}),
       ...(composed ? { composed: composed.report } : {}),
       targets,
       ...(firstStarted
@@ -3824,6 +4112,172 @@ export const getEvalSuiteOperation: PlatformOperation<
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+  },
+};
+
+const getEvalRunDisclosureInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cases: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow the disclosure to these cases (titles or IDs) instead of the whole suite — the same subset a run selects with `cases`.",
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  environments: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+    ),
+});
+export type GetEvalRunDisclosureInput = z.infer<
+  typeof getEvalRunDisclosureInput
+>;
+
+export const getEvalRunDisclosureOperation: PlatformOperation<
+  GetEvalRunDisclosureInput,
+  PlatformEvalRunDisclosure
+> = {
+  name: "get_eval_run_disclosure",
+  title: "Get eval run pre-run disclosure",
+  description:
+    "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
+  readOnly: true,
+  inputSchema: getEvalRunDisclosureInput,
+  async execute(input, { client, signal }) {
+    assertRunTargetSelectorsCoherent({
+      environment: input.environment,
+      environments: input.environments,
+    });
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
+        )
+      : undefined;
+    const detail = await client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+    const selectedEnvironments = await resolveSuiteEnvironmentTargets(
+      client,
+      project,
+      suite,
+      detail,
+      input.environment ? [input.environment] : (input.environments ?? []),
+      signal,
+    );
+    // SAME plan resolution `run_eval_suite` uses — including its
+    // exactly-one-attached-environment auto-select — so a bare call (no
+    // selector at all) discloses the plan a bare launch would actually run,
+    // not a suite-base derivation that could name different models. A suite
+    // with SEVERAL attached targets and no selector is ambiguous for a launch
+    // too, so it refuses the same way here rather than silently disclosing
+    // one of them.
+    const attachedEnvironmentNames = await environmentNamesFor(
+      client,
+      project,
+      detail.environmentIds ?? [],
+      signal,
+    );
+    // `attachedHosts` IS included in this plan — unlike an earlier version
+    // of this operation, which left it out and let a host-only suite fall
+    // through to the misleading selector-less suite-base derivation (the
+    // same failure mode `run_eval_suite`'s `isHostAxisLaunch` refuses). This
+    // operation's own input schema still has no host selector, so a caller
+    // cannot satisfy a host-axis `target-required` refusal the way
+    // `run_eval_suite` lets one satisfy it with `--host` — but that is
+    // handled below by refusing the host-axis case outright, not by hiding
+    // it from `computeRunTargets` and hoping it resolves to something else.
+    const attachedHostNames = new Map(
+      (detail.hosts ?? []).map((host) => [host.id, host.name]),
+    );
+    const plan = computeRunTargets({
+      attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
+        id,
+        ...(attachedEnvironmentNames.get(id)
+          ? { name: attachedEnvironmentNames.get(id)! }
+          : {}),
+      })),
+      attachedHosts: (detail.hosts ?? []).map((host) => ({
+        id: host.id,
+        name: host.name,
+      })),
+      selectedEnvironments,
+      selectedHosts: [],
+    });
+    const hostAxisUnavailableMessage = (hostName?: string) =>
+      `Disclosure is not derivable for this suite — it resolves to a HOST-targeted launch${
+        hostName ? ` ("${hostName}")` : ""
+      }, and the pre-run disclosure contract has no host selector yet. A host config can pin its own model and harness, so the suite-base disclosure would not reliably describe what this launch actually does.`;
+    if (plan.kind === "target-required") {
+      // An ambiguity the caller CAN resolve — this operation's `environment`/
+      // `environments` selector names one of the attached environments — gets
+      // the ordinary refusal. An ambiguity that is PURELY among attached
+      // hosts (zero attached environments) has no selector to resolve it
+      // with at all: `disclosureTargetRequiredMessage` would otherwise say
+      // "name one with environment" against an empty environment list, which
+      // names nothing the caller could actually do.
+      if (plan.attachedEnvironments.length > 0) {
+        throw operationInputError(disclosureTargetRequiredMessage(plan));
+      }
+      throw operationInputError(hostAxisUnavailableMessage());
+    }
+    // A HOST-axis resolution (a bare-launch auto-select of the suite's sole
+    // attached host, same rule `run_eval_suite` uses) has no query this
+    // operation could send: the backend contract (testSuites:getRunDisclosure)
+    // takes only caseIds/environmentId(s), never a host selector. Unlike
+    // `run_eval_suite`, there is no launch to fall back to here — this
+    // operation's entire job is the disclosure — so it refuses outright
+    // rather than silently returning the suite-base derivation as if it
+    // described the host that will actually run.
+    if (plan.kind === "single" && plan.target?.kind === "host") {
+      throw operationInputError(
+        hostAxisUnavailableMessage(
+          attachedHostNames.get(plan.target.id) ?? plan.target.id,
+        ),
+      );
+    }
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
+    return client.getEvalRunDisclosure(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+        ...(disclosureEnvironmentIds.length === 1
+          ? { environmentId: disclosureEnvironmentIds[0]! }
+          : disclosureEnvironmentIds.length > 1
+            ? { environmentIds: disclosureEnvironmentIds }
+            : {}),
+      },
       { signal },
     );
   },
@@ -10795,6 +11249,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   runEvalCaseOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,

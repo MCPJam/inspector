@@ -237,6 +237,8 @@ interface EvalFixtureOptions {
    * started.
    */
   closeAfterLaunch?: boolean;
+  /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
+  disclosureUnavailable?: boolean;
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -247,6 +249,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   groupBodies: unknown[];
   composeBodies: unknown[];
   attachBodies: unknown[];
+  disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+  }>;
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
@@ -255,6 +262,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   const groupBodies: unknown[] = [];
   const composeBodies: unknown[] = [];
   const attachBodies: unknown[] = [];
+  const disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+  }> = [];
   const UNAUTHORIZED_BODY = JSON.stringify({
     code: "UNAUTHORIZED",
     message: "token expired",
@@ -518,6 +530,118 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           schedule: {},
           createdAt: 1,
           updatedAt: 2,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-1/run-disclosure" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      disclosureRequests.push({
+        caseIds: url.searchParams.get("caseIds"),
+        environmentId: url.searchParams.get("environmentId"),
+        environmentIds: url.searchParams.get("environmentIds"),
+      });
+      if (options.disclosureUnavailable) {
+        res.statusCode = 422;
+        res.end(
+          JSON.stringify({
+            code: "FEATURE_NOT_SUPPORTED",
+            message: "This deployment predates the disclosure contract",
+            details: { reason: "contract_unavailable" },
+          }),
+        );
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          contractVersion: 1,
+          computedAt: 1_700_000_000_000,
+          digest: "deadbeef",
+          execution: {
+            engine: "emulated",
+            sandbox: { engaged: false, because: "no sandbox needed" },
+            locus: { known: true, hosted: false },
+            models: [
+              {
+                modelId: "openai/gpt-5.4-mini",
+                provider: "openai",
+                tenantEgress: "mcpjam-hosted",
+                rail: {
+                  managed: true,
+                  possibleDestinations: ["gateway", "openrouter"],
+                  outcomeIfRunNow: {
+                    destination: "gateway",
+                    observedAt: 1_700_000_000_000,
+                    volatile: true,
+                  },
+                  inputs: {
+                    mode: "auto",
+                    gatewayEligible: true,
+                    hasOpenRouterFallback: null,
+                  },
+                  ruleLocation: "convex/lib/chatProvider.ts#resolveChatProvider",
+                  authoritativePerRequestRecord: "llmUsageRecord",
+                },
+              },
+            ],
+          },
+          analysis: [
+            {
+              touchpoint: "goalCompletion",
+              label: "Goal-completion judge",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["OpenRouter (openrouter.ai)"],
+              evidenceSent: ["case prompt"],
+              fires: "explicit-request-only",
+            },
+            {
+              touchpoint: "runInsights",
+              label: "Run insights report",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["A wholly different destination"],
+              evidenceSent: ["failure signatures"],
+              fires: "auto-on-completion",
+            },
+          ],
+          capture: {
+            captureLevel: "full",
+            reportingMode: "standard",
+            tiersImplemented: false,
+            redaction: {
+              kind: "credential-shaped",
+              module: "convex/lib/evalIngestRedaction.ts",
+              isDlp: false,
+              limitation: "not DLP",
+              appliesTo: [],
+            },
+            exportDefaults: {
+              includeContent: false,
+              ruleLocation: "convex/traceExport.ts",
+              note: "redacted by default",
+            },
+          },
+          retention: {
+            planName: "free",
+            policyDays: 30,
+            source: "plan entitlements",
+            enforced: true,
+            enforcementBlockers: [],
+            effectiveToday: "swept-after-policy-days",
+            evidentiaryClasses: [],
+            backupStatement: {
+              vendor: "Convex",
+              capturedAt: "2026-08-23",
+              sourceUrl: "https://docs.convex.dev/database/backup-restore",
+              statements: [],
+            },
+          },
+          region: { stated: false, reason: "no deployment region is derivable" },
+          subprocessors: [],
         }),
       );
       return;
@@ -950,6 +1074,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     groupBodies,
     composeBodies,
     attachBodies,
+    disclosureRequests,
     close: () =>
       new Promise<void>((resolve, reject) => {
         for (const socket of sockets) socket.destroy();
@@ -1925,6 +2050,153 @@ test("--format json output stays byte-identical — no View line", async () => {
   }
 });
 
+test("eval run --format json emits exactly one document, containing disclosure", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(run.stdout.trimEnd().split("\n").length, 1);
+    const parsed = JSON.parse(run.stdout);
+    assert.equal(parsed.disclosure.contractVersion, 1);
+    assert.equal(parsed.disclosure.execution.engine, "emulated");
+    assert.equal(fixture.disclosureRequests.length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints the disclosure block in human mode, before the run link", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const disclosureIndex = run.stdout.indexOf("Pre-run disclosure:");
+    const viewIndex = run.stdout.indexOf("View:");
+    assert.notEqual(disclosureIndex, -1);
+    assert.notEqual(viewIndex, -1);
+    assert.ok(disclosureIndex < viewIndex);
+    assert.match(run.stdout, /Execution: emulated/);
+    // Each firing touchpoint gets its OWN destination line — pooling them
+    // under the first touchpoint's destination would misattribute where the
+    // others' evidence goes.
+    assert.match(
+      run.stdout,
+      /Goal-completion judge.*OpenRouter \(openrouter\.ai\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report.*A wholly different destination/,
+    );
+    assert.ok(
+      !/Goal-completion judge.*A wholly different destination/.test(
+        run.stdout,
+      ),
+    );
+    // Capture/redaction facts are the human's only pre-launch view of what
+    // happens to content once it exists (the standalone disclosure command
+    // is excluded) — a consequential setting like a non-DLP redaction module
+    // must not be silently absent from the printed block.
+    assert.match(run.stdout, /Capture: full · reporting standard/);
+    assert.match(
+      run.stdout,
+      /Redaction: credential-shaped — NOT a DLP system \(not DLP\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Export defaults: excludes content \(redacted by default\)/,
+    );
+    // "fires automatically" vs "fires only if asked" are different consent
+    // stories — the fixture's goalCompletion touchpoint is
+    // explicit-request-only, runInsights is auto-on-completion, and this
+    // renderer must not flatten that distinction just because both "fire".
+    assert.match(
+      run.stdout,
+      /Goal-completion judge fires only if explicitly requested/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report fires automatically on completion/,
+    );
+    // The raw enum plus policy days beside it can read as self-contradictory
+    // for an org whose policy number isn't enforced — "kept-indefinitely
+    // (30d policy)" makes the 30 the number a reader takes away. Print the
+    // humanized claim only, matching the UI's already-correct phrasing.
+    assert.match(run.stdout, /Retention: swept after 30 day\(s\)/);
+    assert.equal(run.stdout.includes("kept-indefinitely"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints a disclosure-unavailable line in human mode when the fetch fails", async () => {
+  // An absent disclosure with NO output at all is indistinguishable from "no
+  // disclosure feature on this build" — this is the failure counterpart to
+  // the happy-path block above.
+  const fixture = await startEvalFixture({ disclosureUnavailable: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(
+      run.stdout,
+      /Pre-run disclosure unavailable: this deployment predates the pre-run disclosure contract/,
+    );
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --wait writes failed JSON and JUnit reports before returning", async () => {
   const fixture = await startEvalFixture({ runCaseResult: "failed" });
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
@@ -1980,6 +2252,13 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     );
     assert.equal(json.cases[0].error, "Authorization: [REDACTED]");
     assert.equal(jsonRaw.includes("top-secret"), false);
+    // A reporter's stdout output must stay ONE parseable document: the
+    // pre-run disclosure block prints from `onDisclosure` on this same
+    // stream, and if it isn't suppressed for a reporter run it prepends
+    // "Pre-run disclosure:" prose ahead of the JSON, breaking a CI caller
+    // that parses stdout as JSON.
+    assert.equal(jsonRun.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(jsonRun.stdout);
 
     const junitRun = await captureProcessOutput(() =>
       main(
@@ -2008,6 +2287,52 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     assert.match(junit, /failures="1"/);
     assert.match(junit, /<failure message="Authorization: \[REDACTED\]"/);
     assert.equal(junit.includes("top-secret"), false);
+    assert.equal(junitRun.stdout.includes("Pre-run disclosure:"), false);
+    assert.match(junitRun.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --format human --reporter redirects the disclosure block to stderr, not stdout", async () => {
+  // A CI user on --reporter is the population most likely to want a record
+  // of what a run discloses, and the fetch happens regardless of whether
+  // anyone consumes it — fully suppressing the block would leave them no
+  // route to it at all. stderr keeps stdout a single parseable document
+  // while still surfacing the disclosure somewhere visible.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary",
+          "--out",
+          jsonPath,
+          "--format",
+          "human",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // A completed run with a failed verdict is the sole producer of exit 1
+    // under --wait's six-code contract (E1) — unrelated to this test's own
+    // concern (where the disclosure block gets routed).
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(await readFile(jsonPath, "utf8"));
+    assert.match(run.stderr, /Pre-run disclosure:/);
+    assert.match(run.stderr, /Execution: emulated/);
   } finally {
     // A nonzero exit code otherwise leaks into `process.exitCode` for
     // whichever `main()` call in this file runs last.
