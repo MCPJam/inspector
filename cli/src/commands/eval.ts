@@ -2565,6 +2565,25 @@ export function registerEvalCommands(program: Command): void {
       }
 
       const needsReport = reporter !== undefined || options.out !== undefined;
+      // Re-checked explicitly, same as the launch-phase preflight above and
+      // for the same reason: `runPlatformOperation`'s own internal recheck
+      // is the ONE thing that can fail from this call's outer preamble
+      // (nothing inside the callback below escapes its own per-target
+      // catches), and a credential that died between the launch and here
+      // must read as 3 (auth), not whatever `toCliError` defaults to. The
+      // launch receipt is written first — it is the only record of run ids
+      // already paid for, and nothing else has reached stdout yet.
+      try {
+        preflightCloudCredentials(platformOptionsOf(command));
+      } catch (error) {
+        writeResult({ launch: result, runs: [] }, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        if (error instanceof CliError && error.exitCode === 2) throw error;
+        if (error instanceof CliError) {
+          throw new CliError(error.code, error.message, 3, error.details);
+        }
+        throw error;
+      }
       const completion = await runPlatformCommand(
         platformOptionsOf(command),
         Math.max(globalOptions.timeout, waitTimeoutMs),
@@ -2635,9 +2654,15 @@ export function registerEvalCommands(program: Command): void {
               runs,
               waitErrors,
               reportInputs: [] as StructuredEvalRunInput[],
+              iterationErrorCodes: new Map<string, string>(),
             };
           }
 
+          // A run's own id, not `StructuredEvalRunInput` (a shared SDK type
+          // report-building also consumes), is what carries a fetch
+          // failure's wire code out of this loop — smuggling a new field
+          // onto that type would leak an eval.ts-only concern into it.
+          const iterationErrorCodes = new Map<string, string>();
           const reportInputs = await Promise.all(
             runs.map(async (run): Promise<StructuredEvalRunInput> => {
               try {
@@ -2653,6 +2678,9 @@ export function registerEvalCommands(program: Command): void {
                   iterationsComplete: iterations.complete,
                 };
               } catch (error) {
+                if (isPlatformApiError(error)) {
+                  iterationErrorCodes.set(run.id, error.code);
+                }
                 return {
                   run,
                   iterations: [],
@@ -2663,7 +2691,7 @@ export function registerEvalCommands(program: Command): void {
               }
             })
           );
-          return { runs, waitErrors, reportInputs };
+          return { runs, waitErrors, reportInputs, iterationErrorCodes };
         },
         {
           projectScope: resolved.projectScope,
@@ -2709,6 +2737,7 @@ export function registerEvalCommands(program: Command): void {
           status: run.status,
           result: run.result,
           reportingFailed: reportingFailedRunIds.has(run.id),
+          reportingFailedErrorCode: completion.iterationErrorCodes.get(run.id),
         })
       );
       const code = evalRunWaitExitCode({

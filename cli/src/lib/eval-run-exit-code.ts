@@ -121,20 +121,20 @@ import {
  * (no `--wait`) behavior is untouched by this module and stays byte-
  * identical.
  *
- * ## Known narrow gap: the wait phase's own outer preamble
+ * ## The wait phase's own outer preamble is covered too
  *
  * Every PER-TARGET poll failure is captured and classified (see the
- * `errorCode` capture at the eval.ts call site). Not wrapped: a CliError
- * thrown by `runPlatformOperation`'s own preamble for the wait-phase call
- * (its own `preflightCloudCredentials` re-check, or the whole-command
- * timeout firing before any per-target request goes out) — that error
- * propagates unclassified and lands on the exitCode `toCliError` already
- * gave it (1), rather than through this module's mapping. In practice this
- * needs a credential that dies in the exact window between the launch
- * preflight and the wait phase starting, or a deadline so tight it elapses
- * before a single poll request is dispatched — narrow enough that it is left
- * as a known gap rather than a fix, to avoid restructuring the write-before-
- * exit guarantee for an edge this unlikely.
+ * `errorCode` capture at the eval.ts call site). The one thing that can
+ * fail from OUTSIDE that per-target handling — before the wait phase's
+ * callback even starts — is `runPlatformOperation`'s own internal
+ * `preflightCloudCredentials` recheck, so the eval.ts call site re-runs
+ * that check explicitly first, exactly mirroring the launch-phase preflight
+ * above: any resulting CliError with `exitCode !== 2` is remapped straight
+ * to 3, unconditionally, not through {@link classifyWaitErrorExitCode} —
+ * the only realistic failure at this point IS a credential, so there is no
+ * "else" case to classify. The launch receipt is written before that
+ * rethrow, for the same reason the timeout and `--out` paths write it
+ * first: it is the only record of run ids already paid for.
  */
 
 /** One waited run's outcome, as read off `PlatformEvalRun`. */
@@ -149,6 +149,14 @@ export type EvalRunWaitRunOutcome = {
    * requested — an unread report is not a reporting failure.
    */
   reportingFailed?: boolean;
+  /**
+   * The wire error code of the iteration fetch failure, when it carried one
+   * (a `PlatformApiError`). Classified the same way a mid-poll failure is —
+   * auth-shaped means the credential died between the terminal poll and the
+   * report fetch, not "no verdict observed" — so a token that expires in
+   * that window still reads as 3, not 5.
+   */
+  reportingFailedErrorCode?: string;
 };
 
 /** One run this invocation could not observe to completion. */
@@ -205,7 +213,9 @@ function runExitCode(run: EvalRunWaitRunOutcome): number {
     codes.push(5);
   }
   if (run.reportingFailed) {
-    codes.push(5);
+    // Same auth-vs-absence split as a mid-poll failure: a token that died
+    // between the terminal poll and the report fetch is 3, not 5.
+    codes.push(classifyWaitErrorExitCode(run.reportingFailedErrorCode));
   }
   return worstOf(codes);
 }

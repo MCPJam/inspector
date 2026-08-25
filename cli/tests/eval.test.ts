@@ -203,6 +203,8 @@ interface EvalFixtureOptions {
   /** Stamp the fixture's `run-case` as decided under verdict policy 2. */
   runCasePolicyVersion2?: boolean;
   runCaseIterationFetchError?: boolean;
+  /** Like `runCaseIterationFetchError`, but the wire code is UNAUTHORIZED. */
+  runCaseIterationFetchAuthError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
   /**
    * Per-target-run overrides for a grouped (`--all-targets` / `--host` x2)
@@ -244,6 +246,14 @@ interface EvalFixtureOptions {
   closeAfterLaunch?: boolean;
   /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
   disclosureUnavailable?: boolean;
+  /**
+   * Delete `process.env.MCPJAM_API_KEY` the moment the single-target launch
+   * POST is handled, simulating a credential that dies in the window
+   * between the launch preflight and the wait phase's own recheck. Only
+   * meaningful when the caller resolves its credential from that env var
+   * (no `--api-key` flag) — see `evalArgvNoKey`.
+   */
+  deleteCredentialAfterLaunch?: boolean;
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -744,6 +754,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       if (options.closeAfterLaunch) {
         networkFailureArmed = true;
       }
+      if (options.deleteCredentialAfterLaunch) {
+        delete process.env.MCPJAM_API_KEY;
+      }
       return;
     }
     if (
@@ -817,6 +830,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
             message: "iteration results unavailable",
           }),
         );
+        return;
+      }
+      if (options.runCaseIterationFetchAuthError) {
+        res.statusCode = 401;
+        res.end(UNAUTHORIZED_BODY);
         return;
       }
       const result = options.runCaseResult ?? "passed";
@@ -1125,6 +1143,32 @@ async function withNoCredential<T>(fn: () => Promise<T>): Promise<T> {
   process.env.MCPJAM_AUTH_FILE = path.join(
     os.tmpdir(),
     `mcpjam-no-auth-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+  );
+  try {
+    return await fn();
+  } finally {
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
+    if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+    else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+  }
+}
+
+/**
+ * Run one `main()` invocation with a credential that starts VALID (read
+ * from `MCPJAM_API_KEY`, not a `--api-key` flag, so it can disappear
+ * mid-flight) and a safe, nonexistent `MCPJAM_AUTH_FILE` so there is no
+ * stored-login fallback masking the deletion. Pairs with
+ * `deleteCredentialAfterLaunch` on the fixture, which removes the env var
+ * the moment the launch POST is handled.
+ */
+async function withDyingCredential<T>(fn: () => Promise<T>): Promise<T> {
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+  const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
+  process.env.MCPJAM_API_KEY = "sk_test";
+  process.env.MCPJAM_AUTH_FILE = path.join(
+    os.tmpdir(),
+    `mcpjam-dying-auth-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
   );
   try {
     return await fn();
@@ -2388,6 +2432,45 @@ test("eval run writes an error report after a completed-run reporting failure", 
     });
     assert.match(report.cases[0].error, /iteration results unavailable/);
     assert.equal(report.metadata.runs[0].status, "completed");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run exits 3, not 5, when the report-fetch failure is auth-shaped", async () => {
+  // Same shape as the previous test, but the iteration fetch failed with a
+  // real 401 (the credential died between the terminal poll and the report
+  // fetch) rather than a generic infra error. That must read as 3 (auth),
+  // not 5 (no valid verdict observed) — a token that expired is a
+  // different, more actionable claim than "the report never assembled".
+  const fixture = await startEvalFixture({
+    runCaseIterationFetchAuthError: true,
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
   } finally {
     process.exitCode = 0;
     await fixture.close();
@@ -3807,6 +3890,47 @@ test("eval run --wait exits 3 on a missing credential, before any network call",
     // Zero-credit guarantee: the fixture never saw a request at all.
     assert.equal(fixture.runBodies.length, 0);
     assert.equal(fixture.groupBodies.length, 0);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 when the credential dies between launch and the wait phase, receipt preserved", async () => {
+  // The launch preflight passes (credential present), the launch itself
+  // succeeds, and only THEN does the credential disappear — simulating the
+  // narrow window between the explicit launch-phase preflight and the wait
+  // phase's own internal recheck. That recheck must still land on exit 3
+  // (not whatever a bare CliError defaults to), and the launch receipt —
+  // the only record of the run id already paid for — must still reach
+  // stdout before the process exits.
+  const fixture = await startEvalFixture({
+    deleteCredentialAfterLaunch: true,
+  });
+  try {
+    const run = await withDyingCredential(() =>
+      captureProcessOutput(() =>
+        main(
+          evalArgvNoKey(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+            "--format",
+            "json",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+    assert.deepEqual(receipt.runs, []);
   } finally {
     process.exitCode = 0;
     await fixture.close();
