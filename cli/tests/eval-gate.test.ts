@@ -17,6 +17,7 @@ import {
   policyNeedsIterations,
   reportForRun,
 } from "../src/lib/eval-gate.js";
+import { DEFAULT_MIN_EFFECT_SIZE, DEFAULT_MIN_SAMPLE_SIZE } from "@mcpjam/sdk";
 import type { GateReport } from "@mcpjam/sdk";
 import type { PlatformRunCompare } from "@mcpjam/sdk/platform";
 
@@ -636,7 +637,9 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     evaluationConfigChanged: true,
     iterationWeightingEqual: false,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input);
+  const provenance = buildBaselineProvenance("run_base", compare, input, {
+    passRateRegression: {},
+  });
   assert.deepEqual(provenance.baseline, compare.baseline);
   assert.deepEqual(provenance.compatibility, {
     caseSetChanged: true,
@@ -650,6 +653,60 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     // cases still measure the same thing, or which ones do not.
     comparableCaseIds: ["ck_a"],
     incompatibleCases: [],
+  });
+  // The resolved policy that produced this verdict — defaults filled in, so
+  // the default case is just as visible as an explicit threshold.
+  assert.deepEqual(provenance.policy, {
+    passRateRegression: {
+      minSampleSize: DEFAULT_MIN_SAMPLE_SIZE,
+      minEffectSize: DEFAULT_MIN_EFFECT_SIZE,
+    },
+    noDeterministicRegressions: false,
+    maximumP95LatencyIncreaseMs: null,
+  });
+});
+
+test("buildBaselineProvenance: an unrequested gate's policy is null, not an implicit default", () => {
+  const compare = compareWire();
+  const input = {
+    base: { iterations: { total: 70, passed: 56 } },
+    compare: { iterations: { total: 80, passed: 48 } },
+    deterministicScoreRegressions: [],
+    scoreDeltasAvailable: false,
+    caseSetChanged: false,
+    scenarioConfigChanged: false,
+    evaluationConfigChanged: false,
+    iterationWeightingEqual: true,
+  };
+  const provenance = buildBaselineProvenance("run_base", compare, input, {});
+  assert.deepEqual(provenance.policy, {
+    passRateRegression: null,
+    noDeterministicRegressions: false,
+    maximumP95LatencyIncreaseMs: null,
+  });
+});
+
+test("buildBaselineProvenance: an explicit policy is echoed back verbatim, not re-defaulted", () => {
+  const compare = compareWire();
+  const input = {
+    base: { iterations: { total: 70, passed: 56 } },
+    compare: { iterations: { total: 80, passed: 48 } },
+    deterministicScoreRegressions: [],
+    scoreDeltasAvailable: false,
+    caseSetChanged: false,
+    scenarioConfigChanged: false,
+    evaluationConfigChanged: false,
+    iterationWeightingEqual: true,
+  };
+  const provenance = buildBaselineProvenance("run_base", compare, input, {
+    passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
+    noDeterministicRegressions: true,
+    maximumP95LatencyIncreaseMs: 500,
+  });
+  assert.deepEqual(provenance.policy, {
+    passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
+    noDeterministicRegressions: true,
+    maximumP95LatencyIncreaseMs: 500,
   });
 });
 
@@ -718,16 +775,21 @@ test("buildBaselineProvenance: names the added/removed cases behind caseSetChang
       },
     ],
   });
-  const provenance = buildBaselineProvenance("run_base", compare, {
-    base: { iterations: { total: 70, passed: 56 } },
-    compare: { iterations: { total: 80, passed: 48 } },
-    deterministicScoreRegressions: [],
-    scoreDeltasAvailable: false,
-    caseSetChanged: true,
-    scenarioConfigChanged: false,
-    evaluationConfigChanged: false,
-    iterationWeightingEqual: true,
-  });
+  const provenance = buildBaselineProvenance(
+    "run_base",
+    compare,
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: true,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {}
+  );
   const compatibility = provenance.compatibility as {
     comparableCaseIds: string[];
     incompatibleCases: Array<{
@@ -833,16 +895,21 @@ test("buildBaselineProvenance: a case-set-stable case can still be individually 
       },
     ],
   });
-  const provenance = buildBaselineProvenance("run_base", compare, {
-    base: { iterations: { total: 70, passed: 56 } },
-    compare: { iterations: { total: 80, passed: 48 } },
-    deterministicScoreRegressions: [],
-    scoreDeltasAvailable: false,
-    caseSetChanged: false,
-    scenarioConfigChanged: true,
-    evaluationConfigChanged: true,
-    iterationWeightingEqual: false,
-  });
+  const provenance = buildBaselineProvenance(
+    "run_base",
+    compare,
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: true,
+      evaluationConfigChanged: true,
+      iterationWeightingEqual: false,
+    },
+    {}
+  );
   const compatibility = provenance.compatibility as {
     comparableCaseIds: string[];
     incompatibleCases: Array<{
@@ -867,6 +934,87 @@ test("buildBaselineProvenance: a case-set-stable case can still be individually 
       caseKey: "ck_reweighted",
       status: "unchanged_passed",
       reasons: ["iteration_weighting_unequal"],
+    },
+  ]);
+});
+
+test("buildBaselineProvenance: a run-level evaluation config change excludes every case, even ones whose own row says unchanged", () => {
+  // `scoreContract.evaluationConfigChanged` is a RUN-level signal (the
+  // evaluation config hash itself changed between runs). A case can still
+  // report `evaluationConfigChanged: false` on its own row if the platform
+  // only diffs per-case config on things other than the evaluation config
+  // hash. The run-level signal must still exclude that case from
+  // `comparableCaseIds` — trusting the row-level flag alone would silently
+  // compare cases under a config change the run as a whole reports.
+  const compare = compareWire({
+    scoreContract: {
+      base: {
+        evaluationConfigHash: "cfg_old",
+        scoreIntegrity: "valid",
+        scoredIterations: 70,
+        quarantinedIterations: 0,
+      },
+      compare: {
+        evaluationConfigHash: "cfg_new",
+        scoreIntegrity: "valid",
+        scoredIterations: 80,
+        quarantinedIterations: 0,
+      },
+      evaluationConfigChanged: true,
+      scorers: [],
+    },
+    cases: [
+      {
+        caseKey: "ck_a",
+        title: "Case A",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b1"],
+          representativeIterationId: "b1",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c1"],
+          representativeIterationId: "c1",
+          error: null,
+        },
+      },
+    ],
+  });
+  const provenance = buildBaselineProvenance(
+    "run_base",
+    compare,
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: true,
+      iterationWeightingEqual: true,
+    },
+    {}
+  );
+  const compatibility = provenance.compatibility as {
+    comparableCaseIds: string[];
+    incompatibleCases: Array<{
+      caseKey: string;
+      status: string;
+      reasons: string[];
+    }>;
+  };
+  assert.deepEqual(compatibility.comparableCaseIds, []);
+  assert.deepEqual(compatibility.incompatibleCases, [
+    {
+      caseKey: "ck_a",
+      status: "unchanged_passed",
+      reasons: ["evaluation_config_changed"],
     },
   ]);
 });

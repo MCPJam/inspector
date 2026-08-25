@@ -28,15 +28,23 @@ path. `eval gate`'s four-code contract is unchanged.
 
 The report (`--reporter`/`--out`) carries baseline provenance — both run
 ids, the resolved baseline policy, every compatibility signal that was
-evaluated, and the comparable case ids the verdict actually covers. A case
-can survive `caseSetChanged` (it exists on both sides) and still be
-individually responsible for a config change or unequal iteration
-weighting, so each excluded case is named with its own reason
-(`case_added`, `case_removed`, `scenario_config_changed`,
-`evaluation_config_changed`, `iteration_weighting_unequal`) rather than
-being silently counted as comparable. Dimensions the comparison wire does
-not carry yet (model/provider, host/harness, server/environment identity,
-config hashes beyond the evaluation config hash) are recorded explicitly as
+evaluated, and the comparable case ids the verdict actually covers. The
+policy is recorded with its defaults already resolved (e.g. the
+`--min-sample-size`/`--min-effect-size-percent` values the pass-rate
+regression gate actually ran with, not just whatever was or wasn't passed
+on the command line) — `null` when the corresponding gate wasn't
+requested at all, distinct from a threshold of zero — so an archived
+report is self-describing without cross-referencing the CLI invocation
+that produced it. A case can survive `caseSetChanged` (it exists on both
+sides) and still be individually responsible for a config change or
+unequal iteration weighting — including a run-level evaluation config
+change that the platform didn't also flag on that case's own row — so
+each excluded case is named with its own reason (`case_added`,
+`case_removed`, `scenario_config_changed`, `evaluation_config_changed`,
+`iteration_weighting_unequal`) rather than being silently counted as
+comparable. Dimensions the comparison wire does not carry yet
+(model/provider, host/harness, server/environment identity, config hashes
+beyond the evaluation config hash) are recorded explicitly as
 `"notRecorded"` rather than omitted.
 
 SHA baselines are not supported yet — a 40-hex `--baseline` argument is

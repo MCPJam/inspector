@@ -6,6 +6,8 @@
  */
 
 import {
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
   evaluateCompareGates,
   evaluateGates,
   gateInputFromPlatformRun,
@@ -342,15 +344,25 @@ type IncompatibleCaseReason =
  * responsible for `scenarioConfigChanged`, `evaluationConfigChanged`, or
  * `iterationWeightingEqual: false`, and `comparableCaseIds` must not claim
  * a case the whole-run verdict did not actually trust.
+ *
+ * `runEvaluationConfigChanged` is `compare.scoreContract.evaluationConfigChanged`
+ * — a RUN-LEVEL fact, not a per-row one. `compareGateInputFrom` ORs it into
+ * the aggregate `evaluationConfigChanged` regardless of any single case's own
+ * flag, so a case whose own row never changed can still be the reason the
+ * whole-run gate is non-gateable; every case must inherit it, not just the
+ * ones whose own `row.evaluationConfigChanged` happens to be true.
  */
 function incompatibilityReasonsFor(
-  row: PlatformRunCompareCase
+  row: PlatformRunCompareCase,
+  runEvaluationConfigChanged: boolean
 ): IncompatibleCaseReason[] {
   const reasons: IncompatibleCaseReason[] = [];
   if (row.status === "new_case") reasons.push("case_added");
   if (row.status === "removed_case") reasons.push("case_removed");
   if (row.configChanged) reasons.push("scenario_config_changed");
-  if (row.evaluationConfigChanged) reasons.push("evaluation_config_changed");
+  if (row.evaluationConfigChanged || runEvaluationConfigChanged) {
+    reasons.push("evaluation_config_changed");
+  }
   // Mirrors `iterationWeightingEqualFrom`'s own skip condition: a case
   // absent on either side has no counterpart to weigh against, and is
   // already covered by `case_added`/`case_removed` above.
@@ -378,17 +390,39 @@ function incompatibilityReasonsFor(
 export function buildBaselineProvenance(
   requestedBaseline: string,
   compare: PlatformRunCompare,
-  input: CompareGateInput
+  input: CompareGateInput,
+  policy: GatePolicy
 ): Record<string, unknown> {
   const classified = compare.cases.map((row) => ({
     row,
-    reasons: incompatibilityReasonsFor(row),
+    reasons: incompatibilityReasonsFor(
+      row,
+      compare.scoreContract.evaluationConfigChanged
+    ),
   }));
   return {
     requestedBaseline,
     baseline: compare.baseline,
     baseRunId: compare.baseRun.id,
     compareRunId: compare.compareRun.id,
+    // The RESOLVED policy that produced this verdict, defaults filled in —
+    // an archived report must be self-describing without cross-referencing
+    // the CLI invocation that produced it. `null` means the gate was not
+    // asked for, not "asked for with a threshold of nothing".
+    policy: {
+      passRateRegression: policy.passRateRegression
+        ? {
+            minSampleSize:
+              policy.passRateRegression.minSampleSize ??
+              DEFAULT_MIN_SAMPLE_SIZE,
+            minEffectSize:
+              policy.passRateRegression.minEffectSize ??
+              DEFAULT_MIN_EFFECT_SIZE,
+          }
+        : null,
+      noDeterministicRegressions: policy.noDeterministicRegressions === true,
+      maximumP95LatencyIncreaseMs: policy.maximumP95LatencyIncreaseMs ?? null,
+    },
     compatibility: {
       caseSetChanged: input.caseSetChanged,
       scenarioConfigChanged: input.scenarioConfigChanged,
@@ -537,6 +571,11 @@ export async function evaluateBaselineComparison(input: {
 
   return {
     report: evaluateCompareGates(compareInput, input.policy),
-    provenance: buildBaselineProvenance(input.baseline, compare, compareInput),
+    provenance: buildBaselineProvenance(
+      input.baseline,
+      compare,
+      compareInput,
+      input.policy
+    ),
   };
 }
