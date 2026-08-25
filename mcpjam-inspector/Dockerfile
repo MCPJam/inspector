@@ -102,6 +102,11 @@ COPY mcpjam-inspector/client ./mcpjam-inspector/client
 COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
 RUN npm run bundle:browser-harness -w @mcpjam/inspector && \
     npm run build:server -w @mcpjam/inspector
+# MCPJAM_BUILD_SURFACE is the Sentry `dist` this bundle reports and uploads
+# under. Hardcoded rather than an ARG: the web image is the only thing this
+# Dockerfile builds. Without it this bundle's events resolve against the npm or
+# desktop artifacts, which share the same bare `release`. See
+# SENTRY_BUILD_SURFACES in shared/sentry-config.ts.
 RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
     if [ -n "$VITE_MCPJAM_NONPROD_LOCKDOWN" ]; then export VITE_MCPJAM_NONPROD_LOCKDOWN; fi; \
     if [ -n "$VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS" ]; then export VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS; fi; \
@@ -110,7 +115,7 @@ RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; f
     if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
     if [ -n "$VITE_MCPJAM_SANDBOX_ORIGIN" ]; then export VITE_MCPJAM_SANDBOX_ORIGIN; fi; \
     if [ -n "$SENTRY_AUTH_TOKEN" ]; then export SENTRY_AUTH_TOKEN; fi; \
-    npm run build:client -w @mcpjam/inspector
+    MCPJAM_BUILD_SURFACE=web npm run build:client -w @mcpjam/inspector
 
 ################################################################################
 # Runtime image.

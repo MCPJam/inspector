@@ -26,6 +26,7 @@ function stubReplay(recording: boolean) {
 describe("client sentry init", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
+    vi.stubGlobal("__BUILD_SURFACE__", "npm");
     init.mockClear();
     replayIntegration.mockClear();
     browserTracingIntegration.mockClear();
@@ -47,6 +48,15 @@ describe("client sentry init", () => {
       tags: { deployment: "self_hosted" },
     });
     expect(config.sendDefaultPii).toBe(false);
+  });
+
+  it("reports the build surface as dist so artifacts resolve per build", async () => {
+    // The release alone is the bare app version, which the web, npm and
+    // desktop builds all share. Without `dist` here, Sentry symbolicates this
+    // bundle's events against whichever of those uploaded last.
+    const { resolveClientSentryConfig } = await import("../sentry");
+
+    expect(resolveClientSentryConfig().dist).toBe("npm");
   });
 
   it("tags hosted when the bundle is built for hosted mode", async () => {
@@ -123,6 +133,7 @@ describe("client sentry init", () => {
 describe("syncSentryReplayForPath", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
+    vi.stubGlobal("__BUILD_SURFACE__", "npm");
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     getClient.mockReset();
     vi.resetModules();

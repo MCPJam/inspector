@@ -4,6 +4,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
 import { readFileSync } from "fs";
+import { electronBuildSurface } from "./shared/sentry-config";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -80,6 +81,11 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      // Sentry `dist`, matching the `--dist` that forge.config.ts's
+      // packageAfterCopy hook uploads `.vite/renderer` under. This config only
+      // ever builds the Electron renderer, and forge builds it on the machine
+      // that packages it, so the build host's platform IS the target's.
+      __BUILD_SURFACE__: JSON.stringify(electronBuildSurface(process.platform)),
     },
     build: {
       // Desktop stack traces were unsymbolicated: the renderer build emitted
