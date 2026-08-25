@@ -4,6 +4,7 @@ import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
+import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
@@ -498,6 +499,15 @@ if (isInIframe) {
     // that Railway's edge blocks on hosted — see lib/posthog-bundled-extensions.ts.
     // No-op (and no chunk download) off the error-capture surfaces.
     await preloadPosthogBundledExtensions();
+
+    if (import.meta.env.DEV) {
+      // The npm SDK does not attach the singleton to `window` the way the
+      // snippet install does, which makes console flag overrides
+      // (`posthog.featureFlags.overrideFeatureFlags({...})`) impossible in
+      // local dev. Expose the same instance the provider initializes —
+      // dev only, so the production surface stays exactly as before.
+      (window as { posthog?: typeof posthog }).posthog = posthog;
+    }
 
     root.render(
       <StrictMode>
