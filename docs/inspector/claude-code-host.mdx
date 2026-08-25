@@ -25,9 +25,22 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
    - **Codex (host-executed)** — the Codex CLI does not make MCP server tools model-callable in the mode MCPJam drives ([openai/codex#19425](https://github.com/openai/codex/issues/19425)), so MCPJam instead enumerates each selected server's tools at turn start and hands them to the agent as *host-executed* tools. The bridge injects their descriptions into the prompt, the model invokes them through a CLI shim, and **MCPJam executes them on its own server** against the already-authorized connection. Nothing about your servers — no URL, no token — enters the sandbox.
 5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
 
-## Host settings
+## Configure the host
 
-### Claude Code
+### Requirements
+
+- A project **Computer** (the E2B data plane must be configured for your deployment).
+- For **Claude Code**: an MCPJam-provided Anthropic model selected on the host.
+- For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
+- A **signed-in project member** — guest sessions cannot run harness hosts.
+
+No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
+
+### Host settings
+
+Each harness honors a different subset of the host config. Read the table for the harness you selected before you tune anything on the host page — a setting listed as not honored is disabled in the UI rather than silently dropped.
+
+#### Claude Code
 
 | Setting | Behavior |
 |---|---|
@@ -39,7 +52,7 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
 | Progressive tool disclosure | Not applied — the real runtime owns tool discovery. |
 
-### Codex
+#### Codex
 
 | Setting | Behavior |
 |---|---|
@@ -59,6 +72,8 @@ MCPJam supports two harness hosts that run a real agent runtime inside your proj
 
 ## Codex MCP fidelity caveat
 
+Read this before you treat a Codex trace as evidence about a connector — what the model received is not what a native MCP client would have received.
+
 Codex's MCP support is **not** equivalent to Claude Code's, and the difference matters if you are using it to benchmark a connector:
 
 - The model does **not** call your tools through native function calling. The harness bridge injects each tool's name, description, and input schema into the prompt, and the model runs `node <shim> <toolName> '<json>'` through its built-in `bash` tool. Tool-selection behavior therefore reflects how well the model follows those shim instructions, not how a native MCP client would behave.
@@ -68,21 +83,12 @@ Codex's MCP support is **not** equivalent to Claude Code's, and the difference m
 
 Claude Code hosts are unaffected by all of the above — they use the runtime's real MCP client.
 
-## Requirements
-
-- A project **Computer** (the E2B data plane must be configured for your deployment).
-- For **Claude Code**: an MCPJam-provided Anthropic model selected on the host.
-- For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
-- A **signed-in project member** — guest sessions cannot run harness hosts.
-
-No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
-
 ## Billing
 
 - **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use.
 - **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat. Spend caps and empty-wallet rejections apply before the stream starts.
 
-## Failure modes
+## Diagnose a failed run
 
 None of these fall back to the emulated engine — a turn that says it ran the real runtime did. All fail closed; a failed start spends nothing.
 
