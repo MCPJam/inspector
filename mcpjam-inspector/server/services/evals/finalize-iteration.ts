@@ -384,17 +384,25 @@ function buildSelectionToolCatalogMetadata(args: {
   if (selectionRow?.state !== "failed") return {};
 
   const prompts = args.prompts ?? [];
-  const expectedToolNames = prompts
+  // Only turns that were PART OF this selection failure — a successful
+  // earlier turn's tool calls have nothing to do with why selection failed,
+  // and folding them in could fill the catalog's cap before the turn that
+  // actually caused the failure is ever considered.
+  const failingPrompts = prompts.filter(
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+  );
+  const expectedToolNames = failingPrompts
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
-  // The full actual set, not just `unexpected`: under the default
-  // `maxExtraToolCalls: null`, a call the model made instead of (not in
-  // addition to) an expected one stays out of `unexpected` — it only ever
-  // lands there as a flagged extra. `missingToolCall` cases are exactly the
-  // ones where the metadata that mattered belongs to whatever the model
-  // picked instead, so the catalog has to look at what was actually called.
-  const actualToolNames = prompts
+  // The full actual set for the failing turn, not just `unexpected`: under
+  // the default `maxExtraToolCalls: null`, a call the model made instead of
+  // (not in addition to) an expected one stays out of `unexpected` — it only
+  // ever lands there as a flagged extra. `missingToolCall` cases are exactly
+  // the ones where the metadata that mattered belongs to whatever the model
+  // picked instead, so the catalog has to look at what was actually called
+  // on that same turn.
+  const actualToolNames = failingPrompts
     .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);

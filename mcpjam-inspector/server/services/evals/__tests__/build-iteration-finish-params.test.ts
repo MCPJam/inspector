@@ -385,6 +385,50 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
       },
     ]);
   });
+
+  test("an earlier successful turn's tool calls never enter the catalog, even under the cap", () => {
+    // Turn 0 succeeds (calls a tool cleanly); turn 1 is the actual selection
+    // failure. Only turn 1's actual/expected names should ever be catalogued
+    // — turn 0's successful call has nothing to do with why selection failed.
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          unexpected: [],
+          actualToolCalls: [{ toolName: "list_files" }],
+          argumentMismatches: [],
+          passed: true,
+        },
+        {
+          promptIndex: 1,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          actualToolCalls: [{ toolName: "delete_all_files" }],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools: {
+        ...selectionTools,
+        list_files: { description: "an unrelated, successfully-called tool" },
+      },
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    const names = (
+      metadata.selectionToolCatalog as Array<{ name: string }>
+    ).map((e) => e.name);
+    expect(names).not.toContain("list_files");
+    expect(names).toEqual(
+      expect.arrayContaining(["get_weather", "delete_all_files"])
+    );
+  });
 });
 
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
