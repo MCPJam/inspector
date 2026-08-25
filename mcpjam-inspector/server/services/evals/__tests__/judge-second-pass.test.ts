@@ -746,5 +746,25 @@ describe("D7: metadata-attribution rides the same second pass", () => {
       });
       expect(failedUserValue?.reason).not.toBe("judgeFailed");
     });
+
+    test("goal-completion's write RETURNS stale (not a thrown error): D7's write still does not carry it", async () => {
+      // `stale` / `deferred` / `skipped_terminal` are normal RETURN VALUES
+      // from applyDerivation, not exceptions — a job id that moved on is
+      // reported the same way a genuinely applied write is. Only
+      // `outcome: "applied"` means the derivation actually landed.
+      const { value, appliedMetadataAttribution } = ports({
+        fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
+        applyDerivation: vi.fn(async () => ({ outcome: "stale" as const })),
+      });
+      await runJudgeSecondPass("run1", value);
+
+      expect(appliedMetadataAttribution).toHaveLength(1);
+      const rows = (appliedMetadataAttribution[0]!.body as Record<
+        string,
+        unknown
+      >).stageResults as Array<{ stage: string; reason?: string }>;
+      const userValueRow = rows.find((r) => r.stage === "userValue");
+      expect(userValueRow?.reason).not.toBe("judgeFailed");
+    });
   });
 });

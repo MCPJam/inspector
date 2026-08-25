@@ -444,7 +444,13 @@ export async function runJudgeSecondPass(
             iterationId: iteration.iterationId,
             outcome: result.outcome,
           });
-          goalCompletionConfirmed = true;
+          // `stale` / `deferred` / `skipped_terminal` are normal RETURN
+          // VALUES, not exceptions (see `JudgeDerivationOutcome`) — a
+          // `stale` outcome means the backend refused to persist anything
+          // for a job id that has moved on. Only `applied` means the
+          // derivation actually landed, which is the only case D7's write
+          // below may safely chain judgeEvidence from.
+          goalCompletionConfirmed = result.outcome === "applied";
         } catch (error) {
           if (error instanceof JudgeStageBackendError && error.isNotFound) {
             // The row is gone. Nothing to report for it, and nothing to retry.
