@@ -1092,9 +1092,13 @@ async function runEvalGate(
   });
   // Parsed and validated BEFORE any network call, like `eval compare`'s own
   // policy: a malformed baseline flag exits 2 without spending a request.
-  if (options.baseline !== undefined) {
-    assertRunIdBaseline(options.baseline, options.run);
-  }
+  // The NORMALIZED value is what travels downstream — the raw one is never
+  // read again, so a whitespace-padded but otherwise valid `--baseline`
+  // cannot slip past validation and then fail to resolve on the wire.
+  const baseline =
+    options.baseline !== undefined
+      ? assertRunIdBaseline(options.baseline, options.run)
+      : undefined;
   const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
@@ -1272,7 +1276,7 @@ async function runEvalGate(
         // gated has a verdict of its own; every early return above already
         // skipped this. `--baseline` is optional, so a threshold-only
         // invocation never pays for a `/compare` fetch it did not ask for.
-        if (!options.baseline) {
+        if (!baseline) {
           return {
             report: thresholdReport,
             run,
@@ -1287,7 +1291,7 @@ async function runEvalGate(
           signal,
           projectId: project.id,
           runId: options.run,
-          baseline: options.baseline,
+          baseline,
           policy: comparePolicy,
           compareIterations: iterations,
         });

@@ -2914,6 +2914,47 @@ test("eval gate --baseline writes provenance into the JSON report, notRecorded i
   }
 });
 
+test("eval gate --baseline sends the TRIMMED value on the wire, not the padded one", async () => {
+  // Validation checks the trimmed value; if the raw one were forwarded
+  // instead, `baseRunId` on the wire (and so the provenance echoed back)
+  // would still carry the padding — observable proof of the bug even though
+  // this fixture's mock backend does not itself reject an unknown run id.
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-trim-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "  run-baseline  ",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.requestedBaseline, "run-baseline");
+    assert.equal(provenance.baseRunId, "run-baseline");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval gate --baseline exits 3 when the case set changed, not 1", async () => {
   // Same regressed pass-rate numbers as the exit-1 test above, but the case
   // set churned — the population rule makes the whole-run rate incomparable,

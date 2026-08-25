@@ -41,4 +41,7 @@ A blank `--baseline` (e.g. an unset CI variable interpolated into the flag)
 and a `--baseline` equal to `--run` are both usage errors too, rather than
 silently disabling the comparison or comparing a run against itself and
 reporting a clean "no regression" that never consulted an independent
-baseline.
+baseline. Validation checks the trimmed value, and the trimmed value is what
+travels to the request — a whitespace-padded but otherwise valid
+`--baseline` cannot slip past validation and then fail to resolve on the
+wire.

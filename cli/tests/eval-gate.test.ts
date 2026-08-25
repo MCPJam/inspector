@@ -302,6 +302,15 @@ test("assertRunIdBaseline accepts an ordinary run id", () => {
   assert.doesNotThrow(() => assertRunIdBaseline("run-1", RUN_ID));
 });
 
+test("assertRunIdBaseline returns the TRIMMED value, not the raw one", () => {
+  // Validation checks the trimmed value; forwarding the raw one instead would
+  // let a whitespace-padded but otherwise valid `--baseline` slip past every
+  // check here and then fail to resolve on the wire (reported as incomplete,
+  // exit 3, rather than either working or naming the usage error).
+  assert.equal(assertRunIdBaseline("  run-base  ", RUN_ID), "run-base");
+  assert.equal(assertRunIdBaseline("run-base", RUN_ID), "run-base");
+});
+
 test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => {
   const sha = "a".repeat(40);
   assert.throws(

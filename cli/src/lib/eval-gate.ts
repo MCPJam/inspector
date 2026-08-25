@@ -170,7 +170,12 @@ export function reportForRun(
 const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
 
 /**
- * Reject a blank, self-referential, or SHA-shaped `--baseline` argument.
+ * Validate `--baseline` and return the NORMALIZED (trimmed) value to use for
+ * everything downstream — the network request included. Validating the
+ * trimmed value while forwarding the raw one would let a whitespace-padded
+ * argument (`--baseline " run-baseline "`) slip past every check here and
+ * then fail to resolve on the wire, reporting `incomplete` (exit 3) instead
+ * of either working or naming the usage error.
  *
  * Blank is rejected explicitly: every downstream check treats
  * `options.baseline` as "present" with `!== undefined` but "enabled" with
@@ -195,7 +200,7 @@ const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
  * catch the one shape a user is likely to hand it by habit — a git commit
  * SHA — before it reaches the network as a doomed run lookup.
  */
-export function assertRunIdBaseline(baseline: string, runId: string): void {
+export function assertRunIdBaseline(baseline: string, runId: string): string {
   const normalized = baseline.trim();
   if (normalized === "") {
     throw usageError(
@@ -219,6 +224,7 @@ export function assertRunIdBaseline(baseline: string, runId: string): void {
         `follow-up step, gated on a backend index that does not exist yet.)`
     );
   }
+  return normalized;
 }
 
 /**
