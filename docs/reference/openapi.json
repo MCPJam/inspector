@@ -3421,7 +3421,7 @@
             "name": "environmentId",
             "in": "query",
             "required": false,
-            "description": "One attached environment to disclose for. Mutually exclusive with `environmentIds`.",
+            "description": "One attached environment to disclose for. Mutually exclusive with `environmentIds` and `host`.",
             "schema": {
               "type": "string"
             }
@@ -3430,7 +3430,16 @@
             "name": "environmentIds",
             "in": "query",
             "required": false,
-            "description": "Comma-separated attached environment IDs to disclose for, mirroring a multi-target launch. Mutually exclusive with `environmentId`.",
+            "description": "Comma-separated attached environment IDs to disclose for, mirroring a multi-target launch. Mutually exclusive with `environmentId` and `host`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "description": "One attached host to disclose for, mirroring a host-targeted launch — the engine and sandbox facts come from that host's own config. Mutually exclusive with `environmentId`/`environmentIds`: a launch plan resolves on exactly one axis.",
             "schema": {
               "type": "string"
             }

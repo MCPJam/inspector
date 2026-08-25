@@ -29,15 +29,19 @@ export interface RunDisclosureErrorInfo {
    */
   contractUnavailable: boolean;
   /**
-   * True when this state describes a HOST-axis launch, never a fetch
-   * failure — `testSuites:getRunDisclosure` has no host selector (see
-   * `eval-disclosure.ts`), so there is nothing to await here. Mirrors the
-   * SDK's `isHostAxisLaunch` refusal in `runEvalSuiteOperation`, which skips
-   * the same fetch for the same reason rather than silently requesting the
-   * misleading suite-base disclosure. Optional — every REAL fetch failure
-   * (the only place this hook itself constructs one) sets it explicitly to
-   * `false`; only the static host-axis state in `run-disclosure-hint.tsx`
-   * sets it `true`.
+   * True when this state describes a launch whose plan the contract cannot
+   * answer for, never a fetch failure.
+   *
+   * Since G4c this is NOT the single-host case — `getRunDisclosure` takes
+   * `namedHostId`, so one attached host is fetched and disclosed like any
+   * environment. What remains is the MULTI-TARGET case: the contract answers
+   * for one launch plan, so a "Run all" fanning out across several hosts has
+   * no single engine or model set to disclose. Mirrors the SDK's
+   * `isMultiTargetHostLaunch` skip in `runEvalSuiteOperation`.
+   *
+   * Optional — every REAL fetch failure (the only place this hook itself
+   * constructs one) sets it explicitly to `false`; only the static
+   * multi-target state in `run-disclosure-hint.tsx` sets it `true`.
    */
   hostAxisUnavailable?: boolean;
 }
@@ -66,11 +70,20 @@ export function useRunDisclosure({
   suiteId,
   caseIds,
   environmentIds,
+  namedHostId,
 }: {
   enabled: boolean;
   suiteId: string | null | undefined;
   caseIds?: readonly string[];
   environmentIds?: readonly string[];
+  /**
+   * Disclose for a HOST-axis launch (G4c) — the single attached host "Run
+   * all" would target when the suite has no attached environments. Mutually
+   * exclusive with `environmentIds` by construction at the callsite: the
+   * environment axis always wins when both are attached, the same rule
+   * `computeRunTargets` uses.
+   */
+  namedHostId?: string;
 }): RunDisclosureState {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<RunDisclosureStatus>("idle");
@@ -117,6 +130,7 @@ export function useRunDisclosure({
             ...(environmentIds && environmentIds.length > 0
               ? { environmentIds }
               : {}),
+            ...(namedHostId ? { namedHostId } : {}),
           },
           controller.signal,
         );
@@ -137,7 +151,7 @@ export function useRunDisclosure({
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, suiteId, caseIdsKey, environmentIdsKey]);
+  }, [active, suiteId, caseIdsKey, environmentIdsKey, namedHostId]);
 
   return { status, disclosure, error, open, setOpen };
 }

@@ -101,7 +101,7 @@ export function formatRunDisclosureSummary(
   }
   if (state.status === "error" || !state.disclosure) {
     if (state.error?.hostAxisUnavailable) {
-      return "Disclosure unavailable for host-targeted runs";
+      return "Disclosure covers one target — this runs several";
     }
     return state.error?.contractUnavailable
       ? "Disclosure not available on this deployment yet"
@@ -244,7 +244,7 @@ export function describeRunDisclosureDetail(
 export function SuiteRunDisclosureHint({
   suiteId,
   environmentIds,
-  hostAxis = false,
+  hostIds,
   suppressed = false,
   label = "What running this suite discloses",
   className,
@@ -254,16 +254,20 @@ export function SuiteRunDisclosureHint({
   suiteId: string | null | undefined;
   environmentIds?: readonly string[];
   /**
-   * Set when Run all launches on the HOST axis (no attached environments,
-   * but hosts attached — environment axis always wins when both are
-   * attached, same rule `computeRunTargets` uses). `environmentIds` would
-   * then be empty, and fetching with no selector at all would silently
-   * return the suite-base disclosure and present it as the plan for a
-   * specific host's launch — which can pin a different model/rail. Skips
-   * the fetch entirely instead, mirroring the SDK's `isHostAxisLaunch`
-   * refusal in `runEvalSuiteOperation`.
+   * The attached hosts Run all would target on the HOST axis — relevant only
+   * when there are no attached environments, since the environment axis
+   * always wins when both are attached (the same rule `computeRunTargets`
+   * uses).
+   *
+   * EXACTLY ONE is disclosed for real (G4c): the contract takes
+   * `namedHostId`, so the engine and sandbox facts come from that host's own
+   * config. SEVERAL is still refused — the contract answers for one launch
+   * plan, and a fan-out across hosts has no single engine or model set to
+   * disclose; the fetch is skipped rather than sending a selector-less query
+   * whose suite-base answer would misdescribe every target. Mirrors the SDK's
+   * `isMultiTargetHostLaunch` skip in `runEvalSuiteOperation`.
    */
-  hostAxis?: boolean;
+  hostIds?: readonly string[];
   /** Set when Run all cannot launch at all (no cases, no servers configured). */
   suppressed?: boolean;
   label?: string;
@@ -275,15 +279,23 @@ export function SuiteRunDisclosureHint({
   if (!flagEnabled || suppressed || !suiteId) {
     return null;
   }
-  if (hostAxis) {
+  const hostAxis =
+    (environmentIds?.length ?? 0) === 0 && (hostIds?.length ?? 0) > 0;
+  if (hostAxis && (hostIds?.length ?? 0) > 1) {
     return (
-      <HostAxisDisclosureHint label={label} className={className} side={side} align={align} />
+      <MultiTargetDisclosureHint
+        label={label}
+        className={className}
+        side={side}
+        align={align}
+      />
     );
   }
   return (
     <SuiteDisclosureFetcher
       suiteId={suiteId}
       environmentIds={environmentIds}
+      {...(hostAxis && hostIds?.[0] ? { namedHostId: hostIds[0] } : {})}
       label={label}
       className={className}
       side={side}
@@ -292,8 +304,8 @@ export function SuiteRunDisclosureHint({
   );
 }
 
-/** No fetch — see `hostAxis` on `SuiteRunDisclosureHint` for why. */
-function HostAxisDisclosureHint({
+/** No fetch — see `hostIds` on `SuiteRunDisclosureHint` for why. */
+function MultiTargetDisclosureHint({
   label,
   className,
   side,
@@ -310,7 +322,7 @@ function HostAxisDisclosureHint({
     disclosure: null,
     error: {
       message:
-        "This suite runs on the host axis — the backend cannot compute a disclosure for a specific host launch.",
+        "Run all fans out across several hosts — the disclosure covers one launch plan, so there is no single set of models or engine to describe here. Run one host at a time to see its disclosure.",
       contractUnavailable: false,
       hostAxisUnavailable: true,
     },
@@ -331,6 +343,7 @@ function HostAxisDisclosureHint({
 function SuiteDisclosureFetcher({
   suiteId,
   environmentIds,
+  namedHostId,
   label,
   className,
   side,
@@ -338,6 +351,7 @@ function SuiteDisclosureFetcher({
 }: {
   suiteId: string;
   environmentIds?: readonly string[];
+  namedHostId?: string;
   label?: string;
   className?: string;
   side?: "top" | "bottom" | "left" | "right";
@@ -347,6 +361,7 @@ function SuiteDisclosureFetcher({
     enabled: true,
     suiteId,
     ...(environmentIds && environmentIds.length > 0 ? { environmentIds } : {}),
+    ...(namedHostId ? { namedHostId } : {}),
   });
   return (
     <RunDisclosureHint

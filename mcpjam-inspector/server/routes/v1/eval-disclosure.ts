@@ -41,6 +41,7 @@ import {
   translateConvexReadError,
 } from "./convex-read-errors.js";
 import { HOSTED_MODE } from "../../config.js";
+import { RUNNER_CAPABILITIES } from "../../services/evals/runner-capabilities.js";
 
 const evalDisclosure = new Hono();
 
@@ -176,13 +177,16 @@ function csvQuery(raw: string | undefined): string[] | undefined {
 
 // GET /v1/projects/:projectId/eval-suites/:suiteId/run-disclosure
 //
-// `caseIds` / `environmentId` / `environmentIds` — the SAME destination-
-// affecting subset `testSuites:getRunDisclosure` takes, and deliberately NOT
-// the estimator's full arg set: `iterationOverride`/`planCount` only scale
-// volume, which is not part of this contract, and Convex's strict validators
-// make forwarding them a runtime error rather than a silent ignore. A caller
-// keeps sending the full plan to `estimateSuiteRunCredits` and this
-// destination-affecting subset here.
+// `caseIds` / `environmentId` / `environmentIds` / `host` — the SAME
+// destination-affecting subset `testSuites:getRunDisclosure` takes, and
+// deliberately NOT the estimator's full arg set: `iterationOverride`/
+// `planCount` only scale volume, which is not part of this contract, and
+// Convex's strict validators make forwarding them a runtime error rather than
+// a silent ignore. A caller keeps sending the full plan to
+// `estimateSuiteRunCredits` and this destination-affecting subset here.
+//
+// `runnerCapabilities` is NOT among them: it is ASSERTED by this route, never
+// accepted from the query. See the forwarding comment below.
 evalDisclosure.get(
   "/projects/:projectId/eval-suites/:suiteId/run-disclosure",
   async (c) => {
@@ -195,16 +199,29 @@ evalDisclosure.get(
     const caseIds = csvQuery(c.req.query("caseIds"));
     const environmentId = c.req.query("environmentId") || undefined;
     const environmentIds = csvQuery(c.req.query("environmentIds"));
-    // Rejected HERE, not left for Convex's validator: forwarding both would
-    // hit `ArgumentValidationError`, which `translateConvexReadError` reads as
-    // "the resource you named cannot exist" and answers 404 — correct for a
-    // bad id, misleading for a caller who sent an ambiguous but well-formed
-    // request.
+    const host = c.req.query("host") || undefined;
+    // Rejected HERE, not left for Convex's validator: forwarding a conflicting
+    // pair would hit `ArgumentValidationError` (or, for host × environment,
+    // the backend's own `DISCLOSURE_SELECTOR_CONFLICT`), and
+    // `translateConvexReadError` reads the former as "the resource you named
+    // cannot exist" and answers 404 — correct for a bad id, misleading for a
+    // caller who sent an ambiguous but well-formed request.
+    //
+    // THREE-WAY since G4c: a launch plan resolves on exactly one axis, so a
+    // host selector conflicts with either spelling of the environment axis
+    // the same way the two environment spellings conflict with each other.
     if (environmentId && environmentIds) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
         "environmentId and environmentIds are mutually exclusive."
+      );
+    }
+    if (host && (environmentId || environmentIds)) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "host and environmentId/environmentIds are mutually exclusive — a launch plan resolves on exactly one axis, and an environment already resolves a host."
       );
     }
 
@@ -217,6 +234,17 @@ evalDisclosure.get(
         ...(caseIds ? { caseIds } : {}),
         ...(environmentId ? { environmentId } : {}),
         ...(environmentIds ? { environmentIds } : {}),
+        ...(host ? { namedHostId: host } : {}),
+        // ASSERTED, never accepted from the query — the same reasoning that
+        // lets this route compose `execution.locus` from `HOSTED_MODE`: the
+        // executing process is the only honest source for what it can run.
+        // The backend gates the engine it discloses on this handshake exactly
+        // as it gates the run's pinned config, so this MUST be the same list
+        // `startSuiteRunWithRecorder` declares at launch (one shared
+        // constant) or the disclosure would describe an engine the launch
+        // never uses. Accepting it from a caller would let a query claim a
+        // capability this runner does not have — and be believed.
+        runnerCapabilities: RUNNER_CAPABILITIES,
       } as never)) as Record<string, unknown> | null;
     } catch (error) {
       // The missing-function branch: unambiguous, no redaction risk — Convex
