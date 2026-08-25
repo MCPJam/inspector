@@ -3,6 +3,7 @@ import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -2214,13 +2215,15 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
     );
   }
-  // Harness MCP calls run out of process, so the policy is enforced at the MCP
-  // proxy the generated `.mcp.json` points at — sealed into the proxy token, so
-  // dropping the policy drops the credential. Refused only when this deployment
-  // cannot seal it.
+  // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
+  // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
+  // into the proxy token, so dropping the policy drops the credential. Refused
+  // only when this deployment cannot seal it. A host-executed adapter never
+  // mints that token (it enforces in-process), and the refusal reads its
+  // delivery off the adapter rather than off a bare "is a harness" boolean.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessAdmission.harness),
+    harness: harnessAdmission.harness,
   });
   if (harnessPolicyRefusal) {
     await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -2534,11 +2537,12 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(
@@ -2958,11 +2962,12 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(
@@ -3132,18 +3137,20 @@ export async function streamEvalTestCaseWithManager(
     // the run's own teardown, which aborts through this signal.
     await: { signal: streamAbortController.signal },
   });
+  // `includeAppOnly` is tied to the PRESENCE of a host policy, not to
+  // `respectToolVisibility`: eval wants the full set so the visibility gate
+  // below can both filter and COUNT the drops honestly.
+  const singleCaseToolOptions = mcpToolOptionsFor({
+    includeAppOnly: Boolean(suiteHostPolicy),
+    modelVisibleMcpToolResults: suiteHostPolicy?.modelVisibleMcpToolResults,
+    tasks: singleCaseTasksSeam,
+  });
   const tools = (
-    suiteHostPolicy || singleCaseTasksSeam
-      ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          ...(suiteHostPolicy
-            ? {
-                includeAppOnly: true,
-                modelVisibleMcpToolResults:
-                  suiteHostPolicy.modelVisibleMcpToolResults,
-              }
-            : {}),
-          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
-        })
+    singleCaseToolOptions
+      ? await clientManager.getToolsForAiSdk(
+          resolvedServerIds,
+          singleCaseToolOptions
+        )
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
   const streamToolSignals = suiteHostPolicy
