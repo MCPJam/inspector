@@ -75,7 +75,12 @@ import {
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import { META_TOOL_NAMES } from "@/shared/progressive-tool-discovery";
+import {
+  META_TOOL_NAMES,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -441,6 +446,45 @@ export type EvalIterationOutcome = {
 };
 
 /**
+ * D7: narrow a turn's full tool registry down to the subset the model was
+ * actually shown, when progressive discovery gated what it could see.
+ *
+ * `prepared.allTools` (and `selectionToolsForFinish`, captured from it) is
+ * always the COMPLETE registry — prepareChatV2 builds it before any step
+ * runs. When progressive discovery is enabled, `prepareStep` narrows each
+ * step's advertised set to `resolveActiveToolNames(plan, discoveryState)`
+ * and only ever adds to `discoveryState.loadedToolIds` (never removes), so
+ * by the time a turn finishes, `resolveActiveToolNames` recomputed against
+ * that SAME (mutated-in-place) state object gives the full set of names the
+ * model was shown across every step of the turn. Passing the unnarrowed
+ * registry to D7's selection-tool-catalog would let it see — and blame —
+ * metadata for a tool the model never had a chance to read.
+ *
+ * A no-op (returns `allTools` unchanged) when progressive discovery wasn't
+ * enabled for this turn, matching `resolveActiveToolNames`'s own non-plan
+ * behavior of exposing everything.
+ */
+export function narrowToolsToAdvertised(
+  allTools: PrepareChatV2Result["allTools"],
+  progressivePlan: ProgressiveToolPlan,
+  discoveryState: ToolDiscoveryState
+): PrepareChatV2Result["allTools"] {
+  if (!progressivePlan.enabled) {
+    return allTools;
+  }
+  const advertisedNames = new Set(
+    resolveActiveToolNames(progressivePlan, discoveryState)
+  );
+  const narrowed: PrepareChatV2Result["allTools"] = {};
+  for (const [name, tool] of Object.entries(allTools)) {
+    if (advertisedNames.has(name)) {
+      narrowed[name] = tool;
+    }
+  }
+  return narrowed;
+}
+
+/**
  * True when the provider/backend actually reported token usage. `accumulatedUsage`
  * is initialized to a zero object, so a zero total is indistinguishable from
  * "unmetered" — passing that into the transcript would let `tokenBudgetUnder`
@@ -574,7 +618,10 @@ function throwSetupPhaseError(args: {
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): never {
-  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  const serverLabel = getServerLabelForEvalError(
+    args.serverId,
+    args.environment
+  );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
       status: 409,
@@ -1307,7 +1354,9 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+  const listPending = async (): Promise<Array<
+    Record<string, unknown>
+  > | null> => {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
@@ -1326,17 +1375,15 @@ async function persistRunSetupFailure(args: {
     }
   };
 
-  const persistPending = async (
-    pending: Array<Record<string, unknown>>
-  ) => {
+  const persistPending = async (pending: Array<Record<string, unknown>>) => {
     await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId
@@ -1358,16 +1405,16 @@ async function persistRunSetupFailure(args: {
                 }),
               }
             : snapshot
-              ? {
-                  stageCase: buildStageAuthoredCase({
-                    test: {
-                      query: snapshot.query,
-                      expectedToolCalls: snapshot.expectedToolCalls,
-                    } as EvalTestCase,
-                    caseNeedsModel: true,
-                  }),
-                }
-              : {}),
+            ? {
+                stageCase: buildStageAuthoredCase({
+                  test: {
+                    query: snapshot.query,
+                    expectedToolCalls: snapshot.expectedToolCalls,
+                  } as EvalTestCase,
+                  caseNeedsModel: true,
+                }),
+              }
+            : {}),
           ...(setupSignals ? { setupSignals } : {}),
           ...(setupSpans.length ? { setupSpans } : {}),
           ...(setupAudit ? { setupAudit } : {}),
@@ -3109,6 +3156,17 @@ const runLocalIteration = async ({
   // the failure path can attach the tool set the model actually chose
   // between when selection failed mid-run.
   let selectionToolsForFinish: PrepareChatV2Result["allTools"] | undefined;
+  // Captured alongside `selectionToolsForFinish` at the same assignment
+  // point, but read lazily at each usage site below (both are live
+  // references into `prepared` — `discoveryState` mutates in place as the
+  // turn's steps run) so the narrowing reflects state AFTER the turn
+  // finishes, not the empty state at prepareChatV2 return time.
+  let selectionDiscoveryForFinish:
+    | {
+        progressivePlan: PrepareChatV2Result["progressivePlan"];
+        discoveryState: PrepareChatV2Result["discoveryState"];
+      }
+    | undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -3163,6 +3221,10 @@ const runLocalIteration = async ({
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
       selectionToolsForFinish = prepared.allTools;
+      selectionDiscoveryForFinish = {
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+      };
 
       llmModel = createLlmModel(
         modelDefinition,
@@ -3589,7 +3651,19 @@ const runLocalIteration = async ({
       // suite-level `_suiteTools` this runner otherwise ignores. Absent on
       // a model-free iteration (`prepared` stays null), where there is no
       // selection stage to explain anyway.
-      ...(selectionToolsForFinish ? { selectionTools: selectionToolsForFinish } : {}),
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -3781,7 +3855,19 @@ const runLocalIteration = async ({
       // suite-level `_suiteTools` this runner otherwise ignores. Absent on
       // a model-free iteration (`prepared` stays null), where there is no
       // selection stage to explain anyway.
-      ...(selectionToolsForFinish ? { selectionTools: selectionToolsForFinish } : {}),
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -4364,9 +4450,7 @@ const runHostedIterationWithBrowser = async (
                 toolName: block.toolName,
                 reason: block.reason,
                 classification: block.classification,
-                ...(block.toolCallId
-                  ? { toolCallId: block.toolCallId }
-                  : {}),
+                ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
               });
             }
           },
@@ -4593,8 +4677,14 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     // D7: same `prepared.allTools` source the local runner threads through —
     // this runner always has a model turn (see the `stageCase` comment
-    // above), so `prepared` is always assigned by this point.
-    selectionTools: prepared.allTools,
+    // above), so `prepared` is always assigned by this point. Narrowed to
+    // what progressive discovery actually advertised, when enabled — see
+    // `narrowToolsToAdvertised`.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState
+    ),
   });
 
   await finalizeIterationWithBrowserArtifacts({
