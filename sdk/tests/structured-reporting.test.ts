@@ -438,6 +438,55 @@ describe("renderStructuredRunHtml", () => {
     expect(html).not.toContain("not measured, not a confirmed regression");
   });
 
+  it("renders an incomplete gate's iteration-fetch diagnostic neutrally, not as a Failures entry", () => {
+    // End-to-end version of the `buildEvalRunReport` classification test
+    // above: build the report the way `eval gate` actually does — the
+    // underlying run as an input (so the "reporting" case auto-generates)
+    // plus the gate's own synthetic case, verdict overridden to
+    // "inconclusive" — then render it and check the page, not just the
+    // report shape.
+    const report = buildEvalRunReport(
+      [
+        {
+          run: {
+            id: "run-1",
+            suiteId: "suite-1",
+            runNumber: 1,
+            status: "completed",
+            result: "inconclusive",
+            summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+            source: "api",
+            notes: null,
+            createdAt: 100,
+            completedAt: 300,
+          } as unknown as PlatformEvalRun,
+          iterations: [],
+          iterationsComplete: false,
+          iterationError: "page 2 failed",
+        },
+      ],
+      {
+        cases: [
+          {
+            id: "gate",
+            title: "Eval gate",
+            category: "gate",
+            passed: false,
+            classification: "informational",
+            error: "the run is incomplete; no verdict was established",
+          },
+        ],
+        verdict: "inconclusive",
+      }
+    );
+    const html = renderStructuredRunHtml(report);
+
+    expect(html).not.toMatch(/<article class="case case-fail">/);
+    expect(html).not.toMatch(/Failures \(\d+\)/);
+    expect(html).toContain("Not measured");
+    expect(html).toMatch(/run-1: iteration results/);
+  });
+
   it("renders a passed verdict as pass and a failed verdict as fail", () => {
     const passedHtml = renderStructuredRunHtml(
       baseReport({ passed: true, verdict: "passed" })
@@ -707,6 +756,47 @@ describe("buildEvalRunReport", () => {
         id: "run-1:iterations",
         passed: false,
         error: "page 2 failed",
+      }),
+    ]);
+  });
+
+  it("classifies the incomplete-iteration-retrieval case as informational, not an observed failure", () => {
+    // A gate composes this report by passing the underlying run as an input
+    // (so this "reporting" case gets auto-generated) alongside its own
+    // synthetic gate case, then overrides the verdict via
+    // `gateOutcomeVerdict`. When retrieval was incomplete, that verdict is
+    // "inconclusive" — but this case had no `classification`, so
+    // `isDiagnosticCase` treated it as an observed failure and the HTML
+    // report painted it red under "Failures" despite the header saying
+    // nothing was measured.
+    const report = buildEvalRunReport(
+      [
+        {
+          run: {
+            id: "run-1",
+            suiteId: "suite-1",
+            runNumber: 1,
+            status: "completed",
+            result: "inconclusive",
+            summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+            source: "api",
+            notes: null,
+            createdAt: 100,
+            completedAt: 300,
+          } as unknown as PlatformEvalRun,
+          iterations: [],
+          iterationsComplete: false,
+          iterationError: "page 2 failed",
+        },
+      ],
+      { verdict: "inconclusive" }
+    );
+
+    expect(report.cases).toEqual([
+      expect.objectContaining({
+        id: "run-1:iterations",
+        passed: false,
+        classification: "informational",
       }),
     ]);
   });

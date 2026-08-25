@@ -162,6 +162,7 @@ export function buildEvalRunReport(
         title: `${input.run.id}: iteration results`,
         category: "reporting",
         passed: false,
+        classification: "informational",
         error:
           input.iterationError ??
           "The complete iteration result set could not be fetched.",
