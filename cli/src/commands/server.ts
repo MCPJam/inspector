@@ -542,7 +542,7 @@ export function registerServerCommands(program: Command): void {
         )
         .option(
           "--reporter <reporter>",
-          "Structured reporter output: json-summary or junit-xml",
+          "Structured reporter output: json-summary, junit-xml, or html",
         )
         .option("--out <path>", "Write the raw diff JSON artifact to a file"),
     ),
