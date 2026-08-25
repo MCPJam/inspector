@@ -234,6 +234,75 @@ function environmentConflictKind(error: unknown): "drift" | "revision" {
  * null rather than throwing so call sites read as one line next to the other
  * translations.
  */
+/**
+ * Every OTHER structured refusal `startTestSuiteRun` can raise before it
+ * creates anything: a bad `ephemeralEnvironment` request, an environment that
+ * is not a suite member, an ambiguous multi-environment launch, and the
+ * resolver's own cross-project / archived / missing verdicts.
+ *
+ * Without this they reach the caller as `500 "Server Error"`. The backend
+ * deliberately raises `ConvexError` for these so the reason SURVIVES
+ * production redaction — Convex redacts a plain `Error`'s message and keeps a
+ * `ConvexError`'s data — and then the launch path threw the whole thing away
+ * by rethrowing it raw into the generic handler. Converting the throw and not
+ * translating it buys nothing: the caller still cannot tell "you named an
+ * environment this suite does not have" from "the server broke".
+ *
+ * Codes, not prose: the message is the backend's and is forwarded verbatim,
+ * but the branch is on `code`, so rewording a backend message cannot silently
+ * change which status a caller sees.
+ *
+ * Returns null for anything unrecognized, so a genuinely unknown failure stays
+ * a logged 500 rather than being relabelled as the caller's mistake.
+ */
+const LAUNCH_REJECTION_STATUS: Record<string, 400 | 404> = {
+  // Malformed request: the argument combination cannot mean anything.
+  VALIDATION: 400,
+  // Named an environment the suite does not have, or named none when the
+  // suite has several. Both are fixable by the caller, and naming the id back
+  // reveals nothing they did not already send.
+  ENV_NOT_A_MEMBER: 400,
+  ENV_AMBIGUOUS: 400,
+  // Archived is a state the caller can see and undo; cross-project and
+  // not-found both answer 404, so a probe cannot use this route to learn
+  // whether an id exists in someone else's project.
+  ENV_ARCHIVED: 400,
+  ENV_CROSS_PROJECT: 404,
+  ENV_NOT_FOUND: 404,
+};
+
+export function environmentLaunchRejectionError(
+  error: unknown
+): WebRouteError | null {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+  const code = typeof record.code === "string" ? record.code : undefined;
+  if (!code) return null;
+  const status = LAUNCH_REJECTION_STATUS[code];
+  if (!status) return null;
+  const message =
+    typeof record.message === "string" && record.message.trim()
+      ? record.message
+      : "This eval run could not be started as requested.";
+  const details =
+    record.details &&
+    typeof record.details === "object" &&
+    !Array.isArray(record.details)
+      ? (record.details as Record<string, unknown>)
+      : {};
+  return new WebRouteError(
+    status,
+    status === 404 ? ErrorCode.NOT_FOUND : ErrorCode.VALIDATION_ERROR,
+    message,
+    { code, ...details, reason: code.toLowerCase() }
+  );
+}
+
 export function environmentModelRequiredError(
   error: unknown
 ): WebRouteError | null {

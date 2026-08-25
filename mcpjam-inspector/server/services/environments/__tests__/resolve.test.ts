@@ -3,6 +3,7 @@ import { ConvexError } from "convex/values";
 import {
   environmentEffectiveServerIds,
   environmentLaunchConflictError,
+  environmentLaunchRejectionError,
   environmentServerIds,
   environmentServerNames,
   isEnvironmentLaunchConflict,
@@ -258,5 +259,52 @@ describe("environmentLaunchConflictError", () => {
     );
     expect(err.status).toBe(409);
     expect(err.message).toMatch(/host or server group changed/i);
+  });
+});
+
+describe("environmentLaunchRejectionError", () => {
+  it("forwards a structured launch refusal as the caller's 400, not a 500", () => {
+    // The whole point of the backend raising ConvexError for these: Convex
+    // redacts a plain Error's message in production, so an untranslated throw
+    // reaches the caller as "Server Error" and they cannot tell a bad request
+    // from a broken server.
+    const err = environmentLaunchRejectionError(
+      new ConvexError({
+        code: "VALIDATION",
+        message:
+          "ephemeralEnvironment requires environmentId — it names the environment to run without attaching it.",
+      })
+    )!;
+    expect(err).toBeInstanceOf(WebRouteError);
+    expect(err.status).toBe(400);
+    expect(err.message).toMatch(/requires environmentId/i);
+    expect((err.details as Record<string, unknown>).reason).toBe("validation");
+  });
+
+  it("answers 404 for cross-project and missing, so the route cannot be used to probe", () => {
+    for (const code of ["ENV_CROSS_PROJECT", "ENV_NOT_FOUND"]) {
+      const err = environmentLaunchRejectionError(
+        new ConvexError({ code, message: "nope" })
+      )!;
+      expect(err.status).toBe(404);
+    }
+  });
+
+  it("keeps a non-member or ambiguous selection a 400 the caller can act on", () => {
+    for (const code of ["ENV_NOT_A_MEMBER", "ENV_AMBIGUOUS", "ENV_ARCHIVED"]) {
+      const err = environmentLaunchRejectionError(
+        new ConvexError({ code, message: "nope" })
+      )!;
+      expect(err.status).toBe(400);
+      expect((err.details as Record<string, unknown>).code).toBe(code);
+    }
+  });
+
+  it("returns null for anything unrecognized so a real fault stays a logged 500", () => {
+    expect(
+      environmentLaunchRejectionError(new ConvexError({ code: "SOMETHING_NEW" }))
+    ).toBeNull();
+    expect(environmentLaunchRejectionError(new Error("boom"))).toBeNull();
+    expect(environmentLaunchRejectionError(null)).toBeNull();
   });
 });
