@@ -150,8 +150,10 @@ import {
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
   harnessScopeStepUpServerMatches,
+  matchHarnessScopeStepUpToolCall,
   subscribeHarnessScopeStepUp,
   type HarnessScopeStepUpEvent,
+  type ObservedHarnessToolCall,
 } from "./harness-scope-step-up.js";
 import {
   emitInsufficientScopeChunk,
@@ -334,20 +336,6 @@ function coerceToolInput(raw: unknown): unknown {
   } catch {
     return raw;
   }
-}
-
-function stableHarnessValue(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableHarnessValue).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableHarnessValue(record[key])}`)
-    .join(",")}}`;
 }
 
 /** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
@@ -744,12 +732,16 @@ export async function runHarnessTurn(
     // in-process tool wrapper emits. Exact turn correlation handles concurrent
     // chats; the registry's server fallback is used only when one live turn can
     // possibly receive a stale resumed-session event.
-    const observedHarnessToolCalls: Array<{
-      toolCallId: string;
-      serverId?: string;
-      toolName: string;
-      input: unknown;
-    }> = [];
+    const observedHarnessToolCalls: ObservedHarnessToolCall[] = [];
+    // HOST-EXECUTED delivery only: the RAW MCP result of a projected call,
+    // captured at `execute()` time and keyed by the AI SDK `toolCallId`. The
+    // relay carries the MODEL-FACING projection instead (see
+    // `projectSelectedMcpServersAsHostTools`), and the runtime echoes back only
+    // what it was given — so without this the UI, the trace and the transcript
+    // would all see the scrubbed copy, diverging from the emulated engine,
+    // which shows the raw result and projects for the model alone. Claimed once
+    // per tool result and then dropped, so the map cannot outgrow the turn.
+    const hostExecutedRawResults = new Map<string, unknown>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -762,16 +754,13 @@ export async function runHarnessTurn(
         return;
       }
       const challenge = pendingScopeChallenge;
-      const matchingCall = observedHarnessToolCalls.find(
-        (call) =>
-          harnessScopeStepUpServerMatches(
-            call.serverId ? [call.serverId] : [],
-            challenge.serverId
-          ) &&
-          call.toolName === challenge.toolName &&
-          stableHarnessValue(call.input) ===
-            stableHarnessValue(challenge.toolInput ?? {})
-      );
+      // `toolCallId` first, tuple only when the publisher had no id to give —
+      // see `matchHarnessScopeStepUpToolCall`. Two identical calls in one turn
+      // otherwise resume the FIRST one, whichever raised the challenge.
+      const matchingCall = matchHarnessScopeStepUpToolCall({
+        observed: observedHarnessToolCalls,
+        challenge,
+      });
       if (!matchingCall) return;
       suspendedHarnessToolCallId = matchingCall.toolCallId;
       scopeStepUpCreation = Promise.resolve(
@@ -1049,6 +1038,12 @@ export async function runHarnessTurn(
               // intake so a hosted-OAuth server pauses this turn instead of
               // reporting an ordinary tool failure to the model.
               onScopeStepUpChallenge: receiveScopeStepUpChallenge,
+              // The relay carries the MODEL-FACING projection of each result;
+              // keep the raw one for the UI/trace/transcript so a Codex turn
+              // shows what the server returned, like every other engine.
+              onRawResult: ({ toolCallId, raw }) => {
+                hostExecutedRawResults.set(toolCallId, raw);
+              },
             })
           : { tools: {}, keyToServerId: {} };
       // The attribution map is whichever mode produced one; they are the same
@@ -2192,9 +2187,17 @@ export async function runHarnessTurn(
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
-            const output =
-              (part as { output?: unknown }).output ??
-              (part as { result?: unknown }).result;
+            // HOST-EXECUTED delivery: prefer the raw result captured at
+            // `execute()` time over the runtime's echo, which is the model-facing
+            // projection we handed it. `has` rather than a truthiness check —
+            // a tool may legitimately resolve `undefined`.
+            const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
+            const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
+            hostExecutedRawResults.delete(toolCallId);
+            const output = hasRawHostExecuted
+              ? rawHostExecuted
+              : (part as { output?: unknown }).output ??
+                (part as { result?: unknown }).result;
             // Surface tool failures the harness reports so eval/trace consumers
             // that key off isError classify them correctly.
             const isError =

@@ -7,6 +7,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { buildToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { scrubMetaAndStructuredContentFromToolResult } from "@mcpjam/sdk";
+import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
   harnessMcpToolName,
   projectSelectedMcpServersAsHostTools,
@@ -273,6 +275,172 @@ describe("projectSelectedMcpServersAsHostTools", () => {
           selectedServerIds: ["ok", "broken"],
         })
       ).rejects.toThrow(/server went away mid-enumeration/);
+    });
+  });
+
+  /**
+   * The relay is a MODEL channel. `execute()` answers the raw MCP result (the
+   * inspector's UI renders widgets off it); `toModelOutput()` is the projection
+   * the model is allowed to see. The harness host-tool loop only ever calls
+   * `execute()`, so without the wrapper an MCP App tool's client-only `_meta`
+   * and `structuredContent` rode straight into Codex's context.
+   */
+  describe("the relay carries the model-facing projection, not the raw result", () => {
+    /** An app tool the way `convertMCPToolsToVercelTools` builds one: raw from
+     *  `execute`, scrubbed through `toModelOutput`, wrapped in the AI SDK's
+     *  `{type:"json"}` transport envelope. */
+    function appTool(raw: CallToolResult) {
+      return {
+        description: "d",
+        execute: vi.fn(async () => raw),
+        toModelOutput: vi.fn(
+          (opts: { toolCallId: string; input: unknown; output: unknown }) => ({
+            type: "json" as const,
+            value: scrubMetaAndStructuredContentFromToolResult(
+              opts.output as CallToolResult
+            ),
+          })
+        ),
+      };
+    }
+
+    const rawAppResult: CallToolResult = {
+      content: [{ type: "text", text: "42 open issues" }],
+      structuredContent: { count: 42 },
+      _meta: { "openai/outputTemplate": "ui://widget/issues.html" },
+    };
+
+    it("scrubs client-only _meta and structuredContent off what the model sees", async () => {
+      const inner = appTool(rawAppResult);
+      const manager = fakeManager({ gh: { list_issues: inner } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["gh"],
+      });
+      const relayed = await (
+        projected.tools["mcp__gh__list_issues"] as FakeTool
+      ).execute({}, { toolCallId: "call-1" });
+
+      // The envelope is unwrapped, so the wire shape is unchanged for a tool
+      // with nothing to scrub — but the widget payload is gone.
+      expect(relayed).toEqual({
+        content: [{ type: "text", text: "42 open issues" }],
+      });
+      expect(relayed).not.toHaveProperty("_meta");
+      expect(relayed).not.toHaveProperty("structuredContent");
+      // Not re-implemented here: it is the manager tool's OWN projection, so the
+      // harness and the emulated engine cannot disagree about model visibility.
+      expect(inner.toModelOutput).toHaveBeenCalledTimes(1);
+      expect(inner.toModelOutput.mock.calls[0]![0]!.output).toBe(rawAppResult);
+    });
+
+    it("hands the RAW result back for the UI, keyed by toolCallId", async () => {
+      // The runtime echoes back only what it was given, so without this the UI,
+      // the trace and the transcript would all show the scrubbed copy — a
+      // divergence from every other engine.
+      const seen: Array<{ toolCallId: string; raw: unknown }> = [];
+      const manager = fakeManager({ gh: { list_issues: appTool(rawAppResult) } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["gh"],
+        onRawResult: (a) => seen.push(a),
+      });
+      await (projected.tools["mcp__gh__list_issues"] as FakeTool).execute(
+        {},
+        { toolCallId: "call-7" }
+      );
+      expect(seen).toEqual([{ toolCallId: "call-7", raw: rawAppResult }]);
+    });
+
+    it("leaves a tool with no projection untouched, by identity", async () => {
+      // Most MCP tools are not app tools. They must not pay a wrapper, and the
+      // single-execution-path property has to survive this change.
+      const inner = tool({ content: [{ type: "text", text: "hi" }] });
+      const manager = fakeManager({ srv: { ping: inner } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+      });
+      expect(projected.tools["mcp__srv__ping"]).toBe(inner);
+      await expect(
+        (projected.tools["mcp__srv__ping"] as FakeTool).execute({}, {})
+      ).resolves.toEqual({ content: [{ type: "text", text: "hi" }] });
+    });
+
+    it("passes a non-json output envelope through as-is", async () => {
+      // The image/linked-resource projection is a genuinely different,
+      // self-describing shape; flattening it would make the model guess.
+      const contentOutput = {
+        type: "content" as const,
+        value: [{ type: "media", data: "…", mediaType: "image/png" }],
+      };
+      const inner = {
+        description: "d",
+        execute: vi.fn(async () => ({ content: [] })),
+        toModelOutput: vi.fn(() => contentOutput),
+      };
+      const manager = fakeManager({ srv: { shot: inner } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+      });
+      await expect(
+        (projected.tools["mcp__srv__shot"] as FakeTool).execute({}, {})
+      ).resolves.toEqual(contentOutput);
+    });
+
+    it("does not project a policy block envelope (projection is innermost)", async () => {
+      // Above the gate, the projection would scrub the `_meta` marker the turn
+      // recognises its OWN block by, and a refusal would be misaccounted as the
+      // customer's tool failing.
+      const inner = appTool(rawAppResult);
+      const manager = fakeManager({ srv: { delete_all: inner } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        toolPolicy: {
+          srv: buildToolPolicySnapshot({
+            policy: { mode: "default", deny: ["delete_all"] },
+            tools: [{ name: "delete_all" }],
+          }),
+        },
+      });
+      const result = (await (
+        projected.tools["mcp__srv__delete_all"] as FakeTool
+      ).execute({}, {})) as { _meta: Record<string, { reason: string }> };
+      expect(result._meta["mcpjam/policyBlock"]!.reason).toBe("denyList");
+      expect(inner.toModelOutput).not.toHaveBeenCalled();
+    });
+
+    it("still observes a scope challenge through the projection wrapper", async () => {
+      // Layering must not cost the SEP-2350 bridge: the error is raised by the
+      // innermost `execute`, below the projection, and still reaches the sink.
+      const error = Object.assign(new Error("Forbidden"), {
+        name: "InsufficientScopeError",
+        requiredScope: "repo.write",
+      });
+      const inner = {
+        description: "d",
+        execute: vi.fn(async () => {
+          throw error;
+        }),
+        toModelOutput: vi.fn(() => ({ type: "json" as const, value: {} })),
+      };
+      const manager = fakeManager({ gh: { create_issue: inner } });
+      const seen: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["gh"],
+        onScopeStepUpChallenge: (event) => seen.push(event),
+      });
+      await expect(
+        (projected.tools["mcp__gh__create_issue"] as FakeTool).execute(
+          {},
+          { toolCallId: "call-2" }
+        )
+      ).rejects.toBe(error);
+      expect(seen).toHaveLength(1);
+      expect(inner.toModelOutput).not.toHaveBeenCalled();
     });
   });
 

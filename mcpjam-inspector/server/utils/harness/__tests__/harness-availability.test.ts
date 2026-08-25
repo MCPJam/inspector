@@ -119,13 +119,24 @@ describe("checkHarnessRuntimeAvailable", () => {
     expect(r.ok).toBe(true);
   });
 
+  // Claude Code's own MCP tools take the NATIVE arm of the delivery split, and
+  // it declares no MCP-tool approval. `kind` is asserted alongside the copy on
+  // purpose: eval admission branches on the kind, so a copy edit must not be
+  // what decides whether this stays a refusal.
   it("still blocks an approval host WITH selected MCP servers (no MCP approval knob)", () => {
     setFullyAvailable();
     const r = checkHarnessRuntimeAvailable(
-      args({ requireToolApproval: true, hasSelectedMcpServers: true })
+      args({
+        harnessId: "claude-code",
+        requireToolApproval: true,
+        hasSelectedMcpServers: true,
+      })
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/MCP-server tools/);
+    if (!r.ok) {
+      expect(r.kind).toBe("tool-approval");
+      expect(r.reason).toMatch(/MCP-server tools/);
+    }
   });
 
   it("still blocks an approval host on Codex (no native approval)", () => {

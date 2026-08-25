@@ -2214,13 +2214,15 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
     );
   }
-  // Harness MCP calls run out of process, so the policy is enforced at the MCP
-  // proxy the generated `.mcp.json` points at — sealed into the proxy token, so
-  // dropping the policy drops the credential. Refused only when this deployment
-  // cannot seal it.
+  // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
+  // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
+  // into the proxy token, so dropping the policy drops the credential. Refused
+  // only when this deployment cannot seal it. A host-executed adapter never
+  // mints that token (it enforces in-process), and the refusal reads its
+  // delivery off the adapter rather than off a bare "is a harness" boolean.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessAdmission.harness),
+    harness: harnessAdmission.harness,
   });
   if (harnessPolicyRefusal) {
     await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -2534,11 +2536,12 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(
@@ -2958,11 +2961,12 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(

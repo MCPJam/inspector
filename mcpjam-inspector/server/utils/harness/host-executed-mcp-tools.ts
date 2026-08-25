@@ -45,6 +45,12 @@
  *    raised by an in-process call is extracted with the same shared helper the
  *    proxy path uses and handed to the turn's existing bridge (see
  *    {@link projectSelectedMcpServersAsHostTools}'s `onScopeStepUpChallenge`).
+ *  - The RELAY carries the model-facing projection of a result, not the raw
+ *    one: `toModelOutput` is the manager tool's own, so app-tool `_meta` /
+ *    `structuredContent` never reaches the model and `modelVisibleMcpToolResults`
+ *    still applies (see {@link withModelOutputProjection}). The raw result is
+ *    handed back through `onRawResult` so the UI keeps rendering what the server
+ *    actually returned.
  *  - Every projected tool's description is injected into the PROMPT by the
  *    bridge, so a server with many tools inflates every turn of the
  *    conversation. There is no cap here — MCPJam has no tool-count budget to
@@ -112,6 +118,16 @@ export async function projectSelectedMcpServersAsHostTools(args: {
    * behaviour for a turn that cannot pause anyway.
    */
   onScopeStepUpChallenge?: (event: HarnessScopeStepUpEvent) => void;
+  /**
+   * Sink for the RAW MCP result of each call, keyed by the AI SDK `toolCallId`.
+   *
+   * The relay receives the model-facing projection (see
+   * {@link withModelOutputProjection}), and the runtime echoes back only what it
+   * was given — so the turn needs this to keep showing the UI, the trace and the
+   * transcript what the server actually returned, exactly as the emulated engine
+   * does. Omitted ⇒ the raw result is simply not retained.
+   */
+  onRawResult?: (args: { toolCallId: string; raw: unknown }) => void;
 }): Promise<HostExecutedMcpProjection> {
   const configured = selectDeliverableServerIds({
     selectedServerIds: args.selectedServerIds,
@@ -151,13 +167,20 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     const serverTools = await args.manager.getToolsForAiSdk([serverId]);
     const snapshot = args.toolPolicy?.[serverId];
     for (const [toolName, tool] of Object.entries(serverTools)) {
-      // Layered inward-out, and the order is load-bearing: the policy gate must
-      // be OUTERMOST so a denied call short-circuits to the block envelope
-      // without ever entering the observer (a blocked call reaches no server and
-      // so can raise no scope challenge). With neither layer in force the
-      // manager's own tool object is passed through by IDENTITY, keeping exactly
-      // one execution path for an MCP call.
-      let projected: unknown = tool;
+      // Layered inward-out, and the order is load-bearing:
+      //  - the MODEL-OUTPUT projection is INNERMOST, so it only ever sees a real
+      //    server result. Above the policy gate it would scrub the block
+      //    envelope's `_meta` marker and the turn would stop recognising its own
+      //    block.
+      //  - the policy gate is OUTERMOST, so a denied call short-circuits to that
+      //    envelope without entering the observer (a blocked call reaches no
+      //    server and so can raise no scope challenge).
+      // With no layer in force the manager's own tool object is passed through
+      // by IDENTITY, keeping exactly one execution path for an MCP call.
+      let projected: unknown = withModelOutputProjection({
+        tool,
+        ...(args.onRawResult ? { onRawResult: args.onRawResult } : {}),
+      });
       if (args.onScopeStepUpChallenge) {
         projected = withScopeStepUpObserver({
           tool: projected,
@@ -173,6 +196,105 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     }
   }
   return { tools, keyToServerId };
+}
+
+/**
+ * Relay the MODEL-FACING projection of an MCP result, not the raw one.
+ *
+ * The manager's AI SDK tool answers TWO shapes on purpose: `execute()` returns
+ * the raw `CallToolResult` (which the inspector's own UI renders — MCP App
+ * widgets read `_meta` and `structuredContent` off it), while `toModelOutput()`
+ * is the model-facing projection — app-tool `_meta`/`structuredContent`
+ * scrubbed, and the host's `modelVisibleMcpToolResults` policy applied to
+ * images and embedded/linked resources.
+ *
+ * The AI SDK's own loop calls both. The harness host-tool loop calls NEITHER
+ * but `execute()`: `maybeExecuteHostTool` submits that value straight to
+ * `control.submitToolResult`, which the bridge JSON-serializes onto the CLI
+ * relay's stdout. So without this wrapper a projected app tool would ship its
+ * client-only `_meta` and `structuredContent` into the model's context — pure
+ * token cost and context leakage, since a harness cannot render a widget at all
+ * (`widgetRendered` is refused at eval admission for exactly that reason) — and
+ * `modelVisibleMcpToolResults` would be bypassed entirely.
+ *
+ * The projection is NOT re-implemented here: it is the tool's own
+ * `toModelOutput`, so the harness and the emulated engine can never disagree
+ * about what a model may see. A tool that has none (or no `execute`) is passed
+ * through BY IDENTITY, so the single-execution-path property still holds.
+ *
+ * `toModelOutput` answers an AI SDK `ToolResultOutput` envelope rather than a
+ * `CallToolResult`, so the envelope is unwrapped before it goes on the wire —
+ * see {@link unwrapToolResultOutput}. It is also STRIPPED from the returned
+ * tool: having already projected, a future harness that learns to call it must
+ * not project a second time.
+ */
+function withModelOutputProjection(args: {
+  tool: unknown;
+  onRawResult?: (a: { toolCallId: string; raw: unknown }) => void;
+}): unknown {
+  const tool = args.tool as {
+    execute?: (input: unknown, options: unknown) => unknown;
+    toModelOutput?: (opts: {
+      toolCallId: string;
+      input: unknown;
+      output: unknown;
+      abortSignal?: AbortSignal;
+    }) => unknown;
+  };
+  const originalExecute = tool.execute?.bind(tool);
+  const toModelOutput = tool.toModelOutput?.bind(tool);
+  if (!originalExecute || !toModelOutput) return args.tool;
+  const { toModelOutput: _projected, ...rest } = tool;
+  return {
+    ...rest,
+    execute: async (input: unknown, options: unknown) => {
+      const raw = await originalExecute(input, options);
+      const callOptions = options as
+        | { toolCallId?: unknown; abortSignal?: unknown }
+        | undefined;
+      const toolCallId =
+        typeof callOptions?.toolCallId === "string"
+          ? callOptions.toolCallId
+          : undefined;
+      if (toolCallId) args.onRawResult?.({ toolCallId, raw });
+      const modelOutput = await toModelOutput({
+        toolCallId: toolCallId ?? "",
+        input,
+        output: raw,
+        // Linked-resource reads happen inside the projection; pass the turn's
+        // signal so a cancelled turn stops them promptly.
+        ...(callOptions?.abortSignal instanceof AbortSignal
+          ? { abortSignal: callOptions.abortSignal }
+          : {}),
+      });
+      return unwrapToolResultOutput(modelOutput, raw);
+    },
+  };
+}
+
+/**
+ * Unwrap an AI SDK `ToolResultOutput` back to the value the relay should carry.
+ *
+ * `json` / `text` / `error-text` are transport envelopes around a value the
+ * relay can serialize directly, and unwrapping them keeps the wire shape
+ * IDENTICAL to today's raw path (an ordinary MCP result projects to
+ * `{type:"json", value: <result>}`), so this change is invisible to a tool with
+ * nothing to scrub. `content` is a genuinely different, self-describing shape
+ * (the image/resource projection), so it rides as-is rather than being flattened
+ * into something the model would have to guess at. Anything unrecognised falls
+ * back to the raw result rather than putting an unknown envelope on the wire.
+ */
+function unwrapToolResultOutput(modelOutput: unknown, raw: unknown): unknown {
+  if (!modelOutput || typeof modelOutput !== "object") return raw;
+  const envelope = modelOutput as { type?: unknown; value?: unknown };
+  if (
+    envelope.type === "json" ||
+    envelope.type === "text" ||
+    envelope.type === "error-text"
+  ) {
+    return envelope.value;
+  }
+  return modelOutput;
 }
 
 /**

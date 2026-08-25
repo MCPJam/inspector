@@ -24,12 +24,32 @@ with a server attached, and therefore every Codex eval suite) is gone; a Codex
 host that requires tool approval is still refused, because Codex cannot pause a
 host-executed tool.
 
+What the model sees is the tool's own **model-facing projection**, not the raw
+MCP result. The harness host-tool loop submits whatever `execute()` returns and
+never calls `toModelOutput`, so a projected MCP App tool would have shipped its
+client-only `_meta` and `structuredContent` straight into the model's context —
+token cost and context leakage for a payload a harness cannot render at all —
+and would have bypassed the host's `modelVisibleMcpToolResults` policy. The
+relay now carries the projection while the raw result is kept for the UI, the
+trace and the transcript, so a Codex turn still shows what the server actually
+returned.
+
 Scope step-up (SEP-2350) is carried on this path too. A host-executed call never
 touches the signed proxy that extracts an `insufficient_scope` challenge on the
 native path, so the projected tools observe it in-process with the same shared
 extractor and publish into the same turn-level bridge. A hosted-OAuth server that
 needs a step-up therefore pauses a Codex turn and offers re-authorization, rather
-than reporting an ordinary tool failure to the model.
+than reporting an ordinary tool failure to the model. The turn correlates a
+challenge to its tool call by `toolCallId` when the publisher has one, falling
+back to the (server, tool, input) tuple only for the proxy, which has no id to
+give — two identical calls in one turn used to resume the first, whichever one
+actually failed.
+
+`toolPolicy` admission is delivery-aware. It used to refuse any policied harness
+run on a deployment that could not seal the policy into a proxy token, which
+wrongly refused every policied Codex eval on a deployment whose terminal secret
+was merely too short — host-executed delivery mints no such token and enforces
+the snapshot in-process. Native delivery still fails closed exactly as before.
 
 Tool-approval refusals no longer depend on whether MCP servers happen to be
 selected. The pre-flight and the in-turn backstop now ask one shared helper, so a
