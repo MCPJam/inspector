@@ -269,4 +269,48 @@ describe("countToolsTokens fallback behavior", () => {
     expect(result).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // The unreachable-backend path is the COMMON one (INSPECTOR-ELECTRON-1Q has
+  // 15,931 of them), it runs in the Electron main process, and it used to
+  // serialize `tools` a second time inside the rejection microtask. `toJSON`
+  // counts real traversals, so this asserts behavior rather than a mock.
+  it("serializes tools once, not twice, when the backend is unreachable", async () => {
+    global.fetch = vi.fn().mockImplementation(() => {
+      const err = new TypeError("fetch failed");
+      (err as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+      throw err;
+    });
+
+    let serializations = 0;
+    const tools = [
+      {
+        toJSON() {
+          serializations++;
+          return { name: "search", description: "search the catalog" };
+        },
+      },
+    ];
+    const expected = estimateTokensFromChars(
+      JSON.stringify([{ name: "search", description: "search the catalog" }])
+    );
+
+    const result = await countToolsTokens(tools, "claude-opus-4-1");
+
+    expect(serializations).toBe(1);
+    expect(result).toBe(expected);
+  });
+
+  it("skips the backend call for a tools payload past the size cap", async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof global.fetch;
+
+    // Past the 4 MB ceiling, where the request envelope would re-escape the
+    // whole payload into a second copy inside the main process.
+    const tools = [{ name: "huge", description: "x".repeat(5 * 1024 * 1024) }];
+
+    const result = await countToolsTokens(tools, "claude-opus-4-1");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toBe(estimateTokensFromChars(JSON.stringify(tools)));
+  });
 });
