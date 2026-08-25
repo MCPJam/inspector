@@ -1416,6 +1416,19 @@ export class PlatformApiClient {
       caseIds?: string[];
       environmentId?: string;
       environmentIds?: string[];
+      /**
+       * Disclose for a HOST-axis launch — the attached host a run would be
+       * stamped with (G4c). Mutually exclusive with `environmentId`/
+       * `environmentIds`: a launch plan resolves on exactly one axis, and the
+       * route rejects the combination with a 400 rather than letting it reach
+       * the backend as an ambiguous query.
+       *
+       * `runnerCapabilities` is deliberately NOT a parameter here. The
+       * inspector route asserts it from the executing process, which is the
+       * only honest source for what that process can run; a client-supplied
+       * value could claim a harness capability the runner does not have.
+       */
+      namedHostId?: string;
     },
     options?: RequestOptions,
   ): Promise<PlatformEvalRunDisclosure> {
@@ -1431,6 +1444,7 @@ export class PlatformApiClient {
           environmentIds: params.environmentIds?.length
             ? params.environmentIds.join(",")
             : undefined,
+          host: params.namedHostId,
         },
       },
       options,

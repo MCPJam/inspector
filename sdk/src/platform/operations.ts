@@ -2124,36 +2124,26 @@ function assertRunTargetSelectorsCoherent(input: {
  * Named after the machine-readable code so a surface can match on it, and
  * written so the caller never has to go look the choices up: the whole failure
  * mode this replaces was an agent guessing a target because the error did not
- * say which ones existed.
+ * say which ones existed. That enumeration lives here ONCE, shared by both
+ * callers, precisely so the two cannot drift — before G4c the disclosure
+ * variant was a separate function that listed only environments, which went
+ * stale the moment that operation gained a `host` selector.
+ *
+ * `readOnly` is `getEvalRunDisclosureOperation`'s variant. It must not inherit
+ * the launch wording's "running all of them would spend more than you may have
+ * meant" / "one PAID RUN per target" — nothing it does spends anything, and
+ * telling an agent otherwise invites it to treat a free planning read as a
+ * costly one. It also has no `allAttached` selector, so naming that flag would
+ * send a caller retrying with an argument that fails validation the same way
+ * twice.
  */
-/**
- * `getEvalRunDisclosureOperation`'s own TARGET_REQUIRED refusal — deliberately
- * NOT `targetRequiredMessage`, whose closing sentence names `host` and
- * `allAttached` and calls each target "one PAID RUN". This operation's input
- * schema has neither selector (see the HOST-axis comment above its plan),
- * and it is `readOnly: true` — nothing it does spends anything. Naming a
- * fix a caller cannot apply would send an agent retrying with a flag that
- * fails validation the same way twice.
- */
-function disclosureTargetRequiredMessage(plan: {
-  attachedEnvironments: RunTarget[];
-}): string {
-  const named = plan.attachedEnvironments
-    .map((target) =>
-      target.name ? `"${target.name}" (${target.id})` : target.id,
-    )
-    .join(", ");
-  return (
-    "TARGET_REQUIRED — this suite has several attached environments, so which one to disclose for is ambiguous. " +
-    `Attached environments: ${named}. ` +
-    "Name one with environment, or several with environments."
-  );
-}
-
-function targetRequiredMessage(plan: {
-  attachedEnvironments: RunTarget[];
-  attachedHosts: RunTarget[];
-}): string {
+function targetRequiredMessage(
+  plan: {
+    attachedEnvironments: RunTarget[];
+    attachedHosts: RunTarget[];
+  },
+  opts: { readOnly?: boolean } = {},
+): string {
   const parts: string[] = [];
   if (plan.attachedEnvironments.length > 0) {
     parts.push(
@@ -2171,11 +2161,25 @@ function targetRequiredMessage(plan: {
         .join(", ")}`,
     );
   }
-  return (
-    "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. " +
-    `Attached ${parts.join("; ")}. ` +
-    "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target)."
-  );
+  const lead = opts.readOnly
+    ? "TARGET_REQUIRED — this suite has several attached targets, so which one to disclose for is ambiguous. "
+    : "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. ";
+  // The read-only closing names ONLY the selectors that actually apply to
+  // what is attached. Naming a fix a caller cannot apply — `host` against a
+  // suite with no attached hosts — sends an agent retrying with an argument
+  // that resolves to nothing; that is the same failure the enumeration above
+  // exists to prevent, one sentence later.
+  const readOnlyWays: string[] = [];
+  if (plan.attachedEnvironments.length > 0) readOnlyWays.push("environment");
+  if (plan.attachedHosts.length > 0) readOnlyWays.push("host");
+  const closing = opts.readOnly
+    ? `Name one with ${readOnlyWays.join(" or ")}${
+        plan.attachedEnvironments.length > 0
+          ? ", or several with environments."
+          : "."
+      }`
+    : "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target).";
+  return lead + `Attached ${parts.join("; ")}. ` + closing;
 }
 
 /**
@@ -3289,28 +3293,37 @@ export const runEvalSuiteOperation: PlatformOperation<
         : plan.targets
             .filter((target) => target.kind === "environment")
             .map((target) => target.id);
-    // A HOST-axis frozen plan has no query this fetch could send: the backend
-    // contract (testSuites:getRunDisclosure) takes only
-    // caseIds/environmentId(s), never a host selector. Sending none would
-    // silently return the suite-BASE disclosure and attach it to the receipt
-    // as if it described this launch — but a host config can pin its own
-    // model and harness, so a host-targeted run can be disclosed as
-    // "emulated, no sandbox" while it actually boots a different engine on a
-    // different model. An honest absence beats a confident wrong answer,
-    // which is the whole principle this contract is built on — so this skips
-    // the fetch entirely for a host target and reports it as unavailable,
-    // rather than presenting the suite-base derivation as authoritative.
+    // A SINGLE host target is disclosed for real since G4c: the backend
+    // contract takes `namedHostId`, so the frozen plan's host is forwarded
+    // and the engine/sandbox facts come from that host's own config. Before
+    // that this skipped the fetch entirely — the only query available was the
+    // selector-less suite-BASE derivation, which a host config's own model
+    // and harness can contradict, so a host-targeted run could be disclosed
+    // "emulated, no sandbox" while it actually booted a harness sandbox.
+    //
+    // A multi-target GROUP containing a host is still not derivable, and for
+    // a DIFFERENT reason than the retired one: the contract answers for ONE
+    // launch plan (its one-axis rule refuses a host alongside an environment
+    // selector), so a group spanning hosts has no single engine or model set
+    // to disclose. N pre-launch round trips to stitch a composite would be a
+    // different contract than the audit stamp records — an honest absence
+    // beats a confident wrong answer, which is the principle this whole
+    // contract is built on.
+    //
     // (A plan with NOTHING attached is unaffected: `plan.target` is
     // undefined there, not host-kind, and that bare-rerun case is exactly
     // what the suite-base derivation already answers correctly for.)
-    const isHostAxisLaunch =
-      (plan.kind === "single" && plan.target?.kind === "host") ||
-      (plan.kind === "group" &&
-        plan.targets.some((target) => target.kind === "host"));
+    const disclosureHostId =
+      plan.kind === "single" && plan.target?.kind === "host"
+        ? plan.target.id
+        : undefined;
+    const isMultiTargetHostLaunch =
+      plan.kind === "group" &&
+      plan.targets.some((target) => target.kind === "host");
     let disclosureFailureReason: string | undefined;
-    if (isHostAxisLaunch) {
+    if (isMultiTargetHostLaunch) {
       disclosureFailureReason =
-        "not derivable for a host-targeted launch — the pre-run disclosure contract has no host selector yet";
+        "not derivable for a multi-target launch that includes a host — the disclosure contract answers for one launch plan, and a group spanning hosts has no single engine or model set to disclose";
     } else {
       // BOUNDED INDEPENDENTLY of the caller's own signal/deadline. This
       // request is awaited BEFORE the launch, so sharing the caller's signal
@@ -3333,6 +3346,7 @@ export const runEvalSuiteOperation: PlatformOperation<
               : disclosureEnvironmentIds.length > 1
                 ? { environmentIds: disclosureEnvironmentIds }
                 : {}),
+            ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal },
         );
@@ -4145,6 +4159,14 @@ const getEvalRunDisclosureInput = z.object({
     .describe(
       "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
     ),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "An attached host (name or ID) to disclose for, mirroring a `host` run launch — the engine and sandbox facts come from that host's own config. Pass either a host or an environment, never both: a run targets one axis, and an environment already resolves a host.",
+    ),
 });
 export type GetEvalRunDisclosureInput = z.infer<
   typeof getEvalRunDisclosureInput
@@ -4157,13 +4179,14 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
   name: "get_eval_run_disclosure",
   title: "Get eval run pre-run disclosure",
   description:
-    "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
+    "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments/host); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
   readOnly: true,
   inputSchema: getEvalRunDisclosureInput,
   async execute(input, { client, signal }) {
     assertRunTargetSelectorsCoherent({
       environment: input.environment,
       environments: input.environments,
+      host: input.host,
     });
     const { project } = await resolveProjectOrThrow(
       client,
@@ -4201,17 +4224,18 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       detail.environmentIds ?? [],
       signal,
     );
-    // `attachedHosts` IS included in this plan — unlike an earlier version
-    // of this operation, which left it out and let a host-only suite fall
-    // through to the misleading selector-less suite-base derivation (the
-    // same failure mode `run_eval_suite`'s `isHostAxisLaunch` refuses). This
-    // operation's own input schema still has no host selector, so a caller
-    // cannot satisfy a host-axis `target-required` refusal the way
-    // `run_eval_suite` lets one satisfy it with `--host` — but that is
-    // handled below by refusing the host-axis case outright, not by hiding
-    // it from `computeRunTargets` and hoping it resolves to something else.
-    const attachedHostNames = new Map(
-      (detail.hosts ?? []).map((host) => [host.id, host.name]),
+    // `attachedHosts` IS included in this plan, and since G4c a caller can
+    // actually SATISFY a host-axis ambiguity: `host` names one, exactly as
+    // `run_eval_suite`'s own selector does. Before that this operation had to
+    // refuse the host axis outright — the backend contract took no host
+    // selector, so the only query it could have sent was the selector-less
+    // suite-base derivation, which a host config's own model/harness can
+    // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
+    // the refusal is gone and the host axis is disclosed for real.
+    const selectedHosts = resolveSuiteHostTargets(
+      suite,
+      detail,
+      input.host ? [input.host] : [],
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -4225,38 +4249,30 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         name: host.name,
       })),
       selectedEnvironments,
-      selectedHosts: [],
+      selectedHosts,
     });
-    const hostAxisUnavailableMessage = (hostName?: string) =>
-      `Disclosure is not derivable for this suite — it resolves to a HOST-targeted launch${
-        hostName ? ` ("${hostName}")` : ""
-      }, and the pre-run disclosure contract has no host selector yet. A host config can pin its own model and harness, so the suite-base disclosure would not reliably describe what this launch actually does.`;
     if (plan.kind === "target-required") {
-      // An ambiguity the caller CAN resolve — this operation's `environment`/
-      // `environments` selector names one of the attached environments — gets
-      // the ordinary refusal. An ambiguity that is PURELY among attached
-      // hosts (zero attached environments) has no selector to resolve it
-      // with at all: `disclosureTargetRequiredMessage` would otherwise say
-      // "name one with environment" against an empty environment list, which
-      // names nothing the caller could actually do.
-      if (plan.attachedEnvironments.length > 0) {
-        throw operationInputError(disclosureTargetRequiredMessage(plan));
-      }
-      throw operationInputError(hostAxisUnavailableMessage());
+      // `readOnly` wording: this operation spends nothing, and has no
+      // `allAttached`. The enumeration now names attached HOSTS too, which is
+      // what makes this refusal actionable on the host axis rather than a
+      // dead end.
+      throw operationInputError(targetRequiredMessage(plan, { readOnly: true }));
     }
-    // A HOST-axis resolution (a bare-launch auto-select of the suite's sole
-    // attached host, same rule `run_eval_suite` uses) has no query this
-    // operation could send: the backend contract (testSuites:getRunDisclosure)
-    // takes only caseIds/environmentId(s), never a host selector. Unlike
-    // `run_eval_suite`, there is no launch to fall back to here — this
-    // operation's entire job is the disclosure — so it refuses outright
-    // rather than silently returning the suite-base derivation as if it
-    // described the host that will actually run.
-    if (plan.kind === "single" && plan.target?.kind === "host") {
+    // ONE PLAN, ONE DISCLOSURE. A multi-target GROUP containing a host cannot
+    // be expressed as one query: `getRunDisclosure` answers for a single
+    // launch plan, and its one-axis rule refuses `namedHostId` alongside an
+    // environment selector — deliberately, because a fan-out across two axes
+    // has no single engine/model set to disclose. Fanning out N pre-launch
+    // round trips to stitch a composite would be a different contract than
+    // the one the audit stamp records, so this refuses with a reason that
+    // names the actual limit (multi-target), not the retired "no host
+    // selector" one.
+    if (
+      plan.kind === "group" &&
+      plan.targets.some((target) => target.kind === "host")
+    ) {
       throw operationInputError(
-        hostAxisUnavailableMessage(
-          attachedHostNames.get(plan.target.id) ?? plan.target.id,
-        ),
+        "Disclosure covers ONE launch plan, and this resolves to several targets including a host — the contract answers per plan, so a multi-target group spanning hosts has no single engine or model set to disclose. Disclose one target at a time with host or environment.",
       );
     }
     const disclosureEnvironmentIds =
@@ -4267,6 +4283,10 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         : plan.targets
             .filter((target) => target.kind === "environment")
             .map((target) => target.id);
+    const disclosureHostId =
+      plan.kind === "single" && plan.target?.kind === "host"
+        ? plan.target.id
+        : undefined;
     return client.getEvalRunDisclosure(
       {
         projectId: project.id,
@@ -4277,6 +4297,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
           : disclosureEnvironmentIds.length > 1
             ? { environmentIds: disclosureEnvironmentIds }
             : {}),
+        ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal },
     );

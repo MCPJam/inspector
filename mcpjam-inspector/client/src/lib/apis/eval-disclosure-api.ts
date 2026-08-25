@@ -39,6 +39,8 @@ export async function fetchRunDisclosure(
     caseIds?: readonly string[];
     environmentId?: string;
     environmentIds?: readonly string[];
+    /** Host-axis launch plan (G4c) — mutually exclusive with the environment selectors. */
+    namedHostId?: string;
   },
   signal?: AbortSignal,
 ): Promise<PlatformEvalRunDisclosure> {
@@ -51,6 +53,7 @@ export async function fetchRunDisclosure(
       ...(params.environmentIds?.length
         ? { environmentIds: [...params.environmentIds] }
         : {}),
+      ...(params.namedHostId ? { namedHostId: params.namedHostId } : {}),
     },
     { signal },
   );

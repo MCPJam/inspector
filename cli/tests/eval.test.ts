@@ -284,6 +284,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     caseIds: string | null;
     environmentId: string | null;
     environmentIds: string | null;
+    host: string | null;
   }>;
   close: () => Promise<void>;
 }> {
@@ -297,6 +298,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     caseIds: string | null;
     environmentId: string | null;
     environmentIds: string | null;
+    host: string | null;
   }> = [];
   const UNAUTHORIZED_BODY = JSON.stringify({
     code: "UNAUTHORIZED",
@@ -574,6 +576,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         caseIds: url.searchParams.get("caseIds"),
         environmentId: url.searchParams.get("environmentId"),
         environmentIds: url.searchParams.get("environmentIds"),
+        host: url.searchParams.get("host"),
       });
       if (options.disclosureUnavailable) {
         res.statusCode = 422;
@@ -2378,6 +2381,55 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     // humanized claim only, matching the UI's already-correct phrasing.
     assert.match(run.stdout, /Retention: swept after 30 day\(s\)/);
     assert.equal(run.stdout.includes("kept-indefinitely"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --host prints a disclosure block, forwarding the host (G4c)", async () => {
+  // Before G4c a `--host` run printed NO disclosure block at all: the SDK
+  // skipped the fetch because the contract had no host selector. The human
+  // renderer never needed a change — it prints whatever comes back — so this
+  // asserts the un-refusal end to end: the host reaches the query, and the
+  // block appears for a host-targeted launch exactly as for an ordinary one.
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-claude", name: "Claude" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--host",
+            "Claude",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(fixture.disclosureRequests.length, 1);
+    assert.equal(fixture.disclosureRequests[0]?.host, "host-claude");
+    // ONE AXIS — never a host and an environment in the same query.
+    assert.equal(fixture.disclosureRequests[0]?.environmentId, null);
+    assert.equal(fixture.disclosureRequests[0]?.environmentIds, null);
+    assert.notEqual(run.stdout.indexOf("Pre-run disclosure:"), -1);
+    assert.match(run.stdout, /Execution: emulated/);
+    // WHAT WAS DISCLOSED IS WHAT RAN. Asserting only the disclosure query
+    // would still pass if the launch dropped the host or picked a different
+    // one — the exact divergence this contract exists to rule out.
+    const launched = fixture.runBodies.at(-1) as Record<string, unknown>;
+    assert.equal(launched.namedHostId, "host-claude");
+    assert.equal(launched.environmentId, undefined);
   } finally {
     await fixture.close();
   }
