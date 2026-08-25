@@ -1,10 +1,15 @@
 /**
  * Release Readiness Checklist tile.
  *
- * Mirrors the gates `release.yml`'s preflight enforces (release.yml:71-98
- * for the staging-SHA match, and the Changesets plan output at
- * release.yml:100-167). If every blocking check is ✅, running the Release
- * workflow will pass preflight.
+ * Mirrors the gates `release.yml`'s preflight enforces, in its order:
+ * "Require green CI for candidate SHA" (test.yml + lint.yml green for the
+ * exact SHA — these replaced the old in-preflight `npm run verify`), "Require
+ * green staging smoke for candidate SHA", and the Changesets plan in "Select
+ * release scope". If every blocking check is ✅, running the Release workflow
+ * will pass preflight.
+ *
+ * Referenced by step name rather than line number on purpose — the previous
+ * line-number citations here went stale the first time preflight was edited.
  *
  * Nudge rows (prod-behind-staging, Soundcheck's own deploy status) are
  * informational — they don't block the release, but they're part of
@@ -94,6 +99,50 @@ export async function ReleaseReadiness() {
       label: "Inspector main is unreachable",
       detail: (err as Error).message
     });
+  }
+
+  // ── Green CI for the candidate SHA (hard gate) ────────────────────────
+  // preflight requires BOTH: lint.yml ("Build and Test") covers typecheck,
+  // typecheck:client, build:inspector and a production boot, test.yml covers
+  // the suites. Between them they cover what `npm run verify` used to re-run
+  // serially inside preflight.
+  if (inspectorHead) {
+    const CI_GATES: { workflow: string; label: string }[] = [
+      { workflow: "test.yml", label: "Tests" },
+      { workflow: "lint.yml", label: "Build and Test" }
+    ];
+
+    for (const gate of CI_GATES) {
+      try {
+        const run = await findSuccessfulRunForSha(
+          INSPECTOR.owner,
+          INSPECTOR.repo,
+          gate.workflow,
+          "main",
+          inspectorHead.sha
+        );
+        if (run) {
+          rows.push({
+            tone: "success",
+            label: `${gate.label} green for ${shortSha(inspectorHead.sha)}`,
+            detail: `${gate.workflow} succeeded ${formatRelativeTime(run.updatedAt)}`,
+            href: run.htmlUrl
+          });
+        } else {
+          rows.push({
+            tone: "failure",
+            label: `No successful ${gate.label} run for ${shortSha(inspectorHead.sha)}`,
+            detail: `Release.yml preflight will fail until ${gate.workflow} is green for this SHA. It may still be running, or it was cancelled by a newer push.`
+          });
+        }
+      } catch (err) {
+        rows.push({
+          tone: "failure",
+          label: `Could not check ${gate.label} for main SHA`,
+          detail: (err as Error).message
+        });
+      }
+    }
   }
 
   // ── Inspector staging-for-SHA (the hard gate) ─────────────────────────

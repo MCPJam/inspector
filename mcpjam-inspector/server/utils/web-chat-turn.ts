@@ -593,7 +593,7 @@ export async function streamWebChatTurn(
       ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
-      // natively, so advertising `listSkills`/`loadSkill` on top would describe
+      // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
       // a second, different delivery of the same set to the same model.
       ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
         ? {
@@ -1082,6 +1082,14 @@ export async function streamWebChatTurn(
       persist.requireToolApproval
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    // Harness engine only: it builds its own MCP tool set (host-executed
+    // delivery) rather than consuming `allTools`, so the host's
+    // tool-construction policies have to reach it separately. Inert on the
+    // emulated path, which is handed tools already built by prepareChatV2.
+    ...(prepare.respectToolVisibility !== undefined
+      ? { respectToolVisibility: prepare.respectToolVisibility }
+      : {}),
+    ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.

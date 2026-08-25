@@ -80,6 +80,16 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     methods: ["GET"],
   },
   { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
+  // The pre-run disclosure for a launch plan. A guest can already POST
+  // /eval-suites/:id/runs above, so denying them the read that describes what
+  // that run discloses is the one gap that actually matters — the payload is
+  // org-plan + vendor names + suite-resolved model ids, nothing a guest
+  // cannot already see via GET /eval-suites/:id. GET-only: there is no write
+  // at this path.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+    methods: ["GET"],
+  },
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
@@ -99,6 +109,15 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   },
   { pattern: /^\/projects\/[^/]+\/scenarios$/ },
   { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
+  // Directory reads only. Backing Convex queries are publicQuery and the
+  // Convex `/v1` twins use authedV1ReadOnly (no guest user/org/project
+  // materialization). Registry-server reads, connection reads, and every
+  // install/uninstall stay guest-DENIED (default). Bearer is still required
+  // — these stay OUT of openapi-drift PUBLIC_OPERATIONS; anonymous MCP
+  // callers arrive with minted guest tokens, not with no token.
+  { pattern: /^\/registry\/directory-servers$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-servers\/[^/]+$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-sources$/, methods: ["GET"] },
 ];
 
 export function isGuestAllowedV1Request(

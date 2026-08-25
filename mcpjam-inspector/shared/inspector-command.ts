@@ -317,8 +317,7 @@ export interface ToggleRegistryStarInspectorCommand {
 }
 
 /**
- * Search a mirrored connector directory shown beneath the curated catalog on
- * the same screen.
+ * Search a mirrored connector directory shown on the Registry screen.
  *
  * Read-only, and deliberately narrow: it DRIVES the screen's own controls, so
  * what the model sees is what the person sees. `query` is optional because an
@@ -348,7 +347,7 @@ export interface SearchRegistryDirectoryInspectorCommand {
  */
 
 /**
- * Opens the create-suite dialog for the USER to finish. Suite creation is
+ * Opens the create-suite page for the USER to finish. Suite creation is
  * high-entropy (model, servers/host attachments, tests), so the ONLY prefill
  * an agent may pass is the suite name — everything else is picked by the
  * human in the form, mirroring the `openServerForm` prefill-over-commit

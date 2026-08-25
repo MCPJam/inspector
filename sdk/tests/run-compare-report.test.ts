@@ -1,5 +1,5 @@
 /**
- * `buildRunCompareReport` — the adapter that gives `mcpjam eval compare` its
+ * `buildRunCompareReport` — the adapter that gives `mcpjam cloud eval compare` its
  * JSON and JUnit output.
  *
  * The two decisions worth pinning are both about what "failed" means:
@@ -123,6 +123,18 @@ const PASSED_GATE: GateReport = {
   verdicts: [],
 };
 
+const INCOMPLETE_GATE: GateReport = {
+  outcome: "incomplete",
+  scoreIntegrity: "unknown",
+  verdicts: [
+    {
+      gate: "baseline",
+      status: "non_gateable",
+      message: "no baseline to compare against",
+    },
+  ],
+};
+
 describe("buildRunCompareReport", () => {
   it("takes `passed` from the gate, not from the case rows", () => {
     const wire = compareWire([caseRow({ status: "regressed" })]);
@@ -132,6 +144,21 @@ describe("buildRunCompareReport", () => {
     expect(
       buildRunCompareReport(compareWire([caseRow()]), FAILED_GATE).passed
     ).toBe(false);
+  });
+
+  it("carries the gate's verdict — incomplete as inconclusive, never failed", () => {
+    // A non-gateable comparison (no baseline yet) is unmeasured, not a
+    // regression: a reporter that infers the verdict from `passed` alone
+    // would paint it the same red as an actual failure.
+    expect(
+      buildRunCompareReport(compareWire([caseRow()]), INCOMPLETE_GATE).verdict
+    ).toBe("inconclusive");
+    expect(
+      buildRunCompareReport(compareWire([caseRow()]), PASSED_GATE).verdict
+    ).toBe("passed");
+    expect(
+      buildRunCompareReport(compareWire([caseRow()]), FAILED_GATE).verdict
+    ).toBe("failed");
   });
 
   it("fails only `regressed` rows; suite edits are informational", () => {
@@ -305,5 +332,22 @@ describe("buildRunCompareReport", () => {
     // the gate row alone is enough.
     expect(xml).toContain('tests="1"');
     expect(xml).toContain("gate: passed");
+  });
+
+  it("carries a supplied decision summary and omits it when absent", () => {
+    const decisionSummary = {
+      verdict: "failed" as const,
+      passRate: { total: 1, passed: 0, failed: 1, percent: 0 },
+      iterationWalkComplete: true,
+      cases: [],
+    };
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE, {
+        decisionSummary,
+      }).decisionSummary
+    ).toBe(decisionSummary);
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE)
+    ).not.toHaveProperty("decisionSummary");
   });
 });

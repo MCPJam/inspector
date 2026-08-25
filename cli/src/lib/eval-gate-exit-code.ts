@@ -1,7 +1,7 @@
 import type { GateReport } from "@mcpjam/sdk";
 
 /**
- * Exit code for `mcpjam eval gate`.
+ * Exit code for `mcpjam cloud eval gate`.
  *
  * Copies the `conformance-exit-code.ts` idiom, and for the same reason: "the
  * evals regressed" and "we never established anything" are different failures
@@ -74,6 +74,23 @@ const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out", "failed"]);
  */
 export function isNonVerdictRunStatus(status: string | undefined): boolean {
   return status !== undefined && NON_VERDICT_STATUSES.has(status);
+}
+
+/**
+ * Whether the platform itself declined to decide this run.
+ *
+ * Verdict policy 2 adds a third `result`, `inconclusive`: the run finished,
+ * but not enough of it was gradeable to make a claim about the server. Its
+ * `summary` counts are precisely the evidence the platform judged
+ * insufficient, so gating them is fail-either-way — a run that graded 3 of 30
+ * trials reads as a 100% pass rate, and one that graded none reads as a
+ * regression. Neither is a verdict, so this maps to `incomplete` (exit 3)
+ * alongside cancelled and timed-out runs, and NEVER to the verdict code 1.
+ */
+export function isNonVerdictRunResult(
+  result: string | null | undefined,
+): boolean {
+  return result === "inconclusive";
 }
 
 /** Exit code for a run that never produced a verdict at all. */

@@ -6,6 +6,7 @@ import {
   finalizeAiSdkTraceOnFailure,
   patchAiSdkRecordedSpansMessageRangesFromSteps,
   pushAiSdkTrailingErrorSpan,
+  pushRunSetupSpans,
   pushBackendStepLlmFailureSpans,
   pushBackendStepSuccessSpans,
   pushBackendStepToolFailureSpans,
@@ -13,6 +14,7 @@ import {
   wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../eval-trace-capture";
+import { TOOL_POLICY_BLOCK_MARKER } from "../tool-policy-gate";
 
 describe("eval-trace-capture", () => {
   const runAt = 10_000;
@@ -154,7 +156,7 @@ describe("eval-trace-capture", () => {
           execute: async () => "ok",
         },
       },
-      ctx,
+      ctx
     ) as any;
 
     wall = runAt + 50;
@@ -201,6 +203,26 @@ describe("eval-trace-capture", () => {
         status: "error",
       }),
     );
+  });
+
+  it("AI SDK: policy-blocked tool produces no trace span", async () => {
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    const tools = wrapToolSetForEvalTrace(
+      {
+        blocked: {
+          execute: async () => ({
+            content: [{ type: "text", text: "blocked" }],
+            [TOOL_POLICY_BLOCK_MARKER]: true,
+          }),
+        },
+      },
+      ctx,
+    ) as any;
+
+    const result = await tools.blocked.execute({}, { toolCallId: "tcblocked" });
+    expect(result[TOOL_POLICY_BLOCK_MARKER]).toBe(true);
+    expect(ctx.recordedSpans).toEqual([]);
   });
 
   it("AI SDK: failure before any step — generation error only", () => {
@@ -331,6 +353,55 @@ describe("eval-trace-capture", () => {
     const spans: EvalTraceSpan[] = [];
     pushAiSdkTrailingErrorSpan(spans, runAt, runAt + 10, runAt + 10);
     expect(spans[0]!.endMs).toBeGreaterThan(spans[0]!.startMs);
+  });
+
+  it("unshifts synthetic run-setup spans ahead of captured spans", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ];
+    pushRunSetupSpans(spans, [
+      {
+        id: "run-connect-s1",
+        name: "connect",
+        category: "connection",
+        startMs: 0,
+        endMs: 12,
+        status: "error",
+        serverId: "s1",
+      },
+    ]);
+    expect(spans.map((s) => s.id)).toEqual(["run-connect-s1", "tool-1"]);
+  });
+
+  it("leaves captured spans unchanged when setupSpans is empty", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ];
+    pushRunSetupSpans(spans, []);
+    expect(spans).toEqual([
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ]);
   });
 
   it("backend wrapped tools emit per-call spans with tool metadata", async () => {

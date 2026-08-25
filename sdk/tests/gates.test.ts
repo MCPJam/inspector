@@ -20,6 +20,7 @@ import {
   formatGateReport,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
+  gateOutcomeVerdict,
   passRateFractionFromPercent,
   type GateInput,
   type GatePolicy,
@@ -681,6 +682,22 @@ describe("assertGate", () => {
   });
 });
 
+describe("gateOutcomeVerdict", () => {
+  it("maps incomplete to inconclusive, never to failed", () => {
+    // The case this guards: a renderer with no explicit verdict falls back
+    // to reading `passed` (false for every non-"passed" outcome), which
+    // would paint an unmeasured gate — a --wait timeout, a cancelled run,
+    // non-gateable score integrity — the same red as a measured regression.
+    expect(gateOutcomeVerdict("incomplete")).toBe("inconclusive");
+  });
+
+  it("maps passed to passed and failed/usage_error to failed", () => {
+    expect(gateOutcomeVerdict("passed")).toBe("passed");
+    expect(gateOutcomeVerdict("failed")).toBe("failed");
+    expect(gateOutcomeVerdict("usage_error")).toBe("failed");
+  });
+});
+
 describe("formatGateReport", () => {
   it("names the outcome and the integrity state", () => {
     const text = formatGateReport(
@@ -716,7 +733,7 @@ describe("evaluateGates — comparative fields fail closed", () => {
       const verdict = report.verdicts.find((row) => row.gate === label);
       expect(verdict?.status).toBe("usage_error");
       // Points at the surface that CAN answer it.
-      expect(verdict?.message).toContain("mcpjam eval compare");
+      expect(verdict?.message).toContain("mcpjam cloud eval compare");
     }
   );
 

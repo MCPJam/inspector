@@ -365,13 +365,21 @@ export type EvalIteration = {
    * `getTestIterationBlob` regardless of which source feeds it.
    */
   preferLegacyBlob?: boolean;
+  /**
+   * LIFECYCLE, not verdict: how far the trial got, never how it graded. A
+   * trial that ran and graded badly is `completed` with `result: "failed"`.
+   * `setup_failed` (the environment never came up) and `skipped` (deliberately
+   * not run) are the two an older deployment cannot emit.
+   */
   status:
     | "pending"
     | "running"
     | "completed"
     | "failed"
     | "cancelled"
-    | "timed_out";
+    | "timed_out"
+    | "setup_failed"
+    | "skipped";
   result: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
   actualToolCalls: Array<{
     toolName: string;
@@ -420,7 +428,9 @@ export type CompareRunRecord = {
     | "completed"
     | "failed"
     | "cancelled"
-    | "timed_out";
+    | "timed_out"
+    | "setup_failed"
+    | "skipped";
   /**
    * When `status === "running"` and there is no iteration yet, true if this run
    * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
@@ -430,7 +440,15 @@ export type CompareRunRecord = {
   error?: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out" | null;
+  result:
+    | "pending"
+    | "passed"
+    | "failed"
+    | "cancelled"
+    | "timed_out"
+    | "setup_failed"
+    | "skipped"
+    | null;
   metrics: {
     durationMs: number | null;
     toolCallCount: number;
@@ -481,11 +499,33 @@ export type CompareRunRecord = {
   streamingStepStatus?: Record<string, EvalStepStatusEntry>;
 };
 
+/**
+ * A policy-2 verdict as the backend decided it.
+ *
+ * Deliberately shallow: the client renders reasons and denominators and must
+ * not re-derive the verdict, so only the fields the UI displays are named and
+ * the rest of the contract shape rides along untyped.
+ */
+export type EvalRunVerdictSummary = {
+  verdict?: "passed" | "failed" | "inconclusive";
+  reasons?: string[];
+  validity?: {
+    valid?: boolean;
+    eligibleTrials?: number;
+    attemptedTrials?: number;
+    configuredTrials?: number;
+    completionRate?: number | null;
+    evaluatorErrorRate?: number | null;
+    notMeasured?: boolean;
+  } & Record<string, unknown>;
+} & Record<string, unknown>;
+
 export type EvalSuiteRunSummary = {
   total: number;
   passed: number;
   failed: number;
   passRate: number;
+  policyBlockedIterations?: number;
 };
 
 export type EvalSuiteRun = {
@@ -594,7 +634,36 @@ export type EvalSuiteRun = {
    * re-confirming the override.
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
-  result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
+  result?:
+    | "pending"
+    | "passed"
+    | "failed"
+    | "cancelled"
+    | "timed_out"
+    /**
+     * Verdict policy 2 only: the run could not be measured well enough to
+     * decide (too few gradeable trials, too many evaluator errors). NOT a
+     * failure — folding it into `failed` reports a defect nothing observed —
+     * and excluded from pass/fail metrics rather than counted on either side.
+     */
+    | "inconclusive";
+  /**
+   * The verdict policy this run was decided under, frozen at run start.
+   * Absent means legacy percent grading, where `inconclusive` cannot occur
+   * and there is no `verdictSummary`.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * The backend's decision record: resolved validity policy, measured rates
+   * with their denominators and exclusions, per-case and per-variant
+   * aggregates, and the exact reasons. Displayed, never recomputed — a second
+   * client-side derivation would disagree with the gate that already ran.
+   * Absent when the stored summary failed contract validation at the API
+   * boundary, because a partially-valid decision is not evidence.
+   */
+  verdictSummary?: EvalRunVerdictSummary;
+  /** Why a policy-2 run could not be decided from its own evidence. */
+  verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
     | "user_cancelled"
@@ -636,6 +705,13 @@ export type EvalSuiteRun = {
    * rows. Set client-side at fan-out and persisted on `testSuiteRun`.
    */
   runGroupId?: string;
+  /**
+   * Model the run actually executed with, persisted at launch (Phase 1).
+   * Absent on pre-attribution rows — fall back to the env join.
+   */
+  effectiveModelId?: string;
+  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
+  modelSource?: "client_default" | "override";
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";
@@ -978,8 +1054,20 @@ export type CommitGroup = {
   shortSha: string; // first 7 chars
   branch: string | null;
   timestamp: number; // most recent run time
-  status: "passed" | "failed" | "running" | "mixed";
+  /**
+   * `inconclusive` is the verdict-policy-2 outcome: the commit's runs were
+   * decided by nobody, so the group is neither green nor red. Without it a
+   * commit whose every run was unmeasurable falls through the pass/fail counts
+   * and renders as "All runs passed".
+   */
+  status: "passed" | "failed" | "running" | "mixed" | "inconclusive";
   runs: EvalSuiteRun[];
   suiteMap: Map<string, string>; // suiteId → suite name
-  summary: { total: number; passed: number; failed: number; running: number };
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    running: number;
+    inconclusive: number;
+  };
 };

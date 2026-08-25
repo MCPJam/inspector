@@ -1,4 +1,9 @@
+import type { ShareAccessOption, ShareMode } from "@/components/sharing/share-types";
 import type { ScenarioMode } from "@/hooks/useScenarios";
+import {
+  isShareModeAboveCeiling,
+  orgShareLimitReason,
+} from "@/lib/share-mode-ceiling";
 
 /** UI preset for scenario access (maps to `mode` + `allowGuestAccess`). */
 export type ScenarioAccessPreset =
@@ -59,4 +64,48 @@ export function settingsFromScenarioAccessPreset(
     case "invited_only":
       return { mode: "invited_only", allowGuestAccess: false };
   }
+}
+
+/** `project` ⇒ rank 0; `invited_only` ⇒ rank 1; `link_guests` ⇒ `anyone_with_link`. */
+export function shareModeForScenarioPreset(
+  preset: ScenarioAccessPreset,
+): ShareMode {
+  return settingsFromScenarioAccessPreset(preset).mode;
+}
+
+export function applyShareCeilingToScenarioOptions(
+  options: readonly ShareAccessOption[],
+  ceiling?: ShareMode | null,
+): ShareAccessOption[] {
+  return options.map((option) => {
+    // Project members is rank 0 — a ceiling never greys it out.
+    if (option.value === "project") {
+      return { ...option, disabled: undefined, disabledReason: undefined };
+    }
+    const mode = shareModeForScenarioPreset(option.value as ScenarioAccessPreset);
+    if (!isShareModeAboveCeiling(mode, ceiling)) {
+      return { ...option, disabled: undefined, disabledReason: undefined };
+    }
+    return {
+      ...option,
+      disabled: true,
+      disabledReason: orgShareLimitReason(ceiling!),
+    };
+  });
+}
+
+/** Snap an over-ceiling create-flow choice down to the highest allowed preset. */
+export function clampScenarioAccessPreset(
+  preset: ScenarioAccessPreset,
+  ceiling?: ShareMode | null,
+): ScenarioAccessPreset {
+  if (
+    preset === "project" ||
+    !isShareModeAboveCeiling(shareModeForScenarioPreset(preset), ceiling)
+  ) {
+    return preset;
+  }
+  if (ceiling === "project_members") return "project";
+  if (ceiling === "invited_only") return "invited_only";
+  return preset;
 }

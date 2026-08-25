@@ -1,0 +1,70 @@
+{
+  "id": "hosted-0006",
+  "note": "connect failed — a setup abort measures nothing",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "failed",
+        "attribution": "theirs",
+        "egressVerified": true,
+        "spanIds": [
+          "run-connect-a"
+        ]
+      }
+    },
+    "traceAbsent": true
+  },
+  "iteration": {
+    "status": "failed",
+    "error": "connect failed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "failed",
+        "reason": "connectFailed",
+        "evidence": {
+          "spanIds": [
+            "run-connect-a"
+          ]
+        }
+      },
+      {
+        "stage": "discovery",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "selection",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "call",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "response",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "connection",
+    "failureCategory": "setup",
+    "stageAnalyzerVersion": 4
+  }
+}

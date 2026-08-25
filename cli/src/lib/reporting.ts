@@ -1,14 +1,16 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  formatEvalDecisionSummary,
+  renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
 } from "@mcpjam/sdk";
+import { writeFileAtomic } from "./atomic-write.js";
 import { operationalError, usageError, writeResult } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 
-export type ReporterFormat = "json-summary" | "junit-xml";
+export type ReporterFormat = "json-summary" | "junit-xml" | "html";
 
 export function parseReporterFormat(
   value: string | undefined,
@@ -17,12 +19,12 @@ export function parseReporterFormat(
     return undefined;
   }
 
-  if (value === "json-summary" || value === "junit-xml") {
+  if (value === "json-summary" || value === "junit-xml" || value === "html") {
     return value;
   }
 
   throw usageError(
-    `Invalid reporter "${value}". Use "json-summary" or "junit-xml".`,
+    `Invalid reporter "${value}". Use "json-summary", "junit-xml", or "html".`,
   );
 }
 
@@ -35,7 +37,22 @@ export function writeReporterResult(
     return;
   }
 
+  if (reporter === "html") {
+    process.stdout.write(renderStructuredRunHtml(report));
+    return;
+  }
+
   writeResult(renderStructuredRunJson(report), "json");
+}
+
+/** Human-only prose, kept separate so `--format json` remains one document. */
+export function writeEvalDecisionSummary(
+  format: string,
+  summary: Parameters<typeof formatEvalDecisionSummary>[0] | undefined,
+  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
+): void {
+  if (format !== "human" || !summary) return;
+  destination.write(`${formatEvalDecisionSummary(summary)}\n`);
 }
 
 /**
@@ -54,11 +71,10 @@ export async function writeJsonArtifact(
   const resolvedPath = path.resolve(process.cwd(), outputPath);
 
   try {
-    await mkdir(path.dirname(resolvedPath), { recursive: true });
-    await writeFile(
+    return await writeFileAtomic(
       resolvedPath,
       `${JSON.stringify(redactForTelemetry(payload), null, 2)}\n`,
-      "utf8",
+      { createParents: true }
     );
   } catch (error) {
     throw operationalError(
@@ -68,6 +84,29 @@ export async function writeJsonArtifact(
       },
     );
   }
+}
 
-  return resolvedPath;
+export async function writeReporterArtifact(
+  outputPath: string,
+  reporter: ReporterFormat,
+  report: StructuredRunReport
+): Promise<string> {
+  const resolvedPath = path.resolve(process.cwd(), outputPath);
+  const body =
+    reporter === "junit-xml"
+      ? renderStructuredRunJUnitXml(report)
+      : reporter === "html"
+        ? renderStructuredRunHtml(report)
+        : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
+
+  try {
+    return await writeFileAtomic(resolvedPath, body, { createParents: true });
+  } catch (error) {
+    throw operationalError(
+      `Failed to write ${reporter} report to "${resolvedPath}".`,
+      {
+        source: error instanceof Error ? error.message : String(error),
+      }
+    );
+  }
 }

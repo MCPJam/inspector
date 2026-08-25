@@ -26,13 +26,417 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+  type EvalSuiteFileToolPolicy,
+  type StageAuthoredCase,
+  type StageEvidence,
+  type StageResultRow,
+  type StageSetupSignals,
+  type IterationStatus as ContractIterationStatus,
+} from "@mcpjam/sdk/contract";
+import {
+  resolveGradingEngineMode,
+  type GradingEngineMode,
+} from "./grading-mode.js";
+import {
+  buildHostedScoreContract,
+  shadowVerdictFromScores,
+  type HostedEvaluationLike,
+  type HostedPredicateResultLike,
+} from "./score-rows.js";
+import {
+  buildShadowMismatch,
+  emitShadowMismatch,
+} from "./shadow-mismatch.js";
+import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
+import { isTerminalIterationStatus } from "./run-status.js";
+import {
+  buildSelectionToolCatalog,
+  type SelectionCatalogToolLike,
+} from "./selection-tool-catalog.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary, imported rather than re-spelled: this
+ * file used to declare a three-value subset of it, which is what forced a
+ * runner whose ENVIRONMENT never came up to report `failed` — a word that says
+ * something about the server under test.
+ *
+ * Lifecycle is not the verdict. A run that asked the question and got the wrong
+ * answer is `completed` + `result: "failed"`; `failed` is reserved for the
+ * execution itself breaking.
+ */
+type IterationStatus = ContractIterationStatus;
 
-type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type ToolCallRecord = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * Mirrors the runner's `ToolCall.toolCallId`. This type describes exactly
+   * what goes over the wire as `updateTestIteration.actualToolCalls`, so it
+   * has to name every field the runner actually sends — the whole reason
+   * `toolCallId` reached a validator that rejected it is that no type on this
+   * path admitted the field existed.
+   */
+  toolCallId?: string;
+};
+type PolicyBlockRecord = { reason?: unknown };
+
+/**
+ * Stage derivation uses the first recorded block as the stable iteration
+ * summary reason when multiple policy blocks occur.
+ */
+function getIterationPolicyReason(
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+): string | undefined {
+  const reason = policyBlocks[0]?.reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
+/**
+ * Adapt what the runner captured into the analyzer's evidence shape.
+ *
+ * The only subtle part is the two "we have no spans" flags, which are NOT
+ * interchangeable and which the analyzer reports differently:
+ *
+ *   - `traceAbsent` — nothing was captured at all. The row exists (a setup
+ *     failure, a lifecycle stop) and carries no transcript.
+ *   - `traceLacksSpanChannel` — a transcript exists (messages and/or per-turn
+ *     summaries) but no spans. That is the caller-supplied `HostExecutor`
+ *     signature: the run DID happen and this executor simply never reports
+ *     what happened. Collapsing it into "nothing happened" is precisely how a
+ *     run with every tool call failing passes vacuously.
+ */
+function buildStageEvidence(args: {
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  /**
+   * Pinned (model-free) tool-call failures. These never enter the trace — the
+   * same blind spot `buildEvalIterationVerdict` compensates for when it applies
+   * `failOnToolError` to them explicitly — so without them a pinned tool
+   * failure would leave `call`/`response` looking unmeasured.
+   */
+  toolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
+  judgeEvidence?: StageEvidence["judgeEvidence"];
+  /** D7's advisory attribution evidence. Absent on the first pass, same as `judgeEvidence`. */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
+}) {
+  const hasSpans = (args.spans?.length ?? 0) > 0;
+  const hasPrompts = (args.prompts?.length ?? 0) > 0;
+  const hasMessages = (args.messages?.length ?? 0) > 0;
+  return {
+    ...(hasSpans ? { spans: args.spans } : {}),
+    ...(hasPrompts ? { prompts: args.prompts } : {}),
+    ...(args.predicateResults?.length
+      ? {
+          predicateResults: args.predicateResults as ReadonlyArray<{
+            passed?: boolean;
+            reason?: string;
+          }>,
+        }
+      : {}),
+    ...(args.widgetRenderObservations?.length
+      ? { renderObservations: args.widgetRenderObservations }
+      : {}),
+    ...(args.toolErrors?.length
+      ? {
+          toolErrors: args.toolErrors as ReadonlyArray<{
+            kind?: string;
+            toolName?: string;
+          }>,
+        }
+      : {}),
+    ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
+    ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
+    ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+    ...(args.metadataAttribution
+      ? { metadataAttribution: args.metadataAttribution }
+      : {}),
+    traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
+    traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
+  };
+}
+
+/**
+ * Derive one iteration's user-value chain metadata, or `{}` when the caller
+ * cannot say what the case authored.
+ *
+ * Exported because a SETUP ABORT never reaches `buildIterationFinishParams`:
+ * `persistSetupFailedIteration` writes its own minimal row for an iteration
+ * that threw before the prompt loop started. That is exactly the shape the
+ * chain has a dedicated verdict for — every applicable stage `notMeasured` for
+ * `setupAborted`, `failureCategory: "setup"` — so leaving that path out would
+ * file a case that demonstrably died in setup as having no chain at all, which
+ * reads identically to an old SDK that reports no chain. Both callers derive
+ * through here so the two cannot drift.
+ *
+ * THIS PRODUCER'S OUTPUT IS NOT FINAL. The LLM judge finishes after the run
+ * does, so a SECOND derivation pass (`judge-second-pass.ts`, reached via the
+ * `judge-completed` doorbell) re-derives these same rows with `judgeEvidence`
+ * present and REWRITES the stage keys. A reader of `metadata.stageResults` is
+ * reading whichever pass wrote last; only `passed` — never derived here — is
+ * authoritative in every pass and every mode.
+ */
+export function buildStageMetadata(args: {
+  stageCase?: StageAuthoredCase;
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  stageToolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  /**
+   * ABSENT on the first pass (the judge has not run yet), PRESENT on the
+   * second. Tier 2: it can only decide `userValue` where the deterministic
+   * evidence said nothing.
+   */
+  judgeEvidence?: StageEvidence["judgeEvidence"];
+  /**
+   * ABSENT on the first pass, PRESENT on the second. Tier 2, same
+   * subordination as `judgeEvidence`: it can only decide `selection`'s
+   * `failureCategory` where D1 already derived `selection: failed`.
+   */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
+  policy?: { blocked: boolean; reason?: string };
+  /**
+   * The EXECUTION lifecycle status, forwarded to the analyzer unchanged. The
+   * stopped states (`cancelled`, `timed_out`, `setup_failed`, `skipped`) are
+   * what let it report a stage as `notMeasured` rather than failed, so
+   * narrowing them to `failed` here would file evidence gaps as findings.
+   */
+  status: IterationStatus;
+  error?: string;
+}): Record<string, unknown> {
+  const { stageCase, status, error } = args;
+  if (!stageCase) return {};
+  return stageDerivationToMetadata(
+    deriveStageResults({
+      authored: stageCase,
+      evidence: buildStageEvidence({
+        spans: args.spans,
+        prompts: args.prompts,
+        messages: args.messages,
+        predicateResults: args.predicateResults,
+        widgetRenderObservations: args.widgetRenderObservations,
+        toolErrors: args.stageToolErrors,
+        toolSignals: args.toolSignals,
+        setupSignals: args.setupSignals,
+        ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+        ...(args.metadataAttribution
+          ? { metadataAttribution: args.metadataAttribution }
+          : {}),
+      }),
+      iteration: { status, ...(error ? { error } : {}) },
+      policy: args.policy,
+    }),
+  );
+}
+
+/** A predicate row the score projection can key a criterion off. */
+function isHostedPredicateResult(
+  value: unknown
+): value is HostedPredicateResultLike {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as { predicate?: unknown; passed?: unknown };
+  return (
+    typeof row.passed === "boolean" &&
+    typeof row.predicate === "object" &&
+    row.predicate !== null
+  );
+}
+
+/** Read only the matcher fields the projection needs, typed rather than cast. */
+function narrowEvaluation(
+  evaluation: Record<string, unknown>
+): HostedEvaluationLike {
+  const list = (key: string): readonly unknown[] | undefined => {
+    const value = evaluation[key];
+    return Array.isArray(value) ? value : undefined;
+  };
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...(list("expectedToolCalls")
+      ? { expectedToolCalls: list("expectedToolCalls") }
+      : {}),
+    ...(list("missing") ? { missing: list("missing") } : {}),
+    ...(list("unexpected") ? { unexpected: list("unexpected") } : {}),
+    ...(list("argumentMismatches")
+      ? { argumentMismatches: list("argumentMismatches") }
+      : {}),
+  };
+}
+
+/**
+ * The score-contract keys this mode contributes to iteration metadata.
+ *
+ * `off` returns `{}` — not empty arrays, not `undefined` values — so the
+ * persisted payload is byte-identical to today's. `shadow` writes ONLY the
+ * shadow keys and `dual_write` ONLY the real ones: no mode writes both, which
+ * is what makes a shadow row impossible to mistake for a decided one.
+ */
+function buildScoreMetadata(args: {
+  mode: GradingEngineMode;
+  predicateResults?: unknown[];
+  evaluation: Record<string, unknown>;
+  matchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /** Identity for the shadow comparison. Absent ⇒ no comparison is emitted. */
+  runId?: string;
+  iterationId?: string;
+  /** The authoritative verdict, compared against but never derived from. */
+  passed: boolean;
+  stageMetadata: Record<string, unknown>;
+}): Record<string, unknown> {
+  if (args.mode === "off") return {};
+  const predicateResults = (args.predicateResults ?? []).filter(
+    isHostedPredicateResult
+  );
+  const { scores, evaluationConfig } = buildHostedScoreContract({
+    ...(predicateResults.length ? { predicateResults } : {}),
+    evaluation: narrowEvaluation(args.evaluation),
+    ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
+    ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
+    // The judge has not run yet on this pass; its row arrives in the second.
+  });
+  if (scores.length === 0) return {};
+  // Agreement emits NOTHING — the parity harnesses assert exactly that — so
+  // this is a comparison, not a report.
+  if (args.runId && args.iterationId) {
+    const shadow = shadowVerdictFromScores(scores, evaluationConfig);
+    // BOTH sides carry the SAME row on this pass. The score projection does not
+    // re-derive the chain — the judge has not spoken yet — so a row difference
+    // here would be an artifact of leaving one side blank, not a finding, and
+    // it would report `userValueRowChanged` on every iteration that has a row.
+    const userValueRow = readUserValueRow(args.stageMetadata);
+    const mismatch = buildShadowMismatch(
+      {
+        runId: args.runId,
+        iterationId: args.iterationId,
+        passed: args.passed,
+        ...(userValueRow ? { userValue: userValueRow } : {}),
+      },
+      {
+        passed: shadow.passed,
+        mode: args.mode,
+        ...(userValueRow ? { userValue: userValueRow } : {}),
+        ...(shadow.disagreeingScorerIds.length
+          ? { disagreeingScorerIds: shadow.disagreeingScorerIds }
+          : {}),
+        evaluationConfigHash: evaluationConfig.hash,
+        ...(typeof args.stageMetadata.stageAnalyzerVersion === "number"
+          ? { stageAnalyzerVersion: args.stageMetadata.stageAnalyzerVersion }
+          : {}),
+      }
+    );
+    // The emitter is only REACHED on disagreement, so a spy on it counts
+    // mismatches rather than comparisons — that is what makes
+    // `toHaveBeenCalledTimes(0)` a parity result.
+    if (mismatch) emitShadowMismatch(mismatch);
+  }
+  return args.mode === "dual_write"
+    ? { scores, evaluationConfig }
+    : { scoresShadow: scores, evaluationConfigShadow: evaluationConfig };
+}
+
+/**
+ * The derived `userValue` row, for the shadow comparison's row-moved check.
+ * On this pass both sides read the SAME row (the judge has not spoken), so the
+ * comparison can only ever fire on the verdict — which is the point: a
+ * first-pass mismatch means the score projection disagrees with `passed`.
+ */
+function readUserValueRow(
+  stageMetadata: Record<string, unknown>
+): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+  const rows = stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return undefined;
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const candidate = row as Partial<StageResultRow>;
+    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
+      return { state: candidate.state, reason: candidate.reason };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * D7's `metadata.selectionToolCatalog` — written ONLY when this pass's own
+ * `stageMetadata` already derived `selection: failed`, so the common
+ * (passing) case costs nothing. Reads `missing` / `unexpected` from the
+ * SAME `prompts` array `deriveSelection` used to reach that verdict — this
+ * never re-derives whether selection failed, it only explains what the
+ * model was choosing between when it did.
+ */
+function buildSelectionToolCatalogMetadata(args: {
+  stageMetadata: Record<string, unknown>;
+  prompts?: PromptTraceSummary[];
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
+}): Record<string, unknown> {
+  if (!args.selectionTools) return {};
+  const rows = args.stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return {};
+  const selectionRow = rows.find(
+    (row): row is Partial<StageResultRow> =>
+      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+  );
+  if (selectionRow?.state !== "failed") return {};
+
+  const prompts = args.prompts ?? [];
+  // Only turns that were PART OF this selection failure — a successful
+  // earlier turn's tool calls have nothing to do with why selection failed,
+  // and folding them in could fill the catalog's cap before the turn that
+  // actually caused the failure is ever considered.
+  const failingPrompts = prompts.filter(
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+  );
+  const expectedToolNames = failingPrompts
+    .flatMap((p) => p.missing ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  // `unexpected` names FIRST, then the rest of the turn's actual calls:
+  // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
+  // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
+  // correctly-called expected tools plus one prohibited extra) the extra
+  // that actually caused the failure could otherwise sit last in call order
+  // and get crowded out by the tools that were selected correctly. The full
+  // actual set still matters beyond just `unexpected`, though: under the
+  // default `maxExtraToolCalls: null`, a call the model made INSTEAD of
+  // (not in addition to) an expected one stays out of `unexpected` — it
+  // only ever lands there as a flagged extra — so `missingToolCall` cases
+  // still need the broader `actualToolCalls` set to see what was chosen.
+  const unexpectedToolNames = failingPrompts
+    .flatMap((p) => p.unexpected ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const otherActualToolNames = failingPrompts
+    .flatMap((p) => p.actualToolCalls ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
+  if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
+    return {};
+  }
+
+  const catalog = buildSelectionToolCatalog({
+    tools: args.selectionTools,
+    expectedToolNames,
+    actualToolNames,
+  });
+  return catalog.length > 0 ? { selectionToolCatalog: catalog } : {};
+}
 
 /**
  * Builds the `finishParams` object every runner passes to
@@ -63,7 +467,12 @@ export function buildIterationFinishParams(args: {
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   browserInteractionSteps?: RunnerBrowserInteractionStep[];
-  status: "completed" | "failed";
+  /**
+   * REQUIRED and explicit. Callers classify their own path — a graded task
+   * failure is `completed`, a setup abort `setup_failed`, a budget expiry
+   * `timed_out` — because `passed` cannot distinguish them and never could.
+   */
+  status: IterationStatus;
   startedAt: number;
   error?: string;
   errorDetails?: string;
@@ -78,10 +487,91 @@ export function buildIterationFinishParams(args: {
    * `predicates` rows lack `stepId` and interact failures aren't otherwise saved.
    */
   stepResults?: unknown[];
+  /**
+   * The authored case's stage-applicability inputs, from
+   * `buildStageAuthoredCase`.
+   *
+   * PRESENT ⇒ this iteration gets a derived user-value chain under
+   * `metadata.stageResults` (+ `firstFailedStage` / `failureCategory` /
+   * `stageAnalyzerVersion`). ABSENT ⇒ no stage keys are written at all, which
+   * is the honest default for a caller that cannot say what the case authored:
+   * without the authored case there is no way to tell `notApplicable` from
+   * `notMeasured`, and guessing would report a stage the case never exercised
+   * as an evidence gap.
+   *
+   * Threaded as its own argument rather than folded into
+   * `iterationMetadataBase` because `buildIterationMetadata` is typed
+   * scalar-only (`Record<string, string | number | boolean>`) and
+   * `stageResults` is an array of rows.
+   */
+  stageCase?: StageAuthoredCase;
+  /**
+   * Pinned tool-call failures, for the stage derivation only (the verdict
+   * gates on them separately). Never enter the trace, so the chain is blind to
+   * them unless they are threaded here.
+   */
+  stageToolErrors?: unknown[];
+  /** Execution-layer policy blocks; persisted as metadata, never a failure. */
+  policyBlocks?: PolicyBlockRecord[];
+  /** Non-fatal policy configuration warnings, persisted for run consumers. */
+  policyWarnings?: string[];
+  /**
+   * The effective tool policy this iteration executed under, snapshotted the
+   * same way `hostPolicy` evidence is: the run row has no field to carry it
+   * (a backend `toolPolicy` column is Lane B), so without this snapshot a
+   * REPLAY of a policied run cannot reconstruct the policy — and a replay
+   * re-dials the ORIGINAL servers with the original credentials
+   * (`MCPServerReplayConfig`), so an unreconstructed policy means the calls we
+   * blocked run for real the second time.
+   */
+  toolPolicy?: EvalSuiteFileToolPolicy;
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
+  /**
+   * Folded run-level connect / tools-list evidence. Threaded into the
+   * analyzer; the same signals are also persisted under
+   * `metadata.stageSetupAudit.signals` (see `setupAudit`) so a v2 verdict
+   * can be audited or recomputed.
+   */
+  setupSignals?: StageSetupSignals;
+  /**
+   * Synthetic connection/discovery spans. Persisted on the trace (timeline)
+   * but never enter stage-derivation evidence.
+   */
+  setupSpans?: EvalTraceSpan[];
+  /** Bounded canary/audit extras from the run-setup observer. */
+  setupAudit?: Record<string, unknown>;
   injectOpenAiCompat?: boolean;
+  /**
+   * The run's resolved grading-engine mode. ABSENT ⇒ resolve from the env kill
+   * switch alone, which is `off` unless an operator set it, so a caller that
+   * knows nothing about the score engine keeps today's payload byte for byte.
+   *
+   *   `off`        → no score keys at all.
+   *   `shadow`     → `scoresShadow` / `evaluationConfigShadow` ONLY.
+   *   `dual_write` → `scores` / `evaluationConfig` ONLY.
+   *
+   * Synchronous in every mode: the projection is pure and adds no awaits, so
+   * the runner's finalization path gains no latency.
+   */
+  gradingMode?: GradingEngineMode;
+  /** Match options + polarity, hashed into the `toolCalls:match` definition. */
+  scoreMatchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /**
+   * The run this iteration belongs to. Used ONLY to key shadow-mismatch
+   * telemetry (dedupe + the per-run cap); absent ⇒ no comparison is emitted,
+   * which is why a quick run with no run row stays silent.
+   */
+  runId?: string;
+  /**
+   * D7: the live tool registry, keyed by name, as the runner had it in
+   * scope THIS iteration. Absent ⇒ no `selectionToolCatalog` is written,
+   * same honest-default reasoning `stageCase` follows for the stage chain
+   * itself — a caller with no live registry cannot say what the model saw.
+   */
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -103,11 +593,74 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     skippedSteps,
     stepResults,
+    stageCase,
+    stageToolErrors,
+    policyBlocks,
+    policyWarnings,
+    toolPolicy,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     injectOpenAiCompat,
+    scoreMatchOptions,
+    isNegativeTest,
+    selectionTools,
   } = args;
+  const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
+  const persistedSpans = [
+    ...(setupSpans ?? []),
+    ...(spans ?? []),
+  ];
+  const stageMetadata = buildStageMetadata({
+    ...(stageCase ? { stageCase } : {}),
+    spans,
+    prompts,
+    messages,
+    predicateResults,
+    widgetRenderObservations,
+    stageToolErrors,
+    toolSignals,
+    setupSignals,
+    policy:
+      policyBlocks &&
+      policyBlocks.length > 0 &&
+      !error &&
+      !(stageToolErrors && stageToolErrors.length > 0)
+        ? {
+            blocked: true,
+            reason: getIterationPolicyReason(policyBlocks),
+          }
+        : undefined,
+    status,
+    ...(error ? { error } : {}),
+  });
+  const scoreMetadata = buildScoreMetadata({
+    mode: gradingMode,
+    predicateResults,
+    evaluation,
+    passed,
+    stageMetadata,
+    ...(args.runId ? { runId: args.runId } : {}),
+    ...(iterationId ? { iterationId } : {}),
+    ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
+    ...(isNegativeTest ? { isNegativeTest } : {}),
+  });
+  // Gated on the same `gradingMode` that decides whether `scoreMetadata`
+  // above writes anything — D7 changes nothing outside `dual_write` (see the
+  // plan's §15 disclosure note), and that includes not capturing server tool
+  // descriptions/schemas into iteration metadata for a suite that never
+  // opted in.
+  const selectionToolCatalogMetadata =
+    gradingMode === "dual_write"
+      ? buildSelectionToolCatalogMetadata({
+          stageMetadata,
+          prompts,
+          selectionTools,
+        })
+      : {};
   return {
     iterationId,
     passed,
@@ -116,7 +669,7 @@ export function buildIterationFinishParams(args: {
     messages,
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
-    ...(spans?.length ? { spans } : {}),
+    ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -132,6 +685,18 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...(policyBlocks?.length
+        ? {
+            policyBlocks,
+            policyBlockCount: policyBlocks.length,
+          }
+        : {}),
+      ...(policyWarnings?.length ? { policyWarnings } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
+      ...stageMetadata,
+      ...scoreMetadata,
+      ...selectionToolCatalogMetadata,
+      ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
@@ -144,13 +709,11 @@ export function buildIterationFinishParams(args: {
   };
 }
 
-const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
-
 export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
   passed: boolean;
-  toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
+  toolsCalled: ToolCallRecord[];
   usage: UsageTotals;
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
@@ -183,7 +746,8 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
-  status?: IterationStatus;
+  /** Explicit harness lifecycle status; never infer it from the verdict. */
+  status: IterationStatus;
   startedAt?: number;
   error?: string;
   errorDetails?: string;
@@ -259,16 +823,13 @@ export async function finalizeEvalIteration(
   // Check if the iteration is already in a terminal stop state before trying
   // to update. A timed-out iteration whose original LLM/browser work ignores
   // the abort and completes late must NOT overwrite the `timed_out` row with a
-  // completed/failed result — both `cancelled` and `timed_out` are terminal.
+  // completed/failed result — every terminal lifecycle status is protected.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (
-      iteration?.status === "cancelled" ||
-      iteration?.status === "timed_out"
-    ) {
+    if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
@@ -280,8 +841,9 @@ export async function finalizeEvalIteration(
     // If we can't check status, continue anyway.
   }
 
-  const iterationStatus =
-    status ?? (passed ? DEFAULT_ITERATION_STATUS : "failed");
+  const iterationStatus = status;
+  // The TASK verdict, independent of the lifecycle above: `completed` +
+  // `failed` is a run that worked and a case that did not.
   const result = passed ? "passed" : "failed";
 
   // PR-2 eval→chatSessions fanout: write the transcript as per-turn rows
@@ -313,7 +875,10 @@ export async function finalizeEvalIteration(
   // error transcript with the wrong reason. Presence of `error` is the
   // cycle-failure signal we already have in scope.
   const isCycleFailure =
-    iterationStatus === "failed" || (error !== undefined && error !== "");
+    iterationStatus === "failed" ||
+    iterationStatus === "setup_failed" ||
+    iterationStatus === "timed_out" ||
+    (error !== undefined && error !== "");
   const terminalReason: "eval_completed" | "eval_failed" | "eval_cancelled" =
     iterationStatus === "cancelled"
       ? "eval_cancelled"

@@ -1,0 +1,93 @@
+{
+  "id": "hosted-0016",
+  "note": "no authored assertions — nothing about user value was measured",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 0
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "list_files",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": true
+      }
+    ],
+    "predicateResults": []
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": true,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "userValue",
+        "state": "notApplicable",
+        "reason": "notAuthored"
+      }
+    ],
+    "stageAnalyzerVersion": 4
+  }
+}

@@ -156,15 +156,43 @@ describe("UserTestingOverviewPanel", () => {
   // The empty state carries the only explanation of what a scenario IS, and it
   // read as a parenthetical buried inside a long clause. One dash can be
   // deliberate; two in one sentence means the sentence wanted to be two.
-  it("explains a scenario without a double-dash parenthetical", () => {
+  it("explains a study in the frame's words, without a double-dash parenthetical", () => {
     render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
 
     const empty = screen.getByTestId("user-testing-overview-empty");
     const copy = empty.textContent ?? "";
 
-    expect(copy).toContain("a link you can hand to a real person");
+    expect(copy).toContain("Create your first study");
+    expect(copy).toContain("A study starts with a link you send");
+    expect(copy).toContain("their sessions are recorded here");
     // No table placeholders live in the empty state, so every dash here is prose.
     expect(copy.split("—").length - 1).toBeLessThan(2);
+  });
+
+  it("fills the panel so it can centre in it, like the Swarm empty state", () => {
+    // jsdom has no layout, so the class is the only observable: without a
+    // height of its own the box is content-tall and `justify-center` does
+    // nothing, which left the notice pinned to the top of the panel.
+    render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
+
+    const empty = screen.getByTestId("user-testing-overview-empty");
+    expect(empty.className).toContain("min-h-full");
+    expect(empty.className).toContain("justify-center");
+  });
+
+  it("leads with an illustration, not a stock glyph", () => {
+    // BB-125 asks for an illustration; the frame's bitmap lives in the design
+    // file, so this is one of the project's pixel characters instead.
+    render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
+
+    const art = screen.getByTestId("user-testing-empty-illustration");
+    expect(art).toBeVisible();
+    const avatar = screen.getByTestId("persona-pixel-avatar");
+    expect(art).toContainElement(avatar);
+    // The scale stays off the avatar, which animates its own transform — they
+    // compose today only because Tailwind emits a standalone `scale`.
+    expect(avatar.className).not.toMatch(/scale-/);
+    expect(avatar.parentElement?.className).toMatch(/scale-/);
   });
 
   it("shows a skeleton while the list is loading, not an empty state", () => {

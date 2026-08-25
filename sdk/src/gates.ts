@@ -1,6 +1,6 @@
 /**
  * The gate engine: one implementation shared by the SDK (`assertGate` in a
- * code-first run) and the CLI (`mcpjam eval gate` against a hosted run).
+ * code-first run) and the CLI (`mcpjam cloud eval gate` against a hosted run).
  *
  * Everything upstream is normalized into {@link GateInput} first. Two surfaces
  * evaluating "did this run pass?" with two subtly different implementations is
@@ -26,6 +26,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import type { StructuredRunVerdict } from "./structured-reporting.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -435,7 +436,7 @@ export function evaluateGates(
       status: "usage_error",
       message:
         `"${field}" is a comparative gate and requires a baseline run — ` +
-        `use evaluateCompareGates() or \`mcpjam eval compare\`. ` +
+        `use evaluateCompareGates() or \`mcpjam cloud eval compare\`. ` +
         `evaluateGates() sees one run and cannot decide it.`,
     });
   }
@@ -698,6 +699,33 @@ const STATUS_LABEL: Record<GateStatus, string> = {
   non_gateable: "N/A ",
   usage_error: "ERR ",
 };
+
+/**
+ * Map a gate's own outcome onto the `StructuredRunReport` verdict vocabulary.
+ *
+ * `incomplete` — a `--wait` timeout, a cancelled run, non-gateable score
+ * integrity, an inconclusive backend result — is the gate's own version of
+ * "not enough was measured", the exact claim `inconclusive` makes for an eval
+ * run. It must map there, never to `failed`: a gate report is `passed: false`
+ * whenever it isn't `passed`, so a renderer that infers the verdict from
+ * `passed` alone (the way `renderStructuredRunHtml` falls back when no
+ * verdict is given) paints an unmeasured gate red — a measured regression
+ * the run never established. `usage_error` is a genuine gate-config defect,
+ * so it reads as a failure like `failed` does.
+ */
+export function gateOutcomeVerdict(
+  outcome: GateReport["outcome"]
+): StructuredRunVerdict {
+  switch (outcome) {
+    case "passed":
+      return "passed";
+    case "incomplete":
+      return "inconclusive";
+    case "failed":
+    case "usage_error":
+      return "failed";
+  }
+}
 
 export function formatGateReport(report: GateReport): string {
   const lines = [

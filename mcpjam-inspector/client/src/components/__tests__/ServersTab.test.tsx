@@ -1692,7 +1692,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        enabled: false,
         projectId: "ws_shared_123",
       })
     );
@@ -1713,7 +1713,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        enabled: false,
         projectId: null,
       })
     );

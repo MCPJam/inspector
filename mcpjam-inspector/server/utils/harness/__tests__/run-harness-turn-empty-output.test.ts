@@ -25,7 +25,6 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   },
   // WS3: no trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
-  prewarmHarness: vi.fn(async () => {}),
 }));
 
 vi.mock("../registry.js", () => ({
@@ -43,7 +42,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    supportsSelectedMcpServers: false,
+    mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),

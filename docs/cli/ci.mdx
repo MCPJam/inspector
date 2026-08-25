@@ -362,7 +362,7 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
 
 ### Trigger a hosted eval suite
 
-`mcpjam eval run` starts an asynchronous run of a suite that lives in your MCPJam project. It prints a `runId` and returns immediately — the iterations execute on the MCPJam platform, not in your CI job. Check on the run with `mcpjam eval status`.
+`mcpjam cloud eval run` starts an asynchronous run of a suite that lives in your MCPJam project. Without `--wait`, it prints a launch receipt and returns immediately. In CI, add `--wait` and `--out` to write a structured JSON report after every launched run reaches a terminal state.
 
 **Secrets needed:**
 
@@ -371,15 +371,45 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
 | `MCPJAM_API_KEY` | MCPJam API key (`sk_…`) |
 
 ```yaml
-      - name: Start eval run
+      - name: Run hosted eval
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
-          npx -y @mcpjam/cli@latest eval run \
+          npx -y @mcpjam/cli@latest cloud eval run \
             --suite "Nightly regression" \
             --project "My project" \
-            --format json > eval-run.json
-          echo "Started run $(jq -r '.runId' eval-run.json)"
+            --wait \
+            --out eval-report.json \
+            --format json > eval-result.json
+          echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
+
+      - name: Gate and write JUnit
+        # Always run this step, even if the run above exited 1 on a failed
+        # verdict: a default `if:` is `success()`, and skipping this step
+        # would lose the gate's configurable policy and its JUnit report
+        # exactly when the run failed. The job still ends up failed either
+        # way — the run step above already exited nonzero.
+        if: always()
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          RUN_ID=$(jq -r '.runs[0].id' eval-result.json)
+          npx -y @mcpjam/cli@latest cloud eval gate \
+            --run "$RUN_ID" \
+            --project "My project" \
+            --wait \
+            --min-pass-rate-percent 100 \
+            --reporter junit-xml \
+            --out eval-report.xml
+
+      - name: Upload eval reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-eval
+          path: |
+            eval-report.json
+            eval-report.xml
 ```
 
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
@@ -390,39 +420,44 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
-Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `cancelled`), then gate the job on `run.result`:
+Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only — traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
-```yaml
-      - name: Wait for eval result
-        env:
-          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
-        run: |
-          RUN_ID=$(jq -r '.runId' eval-run.json)
-          ATTEMPTS=0
-          MAX_ATTEMPTS=60   # ~30 minutes at one poll per 30 s
-          while :; do
-            npx -y @mcpjam/cli@latest eval status \
-              --run "$RUN_ID" \
-              --project "My project" \
-              --format json > eval-status.json
-            STATUS=$(jq -r '.run.status' eval-status.json)
-            case "$STATUS" in completed|failed|cancelled) break;; esac
-            ATTEMPTS=$((ATTEMPTS + 1))
-            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
-              echo "Timed out waiting for eval run (last status: $STATUS)"
-              exit 1
-            fi
-            sleep 30
-          done
-          jq '.run.summary' eval-status.json
-          [ "$(jq -r '.run.result' eval-status.json)" = "passed" ]
-```
+<Warning>
+**`eval run --wait` sets a verdict-based exit code.** `0` pass, `1` a completed run's verdict failed (the ONLY condition that produces `1`), `2` usage error or an invalid suite file, `3` auth failed (no credential, or the platform rejected it, at launch or mid-wait), `4` a connection/setup failure this CLI itself observed before evaluation ran (or a local `--out` write failure), `5` no valid verdict — `inconclusive`, a null/unrecognized result, a run status of failed/cancelled/timed-out, or a wait that hit its deadline. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`.
+
+Retry guidance: `4` and `5` mean infrastructure, or an absence of observation — nothing here says the server is wrong, so retrying the CI job is reasonable. But a bare re-run is not automatically safe: `eval run --suite` only dedupes against an in-flight or already-completed launch when you pass a **stable** `--idempotency-key`, and exit `5` can mean the run is still running (a wait that hit its deadline) — without that key, a retry can start a second paid run alongside the first rather than resuming it. Pass `--idempotency-key` (or poll/resume the run id already in the receipt) before retrying on `4` or `5`. `3` means fix the credential first; it poisons every other observation in the same launch. Never retry blindly on `1` — that code is reserved for a run the platform actually graded as failed.
+
+Either `eval run --wait` or `eval gate` already fails the job on its own — the `eval gate` step above adds a configurable pass/fail *policy* (thresholds, per-scorer gates) and baseline comparison on top of the same verdict, so keep it when you want more than "did this run's own verdict pass".
+</Warning>
 
 <Note>
-The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the full surface, including `eval judge` (request LLM-as-judge grading on a finished run), `eval validate` (offline suite-file validation), `eval export` (write a hosted suite to a local file), `eval checks list/connect` (GitHub Checks integration), and more.
+#### Decision summary in human format
+
+When `eval status` runs in `--format human` and the run has finished with a failed result, it prints a decision summary block to stdout after the status payload. The block lists the overall pass rate and, for each failed case, the first stage that failed, the failure category, any recorded evidence (span IDs, prompt indexes, predicate reasons), and a suggested next action:
+
+```text
+Decision summary: failed — 0/3 cases passed (0%)
+  Fetch order (iteration-1, iteration 1)
+    first failed stage call
+    failure category arguments
+    expected tool calls: fetch_order
+    observed failure: server rejected arguments
+    evidence: span ids span-abc; reasons wrong argument type
+    next action: review the authored arguments against the tool input schema
+  Setup failure (iteration-2, iteration 2)
+    no first failed stage — did not reach the server's stages
+    failure category setup
+    next action: check the server connection and environment configuration
+```
+
+The block is only emitted in `--format human` — `--format json` output is byte-identical to before. If the iteration data cannot be fetched (for example, a network error), the block is silently omitted rather than failing the status read.
+
+`eval gate` and `eval compare` also emit a decision summary in `--format human`, written to stderr alongside their existing gate report.
+
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 
 ### Upload SDK eval results
 
