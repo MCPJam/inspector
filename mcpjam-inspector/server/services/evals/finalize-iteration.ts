@@ -761,10 +761,25 @@ export function buildIterationFinishParams(args: {
   // from the same incomplete projection and would agree. So the conjunction is
   // the guard, and it is structural rather than a policy someone can tune.
   //
-  // What `enforce` still adds is real and is the whole point of the step: the
-  // STRICT reading fails an iteration whose gating evidence is missing or
+  // WHAT `enforce` ADDS ON THIS PATH, STATED HONESTLY — because an earlier
+  // version of this comment overstated it.
+  //
+  // The strict reading fails an iteration whose gating evidence is missing or
   // unscorable (`unresolvedScorerIds`), where the boolean pipeline would have
-  // passed it. Zero evidence never passes.
+  // passed it. Zero evidence never passes. That is the property `enforce`
+  // exists for — but it is NOT REACHABLE FROM HERE. Every gating definition
+  // this pass builds also gets a row, and every one of those rows is `scored`:
+  // predicates and `toolCalls:match` always produce a verdict, and the judge is
+  // ADVISORY so it never gates. So `unresolvedScorerIds` is always empty on the
+  // first pass, and `disagreeingScorerIds` only fires where the boolean already
+  // failed the iteration anyway.
+  //
+  // The strictness catch therefore lives where gating rows can carry
+  // `error`/`skipped`: SDK-REPORTED runs, checked by the backend's verify seam,
+  // and any second-pass write that adds a gating row. On the hosted first pass
+  // `enforce` is currently a no-op in the failing direction — which is exactly
+  // what the soak should be expected to show, rather than being read as the
+  // feature not working.
   //
   // The conjunction comes OUT when the remaining legacy gates are projected as
   // gating rows; until then it is what keeps N1 honest. `resultSource` stays

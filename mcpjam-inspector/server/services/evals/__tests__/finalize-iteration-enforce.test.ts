@@ -405,6 +405,65 @@ describe("an unresolved gating row is a strictness catch, not drift", () => {
 // This asserts the property the runners depend on: the returned `passed` IS
 // the derived verdict, so assigning it is sufficient.
 // =============================================================================
+describe("every gating definition this pass builds also gets a scored row", () => {
+  // WHY THIS IS THE TEST, and not "an errored row fails the iteration".
+  //
+  // Review asked for the latter. It cannot be written against this entry point,
+  // and finding out why was worth more than the test would have been: the
+  // strictness catch is UNREACHABLE from the first pass. Predicates and
+  // `toolCalls:match` always produce a `scored` verdict, and the judge is
+  // advisory, so no gating definition here can ever be unresolved.
+  //
+  // So `enforce` is currently a no-op in the failing direction on the hosted
+  // first pass, and the soak should expect that rather than read it as the
+  // feature being broken. The catch lives where gating rows can carry
+  // `error`/`skipped` — SDK-reported runs at the backend's verify seam.
+  //
+  // Pinned because it is load-bearing in BOTH directions: if a future change
+  // makes a gating definition emit no row, or an unscorable one, this fails and
+  // the reader learns the first pass has gained a strictness path that needs
+  // its own coverage.
+  test("no gating definition is left unresolved, so the strict path cannot fire", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults: [
+        { predicate: passingPredicate, passed: true },
+        { predicate: failingPredicate, passed: false },
+      ],
+      evaluation: evaluationFor(false),
+    });
+
+    const verdict = allGatingScorersPassed(scores, evaluationConfig);
+    expect(verdict.unresolvedScorerIds).toEqual([]);
+
+    // And the reason: every gating definition has a row, and every row scored.
+    const rowIds = new Set(scores.map((row) => row.scorerId));
+    const gating = evaluationConfig.definitions.filter(
+      (definition) => definition.role === "gating"
+    );
+    expect(gating.length).toBeGreaterThan(0);
+    expect(gating.filter((d) => !rowIds.has(d.scorerId))).toEqual([]);
+    expect(
+      scores.filter((row) => row.status !== "scored").map((r) => r.scorerId)
+    ).toEqual([]);
+  });
+
+  test("so a first-pass disagreement only happens where the boolean also failed", () => {
+    // The corollary. `disagreeingScorerIds` fires on a row that scored FALSE,
+    // and those same failures are what `buildEvalIterationVerdict` gates on —
+    // which is why the conjunction is currently the only thing `enforce`
+    // changes here.
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults: [{ predicate: failingPredicate, passed: false }],
+      evaluation: evaluationFor(true),
+    });
+
+    const verdict = allGatingScorersPassed(scores, evaluationConfig);
+    expect(verdict.passed).toBe(false);
+    expect(verdict.disagreeingScorerIds.length).toBeGreaterThan(0);
+    expect(verdict.unresolvedScorerIds).toEqual([]);
+  });
+});
+
 describe("the returned params carry the verdict the run must aggregate", () => {
   test("a strictness catch is visible on the returned params, not just persisted", () => {
     const { definitions, scores } = (() => {
