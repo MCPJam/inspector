@@ -14,8 +14,11 @@
  */
 
 import {
+  errorScoreResult,
   fromCriterionResult,
   fromGoalCompletionCase,
+  notApplicableScoreResult,
+  skippedScoreResult,
   type EvaluationConfigSnapshot,
   type ResolvedScoreDefinition,
   type ScoreResult,
@@ -73,9 +76,28 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/** Only a `scored` judge row is projected; the rest carry no number to project. */
+/** A judge that produced a number to project. */
 function judgeIsScored(verdict: HostedJudgeVerdictLike): boolean {
   return verdict.status === undefined || verdict.status === "scored";
+}
+
+/**
+ * A judge that ran but produced no number, in the contract's own vocabulary.
+ *
+ * These are EVIDENCE OF ABSENCE and are projected as such rather than dropped:
+ * B4 validity reads a missing row as "this scorer was never measured", which is
+ * indistinguishable from "this iteration had no such scorer at all". Writing the
+ * row keeps that distinction, and because it carries `error`/`skipped`/
+ * `not_applicable` instead of a value, it can never gate anything.
+ */
+function judgeAbsenceStatus(
+  verdict: HostedJudgeVerdictLike
+): "error" | "skipped" | "not_applicable" | undefined {
+  return verdict.status === "error" ||
+    verdict.status === "skipped" ||
+    verdict.status === "not_applicable"
+    ? verdict.status
+    : undefined;
 }
 
 /**
@@ -105,7 +127,13 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
-    ...(judge && judgeIsScored(judge) && isFiniteNumber(judge.threshold)
+    // Any judge verdict still declares its scorer, so long as the verdict
+    // carries the threshold that defines it. This includes unknown statuses:
+    // they must project as an error row rather than disappearing. Without a
+    // threshold there is no definition to resolve against and inventing one
+    // would put a fabricated scorer in the snapshot.
+    ...(judge &&
+    isFiniteNumber(judge.threshold)
       ? {
           judge: {
             threshold: judge.threshold,
@@ -175,15 +203,42 @@ export function buildHostedScoreRows(
 
   const judgeDefinition = byId.get(HOSTED_JUDGE_SCORER_ID);
   const judge = inputs.judgeVerdict;
-  if (judgeDefinition && judge && judgeIsScored(judge)) {
-    // `score` is handed over UNCHANGED, including an OUT-OF-RANGE one: the
-    // finalizer turns 1.4 into `status: "error"`, and clamping it here would
-    // launder a broken judge into a passing row. A non-numeric score is a
-    // different thing — a malformed verdict, not an out-of-range one — and
-    // projecting it would fabricate the number the judge failed to produce, so
-    // that row is simply not written.
-    if (typeof judge.score === "number") {
+  if (judgeDefinition && judge) {
+    const absence = judgeAbsenceStatus(judge);
+    if (absence === "error") {
+      rows.push(
+        errorScoreResult(
+          judgeDefinition,
+          typeof judge.error === "string" && judge.error.length > 0
+            ? judge.error
+            : "judge reported an error"
+        )
+      );
+    } else if (absence === "skipped") {
+      rows.push(skippedScoreResult(judgeDefinition, "judge did not run"));
+    } else if (absence === "not_applicable") {
+      rows.push(
+        notApplicableScoreResult(judgeDefinition, "judge does not apply")
+      );
+      // `score` is handed over UNCHANGED, including an OUT-OF-RANGE one: the
+      // finalizer turns 1.4 into `status: "error"`, and clamping it here would
+      // launder a broken judge into a passing row.
+    } else if (judgeIsScored(judge) && typeof judge.score === "number") {
       rows.push(fromGoalCompletionCase(judgeDefinition, { score: judge.score }));
+    } else if (!judgeIsScored(judge)) {
+      rows.push(
+        errorScoreResult(
+          judgeDefinition,
+          `judge reported unknown status ${JSON.stringify(judge.status)}`,
+        ),
+      );
+    } else {
+      // A verdict claiming `scored` with no number is malformed, not
+      // out-of-range. Projecting the number would fabricate it; dropping the row
+      // would report the scorer as absent. `error` says what actually happened.
+      rows.push(
+        errorScoreResult(judgeDefinition, "judge reported no numeric score")
+      );
     }
   }
 
