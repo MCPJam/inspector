@@ -171,18 +171,18 @@ describe("checkEvalHarnessAdmission", () => {
     expect(verdict.reason).toContain("broker");
   });
 
-  it("refuses a harness that cannot deliver the suite's MCP servers", () => {
-    // An eval suite ALWAYS has servers, so Codex (supportsSelectedMcpServers:
-    // false) can never run one — surfaced as the gate's reason, not as a
-    // half-configured run.
-    const verdict = checkEvalHarnessAdmission({
-      hostConfig: { harness: "codex" },
-      serverIds: ["s1"],
-      cases: [{ title: "a", model: "openai/gpt-5", provider: "openai" }],
-    });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCP servers");
+  it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {
+    // COMP-39 inverts this case. An eval suite ALWAYS has servers, so the old
+    // "Codex cannot deliver MCP servers" refusal meant Codex could never run
+    // ANY eval suite. It now delivers them as host-executed tools, so a Codex
+    // suite is admissible on the same terms as a Claude Code one.
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: { harness: "codex" },
+        serverIds: ["s1"],
+        cases: [{ title: "a", model: "openai/gpt-5", provider: "openai" }],
+      })
+    ).toEqual({ ok: true, harness: "codex" });
   });
 });
 
@@ -235,17 +235,31 @@ describe("checkEvalHarnessStaticAdmission", () => {
     expect(verdict.reason).toContain("MCPJam-provided models");
   });
 
-  it("counts PLUGIN-contributed servers toward the MCP gate", () => {
+  it("counts PLUGIN-contributed servers toward the MCP-tool approval gate", () => {
     // A host whose servers come solely from a plugin would otherwise slip the
-    // rule the gate exists to enforce.
+    // rule the gate exists to enforce. (This used to be asserted through the
+    // MCP-delivery refusal, which is gone — every harness delivers MCP servers
+    // now — so it is asserted through the approval rule that still keys off
+    // `hasSelectedMcpServers`.)
     const verdict = checkEvalHarnessStaticAdmission({
-      hostConfig: { harness: "codex" },
+      hostConfig: { harness: "claude-code", requireToolApproval: true },
       serverIds: [],
       pluginServerIds: ["plugin-server-1"],
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCP servers");
+    expect(verdict.reason).toContain("MCP-server tools");
+  });
+
+  it("an approval host with NO servers at all is not caught by that gate", () => {
+    // The control for the case above: without the plugin servers the same host
+    // passes, so the refusal really did come from counting them.
+    expect(
+      checkEvalHarnessStaticAdmission({
+        hostConfig: { harness: "claude-code", requireToolApproval: true },
+        serverIds: [],
+      })
+    ).toEqual({ ok: true, harness: "claude-code" });
   });
 });
 
