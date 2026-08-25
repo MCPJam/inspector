@@ -54,6 +54,10 @@ import {
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
 import { isTerminalIterationStatus } from "./run-status.js";
+import {
+  buildSelectionToolCatalog,
+  type SelectionCatalogToolLike,
+} from "./selection-tool-catalog.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -67,7 +71,18 @@ import { isTerminalIterationStatus } from "./run-status.js";
  */
 type IterationStatus = ContractIterationStatus;
 
-type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type ToolCallRecord = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * Mirrors the runner's `ToolCall.toolCallId`. This type describes exactly
+   * what goes over the wire as `updateTestIteration.actualToolCalls`, so it
+   * has to name every field the runner actually sends — the whole reason
+   * `toolCallId` reached a validator that rejected it is that no type on this
+   * path admitted the field existed.
+   */
+  toolCallId?: string;
+};
 type PolicyBlockRecord = { reason?: unknown };
 
 /**
@@ -112,6 +127,8 @@ function buildStageEvidence(args: {
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /** D7's advisory attribution evidence. Absent on the first pass, same as `judgeEvidence`. */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
 }) {
   const hasSpans = (args.spans?.length ?? 0) > 0;
   const hasPrompts = (args.prompts?.length ?? 0) > 0;
@@ -141,6 +158,9 @@ function buildStageEvidence(args: {
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+    ...(args.metadataAttribution
+      ? { metadataAttribution: args.metadataAttribution }
+      : {}),
     traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
     traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
   };
@@ -182,6 +202,12 @@ export function buildStageMetadata(args: {
    * evidence said nothing.
    */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /**
+   * ABSENT on the first pass, PRESENT on the second. Tier 2, same
+   * subordination as `judgeEvidence`: it can only decide `selection`'s
+   * `failureCategory` where D1 already derived `selection: failed`.
+   */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
   policy?: { blocked: boolean; reason?: string };
   /**
    * The EXECUTION lifecycle status, forwarded to the analyzer unchanged. The
@@ -207,6 +233,9 @@ export function buildStageMetadata(args: {
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+        ...(args.metadataAttribution
+          ? { metadataAttribution: args.metadataAttribution }
+          : {}),
       }),
       iteration: { status, ...(error ? { error } : {}) },
       policy: args.policy,
@@ -422,6 +451,72 @@ function readUserValueRow(
 }
 
 /**
+ * D7's `metadata.selectionToolCatalog` — written ONLY when this pass's own
+ * `stageMetadata` already derived `selection: failed`, so the common
+ * (passing) case costs nothing. Reads `missing` / `unexpected` from the
+ * SAME `prompts` array `deriveSelection` used to reach that verdict — this
+ * never re-derives whether selection failed, it only explains what the
+ * model was choosing between when it did.
+ */
+function buildSelectionToolCatalogMetadata(args: {
+  stageMetadata: Record<string, unknown>;
+  prompts?: PromptTraceSummary[];
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
+}): Record<string, unknown> {
+  if (!args.selectionTools) return {};
+  const rows = args.stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return {};
+  const selectionRow = rows.find(
+    (row): row is Partial<StageResultRow> =>
+      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+  );
+  if (selectionRow?.state !== "failed") return {};
+
+  const prompts = args.prompts ?? [];
+  // Only turns that were PART OF this selection failure — a successful
+  // earlier turn's tool calls have nothing to do with why selection failed,
+  // and folding them in could fill the catalog's cap before the turn that
+  // actually caused the failure is ever considered.
+  const failingPrompts = prompts.filter(
+    (p) => (p.missing?.length ?? 0) > 0 || (p.unexpected?.length ?? 0) > 0
+  );
+  const expectedToolNames = failingPrompts
+    .flatMap((p) => p.missing ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  // `unexpected` names FIRST, then the rest of the turn's actual calls:
+  // `buildSelectionToolCatalog`'s cap is shared across both roles, and for
+  // an `unexpectedToolCall` failure (e.g. `maxExtraToolCalls: 0`, six
+  // correctly-called expected tools plus one prohibited extra) the extra
+  // that actually caused the failure could otherwise sit last in call order
+  // and get crowded out by the tools that were selected correctly. The full
+  // actual set still matters beyond just `unexpected`, though: under the
+  // default `maxExtraToolCalls: null`, a call the model made INSTEAD of
+  // (not in addition to) an expected one stays out of `unexpected` — it
+  // only ever lands there as a flagged extra — so `missingToolCall` cases
+  // still need the broader `actualToolCalls` set to see what was chosen.
+  const unexpectedToolNames = failingPrompts
+    .flatMap((p) => p.unexpected ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const otherActualToolNames = failingPrompts
+    .flatMap((p) => p.actualToolCalls ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const actualToolNames = [...unexpectedToolNames, ...otherActualToolNames];
+  if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
+    return {};
+  }
+
+  const catalog = buildSelectionToolCatalog({
+    tools: args.selectionTools,
+    expectedToolNames,
+    actualToolNames,
+  });
+  return catalog.length > 0 ? { selectionToolCatalog: catalog } : {};
+}
+
+/**
  * Builds the `finishParams` object every runner passes to
  * {@link finalizeIterationWithBrowserArtifacts} (which adds `videoBytes` +
  * `convexClient` and dispatches to the recorder or `finalizeEvalIteration`).
@@ -548,6 +643,13 @@ export function buildIterationFinishParams(args: {
    * which is why a quick run with no run row stays silent.
    */
   runId?: string;
+  /**
+   * D7: the live tool registry, keyed by name, as the runner had it in
+   * scope THIS iteration. Absent ⇒ no `selectionToolCatalog` is written,
+   * same honest-default reasoning `stageCase` follows for the stage chain
+   * itself — a caller with no live registry cannot say what the model saw.
+   */
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -583,6 +685,7 @@ export function buildIterationFinishParams(args: {
     injectOpenAiCompat,
     scoreMatchOptions,
     isNegativeTest,
+    selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
   const persistedSpans = [
@@ -623,6 +726,25 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
+  // Gated on the same `gradingMode` that decides whether `scoreMetadata`
+  // above writes anything — D7 changes nothing outside `dual_write` (see the
+  // plan's §15 disclosure note), and that includes not capturing server tool
+  // descriptions/schemas into iteration metadata for a suite that never
+  // opted in.
+  // `isDualWrite`, not `=== "dual_write"`: B3b added `enforce` ABOVE
+  // dual_write and it writes the same real rows, so an equality check here
+  // would silently switch D7's catalog capture back OFF for the cohort that
+  // has progressed furthest. The predicate is what keeps "dual_write and
+  // above" in one place.
+  const selectionToolCatalogMetadata =
+    isDualWrite(gradingMode)
+      ? buildSelectionToolCatalogMetadata({
+          stageMetadata,
+          prompts,
+          selectionTools,
+        })
+      : {};
+
   // THE FLIP, and the ONE DIRECTION IT MAY MOVE.
   //
   // At `enforce` the gating score rows decide — but only ever toward FAILED.
@@ -683,6 +805,7 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...scoreMetadata,
+      ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
@@ -700,7 +823,7 @@ export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
   passed: boolean;
-  toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
+  toolsCalled: ToolCallRecord[];
   usage: UsageTotals;
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
