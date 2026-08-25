@@ -50,6 +50,7 @@ import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
+import evalDisclosure from "./eval-disclosure.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
@@ -206,6 +207,12 @@ v1.route("/", projects);
 // cannot advertise a per-org beta. Guest-DENIED by default like every other
 // project read.
 v1.route("/", capabilities);
+// The pre-run disclosure for an eval suite launch plan — G4b, the inspector
+// half of Evals v2 Lane G. Guest-allowed (see guest-allowed-paths.ts): a
+// guest can already launch a run at POST /eval-suites/:id/runs, so denying
+// them the disclosure that describes what that run does is the one gap that
+// would actually matter.
+v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
 
 v1.onError((error, c) => v1OnError(error, c));
