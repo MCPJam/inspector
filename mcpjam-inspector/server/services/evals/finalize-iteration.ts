@@ -34,8 +34,11 @@ import {
   type StageResultRow,
   type StageSetupSignals,
   type IterationStatus as ContractIterationStatus,
+  allGatingScorersPassed,
 } from "@mcpjam/sdk/contract";
 import {
+  isDualWrite,
+  isEnforcing,
   resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
@@ -45,10 +48,7 @@ import {
   type HostedEvaluationLike,
   type HostedPredicateResultLike,
 } from "./score-rows.js";
-import {
-  buildShadowMismatch,
-  emitShadowMismatch,
-} from "./shadow-mismatch.js";
+import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
 import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
@@ -210,7 +210,7 @@ export function buildStageMetadata(args: {
       }),
       iteration: { status, ...(error ? { error } : {}) },
       policy: args.policy,
-    }),
+    })
   );
 }
 
@@ -251,12 +251,40 @@ function narrowEvaluation(
 }
 
 /**
- * The score-contract keys this mode contributes to iteration metadata.
+ * The score-contract keys this mode contributes to iteration metadata, plus —
+ * at `enforce` only — the verdict those rows derive.
  *
  * `off` returns `{}` — not empty arrays, not `undefined` values — so the
  * persisted payload is byte-identical to today's. `shadow` writes ONLY the
- * shadow keys and `dual_write` ONLY the real ones: no mode writes both, which
- * is what makes a shadow row impossible to mistake for a decided one.
+ * shadow keys; `dual_write` and `enforce` write ONLY the real ones: no mode
+ * writes both, which is what makes a shadow row impossible to mistake for a
+ * decided one.
+ *
+ * ── What `enforce` changes, and what it does not ────────────────────────────
+ *
+ * The PERSISTED KEYS are identical to `dual_write`'s. That is deliberate and it
+ * is what makes the rollback a flag flip: dropping a cohort from `enforce` to
+ * `dual_write` needs no migration in either direction, because the two modes
+ * wrote the same fields.
+ *
+ * What changes is authority. At `enforce` this returns `derived`, and the
+ * caller uses `derived.passed` as the iteration's outgoing `result` instead of
+ * the boolean pipeline's `passed`. The rule is the contract's
+ * `allGatingScorersPassed` — every gating definition resolved AND every one
+ * that resolved to a verdict passed — read STRICTLY, so a gating scorer that
+ * errored or was skipped fails the iteration rather than being ignored. Zero
+ * evidence never passes, which is also what the legacy pipeline does with an
+ * unscorable criterion.
+ *
+ * ── The evaluation itself is untouched ──────────────────────────────────────
+ *
+ * `buildEvalIterationVerdict` still runs, still produces `passed`, and is still
+ * the thing these rows are a projection OF. What retires at `enforce` is the
+ * parallel verdict ARITHMETIC, not the evaluation: the matcher, the predicates
+ * and the gates all still decide, and the rows report what they decided. That
+ * is why a mismatch between `derived.passed` and `passed` is expected to be
+ * ZERO by construction — two projections of one evaluation cannot honestly
+ * disagree — and why a nonzero rate is a bug signal rather than a finding.
  */
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
@@ -270,8 +298,12 @@ function buildScoreMetadata(args: {
   /** The authoritative verdict, compared against but never derived from. */
   passed: boolean;
   stageMetadata: Record<string, unknown>;
-}): Record<string, unknown> {
-  if (args.mode === "off") return {};
+}): {
+  keys: Record<string, unknown>;
+  /** Present ONLY at `enforce`. The verdict the gating rows derive. */
+  derived?: { passed: boolean; blamedScorerIds: string[] };
+} {
+  if (args.mode === "off") return { keys: {} };
   const predicateResults = (args.predicateResults ?? []).filter(
     isHostedPredicateResult
   );
@@ -282,11 +314,40 @@ function buildScoreMetadata(args: {
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
-  if (scores.length === 0) return {};
+  if (scores.length === 0) {
+    // NO ROWS AND `enforce`. There is nothing to derive from, so the boolean
+    // verdict stands — returning `derived` here would fail every iteration a
+    // case authored no gating criteria for. The backend's verify seam reaches
+    // the same conclusion independently (`not_derivable`), which is what keeps
+    // the two ends of the wire agreeing about a case with nothing to score.
+    return { keys: {} };
+  }
+  // ONE call to the shared arithmetic, read two ways. The SHADOW comparison
+  // ignores unresolved gates (an unscorable criterion is not a disagreement);
+  // the AUTHORITY reading does not (zero evidence never passes).
+  const gating = allGatingScorersPassed(scores, evaluationConfig);
+  const enforcing = isEnforcing(args.mode);
+  const derived = enforcing
+    ? {
+        passed: gating.passed,
+        blamedScorerIds: [
+          ...gating.disagreeingScorerIds,
+          ...gating.unresolvedScorerIds,
+        ],
+      }
+    : undefined;
   // Agreement emits NOTHING — the parity harnesses assert exactly that — so
   // this is a comparison, not a report.
   if (args.runId && args.iterationId) {
-    const shadow = shadowVerdictFromScores(scores, evaluationConfig);
+    // At `enforce` the comparison is against the verdict that actually LANDS,
+    // because that is the number a mismatch would move. Below it, the lenient
+    // shadow reading is preserved byte for byte.
+    const shadow = enforcing
+      ? {
+          passed: gating.passed,
+          disagreeingScorerIds: derived!.blamedScorerIds,
+        }
+      : shadowVerdictFromScores(scores, evaluationConfig);
     // BOTH sides carry the SAME row on this pass. The score projection does not
     // re-derive the chain — the judge has not spoken yet — so a row difference
     // here would be an artifact of leaving one side blank, not a finding, and
@@ -317,9 +378,12 @@ function buildScoreMetadata(args: {
     // `toHaveBeenCalledTimes(0)` a parity result.
     if (mismatch) emitShadowMismatch(mismatch);
   }
-  return args.mode === "dual_write"
-    ? { scores, evaluationConfig }
-    : { scoresShadow: scores, evaluationConfigShadow: evaluationConfig };
+  return {
+    keys: isDualWrite(args.mode)
+      ? { scores, evaluationConfig }
+      : { scoresShadow: scores, evaluationConfigShadow: evaluationConfig },
+    ...(derived ? { derived } : {}),
+  };
 }
 
 /**
@@ -330,13 +394,19 @@ function buildScoreMetadata(args: {
  */
 function readUserValueRow(
   stageMetadata: Record<string, unknown>
-): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+):
+  | { state: StageResultRow["state"]; reason: StageResultRow["reason"] }
+  | undefined {
   const rows = stageMetadata.stageResults;
   if (!Array.isArray(rows)) return undefined;
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
     const candidate = row as Partial<StageResultRow>;
-    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
+    if (
+      candidate.stage === "userValue" &&
+      candidate.state &&
+      candidate.reason
+    ) {
       return { state: candidate.state, reason: candidate.reason };
     }
   }
@@ -507,10 +577,7 @@ export function buildIterationFinishParams(args: {
     isNegativeTest,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
-  const persistedSpans = [
-    ...(setupSpans ?? []),
-    ...(spans ?? []),
-  ];
+  const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -534,7 +601,7 @@ export function buildIterationFinishParams(args: {
     status,
     ...(error ? { error } : {}),
   });
-  const scoreMetadata = buildScoreMetadata({
+  const { keys: scoreMetadata, derived } = buildScoreMetadata({
     mode: gradingMode,
     predicateResults,
     evaluation,
@@ -545,9 +612,14 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
+  // THE FLIP. At `enforce` the iteration's verdict comes from its gating score
+  // rows; in every other mode `passed` is what it always was. `resultSource`
+  // stays `"reported"` either way — the inspector is still the thing reporting
+  // the verdict, it has simply changed what it derives that verdict from.
+  const effectivePassed = derived ? derived.passed : passed;
   return {
     iterationId,
-    passed,
+    passed: effectivePassed,
     toolsCalled: evaluation.toolsCalled,
     usage,
     messages,
@@ -585,7 +657,7 @@ export function buildIterationFinishParams(args: {
             hostPolicy,
             toolSignals,
             evaluation.toolsCalled.length,
-            injectOpenAiCompat === true,
+            injectOpenAiCompat === true
           )
         : {}),
     },
@@ -673,7 +745,7 @@ export type FinalizeEvalIterationParams = {
  * `runDeleted` in directly.
  */
 export async function finalizeEvalIteration(
-  params: FinalizeEvalIterationParams,
+  params: FinalizeEvalIterationParams
 ): Promise<void> {
   const {
     convexClient,
@@ -710,13 +782,13 @@ export async function finalizeEvalIteration(
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId },
+      { iterationId }
     );
     if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
-        iteration.status,
+        iteration.status
       );
       return;
     }
@@ -766,8 +838,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-        ? "eval_failed"
-        : "eval_completed";
+      ? "eval_failed"
+      : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -781,12 +853,12 @@ export async function finalizeEvalIteration(
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient,
+      convexClient
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient,
+      convexClient
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
@@ -822,8 +894,7 @@ export async function finalizeEvalIteration(
   // before any turn landed. With turns already written, re-sending
   // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
   // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-  const useW1Fallback =
-    fanout.persisted === false && fanout.turnsWritten === 0;
+  const useW1Fallback = fanout.persisted === false && fanout.turnsWritten === 0;
   if (fanout.persisted === false) {
     logger.warn(
       useW1Fallback
@@ -833,7 +904,7 @@ export async function finalizeEvalIteration(
         iterationId,
         turnsWritten: fanout.turnsWritten,
         error: fanout.error.message,
-      },
+      }
     );
   }
 
@@ -869,8 +940,7 @@ export async function finalizeEvalIteration(
               : {}),
             ...(widgetSnapshots?.length
               ? {
-                  widgetSnapshots:
-                    sanitizeForConvexTransport(widgetSnapshots),
+                  widgetSnapshots: sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
             // PR 6b: browser artifacts already uploaded + sanitized above;
@@ -881,7 +951,7 @@ export async function finalizeEvalIteration(
               ? {
                   widgetRenderObservations:
                     serializedWidgetRenderObservations.map(
-                      toObservationPayload,
+                      toObservationPayload
                     ),
                 }
               : {}),
@@ -923,7 +993,7 @@ export async function finalizeEvalIteration(
     } else {
       logger.error(
         "[evals] Failed to record iteration result:",
-        new Error(errorMessage),
+        new Error(errorMessage)
       );
       // Transient (non-cancellation) failure: fall through to the lock
       // step. The chatSessions transcript is complete from the fanout's

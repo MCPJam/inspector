@@ -79,6 +79,7 @@ export {
 
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   definitionHash,
   errorScoreResult,

@@ -13,6 +13,15 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
+ * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
+ * judge's row is ADVISORY, so it is structurally excluded from the gating
+ * arithmetic that decides the result; the backend refuses lifecycle fields on
+ * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
+ * backend's own verify seam runs on the merged rows, so if a re-derivation ever
+ * DID move the verdict, the run is marked non-gateable rather than quietly
+ * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
+ * rows `dual_write` writes) and nothing about what it may touch.
+ *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale `goalCompletionJobId` and refuses terminal
  * iterations, so a duplicate doorbell produces the same rows and the same
@@ -22,9 +31,12 @@
 import type { StageEvidence } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import { isModelFree } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
+import { buildStageAuthoredCase } from "./stage-inputs.js";
 import {
+  isDualWrite,
   resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
@@ -171,22 +183,52 @@ function deriveIterationPayload(args: {
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
     isPredicateRow
   );
-  const stage = buildStageMetadata({
-    ...(iteration.stageCase ? { stageCase: iteration.stageCase } : {}),
-    ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
-    ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
-    ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
-    ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-    ...(iteration.toolSignals ? { toolSignals: iteration.toolSignals } : {}),
-    ...(iteration.setupSignals
-      ? { setupSignals: iteration.setupSignals }
-      : {}),
-    ...(judgeEvidence ? { judgeEvidence } : {}),
-    status: iteration.status === "failed" ? "failed" : "completed",
-    ...(iteration.error ? { error: iteration.error } : {}),
-  });
+  // Derived HERE from the run's own frozen case snapshot, through the SAME
+  // function the runner used on the first pass. The backend deliberately hands
+  // back the raw case rather than a derived one — see
+  // `JudgeSecondPassIterationRow.authoredCase`.
+  const stageCase = iteration.authoredCase
+    ? buildStageAuthoredCase({
+        test: iteration.authoredCase,
+        ...(iteration.authoredCase.steps
+          ? { steps: iteration.authoredCase.steps }
+          : {}),
+        ...(iteration.authoredCase.promptTurns
+          ? { turns: iteration.authoredCase.promptTurns }
+          : {}),
+        caseNeedsModel: !isModelFree(iteration.authoredCase.steps),
+      })
+    : undefined;
+  // A TRACE WE COULD NOT GET BACK IS NOT AN EMPTY TRACE. `buildStageMetadata`
+  // hands the analyzer no spans, the analyzer says `traceAbsent`, and the post
+  // would replace a correct chain with one claiming nothing happened. Skipping
+  // the chain leaves the first pass's rows standing, which is strictly better.
+  const stage =
+    iteration.traceComplete === false
+      ? {}
+      : buildStageMetadata({
+          ...(stageCase ? { stageCase } : {}),
+          ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
+          ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
+          ...(iteration.messages?.length
+            ? { messages: iteration.messages }
+            : {}),
+          ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
+          ...(iteration.toolSignals
+            ? { toolSignals: iteration.toolSignals }
+            : {}),
+          ...(iteration.setupSignals
+            ? { setupSignals: iteration.setupSignals }
+            : {}),
+          ...(judgeEvidence ? { judgeEvidence } : {}),
+          status: iteration.status === "failed" ? "failed" : "completed",
+          ...(iteration.error ? { error: iteration.error } : {}),
+        });
 
-  if (args.mode !== "dual_write") return { stage };
+  // `isDualWrite` rather than `=== "dual_write"`: `enforce` writes the same
+  // real rows, and the difference between the two modes is who decides the
+  // verdict — which is not this pass's business either way.
+  if (!isDualWrite(args.mode)) return { stage };
 
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateRows.length
@@ -198,6 +240,11 @@ function deriveIterationPayload(args: {
           })),
         }
       : {}),
+    // The SAME resolved options and polarity the first pass hashed into
+    // `toolCalls:match`. Omitting them here would rebuild that definition under
+    // a different `implementationHash` and orphan the first pass's row.
+    ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
+    ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(verdict && isFiniteNumber(verdict.threshold)
       ? { judgeVerdict: verdict }
       : {}),
@@ -212,10 +259,8 @@ function deriveIterationPayload(args: {
  *
  * THE MODE CHECK IS NOT THE ROUTE'S ALONE. W2's `saveGoalCompletion` rings the
  * doorbell on every judge save without consulting the grading mode, so this
- * function re-resolves the mode from the run's own snapshot and stops when it
- * is not `dual_write`. `shadow` deliberately writes NOTHING here: a shadow row
- * is produced in-process by the first pass, and a second-pass write is by
- * definition a real write.
+ * function re-resolves the mode from the run's own snapshot and stops below
+ * the row-writing positions.
  */
 export async function runJudgeSecondPass(
   runId: string,
@@ -223,7 +268,14 @@ export async function runJudgeSecondPass(
 ): Promise<JudgeSecondPassResult> {
   const envMode = resolveGradingEngineMode();
   if (envMode === "off") {
-    return { runId, mode: "off", noop: true, graded: 0, outcomes: [], reason: "mode_off" };
+    return {
+      runId,
+      mode: "off",
+      noop: true,
+      graded: 0,
+      outcomes: [],
+      reason: "mode_off",
+    };
   }
 
   let run: JudgeSecondPassRunRow;
@@ -249,7 +301,10 @@ export async function runJudgeSecondPass(
   const mode = resolveGradingEngineMode({
     runSnapshot: run.configSnapshot?.gradingEngine ?? run.gradingEngine,
   });
-  if (mode !== "dual_write") {
+  // `shadow` deliberately writes NOTHING here: a shadow row is produced
+  // in-process by the first pass, and a second-pass write is by definition a
+  // real write. `enforce` runs exactly as `dual_write` does.
+  if (!isDualWrite(mode)) {
     return {
       runId,
       mode,

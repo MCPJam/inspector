@@ -14,6 +14,7 @@
  */
 
 import {
+  allGatingScorersPassed,
   errorScoreResult,
   fromCriterionResult,
   fromGoalCompletionCase,
@@ -122,7 +123,9 @@ export function hostedScoreDefinitionInputs(
     ...(inputs.evaluation?.expectedToolCalls?.length
       ? {
           toolMatch: {
-            ...(inputs.matchOptions ? { matchOptions: inputs.matchOptions } : {}),
+            ...(inputs.matchOptions
+              ? { matchOptions: inputs.matchOptions }
+              : {}),
             ...(inputs.isNegativeTest ? { isNegativeTest: true } : {}),
           },
         }
@@ -132,8 +135,7 @@ export function hostedScoreDefinitionInputs(
     // they must project as an error row rather than disappearing. Without a
     // threshold there is no definition to resolve against and inventing one
     // would put a fabricated scorer in the snapshot.
-    ...(judge &&
-    isFiniteNumber(judge.threshold)
+    ...(judge && isFiniteNumber(judge.threshold)
       ? {
           judge: {
             threshold: judge.threshold,
@@ -224,13 +226,15 @@ export function buildHostedScoreRows(
       // finalizer turns 1.4 into `status: "error"`, and clamping it here would
       // launder a broken judge into a passing row.
     } else if (judgeIsScored(judge) && typeof judge.score === "number") {
-      rows.push(fromGoalCompletionCase(judgeDefinition, { score: judge.score }));
+      rows.push(
+        fromGoalCompletionCase(judgeDefinition, { score: judge.score })
+      );
     } else if (!judgeIsScored(judge)) {
       rows.push(
         errorScoreResult(
           judgeDefinition,
-          `judge reported unknown status ${JSON.stringify(judge.status)}`,
-        ),
+          `judge reported unknown status ${JSON.stringify(judge.status)}`
+        )
       );
     } else {
       // A verdict claiming `scored` with no number is malformed, not
@@ -269,34 +273,36 @@ function describeToolMatch(evaluation: HostedEvaluationLike): string {
  * What the score rows alone would say about this iteration, for SHADOW
  * COMPARISON ONLY.
  *
- * Gating rows decide; an advisory row (the judge) is ignored, which is the
- * property that makes `role: "advisory"` structural rather than a convention.
- * Only a `scored` row can fail: an `error` or `skipped` row is an ABSENCE of
- * evidence, not a failure, and reading it as one would manufacture mismatches
- * out of unscorable criteria — the same reason `evaluateGates` treats a
- * non-gateable score as non-gating rather than as a fail.
+ * A THIN READING of the contract's `allGatingScorersPassed`, not a second
+ * implementation of it — B3b promoted the arithmetic into
+ * `sdk/src/contract/derive.ts` so the deriver, the backend's verifier and this
+ * comparison all count the same rows the same way. What this adds is which of
+ * that function's two failure modes the SHADOW question cares about:
  *
- * This is never persisted and never compared against `passed` for a decision:
- * its only consumer is `buildShadowMismatch`, whose output is telemetry.
+ *   - `disagreeingScorerIds` — a gating scorer RAN and said no. A real
+ *     disagreement with the boolean verdict, and the thing worth an alert.
+ *   - `unresolvedScorerIds`  — a gating scorer produced no usable verdict.
+ *     DELIBERATELY IGNORED here. An `error` or `skipped` row is an ABSENCE of
+ *     evidence, not a failure, and reading it as one would manufacture
+ *     mismatches out of unscorable criteria — the same reason `evaluateGates`
+ *     treats a non-gateable score as non-gating rather than as a fail.
+ *
+ * The AUTHORITY path is stricter and reads `passed` off the contract function
+ * directly (see `finalize-iteration`), because "we could not score this gate"
+ * must not pass an iteration. The two questions genuinely differ; sharing the
+ * arithmetic while differing on that one reading is the point.
+ *
+ * This is never persisted: its only consumer is `buildShadowMismatch`, whose
+ * output is telemetry.
  */
 export function shadowVerdictFromScores(
   scores: readonly ScoreResult[],
   config: EvaluationConfigSnapshot
 ): { passed: boolean; disagreeingScorerIds: string[] } {
-  const gating = new Set(
-    config.definitions
-      .filter((definition) => definition.role === "gating")
-      .map((definition) => definition.scorerId)
-  );
-  const failing = scores.filter(
-    (score) =>
-      gating.has(score.scorerId) &&
-      score.status === "scored" &&
-      score.passed === false
-  );
+  const { disagreeingScorerIds } = allGatingScorersPassed(scores, config);
   return {
-    passed: failing.length === 0,
-    disagreeingScorerIds: failing.map((score) => score.scorerId),
+    passed: disagreeingScorerIds.length === 0,
+    disagreeingScorerIds,
   };
 }
 

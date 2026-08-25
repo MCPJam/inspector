@@ -16,23 +16,23 @@
  * (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`) — the second pass never touches an
  * iteration's lifecycle.
  *
- * ONE SURFACE IS NOT DEPLOYED YET. `internalApplyJudgeStageDerivation` has its
- * HTTP route (W1) and is called for real below. The other two facts this pass
- * needs — reading a run's iterations without a user bearer, and reporting
- * outcomes to `judgeStageFanoutMutations.markFanout` — exist in the backend
- * only as internal Convex functions with NO service-token HTTP route, so they
- * are unreachable from here. Their clients are written to the expected paths
- * and shapes and will start working the moment the routes land; until then a
- * call returns `routeMissing`, which is why `dual_write` cannot be promoted on
- * this wave. Nothing at `off` or `shadow` reaches any of them.
+ * ALL THREE SURFACES ARE LIVE (B3b W1). Two of them — reading a run's
+ * iterations without a user bearer, and reporting outcomes to
+ * `judgeStageFanoutMutations.markFanout` — existed in the backend only as
+ * internal Convex functions with no service-token route until then, so they
+ * answered 404 and this client failed soft. That is the reason `dual_write`
+ * could not be promoted before B3b, and it is now closed.
+ *
+ * `routeMissing` STAYS. It is not a leftover: these paths are strings on both
+ * sides of a repository boundary, so an Inspector deployed against a backend
+ * that has not been promoted yet — the ordering failure B2/#4306 already cost
+ * us once — must degrade to "this pass did nothing" rather than to a failed
+ * run. Nothing at `off` or `shadow` reaches any of these calls at all.
  */
 
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
-import type {
-  StageAuthoredCase,
-  StageSetupSignals,
-} from "@mcpjam/sdk/contract";
+import type { StageSetupSignals, TestStep } from "@mcpjam/sdk/contract";
 import type { ToolExposureSignals } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
 import { getInternalBackendConfig } from "../internal-backend.js";
@@ -166,12 +166,39 @@ export type JudgeSecondPassIterationRow = {
   prompts?: PromptTraceSummary[];
   messages?: ModelMessage[];
   /**
-   * The authored case's stage-applicability inputs. NOT persisted on the
-   * iteration, so the read surface resolves it from the suite the same way the
-   * runner did — absent ⇒ this iteration gets no chain, exactly as in the
-   * first pass, rather than a guessed one.
+   * The RUN'S OWN frozen snapshot of the authored case, not a derived
+   * `StageAuthoredCase`.
+   *
+   * Stage applicability is inferred by the SDK's `buildStageAuthoredCase` — the
+   * same function the runner used on the first pass — so the backend hands back
+   * the raw case and this side derives. Mirroring that inference in Convex
+   * would put a second implementation of "what does this case assert" in the
+   * repository least able to test it against the analyzer. Absent ⇒ this
+   * iteration gets no chain, exactly as in the first pass, rather than a
+   * guessed one.
    */
-  stageCase?: StageAuthoredCase;
+  authoredCase?: {
+    isNegativeTest?: boolean;
+    expectedOutput?: string;
+    expectedToolCalls?: readonly unknown[];
+    successPredicates?: readonly unknown[];
+    caseType?: string;
+    steps?: readonly TestStep[];
+    promptTurns?: ReadonlyArray<{ expectedToolCalls?: readonly unknown[] }>;
+  };
+  /** Snapshotted per-case options, for the `toolCalls:match` definition hash. */
+  matchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /**
+   * Whether the persisted TRACE came back in full.
+   *
+   * `false` ⇒ the backend could not serve this iteration's spans within its
+   * byte budget. The analyzer reports `traceAbsent` when handed no spans, so
+   * re-deriving here would replace a correct user-value chain with one saying
+   * nothing happened — this pass therefore posts NO stage keys for such a row.
+   * A partial chain is worse than none: none leaves the first pass's standing.
+   */
+  traceComplete?: boolean;
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
 };
@@ -187,8 +214,8 @@ export type JudgeSecondPassRunRow = {
 /**
  * Read the run and its iterations WITHOUT a user bearer.
  *
- * NOT DEPLOYED YET — see the module docblock. The doorbell carries a run id and
- * nothing else, so the pass has to reread every fact it grades on; that read
+ * The doorbell carries a run id and nothing else — deliberately, so it carries
+ * no authority — so the pass has to reread every fact it grades on; that read
  * needs a service-token route because the worker has no user identity to use.
  */
 export async function fetchRunForJudgeSecondPass(
@@ -205,8 +232,6 @@ export async function fetchRunForJudgeSecondPass(
  * Only iterations this pass ACTUALLY graded are reported: the backend decides
  * completeness from the reported set, so padding it with ungraded rows would
  * mark a fanout complete that never ran.
- *
- * NOT DEPLOYED YET — see the module docblock.
  */
 export async function markJudgeStageFanout(report: {
   runId: string;

@@ -72,6 +72,7 @@ import {
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
   SKILL_TOOL_NAMES,
+  resolveMatchOptions,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
@@ -124,6 +125,7 @@ import {
   buildIterationFinishParams,
   buildStageMetadata,
 } from "./evals/finalize-iteration.js";
+import type { GradingEngineMode } from "./evals/grading-mode.js";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
@@ -351,9 +353,41 @@ export function runFrozenSkillOptions(run: {
   };
 }
 
+/**
+ * The match options the `toolCalls:match` score definition hashes over.
+ *
+ * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
+ * whatever the case declared, so hashing the sparse authored object would give
+ * two cases that grade identically two different `implementationHash`es — and
+ * would leave a case that declares nothing hashing `{}` while actually being
+ * graded order-agnostic with partial argument matching. The digest is supposed
+ * to answer "would this scorer decide differently?", and only the resolved
+ * options can answer that.
+ */
+function scoreMatchOptionsFor(
+  test: Pick<EvalTestCase, "matchOptions">
+): Record<string, unknown> {
+  return resolveMatchOptions(undefined, test.matchOptions) as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
+  /**
+   * The run's FROZEN grading-engine position, read from
+   * `configSnapshot.gradingEngine` at run start and threaded to every
+   * iteration's finalization.
+   *
+   * ABSENT ⇒ each finalization falls back to the env kill switch alone, which
+   * is `off` unless an operator set it — the pre-B3b behaviour. Threading it
+   * is what makes a per-suite `off` real on the FIRST pass (it was previously
+   * honoured only by the judge second pass, which reads the run row) and what
+   * lets a run reach `enforce` at all.
+   */
+  gradingMode?: GradingEngineMode;
   config: {
     tests: EvalTestCase[];
     environment: {
@@ -574,7 +608,10 @@ function throwSetupPhaseError(args: {
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): never {
-  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  const serverLabel = getServerLabelForEvalError(
+    args.serverId,
+    args.environment
+  );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
       status: 409,
@@ -1307,7 +1344,9 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+  const listPending = async (): Promise<Array<
+    Record<string, unknown>
+  > | null> => {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
@@ -1326,17 +1365,15 @@ async function persistRunSetupFailure(args: {
     }
   };
 
-  const persistPending = async (
-    pending: Array<Record<string, unknown>>
-  ) => {
+  const persistPending = async (pending: Array<Record<string, unknown>>) => {
     await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-              ? row.iterationId
-              : undefined;
+            ? row.iterationId
+            : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId
@@ -1358,16 +1395,16 @@ async function persistRunSetupFailure(args: {
                 }),
               }
             : snapshot
-              ? {
-                  stageCase: buildStageAuthoredCase({
-                    test: {
-                      query: snapshot.query,
-                      expectedToolCalls: snapshot.expectedToolCalls,
-                    } as EvalTestCase,
-                    caseNeedsModel: true,
-                  }),
-                }
-              : {}),
+            ? {
+                stageCase: buildStageAuthoredCase({
+                  test: {
+                    query: snapshot.query,
+                    expectedToolCalls: snapshot.expectedToolCalls,
+                  } as EvalTestCase,
+                  caseNeedsModel: true,
+                }),
+              }
+            : {}),
           ...(setupSignals ? { setupSignals } : {}),
           ...(setupSpans.length ? { setupSpans } : {}),
           ...(setupAudit ? { setupAudit } : {}),
@@ -1471,6 +1508,8 @@ type RunIterationBaseParams = {
   injectOpenAiCompat?: boolean;
   /** Resolved host execution policy from the run's hostConfig snapshot. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -1864,6 +1903,8 @@ const executeTestCase = async (params: {
   injectOpenAiCompat?: boolean;
   /** Host execution policy for metadata stamping. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
@@ -1908,6 +1949,7 @@ const executeTestCase = async (params: {
     emit,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -1997,6 +2039,7 @@ const executeTestCase = async (params: {
         ...(compareRunId ? { compareRunId } : {}),
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2127,6 +2170,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2182,6 +2226,7 @@ const executeTestCase = async (params: {
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -2231,6 +2276,7 @@ const executeTestCase = async (params: {
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
+      gradingMode,
       toolSignals,
       setupSignals,
       setupSpans,
@@ -2269,6 +2315,7 @@ const runTestCase = (
 ) => executeTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
+  gradingMode,
   suiteId,
   runId,
   config,
@@ -2504,6 +2551,7 @@ export const runEvalSuiteWithAiSdk = async ({
         abortRun,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
+        ...(gradingMode ? { gradingMode } : {}),
         toolSignals: resolvedToolSignals,
         ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
         ...(resolvedSetupSpans.length
@@ -2834,6 +2882,7 @@ const runLocalIteration = async ({
   precreatedIterationId,
   injectOpenAiCompat,
   hostPolicy,
+  gradingMode,
   toolSignals,
   setupSignals,
   setupSpans,
@@ -3516,6 +3565,12 @@ const runLocalIteration = async ({
       iterationId,
       // Keys shadow-mismatch telemetry only; never read for the verdict.
       ...(runId !== null ? { runId: String(runId) } : {}),
+      // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
+      // THIS pass (it used to be visible only to the judge second pass, which
+      // reads the run row) and so a run can reach `enforce` at all.
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -3711,6 +3766,9 @@ const runLocalIteration = async ({
     const failParams = buildIterationFinishParams({
       iterationId,
       ...(runId !== null ? { runId: String(runId) } : {}),
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -3826,6 +3884,7 @@ const runHostedIterationWithBrowser = async (
     precreatedIterationId,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -4345,9 +4404,7 @@ const runHostedIterationWithBrowser = async (
                 toolName: block.toolName,
                 reason: block.reason,
                 classification: block.classification,
-                ...(block.toolCallId
-                  ? { toolCallId: block.toolCallId }
-                  : {}),
+                ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
               });
             }
           },
@@ -4518,6 +4575,9 @@ const runHostedIterationWithBrowser = async (
   const finishParams = buildIterationFinishParams({
     iterationId,
     ...(runId !== null ? { runId: String(runId) } : {}),
+    ...(gradingMode ? { gradingMode } : {}),
+    scoreMatchOptions: scoreMatchOptionsFor(test),
+    ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,

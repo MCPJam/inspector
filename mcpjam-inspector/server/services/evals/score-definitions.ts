@@ -39,8 +39,23 @@ export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
  * version" half of the predicate `implementationHash` inputs.
  */
 export const HOSTED_PREDICATE_EVALUATOR_VERSION = "1";
-/** Version of the hosted tool-match projection. */
-export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "1";
+/**
+ * Version of the hosted tool-match projection.
+ *
+ * BUMPED to "2" in B3b. The runner now threads the RESOLVED match options and
+ * the case polarity into this definition — before, both were simply absent from
+ * every hosted iteration, so `implementationHash` was computed over `{}` for a
+ * scorer that was in fact grading order-agnostic with partial argument
+ * matching. Fixing that changes the digest of every hosted `toolCalls:match`
+ * definition.
+ *
+ * The bump is what makes that change VERSIONED rather than silent: without it,
+ * two runs graded identically would carry different `implementationHash`es for
+ * the same `scorerVersion`, and a reader comparing them would have no way to
+ * tell a fixed projection from a changed scorer. With it, the digest moves
+ * because the version moved, which is exactly what a version is for.
+ */
+export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "2";
 /** Version of the hosted judge projection (NOT the judge template version). */
 export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
 

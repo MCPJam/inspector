@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { StageAuthoredCase } from "@mcpjam/sdk/contract";
+
 import {
   JudgeStageBackendError,
   type JudgeSecondPassRunRow,
@@ -21,13 +21,23 @@ import {
 const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
 const originalEnv = process.env[ENV_KEY];
 
-const stageCase: StageAuthoredCase = {
-  mode: "model_driven",
-  expectsToolCall: true,
-  assertionCount: 1,
+/**
+ * The RAW authored case, as the backend's derivation-input route hands it back
+ * (B3b). The pass derives the analyzer's `StageAuthoredCase` from it through
+ * the SDK's `buildStageAuthoredCase` — the same function the runner used on the
+ * first pass — rather than being handed a pre-derived one, so stage
+ * applicability has exactly one implementation.
+ *
+ * This shape is `expectsToolCall: true, assertionCount: 1, model_driven`.
+ */
+const authoredCase = {
+  expectedToolCalls: ["list_files"],
+  expectedOutput: "done",
 };
 
-function runRow(over: Partial<JudgeSecondPassRunRow> = {}): JudgeSecondPassRunRow {
+function runRow(
+  over: Partial<JudgeSecondPassRunRow> = {}
+): JudgeSecondPassRunRow {
   return {
     runId: "run1",
     goalCompletionJobId: "job1",
@@ -36,7 +46,7 @@ function runRow(over: Partial<JudgeSecondPassRunRow> = {}): JudgeSecondPassRunRo
       {
         iterationId: "iter1",
         status: "completed",
-        stageCase,
+        authoredCase,
         messages: [{ role: "user", content: "hi" }],
         metadata: {
           judgeVerdict: {
@@ -139,7 +149,12 @@ describe("what it declines to grade", () => {
       fetchRun: vi.fn(async () =>
         runRow({
           iterations: [
-            { iterationId: "iter1", status: "completed", stageCase, metadata: {} },
+            {
+              iterationId: "iter1",
+              status: "completed",
+              authoredCase,
+              metadata: {},
+            },
           ],
         })
       ),

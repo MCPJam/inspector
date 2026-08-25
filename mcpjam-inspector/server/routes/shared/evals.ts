@@ -9,6 +9,7 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
+import { resolveGradingEngineMode } from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
   type SuiteRunRecorder,
@@ -364,7 +365,10 @@ export const RunEvalsRequestSchema = z.object({
    */
   sourceHash: z
     .string()
-    .regex(/^[a-f0-9]{64}$/, "sourceHash must be a 64-character lowercase SHA-256 hex digest")
+    .regex(
+      /^[a-f0-9]{64}$/,
+      "sourceHash must be a 64-character lowercase SHA-256 hex digest"
+    )
     .optional(),
   /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
@@ -2058,6 +2062,7 @@ export async function prepareEvalRun(
     status: existingRunStatus,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
+    gradingEngine: runGradingEngine,
   } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
@@ -2419,6 +2424,12 @@ export async function prepareEvalRun(
       recorder,
       suiteInjectOpenAiCompat,
       hostExecutionPolicy: suiteHostPolicy,
+      // B3b: the run's FROZEN grading-engine position, resolved once by the
+      // backend at run creation and combined here with this process's env
+      // ceiling. Threading it makes a per-suite `off` authoritative on the
+      // FIRST pass — before, only the judge second pass (which reads the run
+      // row) could see it — and is what lets a run reach `enforce` at all.
+      gradingMode: resolveGradingEngineMode({ runSnapshot: runGradingEngine }),
       // PR 4d: thread the raw suite hostConfig record into the runner so
       // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
