@@ -101,7 +101,12 @@ export function formatRunDisclosureSummary(
   }
   if (state.status === "error" || !state.disclosure) {
     if (state.error?.hostAxisUnavailable) {
-      return "Disclosure covers one target — this runs several";
+      // The recovery instruction rides in the SUMMARY, not in `error.message`:
+      // `describeRunDisclosureDetail` bails to `[]` for every non-ready state
+      // and never receives `error` at all, so this line is the only text a
+      // user in an error state actually sees. Guidance parked on `message`
+      // would be invisible.
+      return "Disclosure covers one target — this runs several. Run one host at a time to see its disclosure.";
     }
     return state.error?.contractUnavailable
       ? "Disclosure not available on this deployment yet"
@@ -321,8 +326,12 @@ function MultiTargetDisclosureHint({
     status: "error",
     disclosure: null,
     error: {
+      // NOT the user-facing copy — nothing renders `error.message` (see
+      // `formatRunDisclosureSummary`'s multi-target branch, which carries the
+      // visible text). Kept as the machine-readable reason, worded to match
+      // the SDK's `isMultiTargetHostLaunch` skip.
       message:
-        "Run all fans out across several hosts — the disclosure covers one launch plan, so there is no single set of models or engine to describe here. Run one host at a time to see its disclosure.",
+        "Run all fans out across several hosts — the disclosure covers one launch plan, so there is no single set of models or engine to describe here.",
       contractUnavailable: false,
       hostAxisUnavailable: true,
     },

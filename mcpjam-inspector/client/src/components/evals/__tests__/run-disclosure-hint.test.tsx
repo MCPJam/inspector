@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { useRunDisclosureMock } = vi.hoisted(() => ({
@@ -626,17 +626,44 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     ).toBeInTheDocument();
   });
 
-  it("multi-target summary reads distinctly from a generic fetch failure", () => {
+  it("multi-target summary reads distinctly from a generic fetch failure, and CARRIES the recovery instruction", () => {
+    // The instruction has to live in the SUMMARY: `describeRunDisclosureDetail`
+    // bails to `[]` for every non-ready state and never receives `error`, so
+    // guidance parked on `error.message` would never reach a user.
+    const summary = formatRunDisclosureSummary({
+      status: "error",
+      disclosure: null,
+      error: {
+        message: "n/a",
+        contractUnavailable: false,
+        hostAxisUnavailable: true,
+      },
+    });
+    expect(summary).toMatch(/covers one target/);
+    expect(summary).toMatch(/Run one host at a time/);
     expect(
       formatRunDisclosureSummary({
         status: "error",
         disclosure: null,
-        error: {
-          message: "n/a",
-          contractUnavailable: false,
-          hostAxisUnavailable: true,
-        },
+        error: { message: "boom", contractUnavailable: false },
       }),
-    ).toBe("Disclosure covers one target — this runs several");
+    ).not.toBe(summary);
+  });
+
+  it("RENDERS the multi-target recovery instruction in the tooltip, not just returns it", () => {
+    // Guards the actual failure mode: a string that exists but never paints.
+    render(
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={[]}
+        hostIds={["host-1", "host-2"]}
+      />,
+    );
+    // Radix opens the tooltip on FOCUS (the trigger's own onClick only stops
+    // propagation) — a click alone leaves the content unmounted in jsdom.
+    fireEvent.focus(screen.getByLabelText("What running this suite discloses"));
+    expect(
+      screen.getAllByText(/Run one host at a time/).length,
+    ).toBeGreaterThan(0);
   });
 });

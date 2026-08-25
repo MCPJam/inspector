@@ -2255,6 +2255,12 @@ test("eval run --host prints a disclosure block, forwarding the host (G4c)", asy
     assert.equal(fixture.disclosureRequests[0]?.environmentIds, null);
     assert.notEqual(run.stdout.indexOf("Pre-run disclosure:"), -1);
     assert.match(run.stdout, /Execution: emulated/);
+    // WHAT WAS DISCLOSED IS WHAT RAN. Asserting only the disclosure query
+    // would still pass if the launch dropped the host or picked a different
+    // one — the exact divergence this contract exists to rule out.
+    const launched = fixture.runBodies.at(-1) as Record<string, unknown>;
+    assert.equal(launched.namedHostId, "host-claude");
+    assert.equal(launched.environmentId, undefined);
   } finally {
     await fixture.close();
   }
