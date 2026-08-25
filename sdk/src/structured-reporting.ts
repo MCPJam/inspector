@@ -202,8 +202,8 @@ export function buildEvalRunReport(
     ...(options.verdict !== undefined
       ? { verdict: options.verdict }
       : inputs.length > 0
-        ? { verdict: structuredEvalVerdict(inputs, passed) }
-        : {}),
+      ? { verdict: structuredEvalVerdict(inputs, passed) }
+      : {}),
     summary: summarizeStructuredCases(cases),
     cases,
     durationMs: evalRunDurationMs(inputs.map((input) => input.run)),
@@ -484,7 +484,9 @@ function renderHtmlBucketTable(
   const rows = entries
     .map(
       ([name, bucket]) =>
-        `<tr><td>${escapeHtml(name)}</td><td>${bucket.passed}/${bucket.total}</td><td>${bucket.failed}</td></tr>`
+        `<tr><td>${escapeHtml(name)}</td><td>${bucket.passed}/${
+          bucket.total
+        }</td><td>${bucket.failed}</td></tr>`
     )
     .join("\n");
 
@@ -515,7 +517,9 @@ function renderHtmlDecisionSummary(summary: EvalDecisionSummary): string {
   <h2>Decision summary</h2>
   <p>
     <span class="badge badge-${status}">${escapeHtml(summary.verdict)}</span>
-    ${summary.passRate.passed}/${summary.passRate.total} cases passed (${escapeHtml(rate)})${partial}
+    ${summary.passRate.passed}/${
+    summary.passRate.total
+  } cases passed (${escapeHtml(rate)})${partial}
   </p>
   ${cases}
 </section>`;
@@ -528,8 +532,8 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
         ? `First failed stage: ${escapeHtml(item.firstFailedStage)}`
         : "No first failed stage — did not reach the server's stages"
       : item.stageChainStatus === "unverified"
-        ? "First failed stage not established because the stage chain was unverified"
-        : "No stage metadata was recorded for this run";
+      ? "First failed stage not established because the stage chain was unverified"
+      : "No stage metadata was recorded for this run";
 
   const parts = [
     `<p class="stage-line">${firstFailedStageLine}</p>`,
@@ -539,10 +543,14 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
         : "Failure category not reported"
     }</p>`,
     item.expected
-      ? `<p>Expected tool calls: ${escapeHtml(item.expected.toolNames.join(", "))}</p>`
+      ? `<p>Expected tool calls: ${escapeHtml(
+          item.expected.toolNames.join(", ")
+        )}</p>`
       : "",
     item.observed?.toolNames
-      ? `<p>Observed tool calls: ${escapeHtml(item.observed.toolNames.join(", "))}</p>`
+      ? `<p>Observed tool calls: ${escapeHtml(
+          item.observed.toolNames.join(", ")
+        )}</p>`
       : "",
     item.observed?.failure
       ? `<p>Observed failure: ${escapeHtml(item.observed.failure)}</p>`
@@ -568,7 +576,9 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
     .join("\n  ");
 
   return `<article class="decision-case">
-  <h3>${escapeHtml(item.title)} <span class="note">(iteration ${item.iterationNumber})</span></h3>
+  <h3>${escapeHtml(item.title)} <span class="note">(iteration ${
+    item.iterationNumber
+  })</span></h3>
   ${parts}
 </article>`;
 }
@@ -601,14 +611,20 @@ function renderHtmlCaseSection(
 
 function renderHtmlCase(entry: StructuredCaseResult, neutral: boolean): string {
   const details = entry.details
-    ? `<pre class="details">${escapeHtml(JSON.stringify(entry.details, null, 2))}</pre>`
+    ? `<pre class="details">${escapeHtml(
+        JSON.stringify(entry.details, null, 2)
+      )}</pre>`
     : "";
   const caseClass = neutral ? "case-neutral" : "case-fail";
   const errorClass = neutral ? "note" : "error";
 
   return `<article class="case ${caseClass}">
-  <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(entry.category)})</span></h3>
-  ${entry.error ? `<p class="${errorClass}">${escapeHtml(entry.error)}</p>` : ""}
+  <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(
+    entry.category
+  )})</span></h3>
+  ${
+    entry.error ? `<p class="${errorClass}">${escapeHtml(entry.error)}</p>` : ""
+  }
   ${details}
 </article>`;
 }
