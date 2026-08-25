@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { StageAuthoredCase, StageResultRow } from "@mcpjam/sdk/contract";
+import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -80,7 +81,7 @@ describe("buildIterationFinishParams — stage derivation", () => {
   test("writes a full chain when the authored case is supplied", () => {
     const params = build({ stageCase: authoredCase, spans: [okToolSpan] });
     const metadata = params.metadata as Record<string, unknown>;
-    expect(metadata.stageAnalyzerVersion).toBe(3);
+    expect(metadata.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(rowsOf(params)).toHaveLength(6);
     expect(stage(params, "call").state).toBe("passed");
   });
@@ -231,6 +232,120 @@ describe("buildIterationFinishParams — stage derivation", () => {
   });
 });
 
+describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
+  const selectionTools = {
+    get_weather: {
+      description: "Look up the current weather for a city.",
+      inputSchema: { jsonSchema: { type: "object", properties: { city: {} } } },
+    },
+    delete_all_files: {
+      description: "Deletes every file on the sandbox filesystem.",
+    },
+  };
+
+  test("is written when selection failed and the live tool set is supplied", () => {
+    const params = build({
+      stageCase: authoredCase,
+      prompts: [
+        {
+          promptIndex: 0,
+          expectedToolCalls: [{ toolName: "get_weather" }],
+          actualToolCalls: [{ toolName: "delete_all_files" }],
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    expect(metadata.selectionToolCatalog).toEqual([
+      {
+        name: "get_weather",
+        role: "expected",
+        description: "Look up the current weather for a city.",
+        inputSchemaSummary: JSON.stringify({
+          type: "object",
+          properties: { city: {} },
+        }),
+      },
+    ]);
+  });
+
+  test("is absent when selection did not fail, even with tools supplied", () => {
+    const params = build({
+      stageCase: authoredCase,
+      spans: [okToolSpan],
+      selectionTools,
+    });
+    expect(stage(params, "selection").state).not.toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("is absent when no live tool set is supplied, even on a selection failure", () => {
+    const params = build({
+      stageCase: authoredCase,
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+    });
+    expect(stage(params, "selection").state).toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("captures both roles for an unexpectedToolCall failure, deduped", () => {
+    const params = build({
+      stageCase: authoredCase,
+      prompts: [
+        {
+          promptIndex: 0,
+          missing: [],
+          unexpected: [
+            { toolName: "delete_all_files" },
+            { toolName: "delete_all_files" },
+          ],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(stage(params, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    expect(metadata.selectionToolCatalog).toEqual([
+      {
+        name: "delete_all_files",
+        role: "actual",
+        description: "Deletes every file on the sandbox filesystem.",
+      },
+    ]);
+  });
+});
+
 describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
   // `persistSetupFailedIteration` writes its own minimal iteration row for a
   // case that threw before the prompt loop started, so it never reaches
@@ -252,7 +367,7 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
     expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
     expect(metadata.failureCategory).toBe("setup");
-    expect(metadata.stageAnalyzerVersion).toBe(3);
+    expect(metadata.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     // Never a fabricated failure: nothing was measured, so nothing "failed".
     expect(metadata.firstFailedStage).toBeUndefined();
   });

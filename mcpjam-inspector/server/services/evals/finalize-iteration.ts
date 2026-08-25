@@ -54,6 +54,10 @@ import {
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
 import { isTerminalIterationStatus } from "./run-status.js";
+import {
+  buildSelectionToolCatalog,
+  type SelectionCatalogToolLike,
+} from "./selection-tool-catalog.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -112,6 +116,8 @@ function buildStageEvidence(args: {
   setupSignals?: StageSetupSignals;
   /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /** D7's advisory attribution evidence. Absent on the first pass, same as `judgeEvidence`. */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
 }) {
   const hasSpans = (args.spans?.length ?? 0) > 0;
   const hasPrompts = (args.prompts?.length ?? 0) > 0;
@@ -141,6 +147,9 @@ function buildStageEvidence(args: {
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+    ...(args.metadataAttribution
+      ? { metadataAttribution: args.metadataAttribution }
+      : {}),
     traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
     traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
   };
@@ -182,6 +191,12 @@ export function buildStageMetadata(args: {
    * evidence said nothing.
    */
   judgeEvidence?: StageEvidence["judgeEvidence"];
+  /**
+   * ABSENT on the first pass, PRESENT on the second. Tier 2, same
+   * subordination as `judgeEvidence`: it can only decide `selection`'s
+   * `failureCategory` where D1 already derived `selection: failed`.
+   */
+  metadataAttribution?: StageEvidence["metadataAttribution"];
   policy?: { blocked: boolean; reason?: string };
   /**
    * The EXECUTION lifecycle status, forwarded to the analyzer unchanged. The
@@ -207,6 +222,9 @@ export function buildStageMetadata(args: {
         toolSignals: args.toolSignals,
         setupSignals: args.setupSignals,
         ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+        ...(args.metadataAttribution
+          ? { metadataAttribution: args.metadataAttribution }
+          : {}),
       }),
       iteration: { status, ...(error ? { error } : {}) },
       policy: args.policy,
@@ -344,6 +362,49 @@ function readUserValueRow(
 }
 
 /**
+ * D7's `metadata.selectionToolCatalog` — written ONLY when this pass's own
+ * `stageMetadata` already derived `selection: failed`, so the common
+ * (passing) case costs nothing. Reads `missing` / `unexpected` from the
+ * SAME `prompts` array `deriveSelection` used to reach that verdict — this
+ * never re-derives whether selection failed, it only explains what the
+ * model was choosing between when it did.
+ */
+function buildSelectionToolCatalogMetadata(args: {
+  stageMetadata: Record<string, unknown>;
+  prompts?: PromptTraceSummary[];
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
+}): Record<string, unknown> {
+  if (!args.selectionTools) return {};
+  const rows = args.stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return {};
+  const selectionRow = rows.find(
+    (row): row is Partial<StageResultRow> =>
+      typeof row === "object" && row !== null && (row as { stage?: unknown }).stage === "selection"
+  );
+  if (selectionRow?.state !== "failed") return {};
+
+  const prompts = args.prompts ?? [];
+  const expectedToolNames = prompts
+    .flatMap((p) => p.missing ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  const actualToolNames = prompts
+    .flatMap((p) => p.unexpected ?? [])
+    .map((t) => t.toolName)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+  if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
+    return {};
+  }
+
+  const catalog = buildSelectionToolCatalog({
+    tools: args.selectionTools,
+    expectedToolNames,
+    actualToolNames,
+  });
+  return catalog.length > 0 ? { selectionToolCatalog: catalog } : {};
+}
+
+/**
  * Builds the `finishParams` object every runner passes to
  * {@link finalizeIterationWithBrowserArtifacts} (which adds `videoBytes` +
  * `convexClient` and dispatches to the recorder or `finalizeEvalIteration`).
@@ -470,6 +531,13 @@ export function buildIterationFinishParams(args: {
    * which is why a quick run with no run row stays silent.
    */
   runId?: string;
+  /**
+   * D7: the live tool registry, keyed by name, as the runner had it in
+   * scope THIS iteration. Absent ⇒ no `selectionToolCatalog` is written,
+   * same honest-default reasoning `stageCase` follows for the stage chain
+   * itself — a caller with no live registry cannot say what the model saw.
+   */
+  selectionTools?: Record<string, SelectionCatalogToolLike>;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -505,6 +573,7 @@ export function buildIterationFinishParams(args: {
     injectOpenAiCompat,
     scoreMatchOptions,
     isNegativeTest,
+    selectionTools,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
   const persistedSpans = [
@@ -545,6 +614,11 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
+  const selectionToolCatalogMetadata = buildSelectionToolCatalogMetadata({
+    stageMetadata,
+    prompts,
+    selectionTools,
+  });
   return {
     iterationId,
     passed,
@@ -579,6 +653,7 @@ export function buildIterationFinishParams(args: {
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
       ...scoreMetadata,
+      ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(

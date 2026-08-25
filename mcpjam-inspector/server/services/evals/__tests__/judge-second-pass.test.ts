@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { StageAuthoredCase } from "@mcpjam/sdk/contract";
+import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 import {
   JudgeStageBackendError,
   type JudgeSecondPassRunRow,
   type JudgeStageDerivationBody,
+  type MetadataAttributionStageDerivationBody,
 } from "../judge-stage-backend.js";
 import {
   judgeEvidenceFromVerdict,
+  metadataAttributionEvidenceFromVerdict,
   runJudgeSecondPass,
   type JudgeSecondPassPorts,
 } from "../judge-second-pass.js";
@@ -57,10 +60,16 @@ function runRow(over: Partial<JudgeSecondPassRunRow> = {}): JudgeSecondPassRunRo
 }
 
 type Applied = { iterationId: string; body: JudgeStageDerivationBody };
+type AppliedMetadataAttribution = {
+  iterationId: string;
+  body: MetadataAttributionStageDerivationBody;
+};
 
 function ports(over: Partial<JudgeSecondPassPorts> = {}) {
   const applied: Applied[] = [];
   const reports: unknown[] = [];
+  const appliedMetadataAttribution: AppliedMetadataAttribution[] = [];
+  const metadataAttributionReports: unknown[] = [];
   const value: JudgeSecondPassPorts = {
     fetchRun: vi.fn(async () => runRow()),
     applyDerivation: vi.fn(async (iterationId: string, body) => {
@@ -71,9 +80,25 @@ function ports(over: Partial<JudgeSecondPassPorts> = {}) {
       reports.push(report);
       return { outcome: "completed" };
     }),
+    applyMetadataAttributionDerivation: vi.fn(
+      async (iterationId: string, body) => {
+        appliedMetadataAttribution.push({ iterationId, body });
+        return { outcome: "applied" as const };
+      }
+    ),
+    markMetadataAttributionFanout: vi.fn(async (report) => {
+      metadataAttributionReports.push(report);
+      return { outcome: "completed" };
+    }),
     ...over,
   };
-  return { value, applied, reports };
+  return {
+    value,
+    applied,
+    reports,
+    appliedMetadataAttribution,
+    metadataAttributionReports,
+  };
 }
 
 beforeEach(() => {
@@ -233,7 +258,7 @@ describe("the write it does make", () => {
     }>;
     const userValue = rows.find((row) => row.stage === "userValue");
     expect(userValue).toMatchObject({ state: "failed", reason: "judgeFailed" });
-    expect(applied[0]!.body.stageAnalyzerVersion).toBe(3);
+    expect(applied[0]!.body.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
   });
 
   test("reports exactly the iterations it graded", async () => {
@@ -374,5 +399,214 @@ describe("judgeEvidenceFromVerdict", () => {
 
   test("no verdict at all yields no evidence", () => {
     expect(judgeEvidenceFromVerdict(undefined)).toBeUndefined();
+  });
+});
+
+describe("metadataAttributionEvidenceFromVerdict", () => {
+  test("a scored verdict carries attributed + reasons", () => {
+    expect(
+      metadataAttributionEvidenceFromVerdict({
+        status: "scored",
+        attributed: true,
+        reasons: ["quoted description text"],
+      })
+    ).toEqual({
+      status: "scored",
+      attributed: true,
+      reasons: ["quoted description text"],
+    });
+  });
+
+  test("attributed is never a silent default — an unattributed scored verdict says so explicitly", () => {
+    expect(
+      metadataAttributionEvidenceFromVerdict({
+        status: "scored",
+        attributed: false,
+        reasons: [],
+      })
+    ).toEqual({ status: "scored", attributed: false });
+  });
+
+  test("a broken judge is an error, not a failure", () => {
+    expect(metadataAttributionEvidenceFromVerdict({ status: "error" })).toEqual(
+      { status: "error" }
+    );
+  });
+
+  test("a skipped judge falls through to the deterministic evidence", () => {
+    expect(
+      metadataAttributionEvidenceFromVerdict({ status: "skipped" })
+    ).toEqual({ status: "skipped" });
+  });
+
+  test("an unrecognized status is pending, never a silent unattributed default", () => {
+    expect(
+      metadataAttributionEvidenceFromVerdict({ status: "weird" })
+    ).toEqual({ status: "pending", pendingKind: "scheduled" });
+  });
+
+  test("no verdict at all yields no evidence", () => {
+    expect(metadataAttributionEvidenceFromVerdict(undefined)).toBeUndefined();
+  });
+});
+
+describe("D7: metadata-attribution rides the same second pass", () => {
+  const d7Row = (over: Partial<JudgeSecondPassRunRow> = {}) =>
+    runRow({
+      goalCompletionJobId: undefined,
+      metadataAttributionJobId: "d7-job1",
+      iterations: [
+        {
+          iterationId: "iter1",
+          status: "completed",
+          stageCase,
+          prompts: [
+            {
+              promptIndex: 0,
+              prompt: "what's the weather?",
+              expectedToolCalls: [{ toolName: "get_weather", arguments: {} }],
+              actualToolCalls: [],
+              missing: [{ toolName: "get_weather", arguments: {} }],
+              unexpected: [],
+              argumentMismatches: [],
+              passed: false,
+            },
+          ],
+          metadata: {
+            metadataAttributionVerdict: {
+              status: "scored",
+              attributed: true,
+              reasons: ["the description says it searches files"],
+            },
+          },
+        },
+      ],
+      ...over,
+    });
+
+  test("a D7-only run (no goalCompletionJobId) still writes and reports", async () => {
+    const { value, appliedMetadataAttribution, metadataAttributionReports } =
+      ports({ fetchRun: vi.fn(async () => d7Row()) });
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(result).toMatchObject({ noop: false, graded: 1 });
+    expect(result.outcomes).toEqual([]);
+    expect(result.metadataAttributionOutcomes).toEqual([
+      { iterationId: "iter1", outcome: "applied" },
+    ]);
+    expect(value.applyDerivation).not.toHaveBeenCalled();
+    expect(value.markFanout).not.toHaveBeenCalled();
+    expect(appliedMetadataAttribution).toHaveLength(1);
+    const body = appliedMetadataAttribution[0]!.body as Record<
+      string,
+      unknown
+    >;
+    expect(body).not.toHaveProperty("status");
+    expect(body).not.toHaveProperty("result");
+    expect(body).not.toHaveProperty("scores");
+    expect(body).not.toHaveProperty("evaluationConfig");
+    expect(body.metadataAttributionJobId).toBe("d7-job1");
+    const rows = body.stageResults as Array<{
+      stage: string;
+      state: string;
+      reason: string;
+    }>;
+    expect(rows.find((r) => r.stage === "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+    });
+    expect(body.failureCategory).toBe("metadata");
+    expect(metadataAttributionReports).toEqual([
+      {
+        runId: "run1",
+        metadataAttributionJobId: "d7-job1",
+        outcomes: [{ iterationId: "iter1", outcome: "applied" }],
+      },
+    ]);
+  });
+
+  test("an unattributed selection failure still writes, but stays failureCategory: selection", async () => {
+    const { value, appliedMetadataAttribution } = ports({
+      fetchRun: vi.fn(async () =>
+        d7Row({
+          iterations: [
+            {
+              ...d7Row().iterations[0]!,
+              metadata: {
+                metadataAttributionVerdict: {
+                  status: "scored",
+                  attributed: false,
+                  reasons: [],
+                },
+              },
+            },
+          ],
+        })
+      ),
+    });
+    await runJudgeSecondPass("run1", value);
+    const body = appliedMetadataAttribution[0]!.body as Record<
+      string,
+      unknown
+    >;
+    expect(body.failureCategory).toBe("selection");
+  });
+
+  test("both judges fire on the same run independently — one write, one report, per judge", async () => {
+    const { value, applied, appliedMetadataAttribution, reports, metadataAttributionReports } =
+      ports({
+        fetchRun: vi.fn(async () =>
+          runRow({
+            metadataAttributionJobId: "d7-job1",
+            iterations: [
+              // Graded by goal-completion only.
+              runRow().iterations[0]!,
+              // Graded by D7 only.
+              { ...d7Row().iterations[0]!, iterationId: "iter2" },
+            ],
+          })
+        ),
+      });
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(result.graded).toBe(2);
+    expect(applied.map((a) => a.iterationId)).toEqual(["iter1"]);
+    expect(appliedMetadataAttribution.map((a) => a.iterationId)).toEqual([
+      "iter2",
+    ]);
+    expect(reports).toHaveLength(1);
+    expect(metadataAttributionReports).toHaveLength(1);
+  });
+
+  test("a D7 write failure never blocks goal-completion's own write", async () => {
+    const { value, applied, reports } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          metadataAttributionJobId: "d7-job1",
+          iterations: [
+            runRow().iterations[0]!,
+            { ...d7Row().iterations[0]!, iterationId: "iter2" },
+          ],
+        })
+      ),
+      applyMetadataAttributionDerivation: vi.fn(async () => {
+        throw new JudgeStageBackendError(
+          "conflict",
+          409,
+          "EVAL_RUN_CONFIG_CONFLICT"
+        );
+      }),
+    });
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(applied).toHaveLength(1);
+    expect(reports).toEqual([
+      {
+        runId: "run1",
+        goalCompletionJobId: "job1",
+        outcomes: [{ iterationId: "iter1", outcome: "applied" }],
+      },
+    ]);
+    expect(result.metadataAttributionOutcomes).toEqual([]);
   });
 });

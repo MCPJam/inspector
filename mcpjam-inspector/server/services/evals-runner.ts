@@ -3103,6 +3103,12 @@ const runLocalIteration = async ({
   // here so the finally always sees it.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  // D7: `prepared` (and its `allTools`) is declared inside the try below, so
+  // it is out of scope in the catch's own `buildIterationFinishParams` call.
+  // Captured here, set once `prepared` is assigned, so BOTH the success and
+  // the failure path can attach the tool set the model actually chose
+  // between when selection failed mid-run.
+  let selectionToolsForFinish: PrepareChatV2Result["allTools"] | undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -3156,6 +3162,7 @@ const runLocalIteration = async ({
       // system-free, and persistence prepends the resolved value at write
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+      selectionToolsForFinish = prepared.allTools;
 
       llmModel = createLlmModel(
         modelDefinition,
@@ -3577,6 +3584,12 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      ...(selectionToolsForFinish ? { selectionTools: selectionToolsForFinish } : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -3763,6 +3776,12 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      ...(selectionToolsForFinish ? { selectionTools: selectionToolsForFinish } : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -4572,6 +4591,10 @@ const runHostedIterationWithBrowser = async (
     ...(setupSpans?.length ? { setupSpans } : {}),
     ...(setupAudit ? { setupAudit } : {}),
     injectOpenAiCompat,
+    // D7: same `prepared.allTools` source the local runner threads through —
+    // this runner always has a model turn (see the `stageCase` comment
+    // above), so `prepared` is always assigned by this point.
+    selectionTools: prepared.allTools,
   });
 
   await finalizeIterationWithBrowserArtifacts({

@@ -30,10 +30,14 @@
  *
  * What this module deliberately does NOT do:
  *
- *   - It never derives `failureCategory: "metadata"`. That category means
- *     "tool names, descriptions or schemas misled the model", which is a
- *     judgement about intent that no span carries. Deriving it mechanically
- *     would be guessing, so it is left to a later, evidence-carrying step.
+ *   - It never GUESSES `failureCategory: "metadata"` from the deterministic
+ *     evidence alone. That category means "tool names, descriptions or
+ *     schemas misled the model", which is a judgement about intent that no
+ *     span carries on its own. `categoryFor`'s `selection` branch below is
+ *     reachable, but ONLY through `evidence.metadataAttribution` — a scored,
+ *     evidence-carrying verdict from the D7 judge (attributed elsewhere:
+ *     `metadata-attribution` second-pass). No deterministic span or predicate
+ *     ever produces it.
  *   - It never enforces policy. A policy block is REPRESENTED here
  *     (`notMeasured` + `blockedByPolicy`); enforcing it belongs elsewhere.
  *   - It never reads `finishReason`. That field is advisory display only and
@@ -61,7 +65,7 @@ import {
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
  */
-export const STAGE_ANALYZER_VERSION = 3;
+export const STAGE_ANALYZER_VERSION = 4;
 
 /**
  * Why a stage landed where it did.
@@ -318,6 +322,31 @@ export type StageEvidence = {
     pendingKind?: "scheduled" | "not_requested";
     verdict?: "pass" | "partial" | "fail";
     /** Bounded by the EXISTING evidence caps, same as predicate reasons. */
+    reasons?: readonly string[];
+  };
+  /**
+   * D7's advisory judge: did the server's OWN tool metadata (names,
+   * descriptions, schemas) mislead the model into a wrong or missing tool
+   * choice? Same tier-2 shape as `judgeEvidence` — a report-only LLM
+   * round trip consulted only where `selection` already failed
+   * deterministically (`missingToolCall` / `unexpectedToolCall`).
+   *
+   * Answers a BINARY attribution question, not a graded band: there is no
+   * `judgeEvidence`-style `verdict` scale here, because "did the metadata
+   * cause this?" has no meaningful partial answer the way "did the user get
+   * what they wanted?" does.
+   */
+  metadataAttribution?: {
+    status: "scored" | "error" | "skipped" | "not_applicable" | "pending";
+    /** `pending` only, same split as `judgeEvidence.pendingKind`. */
+    pendingKind?: "scheduled" | "not_requested";
+    /** `true` ⇒ the judge concluded the server's tool metadata caused the miss. */
+    attributed?: boolean;
+    /**
+     * Quoted evidence (description text vs. the ask) plus a one-line
+     * rationale. Bounded by the EXISTING evidence caps, same as predicate
+     * and judge reasons.
+     */
     reasons?: readonly string[];
   };
 };
@@ -762,10 +791,14 @@ function boundedJudgeReasons(
 /**
  * The coarse bucket a failing run is grouped under.
  *
- * `metadata` is never produced (see the module docblock). `evaluator` is only
- * reached when the grader is the ONLY thing that broke — a run whose server
- * demonstrably failed is reported against the server, and an evaluator error
- * on top of that does not launder it.
+ * `metadata` is reachable ONLY through `evidence.metadataAttribution` — D7's
+ * advisory judge, consulted after `selection` already failed
+ * deterministically. No deterministic span or predicate ever selects it: a
+ * `selection` failure with no attribution verdict (or one that scored
+ * `attributed: false`) stays `"selection"`, the same as before D7 shipped.
+ * `evaluator` is only reached when the grader is the ONLY thing that broke —
+ * a run whose server demonstrably failed is reported against the server, and
+ * an evaluator error on top of that does not launder it.
  */
 function categoryFor(
   firstFailed: UserValueStage | undefined,
@@ -780,8 +813,12 @@ function categoryFor(
     case "connection":
     case "discovery":
       return "setup";
-    case "selection":
-      return "selection";
+    case "selection": {
+      const attribution = evidence.metadataAttribution;
+      return attribution?.status === "scored" && attribution.attributed === true
+        ? "metadata"
+        : "selection";
+    }
     case "call":
       if (failedRow?.reason === "argumentMismatch") return "arguments";
       // A transport-local code is OUR side, not the server's.
@@ -953,6 +990,38 @@ export function deriveStageResults(
   return finalize(rows, evidence);
 }
 
+/**
+ * Merge D7's quoted evidence into the `selection` row, but ONLY when the
+ * resolved category actually landed on `metadata` — i.e. `categoryFor`'s
+ * `selection` branch consulted a scored+attributed verdict.
+ *
+ * Reuses `boundedJudgeReasons` and `evidence.predicateReasons` — the row
+ * refs' only free-text slot, same precedent `judgeEvidence` set for
+ * `userValue` — rather than a new field. Any `promptIndexes` already on the
+ * row (from `deriveSelection`'s `missingToolCall` / `unexpectedToolCall`) are
+ * preserved untouched: the judge explains WHY those turns failed, it does
+ * not relocate them. The row's own `reason` is never touched either.
+ *
+ * NO discard is needed on the way in, unlike `judgeEvidence`'s explicit strip
+ * in `deriveStageResults`: `categoryFor`'s `selection` branch is only ever
+ * reached when `firstFailedStage === "selection"`, which — by `finalize`'s
+ * own positional definition — means nothing upstream (`connection` /
+ * `discovery`) already broke. `metadataAttribution` can therefore never be
+ * consulted on a run whose chain broke before `selection` even ran.
+ */
+function mergeMetadataAttributionEvidence(
+  rows: readonly StageResultRow[],
+  metadataAttribution: StageEvidence["metadataAttribution"]
+): StageResultRow[] {
+  const reasonsEvidence = boundedJudgeReasons(metadataAttribution?.reasons);
+  if (!reasonsEvidence) return rows as StageResultRow[];
+  return rows.map((r) =>
+    r.stage === "selection"
+      ? { ...r, evidence: { ...r.evidence, ...reasonsEvidence } }
+      : r
+  );
+}
+
 function finalize(
   rows: StageResultRow[],
   evidence: StageEvidence,
@@ -961,8 +1030,12 @@ function finalize(
   const firstFailedStage = rows.find((r) => r.state === "failed")?.stage;
   const failureCategory =
     forcedCategory ?? categoryFor(firstFailedStage, rows, evidence);
+  const finalRows =
+    failureCategory === "metadata"
+      ? mergeMetadataAttributionEvidence(rows, evidence.metadataAttribution)
+      : rows;
   return {
-    stageResults: rows,
+    stageResults: finalRows,
     ...(firstFailedStage ? { firstFailedStage } : {}),
     ...(failureCategory ? { failureCategory } : {}),
     stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
