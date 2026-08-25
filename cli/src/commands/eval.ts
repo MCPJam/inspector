@@ -124,7 +124,8 @@ import {
 } from "../lib/eval-gate-exit-code.js";
 import {
   activeWaiverForRun,
-  assertRunIdBaseline,
+  resolveBaselineSelector,
+  compareBaseSelector,
   baselineNotFoundReason,
   comparePolicyFromGateOptions,
   evaluateBaselineComparison,
@@ -1165,10 +1166,11 @@ async function runEvalGate(
   // The NORMALIZED value is what travels downstream — the raw one is never
   // read again, so a whitespace-padded but otherwise valid `--baseline`
   // cannot slip past validation and then fail to resolve on the wire.
-  const baseline =
-    options.baseline !== undefined
-      ? assertRunIdBaseline(options.baseline, runId)
-      : undefined;
+  const baseline = resolveBaselineSelector({
+    baseline: options.baseline,
+    baselineSha: options.baselineSha,
+    runId,
+  });
   const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
@@ -1690,6 +1692,7 @@ async function runEvalCompare(
       project?: string;
       run: string;
       baseRun?: string;
+      baseSha?: string;
       reporter?: string;
       out?: string;
     },
@@ -1699,6 +1702,14 @@ async function runEvalCompare(
   // Parsed BEFORE any network call, so a malformed flag exits 2 without
   // spending a request — and cannot be mistaken for an infrastructure failure.
   const policy = comparePolicyFromOptions(options);
+  // Same pre-network parse, and the same mutual exclusion the route and the
+  // Convex action enforce. `eval compare` has NO required baseline — omitting
+  // both selectors is the documented "nearest earlier completed run" default —
+  // so this only refuses the pair, and normalizes whichever one was given.
+  const baseSelector = compareBaseSelector({
+    baseRun: options.baseRun,
+    baseSha: options.baseSha,
+  });
   const reporter = parseReporterFormat(options.reporter);
   const resolved = resolveCloudProjectArgs(options);
 
@@ -1728,7 +1739,7 @@ async function runEvalCompare(
           {
             projectId: project.id,
             runId: options.run,
-            ...(options.baseRun ? { baseRunId: options.baseRun } : {}),
+            ...baseSelector,
           },
           { signal }
         );
@@ -3425,23 +3436,27 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--baseline <runId>",
-        "Baseline run ID to gate a regression delta against (SHA baselines are not supported yet)"
+        "Baseline run ID to gate a regression delta against; mutually exclusive with --baseline-sha"
+      )
+      .option(
+        "--baseline-sha <sha>",
+        "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --baseline"
       )
       .option(
         "--min-sample-size <n>",
-        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline"
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline or --baseline-sha"
       )
       .option(
         "--min-effect-size-percent <0-100>",
-        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline"
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline or --baseline-sha"
       )
       .option(
         "--gate-deterministic-regressions",
-        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline"
+        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline or --baseline-sha"
       )
       .option(
         "--max-p95-latency-increase-ms <ms>",
-        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline"
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
       )
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(
@@ -3523,7 +3538,11 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--base-run <id>",
-        "Baseline run ID (defaults to the nearest earlier completed run in the same suite)"
+        "Baseline run ID (defaults to the nearest earlier completed run in the same suite); mutually exclusive with --base-sha"
+      )
+      .option(
+        "--base-sha <sha>",
+        "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --base-run"
       )
       .option(
         "--gate-regressions",
@@ -3559,6 +3578,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           run: string;
           baseRun?: string;
+          baseSha?: string;
           reporter?: string;
           out?: string;
         },

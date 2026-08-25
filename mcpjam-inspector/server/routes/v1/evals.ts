@@ -3498,6 +3498,34 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = c.req.param("runId");
   const baseRunId = c.req.query("baseRunId");
+  // The backend's OWN argument name, not a synonym, so the wire, this route
+  // and the Convex call all read the same. Trimmed here because the backend
+  // refuses a blank-after-trim SHA with `EVAL_COMPARE_BASELINE_INVALID`, and
+  // a caller that interpolated an unset CI variable (`--baseline-sha
+  // "$SHA"`) deserves that answer without a round trip.
+  const rawBaseCommitSha = c.req.query("baseCommitSha");
+  const baseCommitSha =
+    rawBaseCommitSha === undefined ? undefined : rawBaseCommitSha.trim();
+
+  // Guarded HERE **in addition to** the backend's own guard, not instead of
+  // it. The backend guards because the Convex action is reachable directly;
+  // this route guards so an HTTP caller gets the usage error without paying
+  // for a round trip. Neither is allowed to win silently — they answer the
+  // same 400 with the same meaning.
+  if (baseRunId !== undefined && baseCommitSha !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Pass either baseRunId or baseCommitSha, not both.",
+    );
+  }
+  if (baseCommitSha !== undefined && baseCommitSha === "") {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "baseCommitSha must not be blank.",
+    );
+  }
   // Forwarded, not dropped: the SDK client sends it, and a silently ignored
   // knob is worse than an absent one. Parsed defensively — the action clamps
   // the range, so this only has to refuse non-numbers.
@@ -3531,13 +3559,22 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
       compareRunId: runId,
       ...(baseRunId ? { baseRunId } : {}),
+      ...(baseCommitSha ? { baseCommitSha } : {}),
       ...(previewChars !== undefined ? { previewChars } : {}),
     });
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
     }
-    throw error;
+    // Translated rather than rethrown. The action refuses a malformed
+    // baseline selection with a structured `ConvexError` code, and a raw
+    // rethrow would land on the v1 error boundary as a 500 + INTERNAL_ERROR
+    // with the backend's message dropped — reporting the caller's usage error
+    // as our outage, and paging for it. The translator maps both baseline
+    // codes to 400 and keeps the message; anything it does not recognize
+    // still answers 500, which is the honest outcome for a code we do not
+    // know about.
+    throw translateConvexWriteError(error);
   }
 
   const envelope = (result ?? {}) as Record<string, unknown>;
@@ -3554,8 +3591,19 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       "NOT_FOUND",
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
-        : "No earlier completed run in this suite to compare against.",
-      { reason: "BASELINE_NOT_FOUND", ...(baseRunId ? { baseRunId } : {}) },
+        : baseCommitSha
+          ? "No completed run in this suite was recorded against that commit SHA."
+          : "No earlier completed run in this suite to compare against.",
+      // A SHA that resolved to nothing is deliberately THIS, not one of the
+      // two 400 baseline codes: exit 3 must keep meaning "we looked and
+      // established nothing", distinct from "you asked for something
+      // impossible". The requested SHA rides along so an archived CI log says
+      // WHICH commit found no run.
+      {
+        reason: "BASELINE_NOT_FOUND",
+        ...(baseRunId ? { baseRunId } : {}),
+        ...(baseCommitSha ? { baseCommitSha } : {}),
+      },
     );
   }
 
@@ -3566,13 +3614,40 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     // chosen — so publishing an explicitly named run as `previous_completed`
     // (which a deploy-order skew could cause) is worse than saying nothing.
     policy:
-      baselineSource.policy === "run" ||
-      (baselineSource.policy === undefined && Boolean(baseRunId))
-        ? "run"
-        : baselineSource.policy === "previous_completed_same_environment"
-          ? "previous_completed_same_environment"
-          : "previous_completed",
+      baselineSource.policy === "commit_sha" ||
+      (baselineSource.policy === undefined && Boolean(baseCommitSha))
+        ? "commit_sha"
+        : baselineSource.policy === "run" ||
+            (baselineSource.policy === undefined && Boolean(baseRunId))
+          ? "run"
+          : baselineSource.policy === "previous_completed_same_environment"
+            ? "previous_completed_same_environment"
+            : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
+    // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
+    // back to what the request asked for, so a mixed-version deployment that
+    // resolved the SHA without echoing it still records which SHA was pinned
+    // — the pinned contract requires a gate to record the source SHA, and an
+    // audit trail that drops it on a version skew is not one.
+    ...(baseCommitSha
+      ? {
+          baseCommitSha: String(
+            baselineSource.baseCommitSha ?? baseCommitSha,
+          ),
+        }
+      : {}),
+    // `matchCount` is present ONLY when uniqueness could not be established;
+    // absent means unambiguous. `matchCountTruncated` says the count is a
+    // FLOOR rather than a total — including when it reads 1. They travel
+    // together or not at all: publishing a truncated count without its flag
+    // asserts a uniqueness nobody checked.
+    ...(typeof baselineSource.matchCount === "number"
+      ? { matchCount: baselineSource.matchCount }
+      : {}),
+    ...(typeof baselineSource.matchCount === "number" &&
+    baselineSource.matchCountTruncated === true
+      ? { matchCountTruncated: true }
+      : {}),
   };
 
   return v1Resource(c, toRunCompareDto(envelope.diff, baseline));

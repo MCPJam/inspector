@@ -1984,7 +1984,16 @@
             "name": "baseRunId",
             "in": "query",
             "required": false,
-            "description": "Run ID to compare against. Omit to use the nearest earlier completed run in the same suite.",
+            "description": "Run ID to compare against. Omit to use the nearest earlier completed run in the same suite. Mutually exclusive with baseCommitSha.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "baseCommitSha",
+            "in": "query",
+            "required": false,
+            "description": "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary 404 with details.reason = BASELINE_NOT_FOUND - an incomplete comparison, not a regression.",
             "schema": {
               "type": "string"
             }
@@ -14677,11 +14686,25 @@
                 "enum": [
                   "previous_completed",
                   "previous_completed_same_environment",
-                  "run"
-                ]
+                  "run",
+                  "commit_sha"
+                ],
+                "description": "How the baseline was chosen. `commit_sha` means it was resolved from the requested source SHA."
               },
               "baseRunId": {
                 "type": "string"
+              },
+              "baseCommitSha": {
+                "type": "string",
+                "description": "The pinned source SHA, echoed back for the `commit_sha` policy only."
+              },
+              "matchCount": {
+                "type": "integer",
+                "description": "Present ONLY when uniqueness could not be established - the SHA matched several eligible runs, or the bounded lookup saturated. Absent means the match was unambiguous; do not default it to 1."
+              },
+              "matchCountTruncated": {
+                "type": "boolean",
+                "description": "`matchCount` is a FLOOR, not a total - including when it reads 1. Read it together with `matchCount`; a count without this flag would assert a uniqueness nobody checked."
               }
             },
             "required": [

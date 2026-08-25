@@ -225,6 +225,13 @@ interface EvalFixtureOptions {
     compareTotal?: number;
     /** Adds a `new_case` row, breaking the population rule. */
     caseSetChanged?: boolean;
+    /**
+     * Baseline-match ambiguity the backend reports for a SHA lookup.
+     * `matchCount` is present ONLY when uniqueness could not be established;
+     * `truncated` marks the count a FLOOR rather than a total.
+     */
+    matchCount?: number;
+    matchCountTruncated?: boolean;
   };
   /**
    * Per-target-run overrides for a grouped (`--all-targets` / `--host` x2)
@@ -1091,7 +1098,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         return;
       }
       const cmp = options.compare ?? {};
-      const baseRunId = url.searchParams.get("baseRunId") ?? "run-baseline";
+      // Mirrors the real route: the two selectors are mutually exclusive, and
+      // a SHA resolves server-side to a run id the client never sent.
+      const baseCommitSha = url.searchParams.get("baseCommitSha");
+      if (baseCommitSha !== null && url.searchParams.get("baseRunId") !== null) {
+        res.statusCode = 400;
+        res.end(
+          JSON.stringify({
+            code: "VALIDATION_ERROR",
+            message: "Pass either baseRunId or baseCommitSha, not both.",
+          }),
+        );
+        return;
+      }
+      const baseRunId =
+        url.searchParams.get("baseRunId") ??
+        (baseCommitSha !== null ? "run-resolved-from-sha" : "run-baseline");
       // These defaults are the SAME oracle-pinned 56/70 -> 48/80 regression
       // `eval-compare-exit-code.test.ts` checks against statsmodels, reused
       // here rather than re-derived. They deliberately do NOT track run-1's
@@ -1120,7 +1142,20 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       res.end(
         JSON.stringify({
           suite: { id: "suite-1", name: "Smoke" },
-          baseline: { policy: "run", baseRunId },
+          baseline:
+            baseCommitSha !== null
+              ? {
+                  policy: "commit_sha",
+                  baseRunId,
+                  baseCommitSha,
+                  ...(cmp.matchCount !== undefined
+                    ? { matchCount: cmp.matchCount }
+                    : {}),
+                  ...(cmp.matchCountTruncated
+                    ? { matchCountTruncated: true }
+                    : {}),
+                }
+              : { policy: "run", baseRunId },
           baseRun: {
             id: baseRunId,
             runNumber: 2,
@@ -3095,7 +3130,10 @@ test("eval compare --reporter html --out writes the reporter-selected format to 
 
 // ── eval gate --baseline ────────────────────────────────────────────────────
 
-test("eval gate rejects a SHA-shaped --baseline before any request", async () => {
+/** A 40-hex commit SHA, the shape CI hands `--baseline-sha`. */
+const SHA_BASELINE = "9f1a2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2";
+
+test("eval gate REDIRECTS a SHA-shaped --baseline to --baseline-sha", async () => {
   const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
@@ -3114,7 +3152,12 @@ test("eval gate rejects a SHA-shaped --baseline before any request", async () =>
       ),
     );
     assert.equal(run.result.exitCode, 2);
-    assert.match(run.stderr, /SHA baselines are not supported yet/);
+    // SHA baselines ARE supported now — under their own flag. The shape check
+    // survives as a redirect so a caller who pastes a commit SHA into the
+    // run-id flag is told which flag to use, instead of sending a doomed run
+    // lookup that comes back as `incomplete` (exit 3) and reads as "no
+    // baseline exists".
+    assert.match(run.stderr, /--baseline-sha/);
     // A usage error caught before parsing must never spend a request.
     assert.equal(fixture.authHeaders.length, 0);
   } finally {
@@ -3364,6 +3407,241 @@ test("eval gate --baseline: a threshold miss and a baseline regression fold into
   }
 });
 
+test("eval gate --baseline-sha resolves a SHA end to end and gates on it", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    // The SHA resolved to a real run and the regression gate ran on it: a
+    // verdict, not a comparability excuse.
+    assert.equal(run.result.exitCode, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha records the SHA AND the run it resolved to", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          `  ${SHA_BASELINE}  `,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    // The pin says a gate records baseline run id / source SHA. BOTH: the SHA
+    // is what CI asked for, the run id is what the verdict was computed
+    // against, and an archived report needs to answer either question.
+    assert.equal(provenance.requestedBaselineKind, "commitSha");
+    // Trimmed — the padded flag value never reached the wire.
+    assert.equal(provenance.requestedBaselineCommitSha, SHA_BASELINE);
+    assert.equal(provenance.resolvedBaselineCommitSha, SHA_BASELINE);
+    assert.equal(provenance.baseRunId, "run-resolved-from-sha");
+    // Nothing ambiguous was reported, so the match is recorded as unique —
+    // and no count is invented to say so.
+    assert.equal(provenance.baselineMatchUnique, true);
+    assert.equal(provenance.baselineMatchCount, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha surfaces an AMBIGUOUS match in the report", async () => {
+  const fixture = await startEvalFixture({ compare: { matchCount: 4 } });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-ambiguous-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.baselineMatchCount, 4);
+    assert.equal(provenance.baselineMatchUnique, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha: a TRUNCATED count of 1 is not recorded as unique", async () => {
+  // The case the flag exists for: a floor of 1 is not a proof of 1. Recording
+  // it as an established unique match would be a false claim, and a
+  // regression verdict rests on exactly that claim.
+  const fixture = await startEvalFixture({
+    compare: { matchCount: 1, matchCountTruncated: true },
+  });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-truncated-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.baselineMatchCount, 1);
+    // The flag travels WITH the count. Rendering the 1 alone would assert a
+    // uniqueness nobody checked.
+    assert.equal(provenance.baselineMatchCountTruncated, true);
+    assert.equal(provenance.baselineMatchUnique, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate: an UNRESOLVABLE --baseline-sha exits 3, never 1", async () => {
+  // "We looked and established nothing" must stay distinct from "the evals
+  // regressed". A mistyped SHA that exited 1 would fail a build for a
+  // regression nobody observed.
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    assert.notEqual(run.result.exitCode, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects --baseline and --baseline-sha together, before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "run-baseline",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /mutually exclusive/);
+    // A usage error caught before parsing must never spend a request.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval compare rejects --base-run and --base-sha together", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "compare",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--base-run",
+          "run-baseline",
+          "--base-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /mutually exclusive/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval gate --baseline writes provenance into the JSON report, notRecorded included", async () => {
   const fixture = await startEvalFixture();
   const directory = await mkdtemp(
@@ -3394,7 +3672,8 @@ test("eval gate --baseline writes provenance into the JSON report, notRecorded i
     assert.equal(run.result.exitCode, 1);
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     const provenance = report.metadata.baselineComparison;
-    assert.equal(provenance.requestedBaseline, "run-baseline");
+    assert.equal(provenance.requestedBaselineKind, "run");
+    assert.equal(provenance.requestedBaselineRunId, "run-baseline");
     assert.equal(provenance.baseRunId, "run-baseline");
     assert.equal(provenance.compareRunId, "run-1");
     assert.equal(provenance.compatibility.caseSetChanged, false);
@@ -3455,7 +3734,8 @@ test("eval gate --baseline sends the TRIMMED value on the wire, not the padded o
     assert.equal(run.result.exitCode, 1);
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     const provenance = report.metadata.baselineComparison;
-    assert.equal(provenance.requestedBaseline, "run-baseline");
+    assert.equal(provenance.requestedBaselineKind, "run");
+    assert.equal(provenance.requestedBaselineRunId, "run-baseline");
     assert.equal(provenance.baseRunId, "run-baseline");
   } finally {
     await fixture.close();

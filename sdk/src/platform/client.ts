@@ -2065,6 +2065,14 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       baseRunId?: string;
+      /**
+       * Pin the baseline by SOURCE SHA instead of run id. Mutually exclusive
+       * with `baseRunId` — sending both is a 400. A SHA that resolves to no
+       * completed run in the suite is the ordinary BASELINE_NOT_FOUND 404, not
+       * this error: "we looked and established nothing" stays distinct from
+       * "you asked for something impossible".
+       */
+      baseCommitSha?: string;
       previewChars?: number;
     },
     options?: RequestOptions,
@@ -2077,6 +2085,7 @@ export class PlatformApiClient {
       {
         query: {
           baseRunId: params.baseRunId,
+          baseCommitSha: params.baseCommitSha,
           previewChars: params.previewChars,
         },
       },
