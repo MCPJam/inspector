@@ -2535,11 +2535,14 @@ export function registerEvalCommands(program: Command): void {
         // is not already 2 (usage error / invalid suite file — untouched)
         // gets reclassified by wire code. `toCliError` drops the HTTP
         // status, so classification reads the code string, not the status.
+        // `details` rides along too: a billing failure the v1 API collapsed
+        // onto the wire code FORBIDDEN is only distinguishable from a real
+        // credential rejection by `details.code`.
         if (options.wait && error instanceof CliError && error.exitCode !== 2) {
           throw new CliError(
             error.code,
             error.message,
-            classifyLaunchErrorExitCode(error.code),
+            classifyLaunchErrorExitCode(error.code, error.details),
             error.details
           );
         }

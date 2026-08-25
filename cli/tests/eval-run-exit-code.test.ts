@@ -73,6 +73,28 @@ test("classifyLaunchErrorExitCode — everything else fails toward infra (4)", (
   }
 });
 
+test("classifyLaunchErrorExitCode — a billing failure disguised as FORBIDDEN still reads as 4", () => {
+  // The v1 API's public error union has no billing member, so the server
+  // collapses BILLING_LIMIT_REACHED onto the wire code FORBIDDEN
+  // (routes/v1/envelope.ts's mapInternalCode) — the same wire code a real
+  // credential rejection carries. The original reason survives in
+  // details.code, and must win over the auth-shaped classification.
+  for (const detailCode of ["billing_limit_reached", "billing_feature_not_included"]) {
+    assert.equal(
+      classifyLaunchErrorExitCode("FORBIDDEN", { code: detailCode }),
+      4,
+      detailCode,
+    );
+  }
+});
+
+test("classifyLaunchErrorExitCode — a real FORBIDDEN with no billing detail stays auth-shaped (3)", () => {
+  assert.equal(classifyLaunchErrorExitCode("FORBIDDEN"), 3);
+  assert.equal(classifyLaunchErrorExitCode("FORBIDDEN", { code: "OTHER_REASON" }), 3);
+  assert.equal(classifyLaunchErrorExitCode("FORBIDDEN", null), 3);
+  assert.equal(classifyLaunchErrorExitCode("FORBIDDEN", "not-an-object"), 3);
+});
+
 // ---------------------------------------------------------------------------
 // classifyWaitErrorExitCode
 // ---------------------------------------------------------------------------

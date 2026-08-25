@@ -90,6 +90,14 @@ import {
  * the same "else" bucket as every other non-auth, non-invalid launch error
  * (network, timeout, rate limit, an error code this CLI has never seen).
  *
+ * This holds even when the v1 API's own wire mapping obscures it: the
+ * public error union has no billing member, so the server collapses
+ * `BILLING_LIMIT_REACHED` onto the wire code `FORBIDDEN` — indistinguishable
+ * from a real credential rejection by code alone. The original reason
+ * survives in `details.code`, and `classifyLaunchErrorExitCode` checks it
+ * BEFORE the auth-shaped set, so a disguised billing failure still reads as
+ * 4, never 3.
+ *
  * ## `status: "failed"` → 5, not 4
  *
  * From the CLI's vantage point, "setup failed before evaluation" and
@@ -226,17 +234,49 @@ const INVALID_SHAPED_CODES = new Set([
 ]);
 
 /**
+ * Entitlement/billing codes the v1 API collapses onto the wire code
+ * `FORBIDDEN` (`routes/v1/envelope.ts`'s `mapInternalCode`, backed by
+ * `INTERNAL_TO_V1_CODE`: `BILLING_LIMIT_REACHED` -> `FORBIDDEN`) because the
+ * public error union has no billing member. The original code survives
+ * verbatim in `details.code` (`asBillingRouteError` in
+ * `services/evals/recorder.ts` passes the Convex payload through as
+ * `details`), which is the only way to tell "the credential is no good"
+ * apart from "the credential is fine, the org is out of runway" once both
+ * have flattened to the same wire code. Both keep the billing->4 reading —
+ * `billing_feature_not_included` is a plan gap, not fixable by retrying the
+ * same call with different credentials, exactly like the limit itself.
+ */
+const BILLING_SHAPED_DETAIL_CODES = new Set([
+  "billing_limit_reached",
+  "billing_feature_not_included",
+]);
+
+/** True when `details.code` names one of the billing-shaped codes above. */
+function isBillingShapedDetail(details: unknown): boolean {
+  if (!details || typeof details !== "object") return false;
+  const inner = (details as { code?: unknown }).code;
+  return typeof inner === "string" && BILLING_SHAPED_DETAIL_CODES.has(inner);
+}
+
+/**
  * Classify a launch-phase thrown platform error (a `CliError` whose
- * `exitCode` was not already 2 — see the eval.ts call site). Auth-shaped
- * codes are prerequisite to fixing anything else (3); invalid-shaped codes
- * mean the request itself was malformed, not infrastructure (2); everything
- * else — network, timeout, rate limit, an unrecognized code, and
+ * `exitCode` was not already 2 — see the eval.ts call site). `details` is
+ * the wire error's `details` object, when it carried one; pass it through
+ * even though most codes ignore it — it is what lets a billing failure
+ * disguised as `FORBIDDEN` (see {@link BILLING_SHAPED_DETAIL_CODES}) still
+ * read as 4, not 3, the same way the literal lowercase
+ * `billing_limit_reached` code already does. Auth-shaped codes are
+ * prerequisite to fixing anything else (3); invalid-shaped codes mean the
+ * request itself was malformed, not infrastructure (2); everything else —
+ * network, timeout, rate limit, an unrecognized code, and
  * `billing_limit_reached` — is a setup failure this CLI itself observed (4).
  * Unknown codes fail toward infra (4), never toward a verdict.
  */
 export function classifyLaunchErrorExitCode(
-  code: string | undefined
+  code: string | undefined,
+  details?: unknown
 ): 2 | 3 | 4 {
+  if (isBillingShapedDetail(details)) return 4;
   if (code !== undefined && AUTH_SHAPED_CODES.has(code)) return 3;
   if (code !== undefined && INVALID_SHAPED_CODES.has(code)) return 2;
   return 4;

@@ -229,7 +229,12 @@ interface EvalFixtureOptions {
    * target failure, which is exactly the case `classifyLaunchErrorExitCode`
    * exists to classify.
    */
-  singleRunLaunchError?: { code: string; message: string; status?: number };
+  singleRunLaunchError?: {
+    code: string;
+    message: string;
+    status?: number;
+    details?: Record<string, unknown>;
+  };
   /**
    * Tear the fixture server down shortly after the single-target launch
    * response is flushed, so the first `getEvalRun` poll fails to connect —
@@ -711,6 +716,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           JSON.stringify({
             code: options.singleRunLaunchError.code,
             message: options.singleRunLaunchError.message,
+            ...(options.singleRunLaunchError.details
+              ? { details: options.singleRunLaunchError.details }
+              : {}),
           }),
         );
         return;
@@ -3962,6 +3970,79 @@ test("eval run --wait exits 4 on billing_limit_reached — a setup failure, not 
     );
 
     assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on a billing failure the API disguised as FORBIDDEN", async () => {
+  // The v1 API's public error union has no billing member, so
+  // BILLING_LIMIT_REACHED collapses onto the wire code FORBIDDEN
+  // (routes/v1/envelope.ts's mapInternalCode) — the same code a real
+  // credential rejection carries. Only details.code tells them apart, and
+  // getting this wrong would tell CI to fix its API key when the key is
+  // fine and the org is out of runway.
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Your plan limit was reached.",
+      status: 403,
+      details: { code: "billing_limit_reached", plan: "starter" },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 on a real FORBIDDEN with no billing detail", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Not authorized for this project.",
+      status: 403,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
   } finally {
     process.exitCode = 0;
     await fixture.close();
