@@ -5,6 +5,7 @@ import {
   hostedToolMatchScoreDefinition,
 } from "../score-definitions.js";
 import { buildHostedScoreContract } from "../score-rows.js";
+import { canonicalDigest } from "@mcpjam/sdk/contract";
 
 // =============================================================================
 // THE `toolCalls:match` DEFINITION'S IDENTITY.
@@ -55,13 +56,33 @@ describe("resolved match options are part of the definition's identity", () => {
   });
 
   test("the digest moves with the evaluator VERSION, which is why the bump exists", () => {
-    // Not an assertion about the constant's value — an assertion that the
-    // version is wired into the digest at all. Without it, two runs graded
+    // Not an assertion about the constant's VALUE — an assertion that the
+    // version is an input to the DIGEST. Without it, two runs graded
     // differently would share an `implementationHash` under one
     // `scorerVersion`, and a reader could not tell a fixed projection from a
     // changed scorer.
+    //
+    // `scorerVersion` carrying the constant is NOT that assertion: the two
+    // fields are populated independently, so the digest can stop hashing the
+    // version while `scorerVersion` still reports it. Both halves are checked.
     const definition = hostedToolMatchScoreDefinition({});
     expect(definition.scorerVersion).toBe(HOSTED_TOOL_MATCH_EVALUATOR_VERSION);
+
+    // The digest is exactly the canonical payload INCLUDING the version...
+    expect(definition.implementationHash).toBe(
+      canonicalDigest({
+        evaluatorVersion: HOSTED_TOOL_MATCH_EVALUATOR_VERSION,
+        matchOptions: {},
+      })
+    );
+    // ...and a different version is a different scorer. This is the half that
+    // fails if `evaluatorVersion` is ever dropped from the digest inputs.
+    expect(definition.implementationHash).not.toBe(
+      canonicalDigest({
+        evaluatorVersion: `${HOSTED_TOOL_MATCH_EVALUATOR_VERSION}-other`,
+        matchOptions: {},
+      })
+    );
   });
 });
 
