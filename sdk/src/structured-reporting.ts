@@ -31,6 +31,37 @@ export interface StructuredCaseResult {
   durationMs?: number;
   error?: string;
   details?: unknown;
+  /**
+   * An authorized override of THIS case's verdict, on the record.
+   *
+   * Set only on a gate case whose failure was waived. It is the single home
+   * for the waiver payload in a structured report — every renderer reads it
+   * from here rather than each carrying its own copy, so the three facts the
+   * charter requires cannot drift between the JSON, the JUnit and the HTML.
+   *
+   * A case carrying this is `passed: true` (the gate did not block the build)
+   * but is never rendered as a plain pass: JUnit marks it `<skipped>`, HTML
+   * gives it its own section, and the report's `verdict` says `waived`.
+   */
+  waiver?: StructuredCaseWaiver;
+}
+
+/**
+ * The waiver facts a CI artifact must carry: WHO waived, WHY, and UNTIL WHEN.
+ *
+ * `createdByEmail` is carried alongside the opaque `createdBy` id because a
+ * JUnit file read six months from now cannot resolve a user id, and it is
+ * `null` rather than absent when it could not be resolved — a deleted user
+ * must not make a waiver look authorless.
+ */
+export interface StructuredCaseWaiver {
+  id: string;
+  reason: string;
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  createdByEmail: string | null;
+  policySnapshot?: { minimumPassRate: number } | null;
 }
 
 export interface StructuredSummaryBucket {
@@ -79,7 +110,16 @@ export interface StructuredRunReport {
   decisionSummary?: EvalRunDecisionSummary;
 }
 
-export type StructuredRunVerdict = "passed" | "failed" | "inconclusive";
+export type StructuredRunVerdict =
+  | "passed"
+  | "failed"
+  | "inconclusive"
+  | /**
+     * A measured failure an authorized human overrode. Its own value rather
+     * than `passed`, because the two are not the same claim and only one of
+     * them is a clean run — see `gateOutcomeVerdict` in `gates.ts`.
+     */
+    "waived";
 
 export interface StructuredEvalRunInput {
   run: PlatformEvalRun;
@@ -340,6 +380,17 @@ export function renderStructuredRunJUnitXml(
 
   const tests = effectiveCases.length;
   const failures = effectiveCases.filter((entry) => !entry.passed).length;
+  // Declared on the suite as well as marked on the case: a parser that only
+  // reads the attributes must still be able to see that something here was
+  // overridden rather than run clean.
+  //
+  // OMITTED when zero, rather than written as `skipped="0"`. This XML is
+  // consumed by CI systems and asserted as a literal, and an attribute that
+  // appears on every report ever rendered would be a wire change for every
+  // existing consumer in exchange for saying nothing. A parser that finds it
+  // absent reads zero, which is the fact.
+  const skippedCount = effectiveCases.filter((entry) => entry.waiver).length;
+  const skipped = skippedCount > 0 ? ` skipped="${skippedCount}"` : "";
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const suiteName = escapeXml(redactedReport.kind);
 
@@ -361,7 +412,15 @@ export function renderStructuredRunJUnitXml(
           formatEvalRunDecisionSummary(redactedReport.decisionSummary)
         )}</system-out>`;
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}" time="${time}">\n${casesXml}${systemOut}\n  </testsuite>\n</testsuites>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n${casesXml}${systemOut}\n  </testsuite>\n</testsuites>\n`;
+}
+
+/** `who`, `why`, `until when` — the charter's three facts, on one line. */
+function formatWaiverMessage(waiver: StructuredCaseWaiver): string {
+  const who = waiver.createdByEmail ?? waiver.createdBy;
+  return `Gate WAIVED by ${who} until ${new Date(
+    waiver.expiresAt
+  ).toISOString()} — ${waiver.reason}`;
 }
 
 /**
@@ -387,8 +446,17 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
     isDiagnosticCase(entry)
   );
 
+  // Waived cases are `passed: true`, so they are NOT in `failedCases` and
+  // would otherwise be the one thing this page never mentioned — a report that
+  // silently rendered an overridden failure as a clean run.
+  const waivedCases = redacted.cases.filter((entry) => entry.waiver);
+
   const sections = [
     renderHtmlHeader(redacted, status),
+    // Immediately under the header, ABOVE the summary: on a waived report this
+    // is the reason the page is not what it otherwise appears to be, and a
+    // reader who scrolls no further must still have seen it.
+    renderHtmlWaiverSection(waivedCases),
     renderHtmlSummary(
       redacted.summary,
       observedFailures.length === 0 && diagnosticCases.length > 0
@@ -419,7 +487,7 @@ ${sections}
 `;
 }
 
-type StructuredRunHtmlStatus = "pass" | "fail" | "neutral";
+type StructuredRunHtmlStatus = "pass" | "fail" | "neutral" | "waived";
 
 /**
  * `inconclusive` is NOT a failure — B4's contract: the run did not measure
@@ -435,7 +503,49 @@ function reportHtmlStatus(
   if (report.verdict === "inconclusive") return "neutral";
   if (report.verdict === "passed") return "pass";
   if (report.verdict === "failed") return "fail";
+  // Its own colour, not green and not red. Green would be the silent waiver
+  // the charter forbids; red would report a blocked release that is not
+  // blocked. The `passed` fallback below cannot reach this — `report.passed`
+  // is false for a waived run — which is exactly why the verdict is read
+  // first.
+  if (report.verdict === "waived") return "waived";
   return report.passed ? "pass" : "fail";
+}
+
+/**
+ * The waiver banner: who, why, until when, and what it overrode.
+ *
+ * Rendered from the CASES rather than from a second report-level copy of the
+ * payload, so there is exactly one place a waiver's facts live in a structured
+ * report and no way for two renderings of the same waiver to disagree.
+ */
+function renderHtmlWaiverSection(cases: StructuredCaseResult[]): string {
+  if (cases.length === 0) return "";
+
+  const items = cases
+    .map((entry) => {
+      const waiver = entry.waiver!;
+      const who = waiver.createdByEmail ?? waiver.createdBy;
+      const overrode = waiver.policySnapshot
+        ? `<p>Overrode: minimum pass rate ${waiver.policySnapshot.minimumPassRate}</p>`
+        : "";
+      return `<article class="case case-waived">
+  <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(
+    entry.category
+  )})</span></h3>
+  <p>Waived by <strong>${escapeHtml(who)}</strong></p>
+  <p>Reason: ${escapeHtml(waiver.reason)}</p>
+  <p>Expires: ${escapeHtml(new Date(waiver.expiresAt).toISOString())}</p>
+  ${overrode}
+</article>`;
+    })
+    .join("\n");
+
+  return `<section class="waivers">
+  <h2>Waived (${cases.length})</h2>
+  <p class="note">This gate did not pass on its own evidence. An authorized user overrode it, on the record, until the expiry below.</p>
+  ${items}
+</section>`;
 }
 
 /**
@@ -789,8 +899,12 @@ const STRUCTURED_RUN_HTML_STYLE = `
   .badge.badge-pass { background: #1a7f37; color: #fff; }
   .badge.badge-fail { background: #cf222e; color: #fff; }
   .badge.badge-neutral { background: #9a6700; color: #fff; }
+  /* Violet: deliberately neither the green of a pass nor the red of a
+     failure, so a waived report cannot be mistaken for either at a glance. */
+  .badge.badge-waived { background: #6639ba; color: #fff; }
   article.case-fail { border-left: 4px solid #cf222e; }
   article.case-neutral { border-left: 4px solid #9a6700; }
+  article.case-waived { border-left: 4px solid #6639ba; }
   .meta, .note { color: GrayText; font-size: 0.9rem; }
   table.bucket-table { border-collapse: collapse; margin: 0.5rem 0 1rem; width: 100%; }
   table.bucket-table th, table.bucket-table td {
@@ -883,6 +997,22 @@ function renderJUnitTestCase(
   const testcaseName = escapeXml(caseResult.title);
   const testcaseClassname = escapeXml(resolveJUnitClassname(kind, caseResult));
   const testcaseTime = ((caseResult.durationMs ?? 0) / 1000).toFixed(3);
+
+  // A WAIVED case is neither a pass nor a failure, and JUnit already has the
+  // word for that. `<skipped>` is read by every CI parser and renders as its
+  // own third state, so the build is not failed by the artifact (which is what
+  // the waiver was granted for) while the report still refuses to show a clean
+  // green row. The three required facts ride in the `message`, because that is
+  // the part a CI UI actually displays.
+  //
+  // Checked BEFORE `passed`: a waived case is `passed: true` so it does not
+  // inflate the suite's failure count, and the plain-pass branch below would
+  // otherwise swallow it and emit exactly the silent waiver this forbids.
+  if (caseResult.waiver) {
+    const waiverMessage = escapeXml(formatWaiverMessage(caseResult.waiver));
+    const waiverBody = escapeXml(JSON.stringify(caseResult.waiver));
+    return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">\n      <skipped message="${waiverMessage}">${waiverBody}</skipped>\n    </testcase>`;
+  }
 
   if (caseResult.passed) {
     return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}"/>`;

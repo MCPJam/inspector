@@ -431,8 +431,40 @@ Either `eval run --wait` or `eval gate` already fails the job on its own — the
 </Warning>
 
 <Note>
-`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
+
+#### Waiving a gate
+
+A run whose gate failed can be overridden by an authorized user until an expiry
+they name, so a release is not blocked while a known regression is being fixed:
+
+```bash
+mcpjam cloud eval gate waive --run "$RUN_ID" --reason "hotfix ships today; tracked in ENG-4821" --expires-in 3d
+```
+
+`eval gate` then exits `0` and reports the outcome as `waived`. It is **not**
+reported as a pass: the run keeps its failed result, the failing verdicts stay
+in the report, and the waiver — who granted it, why, and until when — is named
+in every artifact the command writes, including the JUnit XML your CI job
+uploads (as a `<skipped>` element, so it neither fails the build nor renders as
+a clean green row).
+
+Only a real verdict failure is waivable. A cancelled run, a `--wait` timeout, or
+a network failure still exits `3` with a waiver in place — those established
+nothing, and a waiver granted for a regression is not consent to ship on an
+infrastructure failure.
+
+Waivers expire, and expiry is enforced on both sides: the platform republishes
+the GitHub Check Run when the waiver lapses, and the CLI re-derives the expiry
+itself rather than trusting the platform's answer. `mcpjam cloud eval gate
+unwaive --run "$RUN_ID"` ends one early.
+
+<Warning>
+The waiver reason is stored **unredacted** and readable by anyone who can see
+the suite, for as long as the suite exists. Never put secrets, tokens, or
+customer data in it.
+</Warning>
 
 #### Decision summary
 

@@ -512,6 +512,84 @@ export type PlatformSessionsPage = PlatformPage<PlatformSessionSummary> & {
 };
 
 /**
+ * An audited, time-boxed override of a run's gate.
+ *
+ * A waiver never changes the run's own `result` — the run keeps its honest
+ * verdict, and every reader that honors the waiver says so out loud instead.
+ * That is what makes "no silent waiver" checkable rather than promised: the
+ * evidence and the override are two separate records, and nothing collapses
+ * them.
+ */
+export interface PlatformGateWaiver {
+  id: string;
+  suiteId: string;
+  /** The run this waiver covers. Suite-wide waivers are not honored. */
+  runId: string | null;
+  /**
+   * Why the gate was overridden, as the granter wrote it.
+   *
+   * UNREDACTED free text, retained for the life of the suite and readable by
+   * anyone who can see it. Any surface that ACCEPTS one must say so before
+   * taking it — see `GATE_WAIVER_REASON_NOTICE` in the gate engine.
+   */
+  reason: string;
+  /** Epoch ms. Always in the future at creation, and capped at 30 days out. */
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  /** `null`, never absent, when it cannot be resolved (e.g. a deleted user). */
+  createdByEmail: string | null;
+  revokedAt: number | null;
+  revokedBy: string | null;
+  /**
+   * Whether it is in force right now — neither revoked nor expired.
+   *
+   * A client that must not honor a lapsed waiver should re-derive this from
+   * `expiresAt` rather than trust it: the platform computes it at read time,
+   * and a cached read can outlive the instant it changes.
+   */
+  active: boolean;
+  /**
+   * WHAT was overridden, captured at waive time so a later edit to the suite's
+   * criteria cannot rewrite the record.
+   *
+   * `null` for a run decided by the v2 verdict policy: that policy's identity
+   * is recorded on the audit event instead, because this shape cannot hold it
+   * and filling it in would be a false record rather than an incomplete one.
+   */
+  policySnapshot: { minimumPassRate: number } | null;
+}
+
+/**
+ * The result of granting or revoking a waiver.
+ *
+ * `status` distinguishes the write from the two IDEMPOTENT no-ops, and both
+ * no-ops are successes rather than errors:
+ *
+ *   - `conflict` — a waiver was already in force, and `waiver` is that
+ *     EXISTING one rather than a second row.
+ *   - `already_revoked` — this waiver had already been revoked, and `waiver`
+ *     reports the original revocation rather than restamping it, so the record
+ *     of who actually ended it survives a second call.
+ *
+ * `republishedChecks` counts the GitHub Check Runs brought back in line by
+ * this write. A published check is a persisted verdict, not a live read, so
+ * `0` here on a repository with checks connected means the visible CI status
+ * did not change — worth surfacing, since the check is the thing that gates
+ * the merge.
+ */
+export interface PlatformGateWaiverWriteResult {
+  status: "created" | "conflict" | "revoked" | "already_revoked";
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+}
+
+/** The active waiver over a run, or `null` when there is none. */
+export interface PlatformGateWaiverRead {
+  waiver: PlatformGateWaiver | null;
+}
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -600,6 +678,23 @@ export interface PlatformEvalRun {
    * `"inconclusive"` result; it is never a task failure.
    */
   verdictPolicyIntegrityError?: string;
+  /**
+   * The waiver currently in force over this run's gate, or `null`.
+   *
+   * Gated on being able to VIEW the run, deliberately not on being able to
+   * grant a waiver: a waiver only its grantors could see would not be a
+   * visible one, and visibility is the half of the charter this field exists
+   * to serve.
+   *
+   * `null` means no waiver. ABSENT means an API deployment that predates the
+   * field, which is a different fact and must not be read as "not waived" by
+   * anything that needs to be sure.
+   *
+   * Carried on the run projection rather than fetched separately so `eval
+   * gate` — which already GETs this run — can fold a waiver into its report
+   * without a second round trip on the gating path.
+   */
+  gateWaiver?: PlatformGateWaiver | null;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -1495,8 +1590,29 @@ export interface PlatformRunCompare {
     policy:
       | "previous_completed"
       | "previous_completed_same_environment"
-      | "run";
+      | "run"
+      | "commit_sha";
     baseRunId: string;
+    /**
+     * The source SHA that was pinned, echoed back for the `commit_sha` policy
+     * only. Recorded alongside `baseRunId` rather than instead of it: a gate's
+     * audit trail needs both the SHA the caller asked for and the run it
+     * actually resolved to.
+     */
+    baseCommitSha?: string;
+    /**
+     * Present ONLY when uniqueness could NOT be established — the SHA matched
+     * several eligible runs, or the bounded lookup saturated so older eligible
+     * ones may exist beyond it. **Absent means unambiguous**; do not default
+     * it to 1.
+     */
+    matchCount?: number;
+    /**
+     * `matchCount` is a FLOOR, not a total — including when it reads 1. Render
+     * it WITH its count or not at all: a truncated count shown alone asserts a
+     * uniqueness nobody checked.
+     */
+    matchCountTruncated?: boolean;
   };
   baseRun: PlatformRunCompareSide;
   compareRun: PlatformRunCompareSide;

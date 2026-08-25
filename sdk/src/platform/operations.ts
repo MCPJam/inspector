@@ -7,6 +7,10 @@
  */
 import { z } from "zod";
 import { opaqueIdSchema } from "../contract/identity.js";
+import {
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
+} from "../gates.js";
 import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -58,6 +62,8 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformGateWaiver,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
@@ -5264,7 +5270,15 @@ const compareEvalRunInput = evalRunScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite. Mutually exclusive with baseCommitSha.",
+    ),
+  baseCommitSha: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary BASELINE_NOT_FOUND 404 — an incomplete comparison, not a regression. When the SHA matched more than one eligible run, or the bounded lookup saturated, the response reports matchCount and matchCountTruncated; an absent matchCount means the match was unambiguous.",
     ),
 });
 
@@ -5282,7 +5296,7 @@ export const compareEvalRunOperation: PlatformOperation<
   name: "compare_eval_run",
   title: "Compare MCPJam eval runs",
   description:
-    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite, or pass baseCommitSha to pin the baseline by source SHA instead (the two are mutually exclusive). A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
   readOnly: true,
   inputSchema: compareEvalRunInput,
   async execute(input, { client, signal }) {
@@ -5296,6 +5310,7 @@ export const compareEvalRunOperation: PlatformOperation<
         projectId: project.id,
         runId: input.runId,
         baseRunId: input.baseRunId,
+        baseCommitSha: input.baseCommitSha,
       },
       { signal },
     );
@@ -5439,6 +5454,164 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+// ── Gate waivers ─────────────────────────────────────────────────────────
+//
+// The agent-facing half of the gate-waiver workflow. Every description below
+// states the two things an agent must not have to infer: that the reason is
+// stored unredacted and durable, and that a waiver never makes a failing run
+// pass — it records an override of the gate, and the run keeps its verdict.
+
+const waiveEvalGateInput = evalRunScopedInput.extend({
+  // NOT length- or emptiness-checked here, on purpose. Both refusals carry
+  // copy the platform wrote for the caller (`gate_waiver_reason_empty`,
+  // `gate_waiver_reason_too_long`), and a zod check firing first would replace
+  // that copy with a generic validation error on exactly the boundary cases
+  // where the specific message is the useful part.
+  reason: z
+    .string()
+    .describe(
+      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`,
+    ),
+  // A number, but the range is the platform's to refuse — see `reason`.
+  expiresAt: z
+    .number()
+    .describe(
+      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing.",
+    ),
+});
+
+export type WaiveEvalGateInput = z.infer<typeof waiveEvalGateInput>;
+
+export type WaiveEvalGateResult = {
+  project: SelectedProjectInfo;
+  status: PlatformGateWaiverWriteResult["status"];
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+};
+
+export const waiveEvalGateOperation: PlatformOperation<
+  WaiveEvalGateInput,
+  WaiveEvalGateResult
+> = {
+  name: "waive_eval_gate",
+  title: "Waive an MCPJam eval run's gate",
+  description:
+    "Override a FAILING eval run's release gate, on the record, until an expiry you name. This does NOT make the run pass: the run keeps its failed result, and every surface that honors the waiver — the GitHub Check Run and the CLI's `eval gate` — says the gate was waived, by whom, why, and until when. Requires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it. `status: \"conflict\"` means a waiver was already in force and returns that EXISTING one rather than granting a second; it is a normal result, not a failure.",
+  readOnly: false,
+  // EXPOSURE, not `none`, even though a waiver can be revoked.
+  //
+  // Two things a revoke does not undo. The gate stops blocking a release the
+  // moment this lands, so anything that ships in the meantime has shipped. And
+  // `reason` is published UNREDACTED to everyone who can see the suite, for as
+  // long as the suite exists — revoking ends the override, it does not
+  // unpublish the text. Both halves are about what becomes reachable, which is
+  // what this class names, and `none`'s promise of "reversible and costs
+  // nothing" is false for each of them.
+  risk: "exposure",
+  inputSchema: waiveEvalGateInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.createGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        reason: input.reason,
+        expiresAt: input.expiresAt,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
+  },
+};
+
+export type GetEvalGateWaiverResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  waiver: PlatformGateWaiver | null;
+};
+
+export const getEvalGateWaiverOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalGateWaiverResult
+> = {
+  name: "get_eval_gate_waiver",
+  title: "Get an MCPJam eval run's gate waiver",
+  description:
+    "Read the waiver currently in force over an eval run's gate, or null when there is none. Available to anyone who can view the run, not only to those who can grant a waiver — a waiver its readers cannot see is not a visible one. `active: false` on a returned waiver means it has lapsed or been revoked and is no longer overriding anything.",
+  readOnly: true,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const { waiver } = await client.getGateWaiver(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      waiver,
+    };
+  },
+};
+
+const revokeEvalGateWaiverInput = evalRunScopedInput.extend({
+  waiverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver.",
+    ),
+});
+
+export type RevokeEvalGateWaiverInput = z.infer<
+  typeof revokeEvalGateWaiverInput
+>;
+
+export const revokeEvalGateWaiverOperation: PlatformOperation<
+  RevokeEvalGateWaiverInput,
+  WaiveEvalGateResult
+> = {
+  name: "revoke_eval_gate_waiver",
+  title: "Revoke an MCPJam eval gate waiver",
+  description:
+    "End a gate waiver early, putting the gate and the GitHub Check Run back where they were. Requires the manage tier. IDEMPOTENT: `status: \"already_revoked\"` means it had already been revoked and reports the ORIGINAL revocation rather than restamping it — that is a success, not an error, and preserves the record of who actually ended the waiver. An already-expired waiver may still be revoked; the audit trail distinguishes 'this was wrong' from 'this ran out'.",
+  readOnly: false,
+  // `none`: it destroys no record — the row and its audit event survive, and
+  // the revocation is additive — it spends nothing, and a mistaken revoke is
+  // recovered by waiving again. The gate closing is the SAFE direction.
+  //
+  // The registry still places it at `gated` rather than the `direct` this
+  // derives, and TIER_EXCEPTIONS carries the reason: re-blocking somebody
+  // else's release is a decision a person should make.
+  risk: "none",
+  inputSchema: revokeEvalGateWaiverInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.revokeGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        waiverId: input.waiverId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
   },
 };
 
@@ -11366,6 +11539,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,

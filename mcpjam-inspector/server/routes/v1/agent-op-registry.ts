@@ -66,6 +66,9 @@ import {
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -1411,6 +1414,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
     ],
   },
+  { operation: getEvalGateWaiverOperation, tier: "direct" },
   { operation: listEvalRunIterationsOperation, tier: "direct" },
   { operation: getEvalRunStepsOperation, tier: "direct" },
   {
@@ -1542,6 +1546,44 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: (input) => `Cancel run ${named(input, "runId") ?? "(unnamed)"}`,
       buttonLabel: "Cancel the run",
       kind: "cancel",
+    },
+  },
+  // GATED, and the approval card carries the whole decision rather than a
+  // verb and an id. A waiver is an authorized human overriding a release gate
+  // on the record — the reason is stored unredacted for the life of the suite
+  // and the expiry decides when the gate comes back — so an approver who
+  // cannot see WHAT they are agreeing to is approving a signature, not a
+  // decision. Both facts go in the description for exactly that reason.
+  {
+    operation: waiveEvalGateOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const run = named(input, "runId") ?? "(unnamed)";
+        const until =
+          typeof input.expiresAt === "number"
+            ? new Date(input.expiresAt).toISOString()
+            : "(no expiry given)";
+        const reason =
+          typeof input.reason === "string" && input.reason.trim().length > 0
+            ? input.reason.trim()
+            : "(no reason given)";
+        return `Waive the gate on run ${run} until ${until} — "${reason}" (stored unredacted for the life of the suite)`;
+      },
+      buttonLabel: "Waive the gate",
+      kind: "update",
+    },
+  },
+  {
+    operation: revokeEvalGateWaiverOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Revoke gate waiver ${named(input, "waiverId") ?? "(unnamed)"} on run ${
+          named(input, "runId") ?? "(unnamed)"
+        }, putting the gate back`,
+      buttonLabel: "Revoke the waiver",
+      kind: "update",
     },
   },
   // GATED because it SPENDS. `kind: "generate"` matches the other
