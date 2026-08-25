@@ -450,4 +450,88 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-empty-action-describe")).not.toBeDisabled();
     expect(screen.getByTestId("suite-empty-action-import")).not.toBeDisabled();
   });
+
+  it("holds the run-history frame while runs are still loading", () => {
+    // `isSuiteRunsLoading` is its own query and resolves AFTER the detail
+    // spinner clears, so a suite with runs would otherwise show nothing here
+    // and then pop the whole section in.
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[]}
+        runsLoading
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByText("Loading runs\u2026")).toBeTruthy();
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+  });
+
+  it("names the active filter and releases a value that leaves the option set", async () => {
+    const user = userEvent.setup();
+    const twoClientHosts = new Map<string, string | null>([
+      ["host-1", "Claude"],
+      ["host-2", "Cursor"],
+    ]);
+    const bothRuns = [
+      makeRun({ _id: "run-1" }),
+      makeRun({ _id: "run-2", namedHostId: "host-2" }),
+    ];
+    const iterations = [
+      makeIteration({ _id: "i1", suiteRunId: "run-1" }),
+      makeIteration({ _id: "i2", suiteRunId: "run-2" }),
+    ];
+    const view = (runs: EvalSuiteRun[]) => (
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={runs}
+        runsLoading={false}
+        allIterations={iterations}
+        hostNamesById={twoClientHosts}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />
+    );
+
+    const { rerender } = renderWithProviders(view(bothRuns));
+
+    const clientFilter = screen.getByRole("combobox", {
+      name: "Filter by client",
+    });
+    await user.click(clientFilter);
+    await user.click(screen.getByRole("option", { name: "Cursor" }));
+
+    // The trigger names the selection, not just the dimension.
+    expect(clientFilter).toHaveTextContent("Client \u00b7 Cursor");
+    expect(screen.queryByTestId("suite-run-row-run-1")).toBeNull();
+    expect(screen.getByTestId("suite-run-row-run-2")).toBeTruthy();
+
+    // Cursor's only run disappears (live update / rerun on another client).
+    // The filter must release rather than strand the table on a value the
+    // user can no longer see or clear.
+    rerender(view([bothRuns[0]]));
+
+    expect(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    ).toHaveTextContent("Client");
+    expect(
+      screen.queryByText("No runs match these filters."),
+    ).toBeNull();
+    expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
+  });
 });

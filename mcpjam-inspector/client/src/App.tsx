@@ -262,6 +262,7 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
+import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -1463,6 +1464,22 @@ export function EvaluateRoute() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
+  const evaluateEnabled = useEvaluateEnabledState();
+
+  // The sidebar hides the nav item, but a nav filter is not a gate: `/evaluate`
+  // is a plain route, and its `navSegments` entry feeds `KNOWN_APP_TAB_SEGMENTS`
+  // so `ui_navigate` reaches it too. Bounce to the shipped tab — same product,
+  // and the flagged-out user loses nothing by landing there.
+  //
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /evaluate directly. (Same tradeoff as SessionsRoute.)
+  if (evaluateEnabled === false) {
+    return <Navigate to={routePaths.evals} replace />;
+  }
+  if (evaluateEnabled === undefined) {
+    return null;
+  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;

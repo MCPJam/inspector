@@ -86,9 +86,14 @@ export function EvalsHeader({
                     </button>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
-                <BreadcrumbSeparator className="text-muted-foreground">
-                  /
-                </BreadcrumbSeparator>
+                {/* Both crumbs below are conditional — a detail route whose
+                    title has not resolved yet (the header renders outside the
+                    details spinner) would otherwise read "Evaluate /". */}
+                {parentCrumb || children ? (
+                  <BreadcrumbSeparator className="text-muted-foreground">
+                    /
+                  </BreadcrumbSeparator>
+                ) : null}
                 {parentCrumb ? (
                   <>
                     <BreadcrumbItem className="max-w-[min(200px,40vw)] min-w-0">

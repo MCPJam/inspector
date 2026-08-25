@@ -306,11 +306,14 @@ export function CreateSuitePage({
         name: name.trim(),
         ...(target.stack.hostIds.length > 0
           ? {
+              // Empty, like every other creation path. `initialServerId` is the
+              // server whose empty-hero card started this flow; it seeds the
+              // composer's server group above and is never cleared when the
+              // user picks a different one, so pinning it here would attach a
+              // server the user has since navigated away from.
               hostAttachments: target.stack.hostIds.map((namedHostId) => ({
                 namedHostId,
-                enabledOptionalServerIds: initialServerId
-                  ? [initialServerId]
-                  : [],
+                enabledOptionalServerIds: [],
               })),
             }
           : {}),

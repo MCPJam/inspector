@@ -565,4 +565,22 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
 
     expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
+
+  it("keeps the suite header on the edit route so rename and Done stay reachable", () => {
+    // `viewMode` falls through to "overview" for suite-edit, so the opt-in has
+    // to exclude edit mode explicitly. SuiteHeader is the ONLY mount point for
+    // the edit chrome (name editor + Done) and for SuiteEnvironmentComposerBar
+    // — suppressing it leaves the settings sheet headerless and the suite's
+    // client/model/server composer unreachable from both routes.
+    renderOverview({
+      suiteDetailOverview: true,
+      route: { type: "suite-edit", suiteId: "suite-1" },
+    });
+
+    expect(screen.getByTestId("suite-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({ isEditMode: true }),
+    );
+  });
 });

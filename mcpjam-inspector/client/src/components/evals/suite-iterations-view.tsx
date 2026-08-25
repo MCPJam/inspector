@@ -860,10 +860,18 @@ export function SuiteIterationsView({
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
   // history + cases layout. Run detail still folds into SuiteDashboard.
+  //
+  // `viewMode` falls through to "overview" for the suite-edit route, so edit
+  // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
+  // edit-mode chrome lives (the name editor and Done), and the only mount
+  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
+  // the settings sheet headerless and the suite's client/model/server
+  // composer unreachable from both routes.
   const showEvaluateSuiteDetail =
     suiteDetailOverview &&
     hideRunActions &&
     !caseListInSidebar &&
+    !isEditMode &&
     viewMode === "overview";
 
   const showSuiteHeader =
