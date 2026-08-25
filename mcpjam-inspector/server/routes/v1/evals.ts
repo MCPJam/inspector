@@ -1355,6 +1355,19 @@ function toRunDto(run: RunDoc) {
     // under v2 can `result` be `"inconclusive"`, and only then does
     // `verdictSummary` explain the decision.
     ...toRunVerdictProjection(run),
+    // The waiver in force over this run's gate, or `null`.
+    //
+    // ON THE RUN, not behind a separate fetch, because `eval gate` already
+    // GETs this run and computes its verdict client-side: carrying the waiver
+    // here is what lets it fold one in and NAME it in every artifact it
+    // writes, instead of flipping an exit code with nothing explaining why.
+    //
+    // `null` rather than omitted so a caller can distinguish "no waiver" from
+    // "an older deployment that does not report one" — the same convention
+    // `insights` and `judges` use. The platform gates it on being able to VIEW
+    // the run rather than to grant a waiver; a waiver its readers cannot see
+    // is not a visible waiver.
+    gateWaiver: toGateWaiverDto(run.gateWaiver),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -3741,6 +3754,260 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     .catch(() => null);
   return v1Resource(c, toRunDto((updated ?? run)!));
 });
+
+// ── Gate waivers ────────────────────────────────────────────────────────────
+//
+// An audited, time-boxed override of a run's release gate. Three routes, and
+// the shape of each is decided by one rule from the Lane E charter: "no silent
+// or permanent waiver."
+//
+// NOTHING HERE TOUCHES `run.result`. The run keeps its honest verdict and the
+// waiver is a separate record, because two independent computations read that
+// verdict — the backend derives a GitHub Check Run conclusion from the
+// persisted run, and the CLI recomputes its own gate client-side from these
+// same public GETs. Flipping the persisted result would green both with no
+// trace of why, which is the definition of a silent waiver.
+//
+// AUTHORIZATION IS THE CONVEX MUTATION'S, not these handlers'. There is no
+// tier check in this file on purpose: a second copy of the rule here would be
+// a second thing to keep correct, and the one that matters is the one that
+// runs closest to the data.
+
+/**
+ * Body for `POST …/eval-runs/:runId/gate-waivers`.
+ *
+ * STRICT, like every other v1 write body: a non-strict object silently strips
+ * unknown keys and answers 200 for a request that did something other than
+ * what the caller wrote — a known bug class in this router, and a bad one on a
+ * route whose whole job is to be an auditable record.
+ *
+ * Deliberately NOT semantically validated beyond the types. A blank reason, a
+ * 501-character one, an expiry in the past, an expiry a year out — all five are
+ * refusals the platform raises with `gate_waiver_*` codes and customer-facing
+ * copy it wrote, and a zod rule firing first would replace that copy with a
+ * generic validation error on exactly the boundary cases where the specific
+ * message is the useful part. Type errors are still ours: `expiresAt` must be
+ * a finite number before it can mean an instant at all.
+ */
+const gateWaiverCreateSchema = z.strictObject({
+  reason: z.string(),
+  expiresAt: z.number().finite(),
+});
+
+/** The waiver DTO, projected field by field. */
+function toGateWaiverDto(waiver: Record<string, any> | null | undefined) {
+  if (!waiver) return null;
+  return {
+    id: String(waiver.id),
+    suiteId: String(waiver.suiteId),
+    runId: waiver.runId ? String(waiver.runId) : null,
+    reason: String(waiver.reason ?? ""),
+    expiresAt: waiver.expiresAt,
+    createdAt: waiver.createdAt,
+    createdBy: String(waiver.createdBy ?? ""),
+    // `null`, never absent: a deleted user must not make a waiver look
+    // authorless, and a caller reading "who waived this" needs to be able to
+    // tell "we could not resolve them" from "the field is missing".
+    createdByEmail:
+      typeof waiver.createdByEmail === "string" ? waiver.createdByEmail : null,
+    revokedAt: typeof waiver.revokedAt === "number" ? waiver.revokedAt : null,
+    revokedBy: waiver.revokedBy ? String(waiver.revokedBy) : null,
+    active: waiver.active === true,
+    policySnapshot:
+      waiver.policySnapshot &&
+      typeof waiver.policySnapshot.minimumPassRate === "number"
+        ? { minimumPassRate: waiver.policySnapshot.minimumPassRate }
+        : null,
+  };
+}
+
+/** The shared `{ status, republishedChecks, waiver }` write envelope. */
+function toGateWaiverWriteDto(result: Record<string, any>) {
+  return {
+    status: String(result.status),
+    republishedChecks:
+      typeof result.republishedChecks === "number"
+        ? result.republishedChecks
+        : 0,
+    waiver: toGateWaiverDto(result.waiver),
+  };
+}
+
+/**
+ * `notFoundMessage` names BOTH addressable things on purpose. The platform
+ * deliberately answers a missing waiver with the same string as a missing run,
+ * so these endpoints cannot become an existence oracle over waiver ids —
+ * naming only one of them here would undo that by telling a caller which of
+ * the two they got wrong.
+ */
+const GATE_WAIVER_TRANSLATE_OPTIONS = {
+  resource: "Gate waiver",
+  notFoundMessage: "Eval run or gate waiver not found",
+  fallbackMessage: "Gate waiver rejected by the platform",
+} as const;
+
+// POST /v1/projects/:projectId/eval-runs/:runId/gate-waivers
+// Grant a waiver. 201 on a new one; 409 when one is already in force.
+evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const body = parseWithSchema(
+    gateWaiverCreateSchema,
+    await readJsonObjectBody(c),
+  );
+  const token = await getConvexBearerForRequest(c);
+  const readClient = createConvexReadClient(token);
+
+  let run: RunDoc | null;
+  try {
+    run = await readClient.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let result: Record<string, any>;
+  try {
+    result = await createConvexClients(token).convexClient.mutation(
+      "gateWaivers:createGateWaiver" as any,
+      { runId, reason: body.reason, expiresAt: body.expiresAt },
+    );
+  } catch (error) {
+    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+  }
+
+  const dto = toGateWaiverWriteDto(result);
+  // A CONFLICT, not a failure — the platform reports the EXISTING waiver
+  // rather than granting a second one, because two active waivers over one run
+  // would make "which reason is on the check" a race. 409 so a caller can tell
+  // "yours was recorded" from "someone else's already was", and the body
+  // carries the one in force so they can read whose it is.
+  if (dto.status === "conflict") {
+    return v1Resource(c, dto, 409);
+  }
+  return v1Resource(c, dto, 201);
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/gate-waivers
+// The waiver in force over this run, or null.
+//
+// `run.view`, not the manage tier: a waiver only its grantors can see is not a
+// visible waiver, and visibility is half of what the charter asks for.
+//
+// `eval gate` does NOT call this. The run projection already carries
+// `gateWaiver`, so the gating path folds a waiver in without a second round
+// trip; this is the explicit read, for asking the question on its own.
+evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let waiver: Record<string, any> | null;
+  try {
+    waiver = await convex.query("gateWaivers:getActiveWaiverForRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    // A tier denial here still has to keep its 403 rather than becoming a 500,
+    // and the write translator is the only thing that knows how to read the
+    // backend's `kind: 'forbidden'` shape. Nothing is written on this path;
+    // the name is about which error vocabulary it speaks, not about the verb.
+    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+  }
+
+  return v1Resource(c, { waiver: toGateWaiverDto(waiver) });
+});
+
+// DELETE /v1/projects/:projectId/eval-runs/:runId/gate-waivers/:waiverId
+// Revoke a waiver, putting the gate back.
+//
+// IDEMPOTENT and 200 either way: `already_revoked` is the SUCCESS answer for a
+// second call, and it reports the original revocation rather than restamping
+// it — turning that into an error would push callers toward a retry loop that
+// can only ever overwrite the record of who actually ended the waiver.
+evals.delete(
+  "/projects/:projectId/eval-runs/:runId/gate-waivers/:waiverId",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const runId = c.req.param("runId");
+    const waiverId = c.req.param("waiverId");
+    const token = await getConvexBearerForRequest(c);
+    const readClient = createConvexReadClient(token);
+
+    let run: RunDoc | null;
+    try {
+      run = await readClient.query("testSuites:getTestSuiteRun" as any, {
+        runId,
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+      }
+      throw error;
+    }
+    requireProjectMatch(run, projectId, "Eval run");
+
+    // A PRE-WRITE consistency check, and only where it can be decided.
+    //
+    // The path names a run and a waiver, but the mutation authorizes against
+    // the WAIVER's suite — the run is scope context. So when the run's own
+    // active waiver is known and is a DIFFERENT one, the caller has addressed
+    // this waiver through the wrong run and the answer is a refusal.
+    //
+    // Deliberately before the write. The obvious shape — revoke, then notice
+    // the mismatch, then answer 404 — performs the destructive act it is
+    // refusing and reports it as not-found, which is worse than not checking
+    // at all.
+    //
+    // It is a partial check and that is stated rather than hidden: when the
+    // run carries no active waiver, the named one may be an expired or already
+    // revoked waiver of THIS run (both legitimate to revoke — the audit trail
+    // distinguishes "this was wrong" from "this ran out") or one belonging
+    // elsewhere, and nothing readable here separates the two. That case goes
+    // to the mutation, which is the component that owns the decision.
+    const activeWaiverId = run?.gateWaiver?.id
+      ? String(run.gateWaiver.id)
+      : null;
+    if (activeWaiverId !== null && activeWaiverId !== waiverId) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Gate waiver not found for this run",
+      );
+    }
+
+    let result: Record<string, any>;
+    try {
+      result = await createConvexClients(token).convexClient.mutation(
+        "gateWaivers:revokeGateWaiver" as any,
+        { waiverId },
+      );
+    } catch (error) {
+      throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+    }
+
+    return v1Resource(c, toGateWaiverWriteDto(result));
+  },
+);
 
 // GET /v1/projects/:projectId/eval-runs/:runId/iterations?cursor=&limit=
 // Per-iteration results: tool calls, structured token usage, latency.

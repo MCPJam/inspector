@@ -7,6 +7,10 @@
  */
 import { z } from "zod";
 import { opaqueIdSchema } from "../contract/identity.js";
+import {
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
+} from "../gates.js";
 import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -57,6 +61,8 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformGateWaiver,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
@@ -5360,6 +5366,146 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+// ── Gate waivers ─────────────────────────────────────────────────────────
+//
+// The agent-facing half of the gate-waiver workflow. Every description below
+// states the two things an agent must not have to infer: that the reason is
+// stored unredacted and durable, and that a waiver never makes a failing run
+// pass — it records an override of the gate, and the run keeps its verdict.
+
+const waiveEvalGateInput = evalRunScopedInput.extend({
+  // NOT length- or emptiness-checked here, on purpose. Both refusals carry
+  // copy the platform wrote for the caller (`gate_waiver_reason_empty`,
+  // `gate_waiver_reason_too_long`), and a zod check firing first would replace
+  // that copy with a generic validation error on exactly the boundary cases
+  // where the specific message is the useful part.
+  reason: z
+    .string()
+    .describe(
+      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`,
+    ),
+  // A number, but the range is the platform's to refuse — see `reason`.
+  expiresAt: z
+    .number()
+    .describe(
+      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing.",
+    ),
+});
+
+export type WaiveEvalGateInput = z.infer<typeof waiveEvalGateInput>;
+
+export type WaiveEvalGateResult = {
+  project: SelectedProjectInfo;
+  status: PlatformGateWaiverWriteResult["status"];
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+};
+
+export const waiveEvalGateOperation: PlatformOperation<
+  WaiveEvalGateInput,
+  WaiveEvalGateResult
+> = {
+  name: "waive_eval_gate",
+  title: "Waive an MCPJam eval run's gate",
+  description:
+    "Override a FAILING eval run's release gate, on the record, until an expiry you name. This does NOT make the run pass: the run keeps its failed result, and every surface that honors the waiver — the GitHub Check Run and the CLI's `eval gate` — says the gate was waived, by whom, why, and until when. Requires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it. `status: \"conflict\"` means a waiver was already in force and returns that EXISTING one rather than granting a second; it is a normal result, not a failure.",
+  readOnly: false,
+  inputSchema: waiveEvalGateInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.createGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        reason: input.reason,
+        expiresAt: input.expiresAt,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
+  },
+};
+
+export type GetEvalGateWaiverResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  waiver: PlatformGateWaiver | null;
+};
+
+export const getEvalGateWaiverOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalGateWaiverResult
+> = {
+  name: "get_eval_gate_waiver",
+  title: "Get an MCPJam eval run's gate waiver",
+  description:
+    "Read the waiver currently in force over an eval run's gate, or null when there is none. Available to anyone who can view the run, not only to those who can grant a waiver — a waiver its readers cannot see is not a visible one. `active: false` on a returned waiver means it has lapsed or been revoked and is no longer overriding anything.",
+  readOnly: true,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const { waiver } = await client.getGateWaiver(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      waiver,
+    };
+  },
+};
+
+const revokeEvalGateWaiverInput = evalRunScopedInput.extend({
+  waiverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver.",
+    ),
+});
+
+export type RevokeEvalGateWaiverInput = z.infer<
+  typeof revokeEvalGateWaiverInput
+>;
+
+export const revokeEvalGateWaiverOperation: PlatformOperation<
+  RevokeEvalGateWaiverInput,
+  WaiveEvalGateResult
+> = {
+  name: "revoke_eval_gate_waiver",
+  title: "Revoke an MCPJam eval gate waiver",
+  description:
+    "End a gate waiver early, putting the gate and the GitHub Check Run back where they were. Requires the manage tier. IDEMPOTENT: `status: \"already_revoked\"` means it had already been revoked and reports the ORIGINAL revocation rather than restamping it — that is a success, not an error, and preserves the record of who actually ended the waiver. An already-expired waiver may still be revoked; the audit trail distinguishes 'this was wrong' from 'this ran out'.",
+  readOnly: false,
+  inputSchema: revokeEvalGateWaiverInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.revokeGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        waiverId: input.waiverId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
   },
 };
 
@@ -11287,6 +11433,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,

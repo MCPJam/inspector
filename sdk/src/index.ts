@@ -441,9 +441,11 @@ export type {
   StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
+  StructuredCaseWaiver,
   StructuredSummaryBucket,
   StructuredRunSummary,
   StructuredRunReport,
+  StructuredRunVerdict,
 } from "./structured-reporting.js";
 export {
   toConformanceReport,
@@ -1298,14 +1300,18 @@ export type {
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
+  GATE_WAIVER_REASON_NOTICE,
   GateError,
+  applyGateWaiver,
   assertGate,
   evaluateGates,
   formatGateReport,
+  formatGateWaiverLine,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
   gateOutcomeVerdict,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
@@ -1316,6 +1322,7 @@ export type {
   GateScore,
   GateStatus,
   GateVerdict,
+  GateWaiver,
   ScoreIntegrity,
 } from "./gates.js";
 
