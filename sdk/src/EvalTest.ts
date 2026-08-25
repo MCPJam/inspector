@@ -41,6 +41,7 @@ import {
   mintCaseId,
   opaqueIdSchema,
 } from "./contract/identity.js";
+import type { IterationStatus } from "./contract/chain.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
 import type { Scorer } from "./scorers/types.js";
@@ -358,6 +359,20 @@ export interface EvalTestRunOptions {
  */
 export interface IterationResult {
   passed: boolean;
+  /**
+   * What happened to this iteration's EXECUTION, independent of `passed`.
+   *
+   * Always set on a terminal iteration: `completed` once the iteration ran and
+   * was graded (including when it graded FAILED — that is the server's verdict,
+   * not an execution failure), `timed_out` when the iteration budget expired,
+   * and `failed` when it threw and retries were exhausted.
+   *
+   * Optional only because `IterationResult` is also constructed by callers
+   * outside this file; consumers that need a status use
+   * `resolveIterationLifecycleStatus`, which keeps the legacy inference in one
+   * named place instead of re-deriving a status from a verdict.
+   */
+  status?: IterationStatus;
   latencies: LatencyBreakdown[];
   tokens: { total: number; input: number; output: number };
   error?: string;
@@ -633,6 +648,7 @@ export class EvalTest {
       await semaphore.acquire();
       try {
         let lastError: string | undefined;
+        let lastAttemptTimedOut = false;
         let iterationAgent: HostExecutor | undefined;
 
         for (let attempt = 0; attempt <= retries; attempt++) {
@@ -698,6 +714,13 @@ export class EvalTest {
               // `expectedToolCalls` and each predicate each contribute one
               // gating score of exactly that value.
               passed: graded.passed,
+              // The iteration RAN. `graded.passed === false` is the server
+              // under test failing its task, which is not an execution
+              // failure — only the timeout stopped execution short. Bound to
+              // the same condition that stamps the timeout error, so a test
+              // that finished DESPITE a fired abort is not retroactively
+              // reclassified as stopped.
+              status: timeoutTriggered && !passed ? "timed_out" : "completed",
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
@@ -712,6 +735,7 @@ export class EvalTest {
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
+            lastAttemptTimedOut = timeoutTriggered;
 
             if (attempt < retries) {
               await sleep(100 * Math.pow(2, attempt));
@@ -750,6 +774,11 @@ export class EvalTest {
 
         return {
           passed: false,
+          // Retries are exhausted: the EXECUTION failed rather than the task
+          // being graded down. `timed_out` when the last attempt was stopped by
+          // the iteration budget — the same distinction the run-level verdict
+          // policy draws when it decides which trials it could measure.
+          status: lastAttemptTimedOut ? "timed_out" : "failed",
           ...promptMetrics,
           error: lastError,
           retryCount: retries,
