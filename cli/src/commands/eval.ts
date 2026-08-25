@@ -63,6 +63,7 @@ import {
   evaluateCompareGates,
   formatGateReport,
   formatSuiteFileFindings,
+  gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
   MAX_SUITE_FILE_BYTES,
@@ -144,7 +145,6 @@ import {
 import {
   parseReporterFormat,
   writeEvalDecisionSummary,
-  writeJsonArtifact,
   writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
@@ -1053,6 +1053,17 @@ function gateReportCase(
     title: "Eval gate",
     category: "gate",
     passed,
+    // Only a real FAILED gate is a confirmed regression. `incomplete` and
+    // `usage_error` still fail this row (nothing was established either
+    // way), but reporting them as `breaking` — the same class a genuine
+    // failure gets — would claim a defect the run never observed. Mirrors
+    // `gateCase` in sdk/src/run-compare.ts.
+    classification:
+      report.outcome === "failed"
+        ? "breaking"
+        : passed
+          ? "non_breaking"
+          : "informational",
     ...(passed
       ? {}
       : {
@@ -1331,23 +1342,41 @@ async function runEvalGate(
     // 1: a CI job that fails a release on a flaked request, and calls it a
     // regression, teaches people to ignore the gate.
     const detail = error instanceof Error ? error.message : String(error);
-    writeResult(
-      {
-        gate: {
-          outcome: "incomplete",
-          scoreIntegrity: "unknown",
-          verdicts: [
-            {
-              gate: "fetch",
-              status: "non_gateable",
-              message: `could not read the run: ${detail}`,
-            },
-          ],
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: "fetch",
+          status: "non_gateable",
+          message: `could not read the run: ${detail}`,
         },
-        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
-      },
-      globalOptions.format
-    );
+      ],
+    };
+    // `--reporter`/`--out` still need to be honored on an infrastructure
+    // failure: a CI step expecting the reporter-selected artifact must not
+    // find raw JSON on stdout, or find `--out` never written at all.
+    const structured = needsReport
+      ? buildEvalRunReport([], {
+          cases: [gateReportCase(report)],
+          verdict: gateOutcomeVerdict(report.outcome),
+        })
+      : undefined;
+    if (options.out && structured) {
+      await writeReporterArtifact(
+        options.out,
+        reporter ?? "json-summary",
+        structured
+      );
+    }
+    if (reporter && structured) {
+      writeReporterResult(reporter, structured);
+    } else {
+      writeResult(
+        { gate: report, exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE },
+        globalOptions.format
+      );
+    }
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
   }
@@ -1369,6 +1398,7 @@ async function runEvalGate(
           : [],
         {
           cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(outcome.report.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1830,7 +1860,10 @@ async function writeCompareResult(
   structured: StructuredRunReport | undefined
 ): Promise<void> {
   if (args.out && structured) {
-    await writeJsonArtifact(args.out, structured);
+    // `--out` and `--reporter` are two terminals for the same artifact: the
+    // file gets whichever format `--reporter` selected (json-summary by
+    // default), same as `eval run`/`eval gate`, not always raw JSON.
+    await writeReporterArtifact(args.out, args.reporter ?? "json-summary", structured);
   }
   if (args.reporter && structured) {
     writeReporterResult(args.reporter, structured);
@@ -2322,7 +2355,7 @@ export function registerEvalCommands(program: Command): void {
         "Maximum time to wait for completion (default: 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Render the completed run report to stdout"
       )
       .option(
@@ -3162,7 +3195,7 @@ export function registerEvalCommands(program: Command): void {
         "Give up waiting after this many milliseconds (default 600000)"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
       .option(
@@ -3218,10 +3251,13 @@ export function registerEvalCommands(program: Command): void {
         "Fail if p95 end-to-end latency rose by more than this many milliseconds"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
-      .option("--out <path>", "Write the structured report to a JSON file").action(
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
+      ).action(
     async (
       options: PlatformOptions &
         EvalCompareOptions & {

@@ -420,7 +420,7 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
-Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead. When `--reporter` is present, the same report is also written to stdout.
+Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only — traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
 <Warning>
 **`eval run --wait` sets a verdict-based exit code.** `0` pass, `1` a completed run's verdict failed (the ONLY condition that produces `1`), `2` usage error or an invalid suite file, `3` auth failed (no credential, or the platform rejected it, at launch or mid-wait), `4` a connection/setup failure this CLI itself observed before evaluation ran (or a local `--out` write failure), `5` no valid verdict — `inconclusive`, a null/unrecognized result, a run status of failed/cancelled/timed-out, or a wait that hit its deadline. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`.

@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   formatEvalDecisionSummary,
+  renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
@@ -9,7 +10,7 @@ import { writeFileAtomic } from "./atomic-write.js";
 import { operationalError, usageError, writeResult } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 
-export type ReporterFormat = "json-summary" | "junit-xml";
+export type ReporterFormat = "json-summary" | "junit-xml" | "html";
 
 export function parseReporterFormat(
   value: string | undefined,
@@ -18,12 +19,12 @@ export function parseReporterFormat(
     return undefined;
   }
 
-  if (value === "json-summary" || value === "junit-xml") {
+  if (value === "json-summary" || value === "junit-xml" || value === "html") {
     return value;
   }
 
   throw usageError(
-    `Invalid reporter "${value}". Use "json-summary" or "junit-xml".`,
+    `Invalid reporter "${value}". Use "json-summary", "junit-xml", or "html".`,
   );
 }
 
@@ -33,6 +34,11 @@ export function writeReporterResult(
 ): void {
   if (reporter === "junit-xml") {
     process.stdout.write(renderStructuredRunJUnitXml(report));
+    return;
+  }
+
+  if (reporter === "html") {
+    process.stdout.write(renderStructuredRunHtml(report));
     return;
   }
 
@@ -89,7 +95,9 @@ export async function writeReporterArtifact(
   const body =
     reporter === "junit-xml"
       ? renderStructuredRunJUnitXml(report)
-      : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
+      : reporter === "html"
+        ? renderStructuredRunHtml(report)
+        : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
 
   try {
     return await writeFileAtomic(resolvedPath, body, { createParents: true });

@@ -117,7 +117,7 @@ When `--host` is set, the output includes a `host` field and a `toolsDroppedVisi
 | `--tool-args-stdin` | Read tool arguments JSON from stdin |
 | `--validate-response` | Validate the MCP tool-call envelope returned by the server |
 | `--expect-success` | Fail when the tool result reports `isError` |
-| `--reporter <reporter>` | `json-summary` or `junit-xml` validation report output |
+| `--reporter <reporter>` | `json-summary`, `junit-xml`, or `html` validation report output |
 | `--debug-out <path>` | Write debug artifact to file |
 | `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default in a TTY |
 | `--require-render` | Treat skipped Inspector renders as errors (requires `--ui`) |
@@ -992,7 +992,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
-| `--reporter <json-summary\|junit-xml>` | No | Write the completed structured report to stdout; requires `--wait` |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
@@ -1205,7 +1205,7 @@ run before evaluating it.
 | `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
-| `--reporter <json-summary\|junit-xml>` | No | Write the structured eval and gate report to stdout |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
 
 Report files are flushed before gate exit codes are set, including failed and
