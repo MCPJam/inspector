@@ -18,6 +18,10 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import { asSchema } from "ai";
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
+  HARNESS_MCP_DELIVERY,
+  type HarnessMcpDelivery,
+} from "@/shared/harness-mcp-delivery";
+import {
   parseHarnessToolName,
   serializeHarnessMcpJson,
   type HarnessMcpJson,
@@ -176,8 +180,15 @@ export type HarnessBuiltinToolInfo = {
  * The two must never both run for one turn or the model would see every MCP
  * tool twice (once natively, once as a host tool); the adapter union below
  * makes that unrepresentable.
+ *
+ * WHICH mode each harness uses is declared in `@/shared/harness-mcp-delivery`,
+ * not here: the CLIENT has to derive its Behavior-tab promises from the same
+ * answer (a knob that acts at tool-construction time bites on `host-executed`
+ * and cannot on `native`), and it cannot import this server-only module. The
+ * adapters below read that map, and `__tests__/registry.test.ts` asserts the two
+ * can never disagree.
  */
-export type HarnessMcpDelivery = "native" | "host-executed";
+export type { HarnessMcpDelivery };
 
 type HarnessRuntimeAdapterBase = {
   id: HarnessId;
@@ -622,8 +633,10 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // tool-approval-request and resumes with the decision), same path as native.
   supportsHostExecutedToolApproval: true,
   // The CLI's own MCP client connects to the servers from inside the sandbox,
-  // via the `.mcp.json` written below — real native function calling.
-  mcpDelivery: "native",
+  // via the `.mcp.json` written below — real native function calling. Read from
+  // the shared declaration so the host editor's promises about which knobs bite
+  // move with this, instead of being re-asserted by hand on the client.
+  mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
   prepareSkills: prepareClaudeCodeSkills,
@@ -688,7 +701,10 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // selected server's tools into HOST-EXECUTED AI SDK tools instead; the bridge
   // relays the invocations back out (`cli-relay.ts`) and MCPJam runs them
   // in-process. See `HarnessMcpDelivery` and `host-executed-mcp-tools.ts`.
-  mcpDelivery: "host-executed",
+  // Read from the shared declaration — the client's Behavior tab derives from
+  // the same value, so "MCPJam builds these tools, so the host's construction
+  // knobs apply" is stated once for both sides.
+  mcpDelivery: HARNESS_MCP_DELIVERY.codex,
   // INS-8: skills ARE delivered. `codex-harness.ts` writes every `skills` entry
   // to `$HOME/.agents/skills/<name>/SKILL.md` during `doStart`, before it spawns
   // the CLI, and points the process at that HOME — the same delivery contract

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import {
   getHarnessAdapter,
@@ -309,6 +310,30 @@ const toUserMessage = (text) => ({
       // adds MCP tools to its host-executed tool set and the model never sees
       // the same tool twice.
       expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+    });
+
+    it("every adapter's delivery mode IS the shared declaration the client reads", () => {
+      // `@/shared/harness-mcp-delivery` is the one declaration of which mode a
+      // harness uses, because the CLIENT has to derive Behavior-tab promises
+      // from it (a tool-construction-time knob like `respectToolVisibility`
+      // bites on host-executed delivery and cannot on native) and cannot import
+      // this server-only registry.
+      //
+      // This is the anti-drift guard for that split. If someone flips an
+      // adapter's `mcpDelivery` back to a literal — or changes the shared map
+      // without the adapters — the host editor would start disabling a control
+      // that works (or enabling one that doesn't) with no compile error. Fail
+      // here instead.
+      for (const id of registeredHarnessIds()) {
+        expect(getHarnessAdapter(id).mcpDelivery).toBe(
+          HARNESS_MCP_DELIVERY[id]
+        );
+      }
+      // …and the shared map covers exactly the SDK's harness ids, so a new
+      // harness cannot get an adapter without a delivery declaration.
+      expect(Object.keys(HARNESS_MCP_DELIVERY).sort()).toEqual(
+        [...HARNESS_IDS].sort()
+      );
     });
   });
 

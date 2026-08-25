@@ -84,6 +84,23 @@ runtime that cannot pause on its own native tools is refused under
 `requireToolApproval` either way — closing a gap where an eval or synthetic run
 (which skips the pre-flight) could execute host-executed built-ins unapproved.
 
+The host editor now tells the truth about which of these knobs bite. **Respect tool
+visibility** is editable on a Codex host, because host-executed delivery honors it;
+it stays gray on Claude Code, whose CLI lists tools from inside the sandbox through
+a proxy that relays `tools/list` unmodified. Crucially, the editor no longer
+*declares* that per harness — a hardcoded `enforced: true` is a promise about
+server behavior that nothing keeps in sync, and it went stale the same day this
+projection started reading the knob. Which mode a harness uses is now stated once,
+in a module the client and the runtime registry both read, and every
+tool-construction-time control is derived from it, so changing a harness's delivery
+moves the runtime and the editor's claim about it in one edit. A test asserts the
+registry's adapters and that declaration can never disagree.
+
+The two tool-approval notes were corrected while auditing the same table. Both said
+"not enforced yet", which describes the one outcome that never happens: a harness
+host requiring approval is **refused** — before streaming on the chat routes, and by
+an in-turn backstop everywhere else — rather than run unapproved. They now say so.
+
 Fidelity caveat: this is not equivalent to Claude Code's native MCP client. The
 bridge injects each tool's description into the prompt and the model invokes
 them through a CLI shim, so tool-selection behavior differs from a native MCP
