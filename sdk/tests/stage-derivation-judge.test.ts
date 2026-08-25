@@ -66,7 +66,7 @@ const userValue = (rows: StageResultRow[]) =>
 
 describe("the mirror the backend pins against", () => {
   test("carries the five judge reasons, in the analyzer version that added them", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(3);
+    expect(STAGE_ANALYZER_VERSION).toBe(4);
     for (const reason of [
       "judgeObserved",
       "judgePartial",

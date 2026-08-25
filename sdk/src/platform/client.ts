@@ -20,6 +20,7 @@ import type {
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunDisclosure,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -1377,6 +1378,75 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
       { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-suites/{id}/run-disclosure` — the pre-run
+   * disclosure for a launch plan: what happens to the run's content, keyed by
+   * the SAME destination-affecting subset `createEvalRun` uses
+   * (`caseIds`/`environmentId`/`environmentIds`). Deliberately NOT the
+   * estimator's full arg set — `iterationOverride`/`planCount` only scale
+   * volume, which is not part of this contract, and the inspector server
+   * rejects them rather than silently ignoring them.
+   *
+   * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
+   * `details.reason === "contract_unavailable"` against an inspector
+   * deployment too old to compute this — never treat a missing disclosure as
+   * "nothing to disclose". This is a GUARANTEE only when the deployment's
+   * missing-function error reaches the client unredacted (every non-production
+   * Convex environment, and a production one whose redaction the route can
+   * unambiguously identify as a missing function). Production Convex can
+   * redact that same failure to a generic "Server Error" indistinguishable
+   * from a genuine handler crash; the route disambiguates what it safely can
+   * (a caller who cannot see the suite at all still gets a 404, never this
+   * code), but an ambiguous redacted failure on a suite the caller CAN see
+   * surfaces as a 502 `SERVER_UNREACHABLE` instead — this route has no way to
+   * independently confirm "not deployed yet" over "deployed and broken" in
+   * that one case, and guessing `contract_unavailable` would risk hiding a
+   * real incident. A caller cannot rely on this code alone to detect an
+   * old deployment in production; a 502 does not imply the contract is
+   * available either.
+   */
+  getEvalRunDisclosure(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseIds?: string[];
+      environmentId?: string;
+      environmentIds?: string[];
+      /**
+       * Disclose for a HOST-axis launch — the attached host a run would be
+       * stamped with (G4c). Mutually exclusive with `environmentId`/
+       * `environmentIds`: a launch plan resolves on exactly one axis, and the
+       * route rejects the combination with a 400 rather than letting it reach
+       * the backend as an ambiguous query.
+       *
+       * `runnerCapabilities` is deliberately NOT a parameter here. The
+       * inspector route asserts it from the executing process, which is the
+       * only honest source for what that process can run; a client-supplied
+       * value could claim a harness capability the runner does not have.
+       */
+      namedHostId?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDisclosure> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/run-disclosure`,
+      {
+        query: {
+          caseIds: params.caseIds?.length ? params.caseIds.join(",") : undefined,
+          environmentId: params.environmentId,
+          environmentIds: params.environmentIds?.length
+            ? params.environmentIds.join(",")
+            : undefined,
+          host: params.namedHostId,
+        },
+      },
       options,
     );
   }

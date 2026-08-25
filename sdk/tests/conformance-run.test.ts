@@ -89,6 +89,46 @@ describe("conformance run bundle", () => {
     expect(detectConformanceCiMetadata({})).toBeUndefined();
   });
 
+  it("enters the protocol suite from an MCPServerConfig without a protocolVersion", async () => {
+    // Regression: the protocol case spread `server` (which has `url`) into
+    // MCPConformanceConfig (which needs `serverUrl`), so every hosted protocol
+    // run died in normalization with "Cannot read properties of undefined
+    // (reading 'trim')" and was recorded as a bare could-not-run skip. The
+    // suite must reach the server and settle like apps/tasks do — here every
+    // request answers 401, mirroring an OAuth-protected target.
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(
+      async () => new Response("Unauthorized", { status: 401 })
+    ) as never;
+    try {
+      const events: Array<{ status: string; error?: string }> = [];
+      const report = await runConformance({
+        server: { url: "http://127.0.0.1:65535/mcp" },
+        suites: ["protocol"],
+        protocol: { checkIds: ["server-initialize"], checkTimeout: 2_000 },
+        onProgress: (event) => {
+          events.push({ status: event.status, error: event.error });
+        },
+      });
+      for (const event of events) {
+        expect(event.error ?? "").not.toMatch(/reading 'trim'/);
+      }
+      expect(events.some((event) => event.status === "failed")).toBe(false);
+      const protocol = report.reports.protocol;
+      expect(protocol).toBeDefined();
+      const cases = protocol!.groups.flatMap((group) => group.cases);
+      expect(cases.length).toBeGreaterThan(0);
+      // The auth failure is reported as a check verdict with JSON-safe
+      // details, never as a suite crash.
+      expect(() => JSON.stringify(report)).not.toThrow();
+      for (const reportCase of cases) {
+        expect(reportCase.error ?? "").not.toMatch(/reading 'trim'/);
+      }
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }, 30_000);
+
   it("throws when OAuth is requested without a strategy config", async () => {
     await expect(
       runConformance({
