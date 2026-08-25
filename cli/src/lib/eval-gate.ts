@@ -19,6 +19,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformRunCompare,
+  PlatformRunCompareCase,
 } from "@mcpjam/sdk/platform";
 import {
   comparePolicyFromOptions,
@@ -326,6 +327,43 @@ export function mergeGateReports(
   };
 }
 
+/** Why one case does not belong to the comparable population. */
+type IncompatibleCaseReason =
+  | "case_added"
+  | "case_removed"
+  | "scenario_config_changed"
+  | "evaluation_config_changed"
+  | "iteration_weighting_unequal";
+
+/**
+ * Every reason ONE case is excluded from the comparable population, using
+ * the SAME predicates `compareGateInputFrom` aggregates into the whole-run
+ * booleans — a case can be case-set-stable and STILL be individually
+ * responsible for `scenarioConfigChanged`, `evaluationConfigChanged`, or
+ * `iterationWeightingEqual: false`, and `comparableCaseIds` must not claim
+ * a case the whole-run verdict did not actually trust.
+ */
+function incompatibilityReasonsFor(
+  row: PlatformRunCompareCase
+): IncompatibleCaseReason[] {
+  const reasons: IncompatibleCaseReason[] = [];
+  if (row.status === "new_case") reasons.push("case_added");
+  if (row.status === "removed_case") reasons.push("case_removed");
+  if (row.configChanged) reasons.push("scenario_config_changed");
+  if (row.evaluationConfigChanged) reasons.push("evaluation_config_changed");
+  // Mirrors `iterationWeightingEqualFrom`'s own skip condition: a case
+  // absent on either side has no counterpart to weigh against, and is
+  // already covered by `case_added`/`case_removed` above.
+  if (
+    row.base.outcome !== "absent" &&
+    row.compare.outcome !== "absent" &&
+    row.base.iterationIds.length !== row.compare.iterationIds.length
+  ) {
+    reasons.push("iteration_weighting_unequal");
+  }
+  return reasons;
+}
+
 /**
  * Baseline-compatibility provenance for the gate report.
  *
@@ -342,6 +380,10 @@ export function buildBaselineProvenance(
   compare: PlatformRunCompare,
   input: CompareGateInput
 ): Record<string, unknown> {
+  const classified = compare.cases.map((row) => ({
+    row,
+    reasons: incompatibilityReasonsFor(row),
+  }));
   return {
     requestedBaseline,
     baseline: compare.baseline,
@@ -357,16 +399,16 @@ export function buildBaselineProvenance(
       // The pin names "comparable case ids" explicitly: which cases an
       // archived report's verdict actually covers, and which ones a
       // `caseSetChanged: true` flag alone does not name.
-      comparableCaseIds: compare.cases
-        .filter(
-          (row) => row.status !== "new_case" && row.status !== "removed_case"
-        )
-        .map((row) => row.caseKey),
-      incompatibleCases: compare.cases
-        .filter(
-          (row) => row.status === "new_case" || row.status === "removed_case"
-        )
-        .map((row) => ({ caseKey: row.caseKey, status: row.status })),
+      comparableCaseIds: classified
+        .filter(({ reasons }) => reasons.length === 0)
+        .map(({ row }) => row.caseKey),
+      incompatibleCases: classified
+        .filter(({ reasons }) => reasons.length > 0)
+        .map(({ row, reasons }) => ({
+          caseKey: row.caseKey,
+          status: row.status,
+          reasons,
+        })),
     },
     // Dimensions the pinned contract requires but the `/compare` wire does
     // not carry today (E4b / backend follow-up work). Never invented, never

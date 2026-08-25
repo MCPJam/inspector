@@ -730,11 +730,143 @@ test("buildBaselineProvenance: names the added/removed cases behind caseSetChang
   });
   const compatibility = provenance.compatibility as {
     comparableCaseIds: string[];
-    incompatibleCases: Array<{ caseKey: string; status: string }>;
+    incompatibleCases: Array<{
+      caseKey: string;
+      status: string;
+      reasons: string[];
+    }>;
   };
   assert.deepEqual(compatibility.comparableCaseIds, ["ck_shared"]);
   assert.deepEqual(compatibility.incompatibleCases, [
-    { caseKey: "ck_new", status: "new_case" },
-    { caseKey: "ck_removed", status: "removed_case" },
+    { caseKey: "ck_new", status: "new_case", reasons: ["case_added"] },
+    { caseKey: "ck_removed", status: "removed_case", reasons: ["case_removed"] },
+  ]);
+});
+
+test("buildBaselineProvenance: a case-set-stable case can still be individually incompatible", () => {
+  // A case can survive `caseSetChanged` (it exists on both sides) and STILL
+  // be the one responsible for `scenarioConfigChanged`,
+  // `evaluationConfigChanged`, or unequal iteration weighting.
+  // `comparableCaseIds` must not claim a case the whole-run verdict never
+  // actually trusted.
+  const compare = compareWire({
+    cases: [
+      {
+        caseKey: "ck_clean",
+        title: "Clean",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b1"],
+          representativeIterationId: "b1",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c1"],
+          representativeIterationId: "c1",
+          error: null,
+        },
+      },
+      {
+        caseKey: "ck_reconfigured",
+        title: "Reconfigured",
+        status: "changed",
+        configChanged: true,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b2"],
+          representativeIterationId: "b2",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c2"],
+          representativeIterationId: "c2",
+          error: null,
+        },
+      },
+      {
+        caseKey: "ck_regraded",
+        title: "Regraded",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: true,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b3"],
+          representativeIterationId: "b3",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c3"],
+          representativeIterationId: "c3",
+          error: null,
+        },
+      },
+      {
+        caseKey: "ck_reweighted",
+        title: "Reweighted",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b4"],
+          representativeIterationId: "b4",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c4", "c5"],
+          representativeIterationId: "c4",
+          error: null,
+        },
+      },
+    ],
+  });
+  const provenance = buildBaselineProvenance("run_base", compare, {
+    base: { iterations: { total: 70, passed: 56 } },
+    compare: { iterations: { total: 80, passed: 48 } },
+    deterministicScoreRegressions: [],
+    scoreDeltasAvailable: false,
+    caseSetChanged: false,
+    scenarioConfigChanged: true,
+    evaluationConfigChanged: true,
+    iterationWeightingEqual: false,
+  });
+  const compatibility = provenance.compatibility as {
+    comparableCaseIds: string[];
+    incompatibleCases: Array<{
+      caseKey: string;
+      status: string;
+      reasons: string[];
+    }>;
+  };
+  assert.deepEqual(compatibility.comparableCaseIds, ["ck_clean"]);
+  assert.deepEqual(compatibility.incompatibleCases, [
+    {
+      caseKey: "ck_reconfigured",
+      status: "changed",
+      reasons: ["scenario_config_changed"],
+    },
+    {
+      caseKey: "ck_regraded",
+      status: "unchanged_passed",
+      reasons: ["evaluation_config_changed"],
+    },
+    {
+      caseKey: "ck_reweighted",
+      status: "unchanged_passed",
+      reasons: ["iteration_weighting_unequal"],
+    },
   ]);
 });

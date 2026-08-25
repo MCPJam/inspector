@@ -28,10 +28,14 @@ path. `eval gate`'s four-code contract is unchanged.
 
 The report (`--reporter`/`--out`) carries baseline provenance — both run
 ids, the resolved baseline policy, every compatibility signal that was
-evaluated, and the comparable case ids the verdict actually covers (plus
-the added/removed ones behind a `caseSetChanged: true`, named rather than
-left for the reader to re-derive). Dimensions the comparison wire does not
-carry yet (model/provider, host/harness, server/environment identity,
+evaluated, and the comparable case ids the verdict actually covers. A case
+can survive `caseSetChanged` (it exists on both sides) and still be
+individually responsible for a config change or unequal iteration
+weighting, so each excluded case is named with its own reason
+(`case_added`, `case_removed`, `scenario_config_changed`,
+`evaluation_config_changed`, `iteration_weighting_unequal`) rather than
+being silently counted as comparable. Dimensions the comparison wire does
+not carry yet (model/provider, host/harness, server/environment identity,
 config hashes beyond the evaluation config hash) are recorded explicitly as
 `"notRecorded"` rather than omitted.
 
