@@ -78,7 +78,7 @@ export function formatPercent(rate: number): string {
  * name for it would be a guess (and `formatCriterion` has no id to fall back
  * to).
  */
-function findingName(finding: SwarmOverviewFinding): string {
+export function findingName(finding: SwarmOverviewFinding): string {
   if (finding.kind !== undefined && isKnownPredicateKind(finding.kind)) {
     return formatCriterion({ ...finding, kind: finding.kind });
   }
@@ -94,7 +94,7 @@ function findingName(finding: SwarmOverviewFinding): string {
  * `0 >= 0/2` is true, so an unguarded comparison would flag an empty run as
  * blocking on the one shape where we know nothing at all.
  */
-function findingSeverity(
+export function findingSeverity(
   finding: SwarmOverviewFinding
 ): "blocking" | "degraded" {
   if (finding.sessionsGraded <= 0) return "degraded";
@@ -104,7 +104,7 @@ function findingSeverity(
 }
 
 /** "4 of 15 sessions" — the graded denominator only. */
-function findingSessionLabel(finding: SwarmOverviewFinding): string {
+export function findingSessionLabel(finding: SwarmOverviewFinding): string {
   return `${finding.failCount} of ${finding.sessionsGraded} session${
     finding.sessionsGraded === 1 ? "" : "s"
   }`;

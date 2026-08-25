@@ -270,8 +270,12 @@ export function parseUserTestingDetailTab(
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
-export type SwarmDetailTab = "insights" | "sessions";
+/**
+ * Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab.
+ * Findings is feature-flagged: the URL always parses, and `SwarmRunDetail`
+ * coerces it back to Insights when the flag is off.
+ */
+export type SwarmDetailTab = "insights" | "sessions" | "findings";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -303,6 +307,7 @@ export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   const params = new URLSearchParams(search);
   const value = params.get("tab");
   if (value === "sessions") return "sessions";
+  if (value === "findings") return "findings";
   if (value === "insights" || value === "personas" || value === "overview") {
     return "insights";
   }

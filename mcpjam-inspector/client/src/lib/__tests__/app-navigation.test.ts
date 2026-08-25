@@ -99,6 +99,15 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
   });
+
+  it("parses the feature-flagged findings tab", () => {
+    // Always parses — SwarmRunDetail coerces it to insights when the flag is
+    // off, so the URL layer stays flag-agnostic.
+    expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
+      "/swarms/wave-1?tab=findings"
+    );
+  });
 });
 
 describe("User Testing detail / edit navigation", () => {

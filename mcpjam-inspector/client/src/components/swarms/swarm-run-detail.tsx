@@ -59,6 +59,8 @@ import {
   SwarmWaveFindingsList,
   type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
+import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
+import { useSwarmFindingsTabEnabled } from "@/hooks/useSwarmFindingsTabEnabled";
 
 const DETAIL_TAB_OPTIONS = [
   { value: "insights" as const, label: "Insights" },
@@ -68,7 +70,15 @@ const DETAIL_TAB_OPTIONS = [
 export interface SwarmRunDetailProps {
   swarmId: string;
   projectId: string | null;
-  personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
+  /** Avatar-look fields are optional pass-through: SwarmsTab already hands
+   * full persona rows, and the Findings tab reads the pixel-golem look. */
+  personas: ReadonlyArray<{
+    _id: string;
+    name: string;
+    role?: string;
+    avatarShape?: number;
+    avatarPalette?: number;
+  }>;
   hosts?: ReadonlyArray<{ hostId: string; name: string }>;
   /**
    * Relaunch each non-archived journey in the wave. Parent owns the launch
@@ -91,16 +101,31 @@ export function SwarmRunDetail({
   const tabParam = useCurrentSearchParam("tab");
   const sessionParam = useCurrentSearchParam("session");
   const selParam = useCurrentSearchParam("sel");
+  const findingsEnabled = useSwarmFindingsTabEnabled();
   // Pass both tab and session: a `?session=` deep-link without `tab` must open
   // Sessions. Building `?tab=` alone used to strip session and land on Insights.
-  const tab: SwarmDetailTab = parseSwarmDetailTab(
+  const parsedTab: SwarmDetailTab = parseSwarmDetailTab(
     (() => {
       const search = new URLSearchParams();
       if (tabParam) search.set("tab", tabParam);
       if (sessionParam) search.set("session", sessionParam);
       const query = search.toString();
       return query ? `?${query}` : "";
-    })(),
+    })()
+  );
+  // Flag off ⇒ a `?tab=findings` deep link lands on Insights — no surface
+  // outside this component knows the feature exists.
+  const tab: SwarmDetailTab =
+    parsedTab === "findings" && !findingsEnabled ? "insights" : parsedTab;
+  const tabOptions = useMemo(
+    () =>
+      findingsEnabled
+        ? [
+            ...DETAIL_TAB_OPTIONS,
+            { value: "findings" as const, label: "Findings" },
+          ]
+        : [...DETAIL_TAB_OPTIONS],
+    [findingsEnabled]
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
@@ -111,16 +136,16 @@ export function SwarmRunDetail({
   const queryable = shouldQueryProjectId(projectId);
   const overview = useQuery(
     SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any,
+    (queryable ? { projectId } : "skip") as any
   ) as SwarmOverview | undefined;
 
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview],
+    [overview]
   );
   const wave = useMemo(
     () => (overview === undefined ? null : resolveSwarmWave(waves, swarmId)),
-    [overview, waves, swarmId],
+    [overview, waves, swarmId]
   );
 
   // Same subscription the insights rail mounts — Convex dedupes identical
@@ -131,7 +156,7 @@ export function SwarmRunDetail({
     SWARM_QUERIES.getWaveSignals as any,
     (queryable && waveGroupId
       ? { projectId, swarmRunGroupId: waveGroupId }
-      : "skip") as any,
+      : "skip") as any
   ) as SwarmWaveSignals | null | undefined;
 
   const handleTabChange = useCallback(
@@ -141,10 +166,10 @@ export function SwarmRunDetail({
           tab: next,
           sel: selParam ?? undefined,
         }),
-        { replace: true },
+        { replace: true }
       );
     },
-    [navigate, selParam, swarmId],
+    [navigate, selParam, swarmId]
   );
 
   const handleShare = useCallback(async () => {
@@ -168,10 +193,10 @@ export function SwarmRunDetail({
           tab: "sessions",
           session: sessionId,
           sel: selParam ?? undefined,
-        }),
+        })
       );
     },
-    [navigate, selParam, swarmId],
+    [navigate, selParam, swarmId]
   );
 
   /**
@@ -202,13 +227,13 @@ export function SwarmRunDetail({
       buildSwarmPath(swarmId, {
         tab,
         sel: selParam ?? undefined,
-      }),
+      })
     );
   }, [navigate, selParam, swarmId, tab]);
 
   const handleSelectionChange = useCallback(
     (
-      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null,
+      themes: ReadonlyArray<Pick<ThemeRef, "dimension" | "clusterId">> | null
     ) => {
       navigate(
         buildSwarmPath(swarmId, {
@@ -216,17 +241,17 @@ export function SwarmRunDetail({
           session: sessionParam ?? undefined,
           sel: themes ? serializeSelectionParam(themes) : undefined,
         }),
-        { replace: true },
+        { replace: true }
       );
     },
-    [navigate, sessionParam, swarmId, tab],
+    [navigate, sessionParam, swarmId, tab]
   );
 
   const launchableJourneyIds = useMemo(() => {
     if (!wave) return [];
     return [
       ...new Set(
-        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId),
+        wave.runs.filter((r) => !r.journeyArchived).map((r) => r.journeyRefId)
       ),
     ];
   }, [wave]);
@@ -239,11 +264,11 @@ export function SwarmRunDetail({
       toast.success(
         launchableJourneyIds.length === 1
           ? "Swarm run started"
-          : `Started ${launchableJourneyIds.length} goals`,
+          : `Started ${launchableJourneyIds.length} goals`
       );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not start swarm run",
+        err instanceof Error ? err.message : "Could not start swarm run"
       );
     } finally {
       setRunAgainBusy(false);
@@ -292,7 +317,7 @@ export function SwarmRunDetail({
   const runIds = wave.runs.map((r) => r.runId);
   const runLabels = new Map(wave.runs.map((r) => [r.runId, r.journeyName]));
   const goalLabels = new Map(
-    wave.runs.map((r) => [r.journeyRefId, r.journeyName]),
+    wave.runs.map((r) => [r.journeyRefId, r.journeyName])
   );
 
   return (
@@ -351,7 +376,7 @@ export function SwarmRunDetail({
         }
         tabs={{
           value: tab,
-          options: DETAIL_TAB_OPTIONS,
+          options: tabOptions,
           onChange: handleTabChange,
           ariaLabel: "Swarm run view",
           indicatorId: "swarm-run-detail",
@@ -505,6 +530,16 @@ export function SwarmRunDetail({
                 />
               )}
             </div>
+          </div>
+        ) : null}
+        {tab === "findings" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+            <SwarmFindingsTab
+              wave={wave}
+              waveSignals={waveSignals}
+              personas={personas}
+              onOpenSession={handleOpenSession}
+            />
           </div>
         ) : null}
         {tab === "sessions" && projectId ? (
