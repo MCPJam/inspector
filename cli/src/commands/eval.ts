@@ -47,6 +47,7 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
+  CliError,
   cliError,
   operationalError,
   setProcessExitCode,
@@ -77,6 +78,7 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -117,6 +119,12 @@ import {
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  classifyLaunchErrorExitCode,
+  evalRunWaitExitCode,
+  worstOf,
+  type EvalRunWaitRunOutcome,
+} from "../lib/eval-run-exit-code.js";
+import {
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
@@ -137,6 +145,7 @@ import {
   writeReporterResult,
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import { preflightCloudCredentials } from "../lib/cloud-context.js";
 import {
   addProjectOption,
   platformOptionsOf,
@@ -2376,7 +2385,26 @@ export function registerEvalCommands(program: Command): void {
           : DEFAULT_RUN_WAIT_TIMEOUT_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
-      const result = await runPlatformCommand(
+      // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
+      // `runPlatformOperation` preflight (below) stays the chokepoint every
+      // other Cloud command relies on, including `eval gate`'s exit 3 =
+      // "incomplete". Calling the same check here first makes a missing
+      // credential unambiguous before the launch even starts; the internal
+      // preflight then passes identically.
+      if (options.wait) {
+        try {
+          preflightCloudCredentials(platformOptionsOf(command));
+        } catch (error) {
+          if (error instanceof CliError && error.exitCode === 2) throw error;
+          if (error instanceof CliError) {
+            throw new CliError(error.code, error.message, 3, error.details);
+          }
+          throw error;
+        }
+      }
+      let result: RunEvalSuiteResult;
+      try {
+        result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
@@ -2501,7 +2529,25 @@ export function registerEvalCommands(program: Command): void {
           );
         },
         { projectScope: resolved.projectScope }
-      );
+        );
+      } catch (error) {
+        // Launch-phase remap, --wait only: a thrown CliError whose exitCode
+        // is not already 2 (usage error / invalid suite file — untouched)
+        // gets reclassified by wire code. `toCliError` drops the HTTP
+        // status, so classification reads the code string, not the status.
+        // `details` rides along too: a billing failure the v1 API collapsed
+        // onto the wire code FORBIDDEN is only distinguishable from a real
+        // credential rejection by `details.code`.
+        if (options.wait && error instanceof CliError && error.exitCode !== 2) {
+          throw new CliError(
+            error.code,
+            error.message,
+            classifyLaunchErrorExitCode(error.code, error.details),
+            error.details
+          );
+        }
+        throw error;
+      }
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
       // stream unparseable for the CI callers that read it. The human-mode
@@ -2519,6 +2565,25 @@ export function registerEvalCommands(program: Command): void {
       }
 
       const needsReport = reporter !== undefined || options.out !== undefined;
+      // Re-checked explicitly, same as the launch-phase preflight above and
+      // for the same reason: `runPlatformOperation`'s own internal recheck
+      // is the ONE thing that can fail from this call's outer preamble
+      // (nothing inside the callback below escapes its own per-target
+      // catches), and a credential that died between the launch and here
+      // must read as 3 (auth), not whatever `toCliError` defaults to. The
+      // launch receipt is written first — it is the only record of run ids
+      // already paid for, and nothing else has reached stdout yet.
+      try {
+        preflightCloudCredentials(platformOptionsOf(command));
+      } catch (error) {
+        writeResult({ launch: result, runs: [] }, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        if (error instanceof CliError && error.exitCode === 2) throw error;
+        if (error instanceof CliError) {
+          throw new CliError(error.code, error.message, 3, error.details);
+        }
+        throw error;
+      }
       const completion = await runPlatformCommand(
         platformOptionsOf(command),
         Math.max(globalOptions.timeout, waitTimeoutMs),
@@ -2540,11 +2605,23 @@ export function registerEvalCommands(program: Command): void {
                     )
                   };
                 } catch (error) {
+                  // Capture the WIRE code before stringifying: `errorCode`,
+                  // never `code` — the telemetry redactor treats any key
+                  // normalizing to "code" as a possible OAuth authorization
+                  // code and keeps only SCREAMING_SNAKE values (see
+                  // launchFailureCases above). Only set for a real
+                  // PlatformApiError; a deadline timeout (a CliError from
+                  // waitForEvalRun) carries none, which is fine — the
+                  // classifier's "else" bucket already means "no valid
+                  // verdict observed".
                   return {
                     ok: false as const,
                     runId: target.runId,
                     error:
                       error instanceof Error ? error.message : String(error),
+                    ...(isPlatformApiError(error)
+                      ? { errorCode: error.code }
+                      : {}),
                   };
                 }
               })
@@ -2552,7 +2629,15 @@ export function registerEvalCommands(program: Command): void {
           const runs = waited.flatMap((entry) => (entry.ok ? [entry.run] : []));
           const waitErrors = waited.flatMap((entry) =>
             !entry.ok
-              ? [{ runId: entry.runId, error: entry.error }]
+              ? [
+                  {
+                    runId: entry.runId,
+                    error: entry.error,
+                    ...(entry.errorCode
+                      ? { errorCode: entry.errorCode }
+                      : {}),
+                  },
+                ]
               : []
           );
 
@@ -2569,9 +2654,15 @@ export function registerEvalCommands(program: Command): void {
               runs,
               waitErrors,
               reportInputs: [] as StructuredEvalRunInput[],
+              iterationErrorCodes: new Map<string, string>(),
             };
           }
 
+          // A run's own id, not `StructuredEvalRunInput` (a shared SDK type
+          // report-building also consumes), is what carries a fetch
+          // failure's wire code out of this loop — smuggling a new field
+          // onto that type would leak an eval.ts-only concern into it.
+          const iterationErrorCodes = new Map<string, string>();
           const reportInputs = await Promise.all(
             runs.map(async (run): Promise<StructuredEvalRunInput> => {
               try {
@@ -2587,6 +2678,9 @@ export function registerEvalCommands(program: Command): void {
                   iterationsComplete: iterations.complete,
                 };
               } catch (error) {
+                if (isPlatformApiError(error)) {
+                  iterationErrorCodes.set(run.id, error.code);
+                }
                 return {
                   run,
                   iterations: [],
@@ -2597,7 +2691,7 @@ export function registerEvalCommands(program: Command): void {
               }
             })
           );
-          return { runs, waitErrors, reportInputs };
+          return { runs, waitErrors, reportInputs, iterationErrorCodes };
         },
         {
           projectScope: resolved.projectScope,
@@ -2625,12 +2719,49 @@ export function registerEvalCommands(program: Command): void {
           })
         : undefined;
 
+      // Computed BEFORE the `--out` write: a local write failure must MERGE
+      // into this verdict-derived code (worst-of), never overwrite it — a
+      // run that actually failed (1) or hit a mid-wait auth failure (3)
+      // outranks a plain local I/O problem (4), per the documented severity
+      // order. Assigning the write failure a flat 4 here would silently
+      // mask an already-known verdict failure the moment `--out` also
+      // happened to be unwritable.
+      const reportingErrors = completion.reportInputs.filter(
+        (input) => !input.iterationsComplete || input.iterationError
+      );
+      const reportingFailedRunIds = new Set(
+        reportingErrors.map((input) => input.run.id)
+      );
+      const runOutcomes: EvalRunWaitRunOutcome[] = completion.runs.map(
+        (run) => ({
+          status: run.status,
+          result: run.result,
+          reportingFailed: reportingFailedRunIds.has(run.id),
+          reportingFailedErrorCode: completion.iterationErrorCodes.get(run.id),
+        })
+      );
+      const code = evalRunWaitExitCode({
+        launchOutcome: result.outcome,
+        runs: runOutcomes,
+        waitErrors: completion.waitErrors,
+      });
+
+      // Captured, NOT thrown here: the receipt below (or the reporter
+      // stdout) carries the only copy of the launched run ids, and a local
+      // disk error must not cost the caller those ids the way an early
+      // throw would — same discipline the wait-error path above already
+      // follows, for the same reason.
+      let outWriteError: string | undefined;
       if (options.out && report) {
-        await writeReporterArtifact(
-          options.out,
-          reporter ?? "json-summary",
-          report
-        );
+        try {
+          await writeReporterArtifact(
+            options.out,
+            reporter ?? "json-summary",
+            report
+          );
+        } catch (error) {
+          outWriteError = error instanceof Error ? error.message : String(error);
+        }
       }
       if (reporter && report) {
         writeReporterResult(reporter, report);
@@ -2644,20 +2775,27 @@ export function registerEvalCommands(program: Command): void {
 
       // Everything above has already been written — report file, reporter
       // stdout, or the launch receipt. Only now may this fail.
-      const reportingErrors = completion.reportInputs.filter(
-        (input) => !input.iterationsComplete || input.iterationError
-      );
+      if (outWriteError !== undefined) {
+        // A local `--out` write failure is infrastructure the CLI itself
+        // observed, never a verdict — merged toward 4, not the
+        // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
+        // from `normalizeCliError`, and never allowed to outrank an
+        // already-computed verdict failure (1) or auth failure (3).
+        throw cliError("OUT_WRITE_FAILED", outWriteError, worstOf([code, 4]));
+      }
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
         const affectedRunIds = [
           ...reportingErrors.map((input) => input.run.id),
           ...completion.waitErrors.map((entry) => entry.runId),
         ];
-        throw operationalError(
+        throw cliError(
+          "OPERATIONAL_ERROR",
           needsReport
             ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
                 ", "
               )}.`
             : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
+          code,
           {
             // Machine-readable, because the message is not: a pipeline that
             // needs to resume or cancel these runs should not have to parse
@@ -2670,9 +2808,7 @@ export function registerEvalCommands(program: Command): void {
         );
       }
 
-      if (result.outcome !== "started") {
-        setProcessExitCode(1);
-      }
+      setProcessExitCode(code);
     }
   );
 
