@@ -524,3 +524,50 @@ describe("the second pass preserves scorer identity and never loses a score row"
     expect(result.noop).toBe(true);
   });
 });
+
+// =============================================================================
+// The fetch port FOLLOWS THE CURSOR, and a partial fetch never completes a
+// fanout.
+//
+// The backend pages at 200 iterations. A consumer that took only the first page
+// would grade the head of a long run, report every outcome as applied, and let
+// `markFanout` close the fanout — leaving the tail permanently ungraded with
+// nothing to re-drive it.
+// =============================================================================
+describe("a partially fetched run is never reported complete", () => {
+  test("an incomplete fetch reports failed so the sweep re-drives it", async () => {
+    const reported: Array<{ failed?: boolean }> = [];
+    const { value } = ports({
+      fetchRun: vi.fn(async () => ({
+        ...runRow(),
+        // More iterations exist than this fetch retrieved.
+        incomplete: true,
+      })),
+      markFanout: vi.fn(async (report) => {
+        reported.push(report);
+        return { outcome: "pending" };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    // Without this the backend sees an all-success report and marks the run's
+    // fanout COMPLETE — it cannot tell a fully graded run from a partially
+    // fetched one.
+    expect(reported[0]?.failed).toBe(true);
+  });
+
+  test("a complete fetch reports no failure", async () => {
+    const reported: Array<{ failed?: boolean }> = [];
+    const { value } = ports({
+      markFanout: vi.fn(async (report) => {
+        reported.push(report);
+        return { outcome: "completed" };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    expect(reported[0]?.failed).toBeUndefined();
+  });
+});

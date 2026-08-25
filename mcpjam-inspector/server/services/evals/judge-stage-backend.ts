@@ -209,7 +209,20 @@ export type JudgeSecondPassRunRow = {
   gradingEngine?: { mode?: unknown };
   configSnapshot?: { gradingEngine?: { mode?: unknown } };
   iterations: JudgeSecondPassIterationRow[];
+  /**
+   * True when the run has MORE iterations than this fetch retrieved.
+   *
+   * The pass reports the set it graded, and the backend marks a fanout
+   * complete when every reported outcome succeeded — it cannot tell a fully
+   * graded run from one whose tail was never fetched. So a partial fetch must
+   * never be allowed to complete a fanout; the pass reports `failed` instead
+   * and lets the sweep re-drive it.
+   */
+  incomplete?: boolean;
 };
+
+/** Pages one fetch will follow before giving up. 200 iterations per page. */
+const MAX_DERIVATION_INPUT_PAGES = 25;
 
 /**
  * Read the run and its iterations WITHOUT a user bearer.
@@ -221,9 +234,36 @@ export type JudgeSecondPassRunRow = {
 export async function fetchRunForJudgeSecondPass(
   runId: string
 ): Promise<JudgeSecondPassRunRow> {
-  return await postJson<JudgeSecondPassRunRow>("/runs/judge-derivation-input", {
-    runId,
-  });
+  // FOLLOWS THE CURSOR. The route pages at 200 iterations, and a consumer that
+  // took only the first page would grade the head of a long run, report every
+  // outcome as applied, and let the backend mark the fanout complete — leaving
+  // the tail permanently ungraded with nothing to re-drive it. A run of 25
+  // cases at 10 repetitions already exceeds one page.
+  //
+  // Paging is an implementation detail of this port: `runJudgeSecondPass` sees
+  // one run row either way.
+  let cursor: string | undefined;
+  let head: JudgeSecondPassRunRow | undefined;
+  const iterations: JudgeSecondPassIterationRow[] = [];
+
+  for (let page = 0; page < MAX_DERIVATION_INPUT_PAGES; page += 1) {
+    const body: Record<string, unknown> = { runId };
+    if (cursor !== undefined) body.cursor = cursor;
+    const response = await postJson<
+      JudgeSecondPassRunRow & { nextCursor?: string }
+    >("/runs/judge-derivation-input", body);
+
+    head ??= response;
+    iterations.push(...(response.iterations ?? []));
+    if (response.nextCursor === undefined) {
+      return { ...head, iterations };
+    }
+    cursor = response.nextCursor;
+  }
+
+  // A run longer than the page budget. Reported rather than silently truncated
+  // — see `incomplete`.
+  return { ...(head as JudgeSecondPassRunRow), iterations, incomplete: true };
 }
 
 /**

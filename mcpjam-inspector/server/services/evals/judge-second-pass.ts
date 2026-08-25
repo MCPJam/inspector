@@ -448,7 +448,12 @@ export async function runJudgeSecondPass(
       runId,
       goalCompletionJobId,
       outcomes,
-      ...(failed ? { failed: true } : {}),
+      // A run whose iterations could not all be FETCHED must not complete its
+      // fanout: the backend decides completeness from the reported set and
+      // cannot tell a fully graded run from a partially fetched one. Reporting
+      // `failed` leaves it for the sweep rather than closing it over a tail
+      // nothing ever graded.
+      ...(failed || run.incomplete ? { failed: true } : {}),
     });
   } catch (error) {
     // The sweep is the delivery guarantee: an unreported pass is retried, and
