@@ -186,6 +186,41 @@ describe("finalizeEvalIteration", () => {
     expect(update!.args.messages).toBeDefined();
   });
 
+  test("actualToolCalls reaches the wire projected to the persisted shape", async () => {
+    // CONVEX-1QF: `updateTestIteration.actualToolCalls` is a strict Convex
+    // `v.object`, so one unrecognized field fails the whole finalize rather
+    // than being dropped. The mapper's unit tests cover the projection; this
+    // pins that finalize actually applies it to what it sends.
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [
+        {
+          toolName: "connector_list",
+          arguments: { includeSourceConnectors: true },
+          toolCallId: "toolu_01SCzFBPBXj3sQjxBSxaQcoM",
+          // Not in the validator — the shape the runner could drift into.
+          providerExecuted: true,
+        } as never,
+      ],
+      usage: usageZero,
+      messages,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(update).toBeDefined();
+    expect(update!.args.actualToolCalls).toEqual([
+      {
+        toolName: "connector_list",
+        arguments: { includeSourceConnectors: true },
+        toolCallId: "toolu_01SCzFBPBXj3sQjxBSxaQcoM",
+      },
+    ]);
+  });
+
   test("W1 fallback omits systemPrompt when unset", async () => {
     const { client, calls } = makeClient({
       appendThrows: new Error("fanout pre-turn failure"),

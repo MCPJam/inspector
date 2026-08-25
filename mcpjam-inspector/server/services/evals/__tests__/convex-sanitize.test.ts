@@ -50,6 +50,12 @@ describe("sanitizeForConvexTransport", () => {
 });
 
 describe("toPersistedToolCalls", () => {
+  it("returns an empty array for an iteration that called no tools", () => {
+    // The common case: `actualToolCalls: []` is what a no-tool iteration
+    // persists, and the validator requires an array, not a missing field.
+    expect(toPersistedToolCalls([])).toEqual([]);
+  });
+
   it("keeps exactly the fields the backend validator accepts", () => {
     expect(
       toPersistedToolCalls([
