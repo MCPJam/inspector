@@ -24,7 +24,11 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { zodSchema } from "@ai-sdk/provider-utils";
-import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type {
+  MCPClientManager,
+  Harness,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   describeAsSlug,
   describeError,
@@ -678,6 +682,28 @@ export interface MCPJamHandlerOptions {
    * UI/debug history.
    */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Host-level switch for SEP-1865 `_meta.ui.visibility` filtering — the same
+   * field `prepareChatV2` takes. `undefined`/`true` filter (spec default); only
+   * an explicit `false` opts out.
+   *
+   * Read ONLY by the HARNESS engine, which builds its own MCP tool set
+   * (`projectSelectedMcpServersAsHostTools`) instead of consuming the one
+   * `prepareChatV2` prepared. The emulated engine is handed `tools` already
+   * built, so it neither needs nor reads this.
+   */
+  respectToolVisibility?: boolean;
+  /**
+   * Resolved task-seam options, or absent for "tasks off". Same field and same
+   * rule as `PrepareChatV2Options.tasks`: the MODE is resolved by the CALLER
+   * (each surface is its own row in the policy matrix), never here.
+   *
+   * Read ONLY by the HARNESS engine, and for the same reason as
+   * `respectToolVisibility` — the emulated engine's seam already rode in
+   * through `prepareChatV2`. Absent keeps a harness turn on the pre-existing
+   * no-`_meta` path, byte-for-byte.
+   */
+  tasks?: ToolTaskSeamOptions;
   /**
    * Approval-pause policy. `"prompt"` (default) is the real-chat path:
    * approval-required tool calls pause the loop until the user answers
