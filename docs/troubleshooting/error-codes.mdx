@@ -458,12 +458,12 @@ Stateless mode can only be used with an HTTP-transport server, not STDIO.
 This connection is pinned to a specific MCP protocol version that the server does not offer.
 
 **Likely causes**
-- The client profile you're using pins a protocol version this server hasn't adopted — for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision.
+- The client profile you're using pins a protocol version this server hasn't adopted — for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision, or a client pinned to **2025-11-25** against a server that answers with **2025-06-18** (Slack and HubSpot are known examples).
 - A per-server protocol override is pinned to a version the server dropped or never shipped.
 
 **Next steps**
 - Click **Change protocol version** in the error banner or toast to open the client's **MCP Protocol** tab, then set the version to **Automatic** to negotiate whatever the server supports.
-- Or pick the version the server advertises — `server/discover` (modern) or the `initialize` response (legacy) lists the supported versions.
+- Or pick the version the server advertises — the error message names the version the server offered (for example, "doesn't support 2025-11-25, which this client is pinned to. It offers 2025-06-18."). `server/discover` (modern) or the `initialize` response (legacy) also lists the supported versions.
 
 ### Paginated tool / header discovery unsupported
 
