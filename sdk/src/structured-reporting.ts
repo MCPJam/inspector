@@ -533,7 +533,7 @@ function renderHtmlCase(entry: StructuredCaseResult): string {
     ? `<pre class="details">${escapeHtml(JSON.stringify(entry.details, null, 2))}</pre>`
     : "";
 
-  return `<article class="case badge-fail">
+  return `<article class="case case-fail">
   <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(entry.category)})</span></h3>
   ${entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : ""}
   ${details}
@@ -565,10 +565,10 @@ const STRUCTURED_RUN_HTML_STYLE = `
     font-size: 0.85rem;
     text-transform: uppercase;
   }
-  .badge-pass { background: #1a7f37; color: #fff; }
-  .badge-fail { background: #cf222e; color: #fff; }
-  .badge-neutral { background: #9a6700; color: #fff; }
-  article.badge-fail { border-left: 4px solid #cf222e; }
+  .badge.badge-pass { background: #1a7f37; color: #fff; }
+  .badge.badge-fail { background: #cf222e; color: #fff; }
+  .badge.badge-neutral { background: #9a6700; color: #fff; }
+  article.case-fail { border-left: 4px solid #cf222e; }
   .meta, .note { color: GrayText; font-size: 0.9rem; }
   table.bucket-table { border-collapse: collapse; margin: 0.5rem 0 1rem; width: 100%; }
   table.bucket-table th, table.bucket-table td {

@@ -247,6 +247,38 @@ describe("renderStructuredRunHtml", () => {
     expect(html).not.toContain("<img");
   });
 
+  it("does not paint a failed case's error text the same color as its own background", () => {
+    // `.badge-fail` sets a red BACKGROUND for the small pass/fail badges;
+    // `.error` sets the diagnostic text to that same red. A failed case's
+    // <article> must not carry the badge class itself, or the two rules
+    // together render red-on-red — the report's primary diagnostic,
+    // invisible.
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        cases: [
+          {
+            id: "case-1",
+            title: "Case A",
+            category: "eval",
+            passed: false,
+            error: "goal missed",
+          },
+        ],
+        summary: summarizeStructuredCases([
+          {
+            id: "case-1",
+            title: "Case A",
+            category: "eval",
+            passed: false,
+          },
+        ]),
+      })
+    );
+
+    expect(html).not.toMatch(/<article class="[^"]*\bbadge-fail\b/);
+  });
+
   it("escapes hostile case titles and error text", () => {
     const hostileTitle = "</td></tr><script>alert(1)</script>";
     const html = renderStructuredRunHtml(
