@@ -38,6 +38,8 @@ function commitGroupOutcomeTitle(status: CommitGroup["status"]): string {
       return "Runs in progress";
     case "mixed":
       return "Mixed results";
+    case "inconclusive":
+      return "No verdict: runs were inconclusive";
     default:
       return "Commit runs";
   }
