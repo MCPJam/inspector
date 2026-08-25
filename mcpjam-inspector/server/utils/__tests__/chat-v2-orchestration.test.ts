@@ -10,7 +10,7 @@ vi.mock("../computers/cloud-skills.js", async () => {
   >("../computers/cloud-skills.js");
   return {
     ...actual,
-    listCloudSkills: vi.fn(),
+    listCloudSkillsForActor: vi.fn(),
   };
 });
 
@@ -41,7 +41,7 @@ import {
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import {
   CloudSkillsError,
-  listCloudSkills,
+  listCloudSkillsForActor,
 } from "../computers/cloud-skills";
 import { CLOUD_SKILLS_FETCH_TIMEOUT_MS } from "../computers/cloud-skill-tools";
 import {
@@ -68,7 +68,7 @@ beforeEach(() => {
     tools: {},
     systemPromptSection: "",
   });
-  vi.mocked(listCloudSkills).mockReset();
+  vi.mocked(listCloudSkillsForActor).mockReset();
 });
 
 describe("prepareChatV2", () => {
@@ -1397,7 +1397,7 @@ describe("prepareChatV2 — live cloud skills catalog", () => {
   const cloudSkills = { authHeader: "Bearer t", projectId: "proj-1" };
 
   it("inlines the catalog and advertises loadSkill, not listSkills", async () => {
-    vi.mocked(listCloudSkills).mockResolvedValue([
+    vi.mocked(listCloudSkillsForActor).mockResolvedValue([
       {
         skillId: "sk1",
         projectId: "proj-1",
@@ -1427,8 +1427,45 @@ describe("prepareChatV2 — live cloud skills catalog", () => {
     expect(result.skillsFetchFailed).toBeUndefined();
   });
 
+  it("forwards a guest turn's execution scope to the skill reads", async () => {
+    // COMP-38: the scope is how a non-member's reads are authorized, so it has
+    // to reach the read layer — a member turn still carries none.
+    const executionScope = {
+      kind: "swarm" as const,
+      swarmId: "swarm_1",
+      accessVersion: 1,
+      projectId: "proj-1",
+      workspaceId: "ws_1",
+    };
+    vi.mocked(listCloudSkillsForActor).mockResolvedValue([]);
+    await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      cloudSkills: { ...cloudSkills, executionScope },
+    });
+    expect(listCloudSkillsForActor).toHaveBeenCalledWith(
+      expect.objectContaining({ executionScope })
+    );
+  });
+
+  it("omits the scope for a member turn", async () => {
+    vi.mocked(listCloudSkillsForActor).mockResolvedValue([]);
+    await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      cloudSkills,
+    });
+    expect(listCloudSkillsForActor).toHaveBeenCalledWith(
+      expect.not.objectContaining({ executionScope: expect.anything() })
+    );
+  });
+
   it("advertises no skill tools or stanza when the project has zero skills", async () => {
-    vi.mocked(listCloudSkills).mockResolvedValue([]);
+    vi.mocked(listCloudSkillsForActor).mockResolvedValue([]);
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
@@ -1443,7 +1480,7 @@ describe("prepareChatV2 — live cloud skills catalog", () => {
   });
 
   it("prepares the turn without skill tools when the catalog fetch throws", async () => {
-    vi.mocked(listCloudSkills).mockRejectedValue(
+    vi.mocked(listCloudSkillsForActor).mockRejectedValue(
       new CloudSkillsError("CONVEX_URL is not configured", 500)
     );
     const result = await prepareChatV2({
@@ -1463,7 +1500,7 @@ describe("prepareChatV2 — live cloud skills catalog", () => {
 
   it("prepares the turn without skill tools when the catalog fetch times out", async () => {
     vi.useFakeTimers();
-    vi.mocked(listCloudSkills).mockImplementation(
+    vi.mocked(listCloudSkillsForActor).mockImplementation(
       () => new Promise(() => {})
     );
     try {

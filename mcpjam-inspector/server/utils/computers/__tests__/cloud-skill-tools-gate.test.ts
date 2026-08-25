@@ -9,10 +9,15 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
     id.startsWith("mcpjam/") || (provider === "mcpjam" && !id.includes("/")),
 }));
 
-import { shouldEnableCloudSkillTools } from "../cloud-skill-tools";
+import {
+  resolveGuestCloudSkillScope,
+  shouldEnableCloudSkillTools,
+} from "../cloud-skill-tools";
+import type { ExecutionScope } from "../../execution-scope.js";
 
 const base = {
   isGuest: false,
+  hasExecutionScope: false,
   harness: undefined as string | undefined,
   modelId: "mcpjam/claude",
   hasProjectId: true,
@@ -30,8 +35,45 @@ describe("shouldEnableCloudSkillTools", () => {
     );
   });
 
-  it("disables for a guest", () => {
+  it("disables for a guest whose turn carries no execution scope", () => {
     expect(shouldEnableCloudSkillTools({ ...base, isGuest: true })).toBe(false);
+  });
+
+  it("ENABLES for a guest whose turn carries an execution scope", () => {
+    // COMP-38: the scope is what authorizes the scoped skill reads, so a guest
+    // the backend granted one gets the tools those reads back.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasExecutionScope: true,
+      })
+    ).toBe(true);
+  });
+
+  it("still disables a scoped guest on a real harness turn", () => {
+    // The scope relaxes the guest gate, not the harness gate: a harness turn
+    // delivers skills via the adapter, so the emulated tools stay off.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasExecutionScope: true,
+        harness: "claude-code",
+        modelId: "mcpjam/claude",
+      })
+    ).toBe(false);
+  });
+
+  it("still disables a scoped guest with no project id", () => {
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasExecutionScope: true,
+        hasProjectId: false,
+      })
+    ).toBe(false);
   });
 
   it("disables without a project id", () => {
@@ -83,6 +125,55 @@ describe("shouldEnableCloudSkillTools", () => {
         ...base,
         harness: "codex",
         modelId: "mcpjam/gpt-5",
+      })
+    ).toBe(false);
+  });
+});
+
+describe("resolveGuestCloudSkillScope", () => {
+  const scope: ExecutionScope = {
+    kind: "swarm",
+    swarmId: "swarm_1",
+    accessVersion: 2,
+    projectId: "proj_1",
+    workspaceId: "ws_1",
+  };
+
+  it("returns the scope for a guest turn that carries one", () => {
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: scope })
+    ).toBe(scope);
+  });
+
+  it("returns undefined for a member, scope or not", () => {
+    // A member's config carries a scope too, and the scoped query is
+    // shared-only — it would drop their personal skills.
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: false, executionScope: scope })
+    ).toBeUndefined();
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: false, executionScope: undefined })
+    ).toBeUndefined();
+  });
+
+  it("normalizes a null/omitted scope to undefined so the gate and the reads agree", () => {
+    // The gate reads `!== undefined`; a raw `null` from a malformed config would
+    // have opened it while the reads fell back to the membership-only query.
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: null })
+    ).toBeUndefined();
+    expect(
+      resolveGuestCloudSkillScope({ isGuest: true, executionScope: undefined })
+    ).toBeUndefined();
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasExecutionScope:
+          resolveGuestCloudSkillScope({
+            isGuest: true,
+            executionScope: null,
+          }) !== undefined,
       })
     ).toBe(false);
   });

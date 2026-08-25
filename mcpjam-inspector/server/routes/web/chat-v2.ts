@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  resolveGuestCloudSkillScope,
+  shouldEnableCloudSkillTools,
+} from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
 import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
@@ -775,6 +778,15 @@ chatV2.post("/", async (c) => {
         | undefined
     )?.executionScope;
 
+    // COMP-38: the same scope, narrowed to the cloud-skill READS. One value
+    // feeds both the gate and the read context so they cannot disagree — see
+    // `resolveGuestCloudSkillScope` for why that matters, and why a member gets
+    // undefined here even though their config carries a scope.
+    const guestSkillScope = resolveGuestCloudSkillScope({
+      isGuest: Boolean(c.get("guestId")),
+      executionScope,
+    });
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -787,7 +799,11 @@ chatV2.post("/", async (c) => {
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
     // tools) for any signed-in member with a project that has skills. Gate only on:
-    //   - not a guest (a share-link/scenario guest gets no skill tools), and
+    //   - a guest needs the turn's Phase-3 `executionScope` (COMP-38): a plain
+    //     share-link/chatbox guest gets no skill tools, but a guest whose grant
+    //     the backend serves a scope for does — the scoped skill queries are
+    //     what authorize the reads, so gating here on the scope gates on the
+    //     same authority that will answer them, and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
     //     so advertising the tools here would be a prompt/tool mismatch.
@@ -805,6 +821,10 @@ chatV2.post("/", async (c) => {
       !environmentServers &&
       shouldEnableCloudSkillTools({
         isGuest: Boolean(c.get("guestId")),
+        // NOT `computer`: the backend omits that field for guest actors, so
+        // probing it reads false exactly when a guest has a VM. The scope is the
+        // signal the skill reads are authorized against — see the helper's doc.
+        hasExecutionScope: guestSkillScope !== undefined,
         harness: resolvedExecution.harness,
         modelId: String(modelDefinition.id),
         // Provider is required so bare hosted ids canonicalize — without it a
@@ -1490,6 +1510,12 @@ chatV2.post("/", async (c) => {
                 cloudSkills: {
                   authHeader: `Bearer ${bearerToken}`,
                   projectId: hostedBody.projectId,
+                  // A guest's bearer can't read the project-wide catalog, so
+                  // their reads go through the scope-authorized queries. Unset
+                  // for a member, who keeps the project-wide ones.
+                  ...(guestSkillScope
+                    ? { executionScope: guestSkillScope }
+                    : {}),
                 },
               }
             : {}),

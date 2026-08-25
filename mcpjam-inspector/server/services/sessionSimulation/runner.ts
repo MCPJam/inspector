@@ -654,6 +654,9 @@ export async function runSyntheticHostSession(
       Boolean(projectId) &&
       shouldEnableCloudSkillTools({
         isGuest: false,
+        // Member-initiated synthetic session, so the guest gate never applies
+        // and the scope it would consult is moot; explicit for the arg shape.
+        hasExecutionScope: false,
         harness,
         modelId: String(modelDefinition.id),
         provider: modelDefinition.provider,

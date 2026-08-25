@@ -26,7 +26,9 @@ import {
   convexGetSkillByName,
   convexGetSkillFileUrl,
   convexListSkillFiles,
+  convexListSkillFilesForRuntimeExecution,
   convexListSkills,
+  convexListSkillsForRuntimeExecution,
   convexPromoteSkill,
   convexRemoveSkillFile,
   convexUpdateSkill,
@@ -37,6 +39,7 @@ import {
   type SkillSharing,
 } from "./convex-skills-client.js";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
+import type { ExecutionScope } from "../execution-scope.js";
 import type { SkillFileContent } from "../../../shared/skill-types.js";
 
 /** Client-side preflight cap (the backend enforces the real one). */
@@ -60,6 +63,21 @@ export interface CloudSkillsContext {
   authHeader: string;
   projectId: string;
   signal?: AbortSignal;
+  /**
+   * Phase-3 execution scope from the server-resolved runtime config. It changes
+   * WHICH query the actor-scoped reads below issue: the `*ForRuntimeExecution`
+   * pair, which the backend re-resolves against the live grant, instead of the
+   * `projectId` queries that require membership.
+   *
+   * Set it ONLY for a non-member actor. A member's runtime config carries a
+   * scope as well, and the scoped query is shared-only — routing a member
+   * through it would drop their personal skills. Absent ⇒ the member queries,
+   * byte-identical to before.
+   *
+   * Only the actor-scoped reads honour it. The CRUD helpers stay member-only:
+   * they back the `/web/skills` routes, where the caller is always a member.
+   */
+  executionScope?: ExecutionScope;
 }
 
 export type { CloudSkillDetail, CloudSkillListItem, SkillSharing };
@@ -254,51 +272,175 @@ export function readCloudSkillFile(
       skillId,
       path
     );
-    if (!url) throw new CloudSkillsError("Skill file not found", 404);
-    // Guard on the server-verified size BEFORE fetching so a large blob can't
-    // force buffering the whole payload in memory. The backend caps files at
-    // 2MB, so anything above that is anomalous.
-    if (size > SKILL_FILE_MAX_READ_BYTES) {
-      throw new CloudSkillsError(
-        `Skill file too large to read (${size} bytes).`,
-        413
-      );
-    }
-    // Combine the caller's disconnect signal with an explicit timeout so a slow
-    // `_storage` response can't hold the worker indefinitely.
-    const timeout = AbortSignal.timeout(30_000);
-    const signal = ctx.signal
-      ? AbortSignal.any([ctx.signal, timeout])
-      : timeout;
-    const res = await fetch(url, { signal });
-    if (!res.ok) {
-      throw new CloudSkillsError(
-        `Failed to read skill file (${res.status})`,
-        502
-      );
-    }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    const mimeType = getMimeType(path);
-    const name = path.split("/").pop() ?? path;
-    const isText =
-      isTextMimeType(mimeType) && bytes.byteLength <= MAX_SKILL_FILE_TEXT_BYTES;
-    if (isText) {
-      return {
-        path,
-        name,
-        content: new TextDecoder().decode(bytes),
-        mimeType,
-        size: bytes.byteLength,
-        isText: true,
-      };
-    }
+    return await fetchSkillFileContent(ctx, { url, size, path });
+  });
+}
+
+/**
+ * Fetch one supporting file's bytes from an already-resolved `_storage` URL and
+ * shape them like the local FS reader. Shared by the member read above and the
+ * actor-scoped read below, which resolve the URL through different queries but
+ * must apply the same size guard, timeout and text/binary rule.
+ */
+async function fetchSkillFileContent(
+  ctx: CloudSkillsContext,
+  file: { url: string | null; size: number; path: string }
+): Promise<SkillFileContent> {
+  const { url, size, path } = file;
+  if (!url) throw new CloudSkillsError("Skill file not found", 404);
+  // Guard on the server-verified size BEFORE fetching so a large blob can't
+  // force buffering the whole payload in memory. The backend caps files at
+  // 2MB, so anything above that is anomalous.
+  if (size > SKILL_FILE_MAX_READ_BYTES) {
+    throw new CloudSkillsError(
+      `Skill file too large to read (${size} bytes).`,
+      413
+    );
+  }
+  // Combine the caller's disconnect signal with an explicit timeout so a slow
+  // `_storage` response can't hold the worker indefinitely.
+  const timeout = AbortSignal.timeout(30_000);
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout;
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    throw new CloudSkillsError(
+      `Failed to read skill file (${res.status})`,
+      502
+    );
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const mimeType = getMimeType(path);
+  const name = path.split("/").pop() ?? path;
+  const isText =
+    isTextMimeType(mimeType) && bytes.byteLength <= MAX_SKILL_FILE_TEXT_BYTES;
+  if (isText) {
     return {
       path,
       name,
-      base64: Buffer.from(bytes).toString("base64"),
+      content: new TextDecoder().decode(bytes),
       mimeType,
       size: bytes.byteLength,
-      isText: false,
+      isText: true,
     };
+  }
+  return {
+    path,
+    name,
+    base64: Buffer.from(bytes).toString("base64"),
+    mimeType,
+    size: bytes.byteLength,
+    isText: false,
+  };
+}
+
+// ── actor-scoped reads (the chat skill tools) ───────────────────────────────
+//
+// The four reads `createCloudSkillTools` makes, each authorized for whoever is
+// acting: a member through the project-wide queries, a guest / swarm grant
+// through the scope-authorized `*ForRuntimeExecution` pair. Same return shapes
+// either way, so the tools hold no branch of their own.
+//
+// The CRUD helpers above deliberately do NOT branch: a write is a member
+// operation, and a scoped write query does not exist to route to.
+
+/** What the prompt-inlined catalog needs from each visible skill. */
+export type CloudSkillCatalogEntry = { name: string; description: string };
+
+/** What `loadSkill` needs — the only fields the chat tools read off a skill. */
+export type CloudSkillBody = {
+  skillId: string;
+  name: string;
+  content: string;
+};
+
+/** One supporting file, as the file-listing tool renders it. */
+export type CloudSkillFileEntry = { path: string; size: number };
+
+export function listCloudSkillsForActor(
+  ctx: CloudSkillsContext
+): Promise<CloudSkillCatalogEntry[]> {
+  // The scoped listing is the runtime one, so it carries each skill's body as
+  // well as its metadata — there is no metadata-only scoped query to ask for
+  // instead. That makes a scoped catalog fetch heavier than a member's under
+  // the same `CLOUD_SKILLS_FETCH_TIMEOUT_MS`, which is why a timeout degrades
+  // to "no skills this turn" rather than failing it.
+  return run(async () =>
+    ctx.executionScope
+      ? await convexListSkillsForRuntimeExecution(
+          ctx.authHeader,
+          ctx.executionScope
+        )
+      : await convexListSkills(ctx.authHeader, ctx.projectId)
+  );
+}
+
+/**
+ * Resolve a skill by name for `loadSkill`.
+ *
+ * The scoped branch reads the name out of the scope's own listing rather than a
+ * by-name query: the backend serves no scoped `getSkillByName`, and the scoped
+ * listing already carries every visible skill's `content`. Resolving from it
+ * also means a guest can only ever name a skill the grant already exposes.
+ */
+export function getCloudSkillBodyForActor(
+  ctx: CloudSkillsContext,
+  name: string
+): Promise<CloudSkillBody | null> {
+  return run(async () => {
+    if (!ctx.executionScope) {
+      return await convexGetSkillByName(ctx.authHeader, ctx.projectId, name);
+    }
+    const skills = await convexListSkillsForRuntimeExecution(
+      ctx.authHeader,
+      ctx.executionScope
+    );
+    return skills.find((skill) => skill.name === name) ?? null;
+  });
+}
+
+export function listCloudSkillFilesForActor(
+  ctx: CloudSkillsContext,
+  skillId: string
+): Promise<CloudSkillFileEntry[]> {
+  return run(async () => {
+    if (!ctx.executionScope) {
+      return await convexListSkillFiles(ctx.authHeader, ctx.projectId, skillId);
+    }
+    // The scoped query returns every visible skill's files in one shot (it
+    // feeds harness materialization), so narrow to the one asked for.
+    const files = await convexListSkillFilesForRuntimeExecution(
+      ctx.authHeader,
+      ctx.executionScope
+    );
+    return files.filter((file) => file.skillId === skillId);
+  });
+}
+
+/**
+ * Read a supporting file's bytes for whoever is acting. The scoped branch takes
+ * the `_storage` URL off the scoped listing — which mints one per file — because
+ * `getSkillFileUrl` is a member query.
+ */
+export function readCloudSkillFileForActor(
+  ctx: CloudSkillsContext,
+  skillId: string,
+  path: string
+): Promise<SkillFileContent> {
+  const scope = ctx.executionScope;
+  if (!scope) return readCloudSkillFile(ctx, skillId, path);
+  return run(async () => {
+    const files = await convexListSkillFilesForRuntimeExecution(
+      ctx.authHeader,
+      scope
+    );
+    const match = files.find(
+      (file) => file.skillId === skillId && file.path === path
+    );
+    if (!match) throw new CloudSkillsError("Skill file not found", 404);
+    return await fetchSkillFileContent(ctx, {
+      url: match.url,
+      size: match.size,
+      path,
+    });
   });
 }

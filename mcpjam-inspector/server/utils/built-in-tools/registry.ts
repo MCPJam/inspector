@@ -105,11 +105,16 @@ export interface BuiltInToolContext {
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
   /**
-   * True when the acting identity is a guest. Computer-backed tools are not
-   * advertised to guests (the backend also omits `computer` from guest
-   * runtime configs, and rejects guests at reserve — this is the middle of
-   * three layers). Defaults to false for surfaces that pre-authenticate
-   * non-guest actors (eval runners, sessionSimulation).
+   * True when the acting identity is a guest (share-link / chatbox visitor
+   * rather than a project member). Workspace (`mcpjam_*`) tools are never
+   * advertised to a guest. Bash is advertised only on a host-funded swarm
+   * grant — `executionScope.kind === "swarm"` — because the backend rejects a
+   * guest reserve on the personal-project path (`assertNonGuestComputerActor`)
+   * and omits `computer` from guest runtime configs; a guest whose shell comes
+   * from an ephemeral sandbox reaches it through `sandboxBinding` instead, which
+   * is checked before any of these gates. See the bash branch in
+   * `resolveHostTools` for all three. Defaults to false for surfaces that
+   * pre-authenticate non-guest actors (eval runners, sessionSimulation).
    */
   isGuest?: boolean;
   /**
