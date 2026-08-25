@@ -296,14 +296,7 @@ export async function runJudgeSecondPass(
 ): Promise<JudgeSecondPassResult> {
   const envMode = resolveGradingEngineMode();
   if (envMode === "off") {
-    return {
-      runId,
-      mode: "off",
-      noop: true,
-      graded: 0,
-      outcomes: [],
-      reason: "mode_off",
-    };
+    return { runId, mode: "off", noop: true, graded: 0, outcomes: [], reason: "mode_off" };
   }
 
   let run: JudgeSecondPassRunRow;

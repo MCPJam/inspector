@@ -74,7 +74,11 @@ const judgeDefinition: ResolvedScoreDefinition = resolveScoreDefinition({
   role: "advisory",
 });
 
-const definitions = [predicateDefinition, toolMatchDefinition, judgeDefinition];
+const definitions = [
+  predicateDefinition,
+  toolMatchDefinition,
+  judgeDefinition,
+];
 
 const evaluationConfig: EvaluationConfigSnapshot = {
   hash: evaluationConfigHash(definitions),
@@ -136,7 +140,9 @@ function iteration(
   };
 }
 
-function run(overrides: Partial<PlatformEvalRun> = {}): PlatformEvalRun {
+function run(
+  overrides: Partial<PlatformEvalRun> = {}
+): PlatformEvalRun {
   return {
     id: "run-1",
     suiteId: "suite-1",

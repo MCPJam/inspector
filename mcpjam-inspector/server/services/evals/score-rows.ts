@@ -141,9 +141,7 @@ export function hostedScoreDefinitionInputs(
     ...(inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored
       ? {
           toolMatch: {
-            ...(inputs.matchOptions
-              ? { matchOptions: inputs.matchOptions }
-              : {}),
+            ...(inputs.matchOptions ? { matchOptions: inputs.matchOptions } : {}),
             ...(inputs.isNegativeTest ? { isNegativeTest: true } : {}),
           },
         }
@@ -153,7 +151,8 @@ export function hostedScoreDefinitionInputs(
     // they must project as an error row rather than disappearing. Without a
     // threshold there is no definition to resolve against and inventing one
     // would put a fabricated scorer in the snapshot.
-    ...(judge && isFiniteNumber(judge.threshold)
+    ...(judge &&
+    isFiniteNumber(judge.threshold)
       ? {
           judge: {
             threshold: judge.threshold,
@@ -244,15 +243,13 @@ export function buildHostedScoreRows(
       // finalizer turns 1.4 into `status: "error"`, and clamping it here would
       // launder a broken judge into a passing row.
     } else if (judgeIsScored(judge) && typeof judge.score === "number") {
-      rows.push(
-        fromGoalCompletionCase(judgeDefinition, { score: judge.score })
-      );
+      rows.push(fromGoalCompletionCase(judgeDefinition, { score: judge.score }));
     } else if (!judgeIsScored(judge)) {
       rows.push(
         errorScoreResult(
           judgeDefinition,
-          `judge reported unknown status ${JSON.stringify(judge.status)}`
-        )
+          `judge reported unknown status ${JSON.stringify(judge.status)}`,
+        ),
       );
     } else {
       // A verdict claiming `scored` with no number is malformed, not

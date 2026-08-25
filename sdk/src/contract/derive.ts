@@ -164,9 +164,7 @@ function truncate(text: string, max: number): string {
   return `${text.slice(0, max - 1)}…`;
 }
 
-function truncateEvidence(
-  evidence: string[] | undefined
-): string[] | undefined {
+function truncateEvidence(evidence: string[] | undefined): string[] | undefined {
   if (!evidence || evidence.length === 0) return undefined;
   return evidence
     .slice(0, MAX_EVIDENCE_ENTRIES)

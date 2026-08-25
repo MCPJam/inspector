@@ -210,7 +210,7 @@ export function buildStageMetadata(args: {
       }),
       iteration: { status, ...(error ? { error } : {}) },
       policy: args.policy,
-    })
+    }),
   );
 }
 
@@ -394,19 +394,13 @@ function buildScoreMetadata(args: {
  */
 function readUserValueRow(
   stageMetadata: Record<string, unknown>
-):
-  | { state: StageResultRow["state"]; reason: StageResultRow["reason"] }
-  | undefined {
+): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
   const rows = stageMetadata.stageResults;
   if (!Array.isArray(rows)) return undefined;
   for (const row of rows) {
     if (typeof row !== "object" || row === null) continue;
     const candidate = row as Partial<StageResultRow>;
-    if (
-      candidate.stage === "userValue" &&
-      candidate.state &&
-      candidate.reason
-    ) {
+    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
       return { state: candidate.state, reason: candidate.reason };
     }
   }
@@ -577,7 +571,10 @@ export function buildIterationFinishParams(args: {
     isNegativeTest,
   } = args;
   const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
-  const persistedSpans = [...(setupSpans ?? []), ...(spans ?? [])];
+  const persistedSpans = [
+    ...(setupSpans ?? []),
+    ...(spans ?? []),
+  ];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -678,7 +675,7 @@ export function buildIterationFinishParams(args: {
             hostPolicy,
             toolSignals,
             evaluation.toolsCalled.length,
-            injectOpenAiCompat === true
+            injectOpenAiCompat === true,
           )
         : {}),
     },
@@ -766,7 +763,7 @@ export type FinalizeEvalIterationParams = {
  * `runDeleted` in directly.
  */
 export async function finalizeEvalIteration(
-  params: FinalizeEvalIterationParams
+  params: FinalizeEvalIterationParams,
 ): Promise<void> {
   const {
     convexClient,
@@ -803,13 +800,13 @@ export async function finalizeEvalIteration(
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId }
+      { iterationId },
     );
     if (isTerminalIterationStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
-        iteration.status
+        iteration.status,
       );
       return;
     }
@@ -859,8 +856,8 @@ export async function finalizeEvalIteration(
     iterationStatus === "cancelled"
       ? "eval_cancelled"
       : isCycleFailure
-      ? "eval_failed"
-      : "eval_completed";
+        ? "eval_failed"
+        : "eval_completed";
 
   // PR 13: emit per-iteration browser-eval observability from the runner-local
   // arrays (covers both the stream + non-stream paths via this shared choke
@@ -874,12 +871,12 @@ export async function finalizeEvalIteration(
   const serializedWidgetRenderObservations =
     await serializeRenderObservationsForBackend(
       widgetRenderObservations,
-      convexClient
+      convexClient,
     );
   const serializedBrowserInteractionSteps =
     await serializeBrowserStepsForBackend(
       browserInteractionSteps,
-      convexClient
+      convexClient,
     );
 
   // Upload the iteration replay video alongside the screenshots, in the same
@@ -915,7 +912,8 @@ export async function finalizeEvalIteration(
   // before any turn landed. With turns already written, re-sending
   // would overwrite turn 0 (W1 always writes at promptIndex: 0) and
   // orphan turns 1..N. See persist-eval-trace.ts for the contract.
-  const useW1Fallback = fanout.persisted === false && fanout.turnsWritten === 0;
+  const useW1Fallback =
+    fanout.persisted === false && fanout.turnsWritten === 0;
   if (fanout.persisted === false) {
     logger.warn(
       useW1Fallback
@@ -925,7 +923,7 @@ export async function finalizeEvalIteration(
         iterationId,
         turnsWritten: fanout.turnsWritten,
         error: fanout.error.message,
-      }
+      },
     );
   }
 
@@ -961,7 +959,8 @@ export async function finalizeEvalIteration(
               : {}),
             ...(widgetSnapshots?.length
               ? {
-                  widgetSnapshots: sanitizeForConvexTransport(widgetSnapshots),
+                  widgetSnapshots:
+                    sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
             // PR 6b: browser artifacts already uploaded + sanitized above;
@@ -972,7 +971,7 @@ export async function finalizeEvalIteration(
               ? {
                   widgetRenderObservations:
                     serializedWidgetRenderObservations.map(
-                      toObservationPayload
+                      toObservationPayload,
                     ),
                 }
               : {}),
@@ -1014,7 +1013,7 @@ export async function finalizeEvalIteration(
     } else {
       logger.error(
         "[evals] Failed to record iteration result:",
-        new Error(errorMessage)
+        new Error(errorMessage),
       );
       // Transient (non-cancellation) failure: fall through to the lock
       // step. The chatSessions transcript is complete from the fanout's

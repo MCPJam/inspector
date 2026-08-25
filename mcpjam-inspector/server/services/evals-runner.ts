@@ -608,10 +608,7 @@ function throwSetupPhaseError(args: {
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): never {
-  const serverLabel = getServerLabelForEvalError(
-    args.serverId,
-    args.environment
-  );
+  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
       status: 409,
@@ -1344,9 +1341,7 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async (): Promise<Array<
-    Record<string, unknown>
-  > | null> => {
+  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
@@ -1365,15 +1360,17 @@ async function persistRunSetupFailure(args: {
     }
   };
 
-  const persistPending = async (pending: Array<Record<string, unknown>>) => {
+  const persistPending = async (
+    pending: Array<Record<string, unknown>>
+  ) => {
     await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
           typeof row._id === "string"
             ? row._id
             : typeof row.iterationId === "string"
-            ? row.iterationId
-            : undefined;
+              ? row.iterationId
+              : undefined;
         const test = args.tests.find(
           (candidate) =>
             candidate.testCaseId && candidate.testCaseId === row.testCaseId
@@ -1395,16 +1392,16 @@ async function persistRunSetupFailure(args: {
                 }),
               }
             : snapshot
-            ? {
-                stageCase: buildStageAuthoredCase({
-                  test: {
-                    query: snapshot.query,
-                    expectedToolCalls: snapshot.expectedToolCalls,
-                  } as EvalTestCase,
-                  caseNeedsModel: true,
-                }),
-              }
-            : {}),
+              ? {
+                  stageCase: buildStageAuthoredCase({
+                    test: {
+                      query: snapshot.query,
+                      expectedToolCalls: snapshot.expectedToolCalls,
+                    } as EvalTestCase,
+                    caseNeedsModel: true,
+                  }),
+                }
+              : {}),
           ...(setupSignals ? { setupSignals } : {}),
           ...(setupSpans.length ? { setupSpans } : {}),
           ...(setupAudit ? { setupAudit } : {}),
@@ -4404,7 +4401,9 @@ const runHostedIterationWithBrowser = async (
                 toolName: block.toolName,
                 reason: block.reason,
                 classification: block.classification,
-                ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
+                ...(block.toolCallId
+                  ? { toolCallId: block.toolCallId }
+                  : {}),
               });
             }
           },

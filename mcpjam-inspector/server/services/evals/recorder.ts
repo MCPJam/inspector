@@ -535,9 +535,7 @@ export const startSuiteRunWithRecorder = async ({
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
-        ...(ephemeralEnvironment === true
-          ? { ephemeralEnvironment: true }
-          : {}),
+        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );

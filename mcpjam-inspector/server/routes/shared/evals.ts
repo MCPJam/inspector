@@ -365,10 +365,7 @@ export const RunEvalsRequestSchema = z.object({
    */
   sourceHash: z
     .string()
-    .regex(
-      /^[a-f0-9]{64}$/,
-      "sourceHash must be a 64-character lowercase SHA-256 hex digest"
-    )
+    .regex(/^[a-f0-9]{64}$/, "sourceHash must be a 64-character lowercase SHA-256 hex digest")
     .optional(),
   /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
