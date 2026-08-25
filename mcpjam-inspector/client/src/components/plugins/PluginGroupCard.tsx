@@ -71,8 +71,22 @@ const TONE_CLASSES: Record<string, string> = {
   muted: "border-border/60 bg-muted/30 text-muted-foreground",
 };
 
-export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
-  const [expanded, setExpanded] = useState(false);
+export function PluginGroupCard({
+  plugin,
+  /**
+   * Start expanded because a `/servers/plugins/:pluginId` permalink named
+   * this card.
+   *
+   * Seeds the local state rather than controlling it: once the recipient has
+   * the card open, collapsing it is theirs to do, and a controlled prop would
+   * spring it back open on every re-render of the section above.
+   */
+  initiallyExpanded = false,
+}: {
+  plugin: PluginSummary;
+  initiallyExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [pendingAction, setPendingAction] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   /** componentId of the server whose inline setup editor is open. */

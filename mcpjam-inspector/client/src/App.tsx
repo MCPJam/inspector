@@ -642,6 +642,12 @@ export function ServersRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
+  // `/servers/:serverId` and `/servers/plugins/:pluginId` — the exact
+  // permalink targets on Connect. Both render THIS screen (see `router.tsx`),
+  // so the param is the whole difference, and it is threaded down rather than
+  // read inside `ServersTab` so the local-mode and unauthenticated branches
+  // below keep passing it too.
+  const routeParams = useParams<{ serverId?: string; pluginId?: string }>();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
   // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
@@ -682,14 +688,22 @@ export function ServersRoute() {
           }}
         />
         <div className="min-h-0 flex-1">
-          <ServersTabBody />
+          <ServersTabBody
+            routeServerId={routeParams.serverId ?? null}
+            routePluginId={routeParams.pluginId ?? null}
+          />
         </div>
       </motion.div>
     );
   }
 
   if (!isAuthenticated) {
-    return <ServersTabBody />;
+    return (
+      <ServersTabBody
+        routeServerId={routeParams.serverId ?? null}
+        routePluginId={routeParams.pluginId ?? null}
+      />
+    );
   }
 
   return (
@@ -698,12 +712,23 @@ export function ServersRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
       onSelectHost={handleSelectHost}
-      serversTabElement={<ServersTabBody />}
+      serversTabElement={
+        <ServersTabBody
+          routeServerId={routeParams.serverId ?? null}
+          routePluginId={routeParams.pluginId ?? null}
+        />
+      }
     />
   );
 }
 
-function ServersTabBody() {
+function ServersTabBody({
+  routeServerId = null,
+  routePluginId = null,
+}: {
+  routeServerId?: string | null;
+  routePluginId?: string | null;
+} = {}) {
   const {
     projectServers,
     handleConnect,
@@ -746,6 +771,8 @@ function ServersTabBody() {
       areServersHydrated={areServersHydrated}
       onProjectShared={handleProjectShared}
       onLeaveProject={() => handleLeaveProject(activeProjectId)}
+      routeServerId={routeServerId}
+      routePluginId={routePluginId}
       isRegistryEnabled={registryEnabled === true}
       onNavigateToRegistry={
         registryEnabled === true ? () => handleNavigate("registry") : undefined
@@ -1760,6 +1787,11 @@ export function EnvironmentsRoute() {
   // (`canManageHosts` mirrors the backend's admin gate); everyone else
   // browses read-only.
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  // `/environments/:environmentId` — the exact permalink target. Same element
+  // as `/environments`, so the param is what selects the detail.
+  const { environmentId: routeEnvironmentId } = useParams<{
+    environmentId?: string;
+  }>();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
@@ -1783,6 +1815,7 @@ export function EnvironmentsRoute() {
       projectId={convexProjectId ?? null}
       canManage={canManage}
       isAuthenticated={isAuthenticated}
+      routeEnvironmentId={routeEnvironmentId ?? null}
     />
   );
 }

@@ -1,4 +1,5 @@
 import { useAuth } from "@workos-inc/authkit-react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { GitHubStarButton } from "@/components/ui/github-star-button";
@@ -49,7 +50,7 @@ export function AuthUpperArea({
               size="sm"
               onClick={() => {
                 track("login_button_clicked", { location: "header" });
-                signIn();
+                signIn(permalinkSignInOptions());
               }}
             >
               Sign in

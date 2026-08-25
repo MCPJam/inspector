@@ -120,7 +120,7 @@ export const APP_SURFACES = [
   {
     id: "servers",
     canonicalPath: "/servers",
-    routePatterns: ["servers"],
+    routePatterns: ["servers", "servers/plugins/:pluginId", "servers/:serverId"],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -285,7 +285,7 @@ export const APP_SURFACES = [
   {
     id: "project-environments",
     canonicalPath: "/environments",
-    routePatterns: ["environments"],
+    routePatterns: ["environments", "environments/:environmentId"],
     navSegments: ["environments"],
     title: "Environments",
     purpose:

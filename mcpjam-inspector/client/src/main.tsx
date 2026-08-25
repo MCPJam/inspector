@@ -33,6 +33,10 @@ import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
 import {
+  PERMALINK_SIGN_IN_STATE_KEY,
+  takePermalinkSignInReturn,
+} from "./lib/permalink-signin-return";
+import {
   callbackMatchesPending,
   HANDOFF_SIGN_IN_STATE_KEY,
   matchHandoffRoute,
@@ -368,13 +372,14 @@ if (isInIframe) {
        * Send a returning sign-in back where it started, when something asked
        * to come back.
        *
-       * Only the handoff page does today: it lives on `/connect/server/…`, its
-       * sign-in redirect lands HERE on `/callback`, and without this the user
-       * arrives at the app shell having lost the link they were trying to use.
+       * TWO things do. The handoff page lives on `/connect/server/…`, and an
+       * agent-minted PERMALINK can be any exact resource path plus its
+       * `?project=` scope; both redirect HERE on `/callback`, and without
+       * this the user arrives at the app shell having lost what they opened.
        *
-       * The nonce is all that crossed the network — the path itself was kept
-       * in same-origin storage, and `takeHandoffSignInReturn` re-validates it
-       * as same-origin on the way out before anything navigates. AuthKit's
+       * In both cases the nonce is all that crossed the network — the path
+       * itself was kept in same-origin storage, and each `take…` re-validates
+       * it as same-origin on the way out before anything navigates. AuthKit's
        * default for this hook is a no-op, so nothing else changes by
        * supplying it.
        *
@@ -382,12 +387,21 @@ if (isInIframe) {
        * then calls this), so navigating away here does not race the login.
        */
       onRedirectCallback={({ state }) => {
-        const returnTo = takeHandoffSignInReturn(
-          (state as Record<string, unknown> | null)?.[
-            HANDOFF_SIGN_IN_STATE_KEY
-          ],
-          window.location.origin
-        );
+        const carried = state as Record<string, unknown> | null;
+        const returnTo =
+          takeHandoffSignInReturn(
+            carried?.[HANDOFF_SIGN_IN_STATE_KEY],
+            window.location.origin
+          ) ??
+          // An agent-minted permalink the visitor opened while signed out.
+          // Without this they authenticate and land on the app shell, having
+          // lost both the resource AND the `?project=` scope — the
+          // wrong-project landing permalinks exist to prevent, reintroduced
+          // at the last step.
+          takePermalinkSignInReturn(
+            carried?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin
+          );
         // `replace`, not `assign`: `/callback` is not somewhere the back
         // button should return to.
         if (returnTo) window.location.replace(returnTo);

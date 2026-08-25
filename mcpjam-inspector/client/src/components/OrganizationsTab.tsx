@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -492,7 +493,7 @@ export function OrganizationsTab({
           Members, models, and billing live on your organization. Sign in to
           manage them.
         </p>
-        <Button onClick={() => signIn()}>Sign in</Button>
+        <Button onClick={() => signIn(permalinkSignInOptions())}>Sign in</Button>
       </OrganizationStateShell>
     );
   }

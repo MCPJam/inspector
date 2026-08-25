@@ -7,6 +7,7 @@
  * additive fields are non-breaking and must be ignored, never relied on
  * being absent.
  */
+import type { PlatformPermalink } from "./permalinks.js";
 import type { ServerDoctorResult } from "../server-doctor-core.js";
 import type {
   EvaluationConfigSnapshot,
@@ -433,13 +434,21 @@ export interface PlatformSessionParentRef {
   scenarioId?: string;
 }
 
-/** Where a human goes to read a session. Always present. */
-export interface PlatformSessionLink {
-  /** App-relative path, including `?project=`. */
-  path: string;
-  /** Absolute URL for the same target. */
-  url: string;
-}
+/**
+ * Where a human goes to read a session. Always present.
+ *
+ * A PROJECTION of `PlatformPermalink`, not a widening of it: the wire
+ * contract for `/v1/sessions` rows is exactly `{path, url}` today, and adding
+ * `label`/`resource` as REQUIRED fields would make every older backend's
+ * response fail a client that trusted the type. Deriving it from
+ * `PlatformPermalink` instead of restating the two fields is what stops the
+ * shared permalink shape and the session wire shape from drifting apart —
+ * rename `path` there and this stops compiling here.
+ *
+ * The backend may later add `label`/`resource` as OPTIONAL fields without
+ * breaking a client built against this.
+ */
+export type PlatformSessionLink = Pick<PlatformPermalink, "path" | "url">;
 
 /**
  * One row of the unified, cross-surface sessions feed
@@ -1263,6 +1272,18 @@ export interface PlatformEvalStep {
 export interface PlatformEvalCase {
   id: string;
   /**
+   * The suite this case belongs to.
+   *
+   * OPTIONAL on the wire — the REST projection has never sent it — but always
+   * present on a case returned through a platform OPERATION, which stamps it
+   * on the way out. Without it `/evals/suite/:suiteId/test/:testId` cannot be
+   * composed from the response at all: the case knows its own id and nothing
+   * about its parent, and a link site would have to re-resolve the suite it
+   * was just handed. Additive, so a reader built against the older shape is
+   * unaffected.
+   */
+  suiteId?: string;
+  /**
    * The case's effective DECLARED id — what it answers to in a suite file, an
    * import, or a CLI argument. Absent on cases authored before declared
    * identity existed. Distinct from `id`, which is the platform row id the
@@ -1316,6 +1337,18 @@ export interface PlatformEvalCaseBatchCreated {
   index: number;
   /** Platform id — what the per-case routes take as their path parameter. */
   id: string;
+  /**
+   * The suite this case belongs to.
+   *
+   * OPTIONAL on the wire — the REST projection has never sent it — but always
+   * present on a case returned through a platform OPERATION, which stamps it
+   * on the way out. Without it `/evals/suite/:suiteId/test/:testId` cannot be
+   * composed from the response at all: the case knows its own id and nothing
+   * about its parent, and a link site would have to re-resolve the suite it
+   * was just handed. Additive, so a reader built against the older shape is
+   * unaffected.
+   */
+  suiteId?: string;
   /** The effective declared id. On a replay this is the STORED case's. */
   declaredId?: string;
   title: string;

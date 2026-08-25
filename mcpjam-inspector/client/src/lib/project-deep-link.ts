@@ -9,7 +9,19 @@
  * strips the param from the URL.
  */
 
-export const PROJECT_DEEP_LINK_PARAM = "project";
+/**
+ * Re-exported, not declared here.
+ *
+ * The parameter has TWO ends: the SDK's permalink builder writes it and this
+ * module consumes it, so a literal in each place is one rename away from
+ * silently minting links the app ignores. The dependency only runs one way —
+ * app code imports the SDK, never the reverse — which is why the constant
+ * lives in `@mcpjam/sdk/platform` and is re-exported here for the app's own
+ * call sites.
+ */
+import { PROJECT_DEEP_LINK_PARAM } from "@mcpjam/sdk/platform";
+
+export { PROJECT_DEEP_LINK_PARAM };
 
 // Convex ids are lowercase alphanumeric. The shape check keeps mangled or
 // hand-typed params from suppressing first-run onboarding or firing switches.

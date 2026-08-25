@@ -13,9 +13,15 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import {
+  buildProjectEnvironmentPath,
   buildUserTestingScenarioPath,
   routePaths,
+  useAppNavigate,
 } from "@/lib/app-navigation";
+import {
+  permalinkUnavailableMessage,
+  resolvePermalinkTarget,
+} from "@/lib/permalink-target";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -55,12 +61,23 @@ export function ProjectEnvironmentsRoute({
   projectId,
   canManage,
   isAuthenticated,
+  routeEnvironmentId = null,
 }: {
   projectId: string | null;
   /** Admin-gated writes; members browse read-only. */
   canManage: boolean;
   /** Threaded to the detail canvas's host/server reads. */
   isAuthenticated: boolean;
+  /**
+   * The environment an `/environments/:environmentId` permalink named.
+   *
+   * Selection on this screen has always been component state, which is why
+   * `/environments` alone could never be a permalink: it opens whichever row
+   * the viewer last clicked. The param drives selection, and selection drives
+   * the param back (see below), so the URL in the address bar is the URL an
+   * agent would hand out for the same view.
+   */
+  routeEnvironmentId?: string | null;
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
@@ -164,6 +181,47 @@ export function ProjectEnvironmentsRoute({
     [environments, selectedId, justCreated]
   );
 
+  // ── Permalink round-trip ───────────────────────────────────────────
+  //
+  // Route → selection. Runs on every change of the param rather than once at
+  // mount: the project switch above clears `selectedId`, and a deep-linked
+  // arrival has to survive that.
+  useEffect(() => {
+    const wanted = routeEnvironmentId?.trim();
+    if (!wanted || wanted === selectedId) return;
+    setSelectedId(wanted);
+    setCreating(false);
+  }, [routeEnvironmentId, selectedId]);
+
+  const routeState = resolvePermalinkTarget(
+    routeEnvironmentId,
+    environments,
+    (environment) => environment.environmentId
+  );
+
+  // Selection → route, so the address bar always names what is on screen and
+  // Back leaves the detail instead of leaving the surface. `replace` because
+  // clicking through a list is not navigation history anyone wants to walk.
+  const navigate = useAppNavigate();
+  useEffect(() => {
+    if (flagEnabled !== true) return;
+    const current = routeEnvironmentId?.trim() ?? null;
+    const shown = !creating && selected ? selected.environmentId : null;
+    if (current === shown) return;
+    // While the list is still loading, a permalink's id is not yet known to be
+    // good or bad — rewriting the URL then would erase the target before it
+    // could be honored.
+    if (shown === null && routeState.kind === "loading") return;
+    navigate(buildProjectEnvironmentPath(shown), { replace: true });
+  }, [
+    flagEnabled,
+    creating,
+    selected,
+    routeEnvironmentId,
+    routeState.kind,
+    navigate,
+  ]);
+
   // Only the seed/draft consumed FOR THE CURRENT project may reach the form.
   const activeSeed =
     seed && projectId && seed.projectId === projectId.trim()
@@ -201,6 +259,32 @@ export function ProjectEnvironmentsRoute({
   // Detail mode is the ONE mode that escapes the centered `max-w-2xl` column:
   // it owns the full width so the read-only Connect canvas can sit beside the
   // editor. List and create modes keep the narrow shell verbatim.
+  // A permalink to an environment this viewer cannot see says so, once, and
+  // does NOT fall through to the list: rendering the collection instead is
+  // exactly the silent wrong-resource landing permalinks exist to prevent.
+  if (routeState.kind === "unavailable") {
+    return (
+      <div className="mx-auto flex h-full max-w-2xl flex-col justify-center gap-4 p-8">
+        <p
+          role="status"
+          data-testid="environment-permalink-unavailable"
+          className="text-sm text-muted-foreground"
+        >
+          {permalinkUnavailableMessage("environment")}
+        </p>
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(routePaths.environments)}
+          >
+            Back to environments
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!creating && selected) {
     return (
       <EnvironmentDetail

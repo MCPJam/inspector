@@ -11,6 +11,13 @@ import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
+  derivePermalinks,
+  noPermalink,
+  responsePermalinks,
+  type PlatformPermalinkPolicy,
+  type PlatformResourceRef,
+} from "./permalinks.js";
+import {
   computeRunTargets,
   type RunTarget,
   type RunTargetHost,
@@ -131,6 +138,27 @@ import type {
 export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
+  /**
+   * The project this call actually resolved to, fired exactly once when
+   * resolution succeeds.
+   *
+   * Permalinks need a project id and most callers do not have one. The hosted
+   * route does, but an MCP host passes a project NAME or nothing at all and
+   * the operation resolves the real project internally — so a permalink built
+   * from the adapter's own guess would name a different project than the one
+   * the operation read. This receipt is how the adapter learns which project
+   * the work happened in, without the operation's RESULT changing shape
+   * (`{data, scope}` would break every direct SDK caller).
+   *
+   * SYNCHRONOUS BY CONTRACT and best-effort, same as `onDisclosure`: it is
+   * not awaited, a throwing callback is swallowed rather than failing the
+   * operation, and an operation that resolves no project (list_projects,
+   * get_me, the registry directory) never fires it.
+   */
+  onScopeResolved?: (scope: {
+    projectId: string;
+    organizationId?: string;
+  }) => void;
   /**
    * Fired by `runEvalSuiteOperation` with the pre-run disclosure it fetched
    * for the frozen launch plan, ONE resolution before it calls
@@ -294,6 +322,10 @@ export const getMeOperation: PlatformOperation<
   title: "Get the current MCPJam account",
   description: "Return the account associated with the current API credential.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An account identity read. The account is not a project resource and has no app page of its own.",
+  ),
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.getMe({ signal });
@@ -309,6 +341,10 @@ export const listModelsOperation: PlatformOperation<
   description:
     "List the public hosted model catalog available to MCPJam callers.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "The hosted model catalog is platform configuration, not a resource in anyone's project.",
+  ),
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.listModels({ signal });
@@ -324,6 +360,13 @@ export const listOrganizationsOperation: PlatformOperation<
   description:
     "List the organizations the caller belongs to. Use this to discover the organization id that list_projects filters by and create_project takes. An organization-scoped API key only ever sees its own organization.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((organization) => ({
+      type: "organization" as const,
+      id: organization.id,
+      label: `Open ${organization.name}`,
+    })),
+  ),
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.listOrganizations({ signal });
@@ -370,6 +413,19 @@ export interface PlatformOperation<TInput, TOutput> {
    * itself, and a surface that ignores it is no less safe than before.
    */
   risk?: "none" | "spend" | "exposure" | "destructive";
+  /**
+   * Which durable resources this operation's result can be opened at.
+   *
+   * REQUIRED, and discriminated: there is no unclassified operation. Before
+   * this field every surface re-derived app URLs from result shapes it half
+   * knew, three of them assembled the same eval-run URL, and the model filled
+   * the remaining gaps by inventing `https://app.mcpjam.com/servers` — a link
+   * that opens whatever project the RECIPIENT last selected. Making the field
+   * mandatory means a new operation cannot ship having quietly skipped the
+   * question; declaring `noPermalink("mutation-only")` is a decision, an
+   * omitted optional field was not.
+   */
+  permalink: PlatformPermalinkPolicy<TInput, TOutput>;
   inputSchema: z.ZodType<TInput>;
   execute(input: TInput, context: PlatformOperationContext): Promise<TOutput>;
 }
@@ -397,6 +453,17 @@ export const listProjectsOperation: PlatformOperation<
   description:
     "List the MCPJam projects the caller can access, most recently updated first.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    // Rows SPAN projects, so each carries its own `projectId` rather than
+    // inheriting the operation's resolved scope — there is no single resolved
+    // project here, and stamping one would relabel every other row with it.
+    result.items.map((project) => ({
+      type: "project" as const,
+      id: project.id,
+      projectId: project.id,
+      label: `Open ${project.name}`,
+    })),
+  ),
   inputSchema: listProjectsInput,
   async execute(input, { client, signal }) {
     const page = await client.listProjects(
@@ -436,6 +503,9 @@ export const createProjectOperation: PlatformOperation<
   description:
     "Create an empty project in an organization the caller belongs to. The new project starts with no MCP servers; add them with create_project_server or connect_project_server. Counts against the organization plan's project limit.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "project", id: result.id, projectId: result.id },
+  ]),
   inputSchema: createProjectInput,
   async execute(input, { client, signal }) {
     return client.createProject({ body: input }, { signal });
@@ -469,12 +539,14 @@ export const updateProjectOperation: PlatformOperation<
   description:
     "Rename a project or change its description, icon or visibility. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "project", id: result.id, projectId: result.id },
+  ]),
   inputSchema: updateProjectInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const { project: _selector, ...body } = input;
     return client.updateProject({ projectId: project.id, body }, { signal });
@@ -495,12 +567,12 @@ export const deleteProjectOperation: PlatformOperation<
   description:
     "Delete a project and cascade its project-owned resources. This cannot be undone.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: deleteProjectInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.deleteProject({ projectId: project.id }, { signal });
   },
@@ -532,12 +604,19 @@ export const listProjectServersOperation: PlatformOperation<
   description:
     "List the MCP servers saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((server) => ({
+      type: "project_server" as const,
+      id: server.id,
+      projectId: result.project.id,
+      label: `Open ${server.name}`,
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
@@ -560,12 +639,19 @@ export const showServersOperation: PlatformOperation<
   description:
     "Show all MCP servers in a project with their health status. If no project is specified, shows the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.servers.map((server) => ({
+      type: "project_server" as const,
+      id: server.id,
+      projectId: result.project.id,
+      label: `Open ${server.name}`,
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
@@ -586,19 +672,165 @@ export const showServersOperation: PlatformOperation<
   },
 };
 
+/**
+ * Resolve the caller's project selector, and REPORT what it resolved to.
+ *
+ * The report is the reason this is the one shared resolution path: a selector
+ * is usually a name, or absent entirely, so the project id exists only here.
+ * Firing `onScopeResolved` at the single point where resolution succeeds is
+ * what lets an adapter build a permalink for the project the operation
+ * actually read, instead of one it guessed — and doing it here rather than at
+ * 154 call sites is what stops half of them from forgetting.
+ */
 async function resolveProjectOrThrow(
-  client: PlatformApiClient,
+  context: Pick<
+    PlatformOperationContext,
+    "client" | "signal" | "onScopeResolved"
+  >,
   selector: string | undefined,
-  signal: AbortSignal | undefined,
 ): Promise<{ project: PlatformProject; sortedProjects: PlatformProject[] }> {
+  const { client, signal, onScopeResolved } = context;
   const page = await client.listProjects({}, { signal });
   const resolution = resolveProject(page.items, selector);
   if (!resolution.ok) {
     throw projectResolutionError(resolution.message);
   }
+  reportResolvedScope(onScopeResolved, resolution.project);
   return {
     project: resolution.project,
     sortedProjects: resolution.sortedProjects,
+  };
+}
+
+/**
+ * Deliver the resolved-scope receipt, best-effort.
+ *
+ * A caller's own synchronous failure is the caller's problem, not a reason to
+ * fail an operation that already succeeded — the same contract
+ * `notifyDisclosure` keeps one screen up.
+ */
+function reportResolvedScope(
+  onScopeResolved: PlatformOperationContext["onScopeResolved"],
+  project: PlatformProject,
+): void {
+  if (!onScopeResolved) return;
+  try {
+    onScopeResolved({
+      projectId: project.id,
+      ...(project.organizationId ? { organizationId: project.organizationId } : {}),
+    });
+  } catch {
+    // Best-effort by contract.
+  }
+}
+
+
+/**
+ * Stamp the suite a case-shaped payload belongs to.
+ *
+ * The REST projections for eval cases predate permalinks and carry no suite
+ * id, so `/evals/suite/:suiteId/test/:testId` cannot be composed from a
+ * response alone. The operation has just resolved that suite in order to make
+ * the call, so it stamps it on the way out — an additive optional field older
+ * readers ignore, rather than a second lookup at every link site.
+ */
+function stampSuiteId<T extends object>(
+  payload: T,
+  suiteId: string,
+): T & { suiteId: string } {
+  return { ...payload, suiteId };
+}
+
+// ── Permalink derivation helpers ─────────────────────────────────────
+//
+// Small, named, and shared so the 164 policy declarations below stay one
+// readable line of intent each. Every one of them returns a REF, never a URL:
+// composing the URL is `buildAppPermalink`'s job and happens in exactly one
+// place.
+
+/** Spread `projectId` only when the payload actually carries one. */
+function projectIdOf(source: {
+  projectId?: string | null;
+}): { projectId?: string } {
+  return source.projectId ? { projectId: source.projectId } : {};
+}
+
+/** The saved server a server-scoped operation resolved. */
+function serverRef(result: {
+  project: SelectedProjectInfo;
+  server: { id: string; name: string };
+}): PlatformResourceRef {
+  return {
+    type: "project_server",
+    id: result.server.id,
+    projectId: result.project.id,
+    label: `Open ${result.server.name}`,
+  };
+}
+
+/** An eval run, addressed through the suite that owns it. */
+function evalRunRef(
+  runId: string,
+  suiteId: string,
+  projectId?: string,
+): PlatformResourceRef {
+  return {
+    type: "eval_run",
+    id: runId,
+    parent: { type: "eval_suite", id: suiteId },
+    ...(projectId ? { projectId } : {}),
+  };
+}
+
+/**
+ * An eval case, addressed through its suite.
+ *
+ * Returns NOTHING when the suite is unknown rather than falling back to the
+ * suite list or a bare case id: `/evals/suite/<wrong>/test/<id>` would render
+ * a different suite's screen, which is precisely the wrong-resource failure
+ * permalinks exist to end. Every catalog path stamps `suiteId` (see
+ * `stampSuiteId`), so in practice this is the guard, not the common case.
+ */
+function evalCaseRef(
+  testCase: { id: string; title?: string },
+  suiteId: string | undefined,
+): PlatformResourceRef[] {
+  if (!suiteId) return [];
+  return [
+    {
+      type: "eval_case",
+      id: testCase.id,
+      parent: { type: "eval_suite", id: suiteId },
+      ...(testCase.title ? { label: `Open ${testCase.title}` } : {}),
+    },
+  ];
+}
+
+/** One project environment. */
+function environmentRef(environment: {
+  id: string;
+  projectId: string;
+  name?: string | null;
+}): PlatformResourceRef {
+  return {
+    type: "project_environment",
+    id: environment.id,
+    projectId: environment.projectId,
+    ...(environment.name ? { label: `Open ${environment.name}` } : {}),
+  };
+}
+
+/** One swarm. */
+function swarmRef(swarm: {
+  id: string;
+  projectId: string;
+  name: string;
+}): PlatformResourceRef {
+  return {
+    type: "swarm",
+    id: swarm.id,
+    projectId: swarm.projectId,
+    label: `Open ${swarm.name}`,
   };
 }
 
@@ -752,12 +984,18 @@ export const diagnoseServerOperation: PlatformOperation<
   description:
     "Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. Use when a server is erroring, won't connect, or to check its health.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "project_server",
+      id: result.server.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: serverScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -786,12 +1024,15 @@ export const validateServerOperation: PlatformOperation<
   description:
     "Connect to a saved MCP server and return its validation snapshot, including tools, prompts, and resources.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An opaque validation payload: the operation resolves its server from a selector and the response echoes no id to address.",
+  ),
   inputSchema: serverScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -815,12 +1056,15 @@ export const exportServerOperation: PlatformOperation<
   description:
     "Export a saved MCP server's configuration and discovered capabilities as JSON.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An opaque export payload: the operation resolves its server from a selector and the response echoes no id to address.",
+  ),
   inputSchema: serverScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -860,11 +1104,10 @@ async function runServerListing(
     body: Record<string, unknown>,
   ) => Promise<PlatformPage<Record<string, unknown>>>,
 ): Promise<ServerPagedResult> {
-  const { client, signal } = context;
+  const { client, signal, onScopeResolved } = context;
   const { project } = await resolveProjectOrThrow(
-    client,
+    { client, signal, onScopeResolved },
     input.project,
-    signal,
   );
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
@@ -888,6 +1131,7 @@ export const listServerToolsOperation: PlatformOperation<
   description:
     "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Use before call_server_tool to find the tool name and required parameters. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
   async execute(input, context) {
     return runServerListing(input, context, (scope, body) =>
@@ -908,6 +1152,7 @@ export const listServerPromptsOperation: PlatformOperation<
   description:
     "List the prompts a saved MCP server exposes: names, descriptions, and arguments. Use before get_server_prompt to find the prompt name and its arguments. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
   async execute(input, context) {
     return runServerListing(input, context, (scope, body) =>
@@ -928,6 +1173,7 @@ export const listServerResourcesOperation: PlatformOperation<
   description:
     "List the resources a saved MCP server exposes: uris, names, and mime types. Use before read_server_resource to find the resource uri. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
   async execute(input, context) {
     return runServerListing(input, context, (scope, body) =>
@@ -1024,12 +1270,12 @@ export const renderServerWidgetOperation: PlatformOperation<
   // approval-worthy rather than silently callable — see the TIER_EXCEPTIONS
   // entry, which explains why it is gated rather than excluded outright.
   risk: "destructive",
+  permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: renderServerWidgetInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(client, project, input.server, signal);
     const render = await client.renderServerWidget(
@@ -1076,12 +1322,15 @@ export const callServerToolOperation: PlatformOperation<
     "Execute a tool on a saved MCP server and return its result. Runs with the caller's own authorization and may have side effects on the server. Get the tool name and parameter schema from list_server_tools first.",
   readOnly: false,
   mayBeDestructive: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party tool's own output. Linking to MCPJam's page for the server would answer a question the caller did not ask.",
+  ),
   inputSchema: callServerToolInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1137,12 +1386,15 @@ export const getServerPromptOperation: PlatformOperation<
   description:
     "Render a prompt from a saved MCP server with the given arguments and return its messages. Get the prompt name and argument list from list_server_prompts first.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's prompt content.",
+  ),
   inputSchema: getServerPromptInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1194,12 +1446,15 @@ export const readServerResourceOperation: PlatformOperation<
   description:
     "Read one resource from a saved MCP server by uri and return its contents. Get the uri from list_server_resources first.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's resource content.",
+  ),
   inputSchema: readServerResourceInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1258,12 +1513,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
   description:
     "Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). Returns a per-host verdict (works / degraded / blocked / unknown) with the specific findings — e.g. a widget a host can't render, or a host API a widget needs that the host lacks.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1420,12 +1675,18 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
     "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
   readOnly: false,
   risk: "spend",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "readiness_run",
+      id: result.run.runId,
+      projectId: result.run.projectId,
+    },
+  ]),
   inputSchema: startReadinessInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     // Rejects stdio and URL-less servers with a named reason, which is the
     // same refusal the route makes — better here, before a row exists.
@@ -1466,12 +1727,18 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
     "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
   readOnly: false,
   risk: "spend",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "readiness_run",
+      id: result.run.runId,
+      projectId: result.run.projectId,
+    },
+  ]),
   inputSchema: startOpenAIReadinessInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1515,12 +1782,18 @@ export const getReadinessRunOperation: PlatformOperation<
   description:
     "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "readiness_run",
+      id: result.run.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: readinessRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.getReadinessRun(
       { projectId: project.id, runId: input.run },
@@ -1572,12 +1845,18 @@ export const listReadinessRunsOperation: PlatformOperation<
   description:
     "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.runs.map((run) => ({
+      type: "readiness_run" as const,
+      id: run.id,
+      projectId: result.project.id,
+    })),
+  ),
   inputSchema: listReadinessRunsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const serverId = input.server
       ? (await resolveLiveServer(client, project, input.server, signal)).id
@@ -1608,12 +1887,12 @@ export const cancelReadinessRunOperation: PlatformOperation<
   // and the run it interrupts is one somebody is paying to keep running.
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: readinessRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.cancelReadinessRun(
       { projectId: project.id, runId: input.run },
@@ -1686,12 +1965,18 @@ export const getReadinessReportOperation: PlatformOperation<
   description:
     "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "readiness_run",
+      id: result.runId,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: readinessRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const scope = { projectId: project.id, runId: input.run };
     const [run, report] = await Promise.all([
@@ -1809,12 +2094,18 @@ export const startConformanceRunOperation: PlatformOperation<
     "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id — poll `get_conformance_run` for the verdict, which is NOT in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
   readOnly: false,
   risk: "none",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "conformance_run",
+      id: result.run.runId,
+      projectId: result.run.projectId,
+    },
+  ]),
   inputSchema: startConformanceRunInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const server = await resolveLiveServer(
       client,
@@ -1859,12 +2150,18 @@ export const getConformanceRunOperation: PlatformOperation<
   description:
     "Read one persisted conformance run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `outcome` is the grade (a completed run can be `failed`), and `score` is the number. `pending` counts checks this profile reported but did not score.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "conformance_run",
+      id: result.run.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: conformanceRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.getConformanceRun(
       { projectId: project.id, runId: input.run },
@@ -1912,12 +2209,18 @@ export const listConformanceRunsOperation: PlatformOperation<
   description:
     "List a project's persisted conformance runs, newest first, optionally narrowed to one saved server. Use it to find a run id when you have a server but not a run.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.runs.map((run) => ({
+      type: "conformance_run" as const,
+      id: run.id,
+      projectId: result.project.id,
+    })),
+  ),
   inputSchema: listConformanceRunsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const serverId = input.server
       ? (await resolveLiveServer(client, project, input.server, signal)).id
@@ -1947,12 +2250,18 @@ export const getConformanceReportOperation: PlatformOperation<
   description:
     "A bounded projection of a conformance run's failing checks. Failed checks come before could-not-run skips; the list is capped so a model surface is not handed a megabyte-sized report. `pending` on a check means this profile reported it but did not score it.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "conformance_run",
+      id: result.runId,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: conformanceRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const report = await client.getConformanceReport(
       { projectId: project.id, runId: input.run },
@@ -2713,12 +3022,19 @@ export const listEvalSuitesOperation: PlatformOperation<
   description:
     "List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((suite) => ({
+      type: "eval_suite" as const,
+      id: suite.id,
+      projectId: result.project.id,
+      ...(suite.name ? { label: `Open ${suite.name}` } : {}),
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listEvalSuites(
       { projectId: project.id },
@@ -2766,12 +3082,16 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   description:
     "List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. The suite is matched by name or ID within the project.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((run) =>
+      evalRunRef(run.id, result.suite.id, result.project.id),
+    ),
+  ),
   inputSchema: evalSuiteScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const page = await client.listEvalSuiteRuns(
@@ -3114,8 +3434,32 @@ export const runEvalSuiteOperation: PlatformOperation<
     "Start an asynchronous rerun of an existing eval suite. Returns immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
   readOnly: false,
   risk: "spend",
+  permalink: derivePermalinks((result) => {
+    // A GROUPED launch links to the suite's runs lens, not to one member run:
+    // linking to a single run would hide a sibling's failure, which is the one
+    // thing whoever approved N paid runs most needs to see.
+    if (result.runGroupId) {
+      return [
+        {
+          type: "eval_run_group",
+          id: result.runGroupId,
+          parent: { type: "eval_suite", id: result.suite.id },
+          projectId: result.project.id,
+        },
+      ];
+    }
+    return result.runId
+      ? [evalRunRef(result.runId, result.suite.id, result.project.id)]
+      : [
+          {
+            type: "eval_suite",
+            id: result.suite.id,
+            projectId: result.project.id,
+          },
+        ];
+  }),
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal, onDisclosure, onDisclosureUnavailable }) {
+  async execute(input, { client, signal, onScopeResolved, onDisclosure, onDisclosureUnavailable }) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3123,9 +3467,8 @@ export const runEvalSuiteOperation: PlatformOperation<
     assertRunTargetSelectorsCoherent(input);
 
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
 
@@ -3631,14 +3974,16 @@ export const runEvalCaseOperation: PlatformOperation<
     "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs; for one with attached hosts, pass host so the run is stamped with that host's configuration. Returns a runId immediately; poll get_eval_run until terminal. CONSUMES credits like any eval run.",
   readOnly: false,
   risk: "spend",
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suite.id, result.project.id),
+  ]),
   inputSchema: runEvalCaseInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     assertNoServerOverrideWithEnvironment(input);
     assertRunTargetSelectorsCoherent(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -3949,12 +4294,18 @@ export const createEvalSuiteOperation: PlatformOperation<
   description:
     "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "eval_suite",
+      id: result.suite.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: createEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const servers = await resolveRunServers(
       client,
@@ -4116,12 +4467,14 @@ export const getEvalSuiteOperation: PlatformOperation<
   description:
     "Fetch one eval suite's full settings: environment (servers, computer image), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    { type: "eval_suite", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: getEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
@@ -4181,17 +4534,20 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
   description:
     "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments/host); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A pre-run planning read: it describes what a launch WOULD do, so there is no run to open yet.",
+  ),
   inputSchema: getEvalRunDisclosureInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     assertRunTargetSelectorsCoherent({
       environment: input.environment,
       environments: input.environments,
       host: input.host,
     });
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const caseIds = input.cases
@@ -4403,12 +4759,14 @@ export const updateEvalSuiteOperation: PlatformOperation<
   description:
     "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "eval_suite", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: updateEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const body: Record<string, unknown> = {};
@@ -4449,12 +4807,12 @@ export const deleteEvalSuiteOperation: PlatformOperation<
   description:
     "Permanently delete an eval suite and all its cases and runs. This cannot be undone.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: deleteEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
@@ -4504,8 +4862,11 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
   description:
     "Enable or disable automatic scheduled runs for a suite, and set the interval. Disabling preserves the stored interval and environment pin. For an environment-based suite, environment pins which single environment the scheduled runs launch.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "eval_suite", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: setEvalSuiteScheduleInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Disabling returns early server-side and would silently drop a pin, so an
     // environment sent with `enabled: false` never takes effect. Fail instead
     // of letting the caller believe they repointed the schedule.
@@ -4515,9 +4876,8 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
       );
     }
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const environment = input.environment
@@ -4572,12 +4932,14 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
   description:
     "Attach project environments to an eval suite, replacing whatever it had. Once a suite has environments, its runs execute against one of them (resolved host config, closed server set, pinned plugin versions) instead of its saved server selection — that is what makes run_eval_suite's environment argument available. Pass null to detach them all. Rejected if it would strand an enabled schedule pinned to an environment being removed.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "eval_suite", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: setEvalSuiteEnvironmentsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     let environmentIds: string[] | null = null;
@@ -4687,18 +5049,24 @@ export const listEvalCasesOperation: PlatformOperation<
   description:
     "List the test cases in an eval suite, with their ids and configuration.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.flatMap((testCase) => evalCaseRef(testCase, testCase.suiteId)),
+  ),
   inputSchema: listEvalCasesInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
-    return client.listEvalCases(
+    const page = await client.listEvalCases(
       { projectId: project.id, suiteId: suite.id },
       { signal },
     );
+    return {
+      ...page,
+      items: page.items.map((testCase) => stampSuiteId(testCase, suite.id)),
+    };
   },
 };
 
@@ -4722,12 +5090,12 @@ export const getEvalCaseOperation: PlatformOperation<
   title: "Get MCPJam eval case",
   description: "Fetch one eval test case's full definition.",
   readOnly: true,
+  permalink: derivePermalinks((result) => evalCaseRef(result, result.suiteId)),
   inputSchema: getEvalCaseInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -4737,9 +5105,12 @@ export const getEvalCaseOperation: PlatformOperation<
       input.case,
       signal,
     );
-    return client.getEvalCase(
-      { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
-      { signal },
+    return stampSuiteId(
+      await client.getEvalCase(
+        { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
+        { signal },
+      ),
+      suite.id,
     );
   },
 };
@@ -4767,21 +5138,24 @@ export const createEvalCaseOperation: PlatformOperation<
   description:
     "Add one test case to an eval suite. Provide ordered `steps`: a `prompt` step is a model turn, a `toolCall` step is a deterministic tool call, and `assert` steps hold the expectations (e.g. a `toolCalledWith` or `widgetRendered` predicate). Positive cases must include at least one `assert` step.",
   readOnly: false,
+  permalink: derivePermalinks((result) => evalCaseRef(result, result.suiteId)),
   inputSchema: createEvalCaseInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
-    return client.createEvalCase(
-      {
-        projectId: project.id,
-        suiteId: suite.id,
-        body: buildCreateCaseBody(input),
-      },
-      { signal },
+    return stampSuiteId(
+      await client.createEvalCase(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          body: buildCreateCaseBody(input),
+        },
+        { signal },
+      ),
+      suite.id,
     );
   },
 };
@@ -4837,8 +5211,11 @@ export const createEvalCasesOperation: PlatformOperation<
   // nothing is spent until a run is started. (`create_eval_case` predates this
   // field and is pinned as legacy-unclassified; it means the same thing.)
   risk: "none",
+  permalink: derivePermalinks((result) =>
+    result.created.flatMap((entry) => evalCaseRef(entry, entry.suiteId)),
+  ),
   inputSchema: createEvalCasesInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Checked HERE rather than as a schema `.refine`: an operation's
     // `inputSchema` is handed to the agent tool surface, which needs a plain
     // object schema — a refinement wraps it in `ZodEffects` and the toolset
@@ -4861,12 +5238,11 @@ export const createEvalCasesOperation: PlatformOperation<
       );
     }
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
-    return client.createEvalCases(
+    const batch = await client.createEvalCases(
       {
         projectId: project.id,
         suiteId: suite.id,
@@ -4884,6 +5260,10 @@ export const createEvalCasesOperation: PlatformOperation<
       },
       { signal },
     );
+    return {
+      ...batch,
+      created: batch.created.map((entry) => stampSuiteId(entry, suite.id)),
+    };
   },
 };
 
@@ -4909,12 +5289,12 @@ export const updateEvalCaseOperation: PlatformOperation<
   description:
     "Edit an eval test case. Only the fields you pass change (steps, expected output, iterations, models, match options, checks). Passing `steps` replaces the case's test-step sequence wholesale.",
   readOnly: false,
+  permalink: derivePermalinks((result) => evalCaseRef(result, result.suiteId)),
   inputSchema: updateEvalCaseInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -4924,14 +5304,17 @@ export const updateEvalCaseOperation: PlatformOperation<
       input.case,
       signal,
     );
-    return client.updateEvalCase(
-      {
-        projectId: project.id,
-        suiteId: suite.id,
-        caseId: testCase.id,
-        body: buildCaseBody(input),
-      },
-      { signal },
+    return stampSuiteId(
+      await client.updateEvalCase(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          caseId: testCase.id,
+          body: buildCaseBody(input),
+        },
+        { signal },
+      ),
+      suite.id,
     );
   },
 };
@@ -4957,12 +5340,12 @@ export const deleteEvalCaseOperation: PlatformOperation<
   description:
     "Permanently delete one test case from an eval suite. This cannot be undone.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: deleteEvalCaseInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -5079,13 +5462,15 @@ export const generateEvalCasesOperation: PlatformOperation<
   description:
     "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
   readOnly: false,
+  permalink: derivePermalinks((result) =>
+    result.created.flatMap((testCase) => evalCaseRef(testCase, testCase.suiteId)),
+  ),
   inputSchema: generateEvalCasesInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     assertNoServerOverrideWithEnvironment(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     // Resolve server name/id selectors to project server IDs before sending —
@@ -5102,7 +5487,7 @@ export const generateEvalCasesOperation: PlatformOperation<
           signal,
         )
       : undefined;
-    return client.generateEvalCases(
+    const generated = await client.generateEvalCases(
       {
         projectId: project.id,
         suiteId: suite.id,
@@ -5133,6 +5518,12 @@ export const generateEvalCasesOperation: PlatformOperation<
           : {}),
       },
     );
+    return {
+      ...generated,
+      created: generated.created.map((testCase) =>
+        stampSuiteId(testCase, suite.id),
+      ),
+    };
   },
 };
 
@@ -5163,12 +5554,14 @@ export const getEvalRunOperation: PlatformOperation<
   description:
     "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.run.id, result.run.suiteId, result.project.id),
+  ]),
   inputSchema: evalRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.getEvalRun(
       { projectId: project.id, runId: input.runId },
@@ -5205,12 +5598,15 @@ export const compareEvalRunOperation: PlatformOperation<
   description:
     "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A cross-run diff. It belongs to no single run, and the app has no compare route to address it by.",
+  ),
   inputSchema: compareEvalRunInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const compare = await client.compareEvalRun(
       {
@@ -5257,12 +5653,15 @@ export const listEvalRunIterationsOperation: PlatformOperation<
   description:
     "List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "The page names its run but not the run's suite, and `/evals/suite/:suiteId/runs/:runId` needs both. Reach the run through get_eval_run.",
+  ),
   inputSchema: evalRunIterationsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listEvalRunIterations(
       {
@@ -5310,12 +5709,15 @@ export const getEvalIterationTraceOperation: PlatformOperation<
   description:
     "Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. Use it to diagnose why an iteration failed. Responses can be large.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A trace payload for one iteration; iterations have no route of their own, and the response names no suite to reach the run through.",
+  ),
   inputSchema: evalIterationTraceInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const trace = await client.getEvalIterationTrace(
       {
@@ -5348,12 +5750,12 @@ export const cancelEvalRunOperation: PlatformOperation<
   description:
     "Cancel an in-flight eval run. Marks the run and its pending/running iterations cancelled. No-op if already cancelled; errors if the run already finished.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: evalRunScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.cancelEvalRun(
       { projectId: project.id, runId: input.runId },
@@ -5405,12 +5807,12 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
     "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink("mutation-only"),
   inputSchema: requestEvalRunJudgeInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const judge = await client.requestEvalRunJudge(
       {
@@ -5486,12 +5888,15 @@ export const listEvalCheckReposOperation: PlatformOperation<
   description:
     "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "GitHub repositories and their check configuration; the rows are GitHub's, not MCPJam app pages.",
+  ),
   inputSchema: listEvalCheckReposInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const checks = await client.listEvalCheckRepos(
       { organizationId: checkRepoOrganizationOrThrow(project) },
@@ -5544,12 +5949,15 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
   // surface needs to warn about here is REACH — it changes what happens in a
   // shared repository for everyone who opens a PR against it.
   risk: "exposure",
+  permalink: noPermalink(
+    "external-resource",
+    "Binds a GitHub repository to the project's checks; the resource named is GitHub's.",
+  ),
   inputSchema: connectEvalCheckRepoInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     // BEFORE the suite lookup: a project with no organization can never
     // connect, so spending a round trip to resolve a suite first only delays
@@ -5596,12 +6004,15 @@ export const getEvalRunStepsOperation: PlatformOperation<
   description:
     "Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). The fastest way to see WHICH step failed and why.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A step-level projection of one iteration; the response names no suite to reach the run through.",
+  ),
   inputSchema: evalRunStepsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.getEvalRunSteps(
       {
@@ -5775,12 +6186,15 @@ export const createTunnelOperation: PlatformOperation<
   description:
     "Register (or revive) a relay tunnel for a named server in an MCPJam project and return the connection grant. Each call rotates the tunnel secret and disconnects any previous tunnel session for that server, so calling it again is also how a lost or expired grant is replaced.",
   readOnly: false,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A tunnel grant is a short-lived credential for a local process, not a durable resource with an app page.",
+  ),
   inputSchema: createTunnelInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const grant = await client.createTunnel(
       { projectId: project.id, name: input.name },
@@ -5823,12 +6237,12 @@ export const closeTunnelOperation: PlatformOperation<
   description:
     "Revoke a tunnel's live grant: the public URL stops working immediately. The server record is kept (with its now-dead URL) so the tunnel revives with the same slug on the next create_tunnel.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: closeTunnelInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.closeTunnel(
       { projectId: project.id, serverId: input.serverId },
@@ -5859,12 +6273,19 @@ export const listScenariosOperation: PlatformOperation<
   description:
     "List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((scenario) => ({
+      type: "user_testing_scenario" as const,
+      id: scenario.id,
+      projectId: result.project.id,
+      label: `Open ${scenario.name}`,
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listScenarios(
       { projectId: project.id },
@@ -5904,12 +6325,18 @@ export const getScenarioOperation: PlatformOperation<
   description:
     "Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. The scenario is matched by name or ID within the project.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "user_testing_scenario",
+      id: result.scenario.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: scenarioScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listScenarios(
       { projectId: project.id },
@@ -5975,8 +6402,16 @@ export const listChatSessionsOperation: PlatformOperation<
   description:
     "List chat sessions visible to the caller, most recent activity first. Optionally filter by project (name or ID) and status; paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.id,
+      ...projectIdOf(session),
+      ...(session.title ? { label: `Open ${session.title}` } : {}),
+    })),
+  ),
   inputSchema: listChatSessionsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Unlike the project-scoped reads, no default project is applied: the
     // unfiltered listing (personal + project-shared sessions) is the API's
     // own default and the more useful answer for "what was I working on?".
@@ -5984,7 +6419,10 @@ export const listChatSessionsOperation: PlatformOperation<
     // selector must mean "unfiltered", never silently the default project.
     const projectSelector = input.project?.trim();
     const project = projectSelector
-      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
+      ? (await resolveProjectOrThrow(
+          { client, signal, onScopeResolved },
+          projectSelector,
+        )).project
       : undefined;
     const page = await client.listChatSessions(
       {
@@ -6131,15 +6569,21 @@ export const sendChatMessageOperation: PlatformOperation<
   // destructive default would claim a safety the host cannot verify.
   mayBeDestructive: true,
   risk: "spend",
+  permalink: derivePermalinks((result) =>
+    result.sessionId ? [{ type: "chat_session", id: result.sessionId }] : [],
+  ),
   inputSchema: sendChatMessageInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
     // A continuation takes its project from the session — resolving one here
     // would make an unnecessary call and let a caller name a project the
     // session is not in.
     const projectId =
       !input.sessionId && projectSelector
-        ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
+        ? (await resolveProjectOrThrow(
+          { client, signal, onScopeResolved },
+          projectSelector,
+        )).project
             .id
         : undefined;
     return client.sendChatMessage(
@@ -6206,11 +6650,17 @@ export const getChatSessionOperation: PlatformOperation<
   description:
     "Return a session's metadata plus a bounded window of its raw messages, indexed by ABSOLUTE transcript position. The companion to get_chat_session_trace: spans reference messages by index, so resolving a span to the payload that produced it needs both. A transcript that could not be read reports transcriptUnavailable and a null messageCount rather than an empty conversation.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    { type: "chat_session", id: result.sessionId, ...projectIdOf(result) },
+  ]),
   inputSchema: getChatSessionInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
     const projectId = projectSelector
-      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      ? (await resolveProjectOrThrow(
+          { client, signal, onScopeResolved },
+          projectSelector,
+        )).project.id
       : undefined;
     return client.getChatSession(
       {
@@ -6269,11 +6719,18 @@ export const getChatSessionTraceOperation: PlatformOperation<
   description:
     "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A span-level trace projection; the response names turns, not the session id the Sessions feed opens on.",
+  ),
   inputSchema: getChatSessionTraceInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const projectSelector = input.project?.trim();
     const projectId = projectSelector
-      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      ? (await resolveProjectOrThrow(
+          { client, signal, onScopeResolved },
+          projectSelector,
+        )).project.id
       : undefined;
     return client.getChatSessionTrace(
       {
@@ -6361,8 +6818,21 @@ export const searchSessionsOperation: PlatformOperation<
     "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
     "Every result carries a link to open the session.",
   readOnly: true,
+  permalink: responsePermalinks((result) =>
+    // BACKEND-minted. The server owns the fallback rules for a session whose
+    // surface-native page does not exist (an eval Quick Run, a session whose
+    // parent run was deleted); re-deriving them here would be a second copy
+    // that drifts the first time one of those rules changes.
+    result.items.map((session) => ({
+      path: session.link.path,
+      url: session.link.url,
+      label: "Open session",
+      resource: { type: "chat_session" as const, id: session.chatSessionId },
+      ...projectIdOf(session),
+    })),
+  ),
   inputSchema: searchSessionsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Re-checked here, not just in the schema: `execute()` is called directly
     // by surfaces that never parse the schema (the CLI binding, raw callers).
     // The endpoint treats a blank `q` as an EMPTY SEARCH — so a blank query
@@ -6376,9 +6846,8 @@ export const searchSessionsOperation: PlatformOperation<
     }
 
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const requestedScope = input.scope ?? "titles";
     const page = await client.listSessions(
@@ -6454,12 +6923,19 @@ export const listHostsOperation: PlatformOperation<
   description:
     "List the hosts saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((host) => ({
+      type: "host" as const,
+      id: host.id,
+      projectId: result.project.id,
+      label: `Open ${host.name}`,
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listHosts({ projectId: project.id }, { signal });
     return {
@@ -6490,12 +6966,12 @@ export const getHostOperation: PlatformOperation<
   description:
     "Show one host's full settings, including its resolved host config (model, capabilities, host context).",
   readOnly: true,
+  permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: getHostInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.getHost(
@@ -6575,12 +7051,12 @@ export const createHostOperation: PlatformOperation<
   description:
     "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: createHostInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -6626,12 +7102,12 @@ export const updateHostOperation: PlatformOperation<
   description:
     "Edit a host's display name and/or its host config. Only the fields you pass change.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: updateHostInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     const body: Record<string, unknown> = {};
@@ -6664,12 +7140,12 @@ export const deleteHostOperation: PlatformOperation<
   description:
     "Permanently delete a host from a project. This cannot be undone.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: deleteHostInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.deleteHost(
@@ -6709,12 +7185,12 @@ export const setHostServersOperation: PlatformOperation<
   description:
     "Replace the required and optional saved-server attachments for a host.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: setHostServersInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     await client.setHostServers(
@@ -6753,12 +7229,12 @@ export const duplicateHostOperation: PlatformOperation<
   title: "Duplicate an MCPJam host",
   description: "Create a new host with the selected host's current config.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [{ type: "host", id: result.id }]),
   inputSchema: duplicateHostInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.duplicateHost(
@@ -6889,12 +7365,19 @@ export const listEnvironmentsOperation: PlatformOperation<
   description:
     "List the project environments in an MCPJam project. An environment is a named execution bundle (one host, optionally a standalone server group, pinned skills, and pinned plugin versions) that eval suites and journeys run against. Not a Computer sandbox image.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((environment) => ({
+      type: "project_environment" as const,
+      id: environment.id,
+      projectId: environment.projectId,
+      label: `Open ${environment.name}`,
+    })),
+  ),
   inputSchema: listEnvironmentsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listEnvironments(
       {
@@ -6939,12 +7422,15 @@ export const getEnvironmentCapabilitiesOperation: PlatformOperation<
   description:
     "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A deployment-compatibility probe, not a resource.",
+  ),
   inputSchema: environmentCapabilitiesInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -6980,12 +7466,12 @@ export const getEnvironmentOperation: PlatformOperation<
   description:
     "Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it).",
   readOnly: true,
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: environmentSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
@@ -7009,12 +7495,15 @@ export const resolveEnvironmentOperation: PlatformOperation<
   description:
     "Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. Fails with a conflict if the environment cannot currently produce a runnable configuration — for example a pinned plugin was disabled.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A resolution preview — what an environment WOULD resolve to for a run. The environment itself is addressable through get_project_environment.",
+  ),
   inputSchema: environmentSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
@@ -7111,12 +7600,12 @@ export const createEnvironmentOperation: PlatformOperation<
   description:
     "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: createEnvironmentInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.createEnvironment(
       {
@@ -7265,12 +7754,15 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
     "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image and pinned skills. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An ad-hoc cell is a throwaway that never enters the project's environment list, so `/environments/:environmentId` would not find it. Promote it with name_environment first.",
+  ),
   inputSchema: ensureAdhocEnvironmentInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const body = await resolveComposeStack(client, project, input, signal);
     const ensured = await client.ensureAdhocEnvironment(
@@ -7328,12 +7820,12 @@ export const nameEnvironmentOperation: PlatformOperation<
     "Give an UNNAMED (ad-hoc) environment a name, promoting it in place — the same environment, now a permanent entry in the project's environment list, with the same id every existing run still points at. This is the ONLY way to promote one: update_project_environment renames an already-named environment and refuses an unnamed one. Promotion also drops the content fingerprint, so a later identical composition gets a fresh ad-hoc row rather than deduplicating onto this one, which is now independently editable.",
   readOnly: false,
   risk: "none",
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: nameEnvironmentInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.nameEnvironment(
       {
@@ -7450,12 +7942,12 @@ export const updateEnvironmentOperation: PlatformOperation<
   description:
     "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
@@ -7517,12 +8009,12 @@ export const archiveEnvironmentOperation: PlatformOperation<
     "Archive a project environment. It stops being selectable for runs and frees its name for a new one, but the row is kept and can be restored. Requires project admin.",
   readOnly: false,
   mayBeDestructive: true,
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: environmentRevisionInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
@@ -7550,12 +8042,12 @@ export const restoreEnvironmentOperation: PlatformOperation<
   description:
     "Restore an archived project environment. Fails with a conflict if another live environment took its name in the meantime. Plugin pins whose version no longer exists at all are dropped — compare the returned pluginVersionIds against what you archived. Requires project admin.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: environmentRevisionInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     // Restore is the one operation whose target is archived by definition, so
     // a name shared with a live environment must resolve to the archived one.
@@ -7607,12 +8099,19 @@ export const listProjectPluginsOperation: PlatformOperation<
   description:
     "List the live (installed, non-uninstalled) Agent Plugins in an MCPJam project. Each plugin names its active version id — pass that to get_plugin_version for the version's servers and skills. Disabled plugins are listed too, marked `enabled: false`.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((plugin) => ({
+      type: "project_plugin" as const,
+      id: plugin.id,
+      projectId: plugin.projectId,
+      label: `Open ${plugin.displayName ?? plugin.name}`,
+    })),
+  ),
   inputSchema: listProjectPluginsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listProjectPlugins(
       { projectId: project.id },
@@ -7646,6 +8145,10 @@ export const getPluginVersionOperation: PlatformOperation<
   description:
     "Show one imported Agent Plugin version: its status, component counts, and per-component summaries (declared MCP servers with placement and auth timing, declared skills with their namespaced model refs). Requires membership of the version's project; historical versions of uninstalled plugins stay readable.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A version read that resolves no project — it takes a global pluginVersionId — so there is no `?project=` to scope a link with. Reach the plugin through list_project_plugins.",
+  ),
   inputSchema: getPluginVersionInput,
   async execute(input, { client, signal }) {
     return client.getPluginVersion(
@@ -7700,12 +8203,15 @@ export const listImagesOperation: PlatformOperation<
   description:
     "List the custom Computer sandbox images (blueprints) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listImages({ projectId: project.id }, { signal });
     return {
@@ -7725,12 +8231,15 @@ export const getImageOperation: PlatformOperation<
   description:
     "Show one sandbox image's blueprint, sharing, and latest build status.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.getImage(
@@ -7770,12 +8279,15 @@ export const createImageOperation: PlatformOperation<
   description:
     "Create a custom Computer sandbox image from a blueprint. Build it (build_sandbox_image) before a computer can boot from it.",
   readOnly: false,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: createImageInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.createImage(
       {
@@ -7825,12 +8337,15 @@ export const updateImageOperation: PlatformOperation<
   description:
     "Edit a sandbox image's name and/or blueprint. Base/initialize edits need a re-build; maintenance/knowledge edits apply at the next chat turn without one.",
   readOnly: false,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: updateImageInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     const body: { name?: string; blueprint?: string } = {};
@@ -7865,12 +8380,15 @@ export const validateImageBlueprintOperation: PlatformOperation<
   description:
     "Lint sandbox-image blueprint YAML without saving it. Returns ok + the resolved base digest, or structured errors.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A blueprint lint result; nothing was created to open.",
+  ),
   inputSchema: validateImageBlueprintInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.validateImageBlueprint(
       { projectId: project.id, body: { blueprint: input.blueprint } },
@@ -7888,12 +8406,15 @@ export const buildImageOperation: PlatformOperation<
   description:
     "Trigger a build of the sandbox image. Async — poll list_sandbox_image_builds for status.",
   readOnly: false,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.buildImage(
@@ -7918,12 +8439,15 @@ export const listImageBuildsOperation: PlatformOperation<
   description:
     "List a sandbox image's builds (newest first) with their status and log preview.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A build log listing; builds have no route of their own.",
+  ),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     const page = await client.listImageBuilds(
@@ -7947,12 +8471,15 @@ export const promoteImageOperation: PlatformOperation<
   description:
     "Promote a personal-draft sandbox image to a project-shared one (requires project admin).",
   readOnly: false,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `computer/images/:imageId` route: sandbox images are selected inside /computer as component state.",
+  ),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.promoteImage(
@@ -7971,12 +8498,12 @@ export const useImageOperation: PlatformOperation<
   description:
     "Attach the sandbox image to your computer, which rebuilds it from the pinned image (installed files are wiped). The sandbox image must have a ready build.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.useImage(
@@ -7995,12 +8522,12 @@ export const resetComputerOperation: PlatformOperation<
   description:
     "Reset the caller's computer back to its current image, wiping mutable state.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.resetComputer({ projectId: project.id }, { signal });
   },
@@ -8015,12 +8542,12 @@ export const deleteImageOperation: PlatformOperation<
   description:
     "Permanently delete a sandbox image. Computers booted from it fall back to the base image. This cannot be undone.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: imageSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.deleteImage(
@@ -8068,6 +8595,9 @@ export const createProjectServerOperation: PlatformOperation<
   description:
     "Save a new MCP server in a project, including optional credentials.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "project_server", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: z.object({
     project: z
       .string()
@@ -8081,11 +8611,10 @@ export const createProjectServerOperation: PlatformOperation<
       transportType: z.enum(["stdio", "http"]),
     }),
   }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.createProjectServer(
       { projectId: project.id, body: input.body },
@@ -8107,12 +8636,14 @@ export const getProjectServerOperation: PlatformOperation<
   title: "Get a project MCP server",
   description: "Read one saved MCP server by project and server id.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    { type: "project_server", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: projectServerSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.getProjectServer(
       { projectId: project.id, serverId: input.serverId },
@@ -8132,12 +8663,14 @@ export const updateProjectServerOperation: PlatformOperation<
   title: "Update a project MCP server",
   description: "Update saved MCP server metadata or rotate/clear credentials.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    { type: "project_server", id: result.id, ...projectIdOf(result) },
+  ]),
   inputSchema: projectServerSelectorInput.extend({ body: serverWriteBody }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.updateProjectServer(
       { projectId: project.id, serverId: input.serverId, body: input.body },
@@ -8154,12 +8687,12 @@ export const deleteProjectServerOperation: PlatformOperation<
   title: "Delete a project MCP server",
   description: "Soft-delete a saved MCP server from a project.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: projectServerSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.deleteProjectServer(
       { projectId: project.id, serverId: input.serverId },
@@ -8212,12 +8745,15 @@ export const listJourneysOperation: PlatformOperation<
   description:
     "List the journeys in an MCPJam project. A journey is one persona pursuing a goal against one or more environments — the unit that Swarms actually executes. Use the returned id with list_journey_runs.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: listJourneysInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listJourneys(
       { projectId: project.id },
@@ -8264,12 +8800,18 @@ export const listJourneyRunsOperation: PlatformOperation<
   description:
     "List a journey's runs, newest first, with each run's status and pass/fail rollup. A run someone STOPPED reports status 'failed' with canceled: true — check that flag before calling a run a failure.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((run) => ({
+      type: "journey_run" as const,
+      id: run.id,
+      projectId: run.projectId,
+    })),
+  ),
   inputSchema: journeyRunsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listJourneyRuns(
       {
@@ -8313,12 +8855,18 @@ export const getJourneyRunOperation: PlatformOperation<
   description:
     "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's wave with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
   inputSchema: journeyRunSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.getJourneyRun(
       { projectId: project.id, runId: input.run },
@@ -8356,12 +8904,18 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   description:
     "The chat sessions a journey run produced — one per persona attempt against each target — with readiness, goal scores and a first-message preview. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: session.projectId,
+    })),
+  ),
   inputSchema: journeyRunSessionsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listJourneyRunSessions(
       {
@@ -8435,12 +8989,18 @@ export const launchJourneyRunOperation: PlatformOperation<
   description:
     "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_journey_run, or list_journey_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.run.id,
+      projectId: result.run.projectId,
+    },
+  ]),
   inputSchema: launchJourneyRunInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.launchJourneyRun(
       {
@@ -8472,12 +9032,12 @@ export const cancelJourneyRunOperation: PlatformOperation<
   description:
     "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: journeyRunSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const run = await client.cancelJourneyRun(
       { projectId: project.id, runId: input.run },
@@ -8563,12 +9123,21 @@ export const publishScenarioOperation: PlatformOperation<
   description:
     "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the scenario is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the scenario already existed. Requires project admin.",
   readOnly: false,
+  permalink: derivePermalinks((result) => [
+    // The scenario's own page. `result.scenario.link` is the token-bearing
+    // GUEST share link — a backend-minted product capability, not a permalink,
+    // and untouched by this policy.
+    {
+      type: "user_testing_scenario",
+      id: result.scenario.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: publishScenarioInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const { overridesIgnored, ...scenario } = await client.publishScenario(
       {
@@ -8607,12 +9176,12 @@ export const unpublishScenarioOperation: PlatformOperation<
   description:
     "Unpublish an environment's scenario, invalidating its share link and any live guest sessions. Idempotent — an environment with no scenario reports `deleted: false` rather than failing. Requires project admin.",
   readOnly: false,
+  permalink: noPermalink("mutation-only"),
   inputSchema: scenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.unpublishScenario(
       { projectId: project.id, environmentId: input.environment },
@@ -8707,12 +9276,15 @@ export const listPersonasOperation: PlatformOperation<
   description:
     "The project's reusable synthetic characters — the cast Swarms journeys run as. A persona carries a name, a role and notes; the GOAL lives on each journey, so one persona can be pointed at many different things to try. Start here before creating a journey.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: listPersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listPersonas(
       { projectId: project.id },
@@ -8736,12 +9308,15 @@ export const getPersonaOperation: PlatformOperation<
   title: "Get one MCPJam persona",
   description: "One persona in full, including its notes.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: personaSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const persona = await client.getPersona(
       { projectId: project.id, personaId: input.persona },
@@ -8799,12 +9374,15 @@ export const createPersonaOperation: PlatformOperation<
     "Create a reusable synthetic character for Swarms to run as. Behind the sandboxes-enabled beta. Check get_capabilities first if you are unsure the organization has it.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: createPersonaInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const persona = await client.createPersona(
       {
@@ -8843,12 +9421,15 @@ export const updatePersonaOperation: PlatformOperation<
     "Edit a persona's name, role or notes. Runs already finished keep the persona they ran as — editing does not rewrite history.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: updatePersonaInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const persona = await client.updatePersona(
       {
@@ -8880,12 +9461,12 @@ export const deletePersonaOperation: PlatformOperation<
     "Remove a persona from the project's roster. SOFT: finished runs and sessions keep resolving it, so history stays intact, but the persona cannot be used for new journeys and a second delete answers not-found.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink("mutation-only"),
   inputSchema: personaSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const persona = await client.deletePersona(
       { projectId: project.id, personaId: input.persona },
@@ -8920,12 +9501,15 @@ export const getJourneyOperation: PlatformOperation<
   description:
     "One journey in full: its goal, persona, environments and execution config. Read this before launching if you need to know how many sessions a run will produce — that is targets x sessionsPerTarget, and it is what spends.",
   readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: journeySelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const journey = await client.getJourney(
       { projectId: project.id, journeyId: input.journey },
@@ -8991,12 +9575,15 @@ export const createJourneyOperation: PlatformOperation<
     "Author a journey: a persona, a goal, and the environments to pursue it against. Creating does NOT run it — launch_journey_run does, and that is the call that spends. Behind the sandboxes-enabled beta.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: createJourneyInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const journey = await client.createJourney(
       {
@@ -9046,13 +9633,16 @@ export const updateJourneyOperation: PlatformOperation<
     "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: updateJourneyInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     requireConfigPair(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const journey = await client.updateJourney(
       {
@@ -9090,12 +9680,12 @@ export const archiveJourneyOperation: PlatformOperation<
     "Take a journey off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the journey that produced it. A second call answers not-found.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink("mutation-only"),
   inputSchema: journeySelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const journey = await client.archiveJourney(
       { projectId: project.id, journeyId: input.journey },
@@ -9130,12 +9720,19 @@ export const listSwarmsOperation: PlatformOperation<
   description:
     "Swarm containers group journeys authored together and hold their shared execution config. A journey does not need one — but a project authored through the app will have them, so list here to match what a human would see.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((swarm) => ({
+      type: "swarm" as const,
+      id: swarm.id,
+      projectId: swarm.projectId,
+      label: `Open ${swarm.name}`,
+    })),
+  ),
   inputSchema: listPersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listSwarms({ projectId: project.id }, { signal });
     return { project: toSelectedProjectInfo(project), items: page.items };
@@ -9156,12 +9753,12 @@ export const getSwarmOperation: PlatformOperation<
   title: "Get one MCPJam swarm container",
   description: "One swarm container: its name, defaults and fan-out.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
   inputSchema: swarmSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const swarm = await client.getSwarm(
       { projectId: project.id, swarmId: input.swarm },
@@ -9202,12 +9799,12 @@ export const createSwarmOperation: PlatformOperation<
     "Create a container to author journeys under. Creating one runs nothing. Behind the sandboxes-enabled beta.",
   readOnly: false,
   risk: "none",
+  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
   inputSchema: createSwarmInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const swarm = await client.createSwarm(
       {
@@ -9256,13 +9853,13 @@ export const updateSwarmOperation: PlatformOperation<
     "Edit a swarm container. sessionsPerTarget and maxTurns must be sent together — they are one config object upstream.",
   readOnly: false,
   risk: "none",
+  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
   inputSchema: updateSwarmInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     requireConfigPair(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const swarm = await client.updateSwarm(
       {
@@ -9302,12 +9899,12 @@ export const archiveSwarmOperation: PlatformOperation<
     "Take a swarm container off the roster. Journeys authored under it keep working — the reference is authoring provenance, not ownership.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink("mutation-only"),
   inputSchema: swarmSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const swarm = await client.archiveSwarm(
       { projectId: project.id, swarmId: input.swarm },
@@ -9377,13 +9974,16 @@ export const generatePersonasOperation: PlatformOperation<
     "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model on the organization's account, so it spends. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/personas/:personaId` route: personas are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: generatePersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     requireExactlyOneGrounding(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const drafts = await client.generatePersonas(
       {
@@ -9437,13 +10037,16 @@ export const generateJourneysOperation: PlatformOperation<
     "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Spends. Exactly one of environmentId or serverAttachmentId.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/journeys/:journeyId` route: journeys are edited inside the Swarms surface as component state.",
+  ),
   inputSchema: generateJourneysInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     requireExactlyOneGrounding(input);
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const drafts = await client.generateJourneys(
       {
@@ -9481,12 +10084,15 @@ export const getSwarmOverviewOperation: PlatformOperation<
   description:
     "The project's recent journey runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. Start here to answer 'how are our swarms doing'. Rates are over GRADED sessions, never attempted ones, and passRate is null (not 0) when nothing has been graded.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A cross-swarm aggregate; it belongs to no single swarm.",
+  ),
   inputSchema: listPersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const overview = await client.getSwarmOverview(
       { projectId: project.id },
@@ -9513,12 +10119,18 @@ export const getJourneyRunScorecardOperation: PlatformOperation<
   description:
     "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "journey_run",
+      id: result.scorecard.runId,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: journeyRunSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const scorecard = await client.getJourneyRunScorecard(
       { projectId: project.id, runId: input.run },
@@ -9543,12 +10155,15 @@ export const listSwarmFindingsOperation: PlatformOperation<
   description:
     "Criteria that keep failing across waves, with how long each has been failing. A finding with a long streak is a standing problem; a `new` one is what just changed.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "Findings are rows inside a run's insights panel with no addressable route of their own.",
+  ),
   inputSchema: listPersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listSwarmFindings(
       { projectId: project.id },
@@ -9584,12 +10199,12 @@ export const dismissSwarmFindingOperation: PlatformOperation<
     "Mark a finding as not worth acting on. It stops surfacing as active but its lifecycle keeps updating underneath, so undismissing later shows honest current state rather than a stale snapshot.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: findingSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const finding = await client.dismissSwarmFinding(
       { projectId: project.id, findingId: input.finding },
@@ -9611,12 +10226,12 @@ export const undismissSwarmFindingOperation: PlatformOperation<
   description: "Bring a dismissed finding back into the active list.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: findingSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const finding = await client.undismissSwarmFinding(
       { projectId: project.id, findingId: input.finding },
@@ -9655,12 +10270,19 @@ export const getWaveInsightsOperation: PlatformOperation<
   description:
     "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    // A wave IS a journey run on the Swarms surface: `/swarms/<waveId>`.
+    {
+      type: "journey_run",
+      id: result.insights.waveId,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: waveSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const insights = await client.getWaveInsights(
       { projectId: project.id, waveId: input.wave },
@@ -9695,12 +10317,12 @@ export const requestWaveInsightsOperation: PlatformOperation<
     "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. SPENDS against the organization's daily insights budget, which is SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink("mutation-only"),
   inputSchema: requestWaveInsightsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const request = await client.requestWaveInsights(
       {
@@ -9730,12 +10352,12 @@ export const cancelWaveInsightsOperation: PlatformOperation<
     "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which spends again.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: waveSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const canceled = await client.cancelWaveInsights(
       { projectId: project.id, waveId: input.wave },
@@ -9762,12 +10384,15 @@ export const getCapabilitiesOperation: PlatformOperation<
   description:
     "Your role, which betas this organization has, your plan's limits, and a `can` block of booleans to branch on. CHECK THIS BEFORE PLANNING work that authors, launches or publishes: the tool list you can see is the same for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the operation needs an admin. Finding that out from a 403 means you have already told someone you were doing it.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "What this organization may do — a policy read, not a resource.",
+  ),
   inputSchema: listPersonasInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const capabilities = await client.getCapabilities(
       { projectId: project.id },
@@ -9819,12 +10444,18 @@ export const getUserTestingScenarioOperation: PlatformOperation<
   description:
     "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
   readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "user_testing_scenario",
+      id: result.scenario.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: userTestingScenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const scenario = await client.getUserTestingScenario(
       { projectId: project.id, scenarioId: input.scenario },
@@ -9863,8 +10494,15 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
     "Rename a scenario, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the scenario live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Workspace membership is enough — no admin needed.",
   readOnly: false,
   risk: "exposure",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "user_testing_scenario",
+      id: result.scenario.id,
+      projectId: result.project.id,
+    },
+  ]),
   inputSchema: updateUserTestingScenarioInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Identity and exposure are separate mutations upstream, so the route
     // refuses to chain them: a failure between the two would leave the
     // scenario half-updated on the half that decides who can reach it.
@@ -9877,9 +10515,8 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
       );
     }
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const scenario = await client.updateUserTestingScenario(
       {
@@ -9925,12 +10562,18 @@ export const listUserTestingSessionsOperation: PlatformOperation<
   description:
     "Sessions real visitors had with a published scenario: message counts, feedback, device and visitor segment, and a first-message preview. SUMMARIES only — transcripts are a separate call, because these are real people's conversations and a listing should not page them into every caller that wanted counts.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((session) => ({
+      type: "chat_session" as const,
+      id: session.chatSessionId,
+      projectId: result.project.id,
+    })),
+  ),
   inputSchema: listUserTestingSessionsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listUserTestingSessions(
       {
@@ -9972,12 +10615,22 @@ export const getUserTestingSessionOperation: PlatformOperation<
   description:
     "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.session.chatSessionId
+      ? [
+          {
+            type: "chat_session" as const,
+            id: result.session.chatSessionId,
+            projectId: result.project.id,
+          },
+        ]
+      : [],
+  ),
   inputSchema: getUserTestingSessionInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const session = await client.getUserTestingSession(
       {
@@ -10019,12 +10672,15 @@ export const getUserTestingMetricsOperation: PlatformOperation<
   description:
     "Aggregate metrics across a scenario's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a scenario's sessions; the numbers are not a resource.",
+  ),
   inputSchema: userTestingMetricsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const metrics = await client.getUserTestingMetrics(
       {
@@ -10055,12 +10711,15 @@ export const getUserTestingUsageOperation: PlatformOperation<
   description:
     "Usage rates for a scenario, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "An aggregate over a scenario's usage; the numbers are not a resource.",
+  ),
   inputSchema: userTestingScenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const usage = await client.getUserTestingUsage(
       { projectId: project.id, scenarioId: input.scenario },
@@ -10087,12 +10746,15 @@ export const listUserTestingFindingsOperation: PlatformOperation<
   description:
     "Problems detected across a scenario's sessions, tracked over time so a recurring one is distinguishable from a new one.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "Findings are rows inside a scenario's insights panel with no addressable route of their own.",
+  ),
   inputSchema: userTestingScenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listUserTestingFindings(
       { projectId: project.id, scenarioId: input.scenario },
@@ -10119,12 +10781,15 @@ export const getUserTestingSignalsOperation: PlatformOperation<
   description:
     "The scenario's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived signal summary, not a resource.",
+  ),
   inputSchema: userTestingScenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const signals = await client.getUserTestingSignals(
       { projectId: project.id, scenarioId: input.scenario },
@@ -10159,12 +10824,15 @@ export const getUserTestingInsightsOperation: PlatformOperation<
   description:
     "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "A derived insights payload, not a resource.",
+  ),
   inputSchema: userTestingWindowInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const insights = await client.getUserTestingInsights(
       {
@@ -10207,12 +10875,12 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
     "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink("mutation-only"),
   inputSchema: requestUserTestingInsightsInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const request = await client.requestUserTestingInsights(
       {
@@ -10244,12 +10912,12 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
     "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: userTestingWindowInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const canceled = await client.cancelUserTestingInsights(
       {
@@ -10285,12 +10953,12 @@ export const dismissUserTestingFindingOperation: PlatformOperation<
     "Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: userTestingFindingInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const finding = await client.dismissUserTestingFinding(
       {
@@ -10316,12 +10984,12 @@ export const undismissUserTestingFindingOperation: PlatformOperation<
   description: "Bring a dismissed finding back into the active list.",
   readOnly: false,
   risk: "none",
+  permalink: noPermalink("mutation-only"),
   inputSchema: userTestingFindingInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const finding = await client.undismissUserTestingFinding(
       {
@@ -10369,12 +11037,12 @@ export const setUserTestingGuestExecutionOperation: PlatformOperation<
     "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
   readOnly: false,
   risk: "spend",
+  permalink: noPermalink("mutation-only"),
   inputSchema: setGuestExecutionInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const { project: _project, scenario, ...guestExecution } = input;
     const result = await client.setUserTestingGuestExecution(
@@ -10407,12 +11075,15 @@ export const rotateUserTestingLinkOperation: PlatformOperation<
     "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Workspace membership is enough — no admin needed.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink(
+    "mutation-only",
+    "Mints a NEW guest share link and invalidates the old one. That link is a backend-owned product capability with its own delivery, not a permalink.",
+  ),
   inputSchema: userTestingScenarioSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.rotateUserTestingLink(
       { projectId: project.id, scenarioId: input.scenario },
@@ -10450,12 +11121,12 @@ export const upsertUserTestingMemberOperation: PlatformOperation<
     "Grant one person access to a scenario by email. Upsert, so re-inviting an existing member is not an error. Widens who can reach the scenario.",
   readOnly: false,
   risk: "exposure",
+  permalink: noPermalink("mutation-only"),
   inputSchema: upsertUserTestingMemberInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.upsertUserTestingMember(
       {
@@ -10495,12 +11166,12 @@ export const removeUserTestingMemberOperation: PlatformOperation<
   // confirm before it fires; that it is also ungated by the beta flag is a
   // separate property, decided by direction of exposure rather than by risk.
   risk: "destructive",
+  permalink: noPermalink("mutation-only"),
   inputSchema: removeUserTestingMemberInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.removeUserTestingMember(
       {
@@ -10537,12 +11208,15 @@ export const rebindUserTestingScenarioOperation: PlatformOperation<
     "Swap the environment behind a scenario, KEEPING its share link, its members and its session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone. Changes what visitors are talking to; project admin.",
   readOnly: false,
   risk: "exposure",
+  permalink: noPermalink(
+    "mutation-only",
+    "Repoints a scenario at another environment and returns an opaque receipt that names no id to address.",
+  ),
   inputSchema: rebindUserTestingScenarioInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const result = await client.rebindUserTestingScenario(
       {
@@ -10649,8 +11323,23 @@ export const connectProjectServerOperation: PlatformOperation<
   description:
     "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries a private authorization link for the requester to open; present it privately and never repeat the URL in a shared channel. Poll get_project_server_connection_status until the status is ready or failed.",
   readOnly: false,
+  permalink: derivePermalinks((result) =>
+    // The saved server, once one exists. The connection's own `handoffUrl` is
+    // a private, single-use authorization continuation — not a permalink, and
+    // deliberately outside this selector: its existing delivery is unchanged.
+    result.server
+      ? [
+          {
+            type: "project_server" as const,
+            id: result.server.id,
+            ...(result.projectId ? { projectId: result.projectId } : {}),
+            label: `Open ${result.server.name}`,
+          },
+        ]
+      : [],
+  ),
   inputSchema: connectProjectServerInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     // Resolve a NAMED project to an id, but only when one was supplied.
     // `resolveProject`'s no-selector arm falls back to the most recently
     // updated project, and silently adopting that here would connect a server
@@ -10659,9 +11348,8 @@ export const connectProjectServerOperation: PlatformOperation<
     let projectId: string | undefined;
     if (input.project) {
       const { project } = await resolveProjectOrThrow(
-        client,
+        { client, signal, onScopeResolved },
         input.project,
-        signal,
       );
       projectId = project.id;
     }
@@ -10697,6 +11385,18 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   description:
     "Check the status of a server connection request started by connect_project_server. Returns the current status, the saved server once one exists, and an error with a retryable flag if it failed.",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.server
+      ? [
+          {
+            type: "project_server" as const,
+            id: result.server.id,
+            ...(result.projectId ? { projectId: result.projectId } : {}),
+            label: `Open ${result.server.name}`,
+          },
+        ]
+      : [],
+  ),
   inputSchema: getProjectServerConnectionStatusInput,
   async execute(input, { client, signal }) {
     return await client.getServerConnection(
@@ -10738,12 +11438,15 @@ export const getShareSettingsOperation: PlatformOperation<
   description:
     "Read the share envelope for a scenario, conformance run, or eval run: mode, policyVersion, link token, and invited members.",
   readOnly: true,
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "Share configuration for a run, not a resource with a page.",
+  ),
   inputSchema: shareResourceSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const settings = await client.getShareSettings(
       {
@@ -10778,12 +11481,12 @@ export const setShareModeOperation: PlatformOperation<
     "Change the share mode for a scenario, conformance run, or eval run. anyone_with_link means anyone holding the URL, including guests (browser sessions, not verified individuals). invited_only restricts to named emails. project_members is private to the project.",
   readOnly: false,
   risk: "exposure",
+  permalink: noPermalink("mutation-only"),
   inputSchema: setShareModeInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const settings = await client.setShareMode(
       {
@@ -10815,12 +11518,15 @@ export const rotateShareLinkOperation: PlatformOperation<
     "Mint a new share URL and invalidate the old one. IMMEDIATE: everyone holding the old URL loses the ability to redeem it. Invited people keep their access. Use this when a link has leaked, not as routine hygiene.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink(
+    "mutation-only",
+    "Mints a NEW token-bearing share link and invalidates the old one. That link is a backend-owned product capability with its own delivery, not a permalink.",
+  ),
   inputSchema: shareResourceSelectorInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const settings = await client.rotateShareLink(
       {
@@ -10903,6 +11609,10 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
   description:
     "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching organization card from list_registry_servers when one exists: those carry config someone in the org already set up.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "Third-party directory rows. Nothing is in the caller's project until it is installed.",
+  ),
   inputSchema: z.object({
     q: z.string().trim().min(1).optional().describe("Search query."),
     source: z
@@ -10964,6 +11674,10 @@ export const getRegistryDirectoryServerOperation: PlatformOperation<
   description:
     "Fetch one scraped directory row by catalogServerId, or by name (optionally with source). The latestContentHash is the freshness pin for install_registry_directory_server.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "A third-party directory entry. Nothing is in the caller's project until it is installed.",
+  ),
   inputSchema: getRegistryDirectoryServerInput,
   async execute(input, { client, signal }) {
     if (input.catalogServerId) {
@@ -10988,6 +11702,10 @@ export const listRegistryDirectorySourcesOperation: PlatformOperation<
   description:
     "Discover directory source ids for search_registry_directory. Sources are data, not an enum.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "Upstream directory sources and their sync status.",
+  ),
   inputSchema: z.object({}),
   async execute(_input, { client, signal }) {
     return client.listRegistryDirectorySources({ signal });
@@ -11003,6 +11721,10 @@ export const listRegistryServersOperation: PlatformOperation<
   description:
     "List the project's organization registry cards (and any global cards; the global shelf is currently empty). Prefer an organization card over a scraped directory row when both match — cards carry config someone in the org already set up.",
   readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "Global/organization registry rows. A row becomes a project resource only once installed — see list_registry_connections.",
+  ),
   inputSchema: z.object({
     project: z
       .string()
@@ -11012,11 +11734,10 @@ export const listRegistryServersOperation: PlatformOperation<
       .describe(PROJECT_SELECTOR_DESCRIPTION),
     scope: z.enum(["global", "organization", "all"]).optional(),
   }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listRegistryServers(
       { projectId: project.id, scope: input.scope ?? "all" },
@@ -11035,12 +11756,21 @@ export const listRegistryConnectionsOperation: PlatformOperation<
   description:
     "List directory and card installs already in a project (provenance rows whose server still exists).",
   readOnly: true,
+  permalink: derivePermalinks((result) =>
+    result.items.map((connection) => ({
+      type: "project_server" as const,
+      id: connection.serverId,
+      ...projectIdOf(connection),
+      ...(connection.serverName
+        ? { label: `Open ${connection.serverName}` }
+        : {}),
+    })),
+  ),
   inputSchema: projectScopedInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const page = await client.listRegistryConnections(
       { projectId: project.id },
@@ -11064,6 +11794,15 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
   description: INSTALL_NOT_CONNECT_DESCRIPTION,
   readOnly: false,
   risk: "exposure",
+  permalink: derivePermalinks((result) => [
+    // No project id in the install receipt — this one rides the operation's
+    // resolved-scope receipt, which is exactly the case it exists for.
+    {
+      type: "project_server",
+      id: result.serverId,
+      label: `Open ${result.serverName}`,
+    },
+  ]),
   inputSchema: z.object({
     project: z
       .string()
@@ -11095,11 +11834,10 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
       .optional()
       .describe("Freshness pin from get_registry_directory_server."),
   }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const installed = await client.installRegistryDirectoryServer(
       {
@@ -11137,6 +11875,13 @@ export const installRegistryServerOperation: PlatformOperation<
   description: INSTALL_NOT_CONNECT_DESCRIPTION,
   readOnly: false,
   risk: "exposure",
+  permalink: derivePermalinks((result) => [
+    {
+      type: "project_server",
+      id: result.serverId,
+      label: `Open ${result.serverName}`,
+    },
+  ]),
   inputSchema: z.object({
     project: z
       .string()
@@ -11172,11 +11917,10 @@ export const installRegistryServerOperation: PlatformOperation<
       .optional()
       .describe("Freshness pin from list_registry_servers.updatedAt."),
   }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     const installed = await client.installRegistryServer(
       {
@@ -11209,6 +11953,7 @@ export const uninstallRegistryServerOperation: PlatformOperation<
     "Remove a curated/org registry card install from a project. Directory uninstall is delete_project_server — there is no separate catalog-uninstall route.",
   readOnly: false,
   risk: "destructive",
+  permalink: noPermalink("mutation-only"),
   inputSchema: z.object({
     project: z
       .string()
@@ -11218,11 +11963,10 @@ export const uninstallRegistryServerOperation: PlatformOperation<
       .describe(PROJECT_SELECTOR_DESCRIPTION),
     registryServerId: z.string().trim().min(1),
   }),
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
-      client,
+      { client, signal, onScopeResolved },
       input.project,
-      signal,
     );
     return client.uninstallRegistryServer(
       { projectId: project.id, registryServerId: input.registryServerId },

@@ -23,6 +23,32 @@ export {
 } from "./client.js";
 
 export {
+  DEFAULT_MCPJAM_APP_ORIGIN,
+  PLATFORM_PERMALINK_ROUTES,
+  PROJECT_DEEP_LINK_PARAM,
+  PlatformPermalinkError,
+  buildAppPermalink,
+  buildAppPermalinks,
+  derivePermalinks,
+  derivePermalinksFor,
+  formatPermalinkLines,
+  isPlatformResourceType,
+  noPermalink,
+  permalinkProjectId,
+  responsePermalinks,
+  runOperationWithPermalinks,
+  withPermalinkEnvelope,
+  type PermalinkAwareOperation,
+  type PermalinkScopeReceiver,
+  type PlatformNoPermalinkReason,
+  type PlatformPermalink,
+  type PlatformPermalinkContext,
+  type PlatformPermalinkPolicy,
+  type PlatformResourceRef,
+  type PlatformResourceType,
+} from "./permalinks.js";
+
+export {
   computeRunTargets,
   type ComputeRunTargetsInput,
   type RunTarget,

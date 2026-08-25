@@ -1,4 +1,5 @@
 import { useAuth } from "@workos-inc/authkit-react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
 
@@ -40,7 +41,7 @@ export function GuestSignInMessage({
     track("login_button_clicked", {
       location: location ?? "guest_signin_message",
     });
-    signIn();
+    signIn(permalinkSignInOptions());
   };
 
   return (

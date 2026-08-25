@@ -40,6 +40,10 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { AddPluginModal } from "./plugins/AddPluginModal";
 import { PluginsSection } from "./plugins/PluginsSection";
+import {
+  permalinkUnavailableMessage,
+  resolvePermalinkTarget,
+} from "@/lib/permalink-target";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { ServerFormData } from "@/shared/types.js";
 import {
@@ -587,6 +591,18 @@ interface ServersTabProps {
   areServersHydrated?: boolean;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   onLeaveProject?: () => void;
+  /**
+   * The saved server named by a `/servers/:serverId` permalink, if any.
+   *
+   * A HOSTED (Convex) server id, not a name: a permalink has to survive a
+   * rename, and the id is what an agent returned. Resolved against the
+   * project's remote server rows below.
+   */
+  routeServerId?: string | null;
+  /** The plugin named by a `/servers/plugins/:pluginId` permalink, if any. */
+  routePluginId?: string | null;
+  /** Called once the permalink's selection has been applied or refused. */
+  onRouteTargetSettled?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
 }
@@ -608,6 +624,9 @@ export function ServersTab({
   isAuthHydrating = false,
   areServersHydrated = true,
   onProjectShared: _onProjectShared,
+  routeServerId,
+  routePluginId,
+  onRouteTargetSettled,
   isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
@@ -1202,6 +1221,47 @@ export function ServersTab({
       isAuthenticated,
     }
   );
+
+  // ── Permalink targets ──────────────────────────────────────────────
+  //
+  // `/servers/:serverId` and `/servers/plugins/:pluginId` are exact
+  // addresses an agent hands to a human. Resolving them HERE, against the
+  // rows this viewer can actually see, is what keeps a link to a deleted or
+  // inaccessible resource from quietly rendering the collection instead —
+  // the wrong-resource failure the permalink work exists to end.
+  const remoteServerRows = useMemo(
+    () => Object.values(sharedProjectServersRecord),
+    [sharedProjectServersRecord]
+  );
+  const routeServerState = resolvePermalinkTarget(
+    routeServerId,
+    // `useRemoteProjectServers` answers `{}` both while loading and for an
+    // empty project, so "still loading" is the auth/project gate, not the
+    // record's size.
+    isAuthenticated && hostedProjectId ? remoteServerRows : undefined,
+    (row) => row?._id
+  );
+  const routeServerName =
+    routeServerState.kind === "found" ? routeServerState.target?.name : null;
+
+  useEffect(() => {
+    if (!routeServerName) return;
+    const server = projectServers[routeServerName];
+    if (!server) return;
+    setDetailModalState((prev) =>
+      prev.isOpen && prev.serverName === server.name
+        ? prev
+        : {
+            isOpen: true,
+            serverName: server.name,
+            defaultTab: "configuration",
+            sessionKey: prev.sessionKey + 1,
+            serverSnapshot: server,
+          }
+    );
+    onRouteTargetSettled?.();
+  }, [routeServerName, projectServers, onRouteTargetSettled]);
+
 
   /**
    * PROMOTE: share a server that is already connected here on the
@@ -1961,8 +2021,37 @@ export function ServersTab({
   // this section is the only place their health is visible on Connect.
   const renderPluginsSection = () =>
     isPluginsEnabled ? (
-      <PluginsSection projectId={sharedProjectIdForHostScope} />
+      <PluginsSection
+        projectId={sharedProjectIdForHostScope}
+        expandedPluginId={routePluginId ?? null}
+      />
     ) : null;
+
+  /**
+   * What a permalink to a gone-or-forbidden resource renders.
+   *
+   * Deliberately says one thing for BOTH "deleted" and "you cannot see it":
+   * two messages would confirm to someone without access that the id exists.
+   * Rendered ABOVE the collection rather than instead of it, so the recipient
+   * can still use the screen — but never without being told the link they
+   * followed did not land.
+   */
+  const renderPermalinkNotice = () => {
+    // The PLUGIN half of the same question is answered inside
+    // `PluginsSection`, which is where the plugin list lives — duplicating
+    // that query here to render one sentence would put two sources of truth
+    // behind one message.
+    if (routeServerState.kind !== "unavailable") return null;
+    return (
+      <div
+        role="status"
+        data-testid="permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("server")}
+      </div>
+    );
+  };
 
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -1972,6 +2061,7 @@ export function ServersTab({
         minSize={70}
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
+          {renderPermalinkNotice()}
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">

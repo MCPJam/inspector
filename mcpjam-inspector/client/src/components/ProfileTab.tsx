@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -84,7 +85,7 @@ export function ProfileTab() {
       <div className="flex flex-col items-center justify-center h-full p-8">
         <div className="text-center space-y-4 max-w-md">
           <h2 className="text-2xl font-bold">Sign in to view your profile</h2>
-          <Button onClick={() => signIn()} size="lg">
+          <Button onClick={() => signIn(permalinkSignInOptions())} size="lg">
             Sign In
           </Button>
         </div>

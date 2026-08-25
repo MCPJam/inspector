@@ -1,4 +1,5 @@
 import { useByokAllowed } from "@/hooks/use-byok-allowed";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useAuth } from "@workos-inc/authkit-react";
 import { SettingsSection } from "./setting/SettingsSection";
 import { SettingsRow } from "./setting/SettingsRow";
@@ -82,7 +83,7 @@ export function SettingsTab({
                 track("login_button_clicked", {
                   location: "byok_signin_gate",
                 });
-                signIn();
+                signIn(permalinkSignInOptions());
               }}
               size="sm"
             >

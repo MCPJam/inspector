@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   ArrowLeftRight,
   Building2,
@@ -362,7 +363,7 @@ export function SidebarContextSwitcher({
                     type="button"
                     data-testid="org-sign-in-button"
                     onClick={() => {
-                      signIn();
+                      signIn(permalinkSignInOptions());
                       setMenuOpen(false);
                     }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
