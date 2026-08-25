@@ -1082,6 +1082,14 @@ export async function streamWebChatTurn(
       persist.requireToolApproval
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    // Harness engine only: it builds its own MCP tool set (host-executed
+    // delivery) rather than consuming `allTools`, so the host's
+    // tool-construction policies have to reach it separately. Inert on the
+    // emulated path, which is handed tools already built by prepareChatV2.
+    ...(prepare.respectToolVisibility !== undefined
+      ? { respectToolVisibility: prepare.respectToolVisibility }
+      : {}),
+    ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
     ...(persist.harness ? { harness: persist.harness } : {}),
     // Presence is semantic (even an empty array): the harness turn then skips
     // the live project-wide skills fetch entirely.
