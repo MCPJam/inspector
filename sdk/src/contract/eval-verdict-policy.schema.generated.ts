@@ -1,0 +1,849 @@
+// GENERATED FILE — DO NOT EDIT BY HAND.
+//
+// Source of truth: src/contract/verdict-policy.ts (zod).
+// Regenerate with:
+//   npm run generate:eval-verdict-policy-schema -w @mcpjam/sdk
+//
+// The identical document is also written to eval-verdict-policy.schema.json,
+// which is what the schema's $id publishes. This module exists so package
+// consumers can import the schema without a JSON import attribute: the contract
+// subpath is built by three toolchains (tsup, Vite with the client's src alias,
+// and plain tsc) and only Node-only code in this repo uses import attributes.
+
+/**
+ * The eval run verdict decision's JSON Schema (draft 2020-12).
+ *
+ * STRUCTURAL contract only. Every arithmetic and phase-ordering rule the zod
+ * validator enforces — a rate equalling its own quotient, a verdict following
+ * from the trial counts, validity being decided before the task verdict — does
+ * not project into JSON Schema. Validate with `evalVerdictDecisionSchema` when
+ * you have the SDK; use this when you only have a JSON Schema validator.
+ */
+export const evalVerdictPolicyJsonSchema: Record<string, unknown> = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://mcpjam.com/schemas/eval-verdict-policy/v2.json",
+  title: "MCPJam eval run verdict decision (verdictPolicyVersion 2)",
+  description:
+    "Structural contract for an MCPJam eval run verdict decision. Generated from the zod source in @mcpjam/sdk (src/contract/verdict-policy.ts). Describes what is ACCEPTED (zod io:input). The zod validator `evalVerdictDecisionSchema` is the authoritative superset: it additionally enforces every arithmetic and ordering rule that JSON Schema cannot express — a rate's `value` is exactly `numerator / denominator`, passed + failed trials equal eligible trials, each rate's denominator is the population it names, `mixedVerdict` is true exactly when both a pass and a fail were graded, `observedStability` is max(passed, failed) over eligible, a case with zero eligible trials is inconclusive whatever its threshold, validity is decided BEFORE the task verdict and a run whose validity fails is inconclusive with validity-only reasons, and a measured case passes exactly when its pass rate is greater than or equal to its effective threshold. What this document does pin structurally: every object is closed (additionalProperties: false), every fraction is a finite number in [0,1] so percents are rejected, and a rate with a zero denominator is representable only as the `notMeasured` branch with a null value. `verdictPolicyVersion` is a required const: a payload without it is a LEGACY (percent-threshold) row and is not described by this schema.",
+  type: "object",
+  properties: {
+    verdictPolicyVersion: { type: "number", const: 2 },
+    verdict: { type: "string", enum: ["passed", "failed", "inconclusive"] },
+    reasons: {
+      minItems: 1,
+      maxItems: 11,
+      type: "array",
+      items: {
+        type: "string",
+        enum: [
+          "configuredTrialsNotAttempted",
+          "noGradeableTrials",
+          "eligibleTrialsBelowMinimum",
+          "completionRateBelowMinimum",
+          "completionRateNotMeasured",
+          "evaluatorErrorRateAboveMaximum",
+          "evaluatorErrorRateNotMeasured",
+          "caseHasNoEligibleTrials",
+          "casePassRateMetThreshold",
+          "casePassRateBelowThreshold",
+          "allMeasuredCasesMetThreshold",
+        ],
+      },
+    },
+    validity: {
+      type: "object",
+      properties: {
+        policy: {
+          type: "object",
+          properties: {
+            coverage: {
+              oneOf: [
+                {
+                  type: "object",
+                  properties: {
+                    kind: {
+                      type: "string",
+                      const: "allConfiguredTrialsAttempted",
+                    },
+                    minGradeableTrials: { type: "number", const: 1 },
+                  },
+                  required: ["kind", "minGradeableTrials"],
+                  additionalProperties: false,
+                },
+                {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string", const: "minEligibleTrials" },
+                    minEligibleTrials: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  required: ["kind", "minEligibleTrials"],
+                  additionalProperties: false,
+                },
+              ],
+            },
+            minCompletionRate: { type: "number", minimum: 0, maximum: 1 },
+            maxEvaluatorErrorRate: { type: "number", minimum: 0, maximum: 1 },
+          },
+          required: ["coverage", "minCompletionRate", "maxEvaluatorErrorRate"],
+          additionalProperties: false,
+        },
+        holds: { type: "boolean" },
+        configuredTrials: {
+          type: "integer",
+          minimum: 0,
+          maximum: 9007199254740991,
+        },
+        attemptedTrials: {
+          type: "integer",
+          minimum: 0,
+          maximum: 9007199254740991,
+        },
+        eligibleTrials: {
+          type: "integer",
+          minimum: 0,
+          maximum: 9007199254740991,
+        },
+        completionRate: {
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                state: { type: "string", const: "measured" },
+                value: { type: "number", minimum: 0, maximum: 1 },
+                numerator: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                denominator: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 9007199254740991,
+                },
+                exclusions: {
+                  type: "object",
+                  properties: {
+                    notTerminal: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    skipped: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    setupFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    cancelled: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    timedOut: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    executionFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    evaluatorError: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              required: [
+                "state",
+                "value",
+                "numerator",
+                "denominator",
+                "exclusions",
+              ],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                state: { type: "string", const: "notMeasured" },
+                value: { type: "null" },
+                numerator: { type: "number", const: 0 },
+                denominator: { type: "number", const: 0 },
+                exclusions: {
+                  type: "object",
+                  properties: {
+                    notTerminal: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    skipped: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    setupFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    cancelled: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    timedOut: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    executionFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    evaluatorError: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              required: [
+                "state",
+                "value",
+                "numerator",
+                "denominator",
+                "exclusions",
+              ],
+              additionalProperties: false,
+            },
+          ],
+        },
+        evaluatorErrorRate: {
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                state: { type: "string", const: "measured" },
+                value: { type: "number", minimum: 0, maximum: 1 },
+                numerator: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                denominator: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 9007199254740991,
+                },
+                exclusions: {
+                  type: "object",
+                  properties: {
+                    notTerminal: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    skipped: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    setupFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    cancelled: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    timedOut: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    executionFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    evaluatorError: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              required: [
+                "state",
+                "value",
+                "numerator",
+                "denominator",
+                "exclusions",
+              ],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                state: { type: "string", const: "notMeasured" },
+                value: { type: "null" },
+                numerator: { type: "number", const: 0 },
+                denominator: { type: "number", const: 0 },
+                exclusions: {
+                  type: "object",
+                  properties: {
+                    notTerminal: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    skipped: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    setupFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    cancelled: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    timedOut: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    executionFailed: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    evaluatorError: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              required: [
+                "state",
+                "value",
+                "numerator",
+                "denominator",
+                "exclusions",
+              ],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      required: [
+        "policy",
+        "holds",
+        "configuredTrials",
+        "attemptedTrials",
+        "eligibleTrials",
+        "completionRate",
+        "evaluatorErrorRate",
+      ],
+      additionalProperties: false,
+    },
+    cases: {
+      minItems: 1,
+      maxItems: 50000,
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          caseId: {
+            type: "string",
+            minLength: 1,
+            maxLength: 128,
+            pattern: "^[A-Za-z0-9_-]+$",
+          },
+          executionVariant: {
+            type: "object",
+            properties: {
+              model: { type: "string", minLength: 1, maxLength: 200 },
+              provider: { type: "string", minLength: 1, maxLength: 200 },
+            },
+            required: ["model"],
+            additionalProperties: false,
+          },
+          configuredTrials: { type: "integer", minimum: 1, maximum: 100 },
+          attemptedTrials: {
+            type: "integer",
+            minimum: 0,
+            maximum: 9007199254740991,
+          },
+          eligibleTrials: {
+            type: "integer",
+            minimum: 0,
+            maximum: 9007199254740991,
+          },
+          passedTrials: {
+            type: "integer",
+            minimum: 0,
+            maximum: 9007199254740991,
+          },
+          failedTrials: {
+            type: "integer",
+            minimum: 0,
+            maximum: 9007199254740991,
+          },
+          effectivePassThreshold: { type: "number", minimum: 0, maximum: 1 },
+          passRate: {
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "measured" },
+                  value: { type: "number", minimum: 0, maximum: 1 },
+                  numerator: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  denominator: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "notMeasured" },
+                  value: { type: "null" },
+                  numerator: { type: "number", const: 0 },
+                  denominator: { type: "number", const: 0 },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+            ],
+          },
+          completionRate: {
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "measured" },
+                  value: { type: "number", minimum: 0, maximum: 1 },
+                  numerator: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  denominator: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "notMeasured" },
+                  value: { type: "null" },
+                  numerator: { type: "number", const: 0 },
+                  denominator: { type: "number", const: 0 },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+            ],
+          },
+          observedStability: {
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "measured" },
+                  value: { type: "number", minimum: 0, maximum: 1 },
+                  numerator: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  denominator: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  state: { type: "string", const: "notMeasured" },
+                  value: { type: "null" },
+                  numerator: { type: "number", const: 0 },
+                  denominator: { type: "number", const: 0 },
+                  exclusions: {
+                    type: "object",
+                    properties: {
+                      notTerminal: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      skipped: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      setupFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      cancelled: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      timedOut: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      executionFailed: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      evaluatorError: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                required: [
+                  "state",
+                  "value",
+                  "numerator",
+                  "denominator",
+                  "exclusions",
+                ],
+                additionalProperties: false,
+              },
+            ],
+          },
+          mixedVerdict: { type: "boolean" },
+          verdict: {
+            type: "string",
+            enum: ["passed", "failed", "inconclusive"],
+          },
+          reason: {
+            type: "string",
+            enum: [
+              "configuredTrialsNotAttempted",
+              "noGradeableTrials",
+              "eligibleTrialsBelowMinimum",
+              "completionRateBelowMinimum",
+              "completionRateNotMeasured",
+              "evaluatorErrorRateAboveMaximum",
+              "evaluatorErrorRateNotMeasured",
+              "caseHasNoEligibleTrials",
+              "casePassRateMetThreshold",
+              "casePassRateBelowThreshold",
+              "allMeasuredCasesMetThreshold",
+            ],
+          },
+        },
+        required: [
+          "caseId",
+          "configuredTrials",
+          "attemptedTrials",
+          "eligibleTrials",
+          "passedTrials",
+          "failedTrials",
+          "effectivePassThreshold",
+          "passRate",
+          "completionRate",
+          "observedStability",
+          "mixedVerdict",
+          "verdict",
+          "reason",
+        ],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["verdictPolicyVersion", "verdict", "reasons", "validity", "cases"],
+  additionalProperties: false,
+};

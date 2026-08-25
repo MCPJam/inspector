@@ -86,7 +86,7 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  *
  * A no-op outside hosted mode, where reaching localhost is the point.
  */
-function createConformanceFetch(targetLabel: string): typeof fetch {
+export function createConformanceFetch(targetLabel: string): typeof fetch {
   return createStreamingPinnedFetch({
     targetLabel,
     // DNS + connect + headers, summed across the redirect chain. Deliberately

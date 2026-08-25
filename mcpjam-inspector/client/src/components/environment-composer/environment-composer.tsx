@@ -24,21 +24,50 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
+import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerStateFromEnvironments,
+  composerTargetCount,
   emptyEnvironmentStack,
+  emptyModelSelection,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
+  modelChoiceCount,
   type EnvironmentComposerState,
   type EnvironmentStack,
+  type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+
+export type ComposerSlot =
+  | "environments"
+  | "clients"
+  | "servers"
+  | "skills"
+  | "computers"
+  | "models";
+
+/** Default strip: no models slot. Evals opt in via `slots`. */
+export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
+  "environments",
+  "clients",
+  "servers",
+  "skills",
+  "computers",
+];
+
+export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
 
 export function EnvironmentComposer({
   projectId,
@@ -51,6 +80,10 @@ export function EnvironmentComposer({
   inModal = false,
   environmentPickerFooter,
   className,
+  slots = DEFAULT_COMPOSER_SLOTS,
+  clientDefaultLabel,
+  emptyServerLabel = "Server group · client default",
+  serverInfoText = "Optional shared server group for every client in this setup.",
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -60,6 +93,22 @@ export function EnvironmentComposer({
   /** Fan-out cap. `1` makes both rows single-select. */
   maxTargets?: number;
   disabled?: boolean;
+  /**
+   * Which pills to offer. `models` stays out of the default and is opted
+   * into by evals. Swarm / User Testing omit it so a model-bearing env
+   * cannot silently shed its override.
+   */
+  slots?: readonly ComposerSlot[];
+  /** Secondary text on the Client-defaults row (previewed host's model). */
+  clientDefaultLabel?: string | null;
+  /**
+   * Empty-state label and info tooltip for the servers pill. The defaults are
+   * the strip's own wording, where the group is genuinely optional; a surface
+   * that makes it REQUIRED (evals create) must say so itself rather than
+   * offering "client default" for a choice it will then block on.
+   */
+  emptyServerLabel?: string;
+  serverInfoText?: string;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -80,6 +129,20 @@ export function EnvironmentComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const modelsOptedIn = slots.includes("models");
+  const modelMatrix = useModelMatrixCapability(
+    modelsOptedIn ? projectId : null
+  );
+  const modelsEnabled = modelsOptedIn && modelMatrix === true;
+  // `slots` NARROWS, never widens: a slot must be both asked for by the caller
+  // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
+  // every existing surface renders exactly the strip it rendered before.
+  const showEnvironmentsSlot =
+    slots.includes("environments") && environmentsEnabled;
+  const showClientsSlot = slots.includes("clients");
+  const showServersSlot = slots.includes("servers");
+  const showSkillsSlot = slots.includes("skills") && skillsEnabled;
+  const showComputersSlot = slots.includes("computers") && computersEnabled;
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -100,22 +163,25 @@ export function EnvironmentComposer({
    * Only while `customized` is false: once the stack is authoritative there is
    * no saved selection left to lose.
    */
-  const stackEditBlock = useMemo<"pins" | "collapse" | null>(() => {
+  const stackEditBlock = useMemo<"pins" | "collapse" | "models" | null>(() => {
     if (value.customized || value.environmentIds.length === 0) return null;
     const selected = value.environmentIds
       .map((id) => liveEnvironments.find((e) => e.environmentId === id))
       .filter((e): e is NonNullable<typeof e> => Boolean(e));
     if (selected.length !== value.environmentIds.length) return null;
     if (environmentsCarryPluginPins(selected)) return "pins";
+    if (!modelsEnabled && environmentsCarryModels(selected)) return "models";
     return environmentsExceedOneStack(selected, {
       skillsEnabled,
       computersEnabled,
+      modelsEnabled,
     })
       ? "collapse"
       : null;
   }, [
     computersEnabled,
     liveEnvironments,
+    modelsEnabled,
     skillsEnabled,
     value.customized,
     value.environmentIds,
@@ -123,6 +189,13 @@ export function EnvironmentComposer({
   const slotsDisabled = disabled || stackEditBlock !== null;
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
+  const choiceCount = modelChoiceCount(value.stack.modelSelection);
+  const budget: TargetBudgetContext = {
+    hostCount: value.stack.hostIds.length,
+    choiceCount,
+    maxTargets,
+  };
+  const targetCount = composerTargetCount(value);
 
   const patchStack = useCallback(
     (patch: Partial<EnvironmentStack>) => {
@@ -164,7 +237,11 @@ export function EnvironmentComposer({
           // would drop an already-attached ad-hoc id the picker can only detach.
           stack:
             selected.length > 0
-              ? composerStateFromEnvironments(selected).stack
+              ? composerStateFromEnvironments(selected, {
+                  skillsEnabled,
+                  computersEnabled,
+                  modelsEnabled,
+                }).stack
               : value.stack,
           customized: false,
         });
@@ -179,7 +256,11 @@ export function EnvironmentComposer({
           environmentIds: ids,
           stack:
             remaining.length > 0
-              ? composerStateFromEnvironments(remaining).stack
+              ? composerStateFromEnvironments(remaining, {
+                  skillsEnabled,
+                  computersEnabled,
+                  modelsEnabled,
+                }).stack
               : emptyEnvironmentStack(),
           customized: false,
         });
@@ -208,9 +289,12 @@ export function EnvironmentComposer({
       });
     },
     [
+      computersEnabled,
       liveEnvironments,
       maxTargets,
+      modelsEnabled,
       onChange,
+      skillsEnabled,
       value.environmentIds,
       value.customized,
       value.stack,
@@ -223,7 +307,7 @@ export function EnvironmentComposer({
         className="flex min-w-0 flex-wrap items-center gap-2"
         data-testid={testId("lego-strip")}
       >
-        {environmentsEnabled ? (
+        {showEnvironmentsSlot ? (
           <EnvironmentPicker
             projectId={projectId}
             value={
@@ -250,26 +334,51 @@ export function EnvironmentComposer({
             footerSlot={environmentPickerFooter}
           />
         ) : null}
-        <ClientsPill
-          projectId={projectId}
-          value={value.stack.hostIds}
-          onChange={(hostIds) => patchStack({ hostIds })}
-          max={maxTargets}
-          disabled={slotsDisabled}
-          testId={testId("clients-picker")}
-          inModal={inModal}
-        />
-        <ServerGroupPicker
-          projectId={projectId}
-          value={value.stack.serverAttachmentId}
-          onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-          disabled={slotsDisabled}
-          emptyTriggerLabel="Server group · client default"
-          infoText="Optional shared server group for every client in this setup."
-          onClearSelection={() => patchStack({ serverAttachmentId: null })}
-          inModal={inModal}
-        />
-        {skillsEnabled ? (
+        {showClientsSlot ? (
+          <ClientsPill
+            projectId={projectId}
+            value={value.stack.hostIds}
+            onChange={(hostIds) => patchStack({ hostIds })}
+            max={maxTargets}
+            disabled={slotsDisabled}
+            testId={testId("clients-picker")}
+            inModal={inModal}
+            budget={budget}
+          />
+        ) : null}
+        {modelsEnabled ? (
+          <ModelsPill
+            projectId={projectId}
+            // The stack's own contract says a state can genuinely arrive
+            // without a selection (a draft persisted before the field existed),
+            // and that a missed guard should read as "client defaults" rather
+            // than throw mid-render. Every other reader here goes through
+            // `modelChoiceCount`, which absorbs it; this was the one that
+            // dereferenced the value directly.
+            value={value.stack.modelSelection ?? emptyModelSelection()}
+            onChange={(modelSelection) => patchStack({ modelSelection })}
+            mode="multiple"
+            disabled={slotsDisabled}
+            testId={testId("models-picker")}
+            inModal={inModal}
+            budget={budget}
+            clientDefaultLabel={clientDefaultLabel}
+          />
+        ) : null}
+        {showServersSlot ? (
+          <ServerGroupPicker
+            projectId={projectId}
+            value={value.stack.serverAttachmentId}
+            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
+            disabled={slotsDisabled}
+            emptyTriggerLabel={emptyServerLabel}
+            infoText={serverInfoText}
+            triggerTestId={testId("servers-picker")}
+            onClearSelection={() => patchStack({ serverAttachmentId: null })}
+            inModal={inModal}
+          />
+        ) : null}
+        {showSkillsSlot ? (
           <SkillsPill
             projectId={projectId}
             value={value.stack.skillSelection}
@@ -279,7 +388,7 @@ export function EnvironmentComposer({
             inModal={inModal}
           />
         ) : null}
-        {computersEnabled ? (
+        {showComputersSlot ? (
           <SandboxImagePill
             projectId={projectId}
             value={value.stack.computerEnvironmentId}
@@ -296,14 +405,24 @@ export function EnvironmentComposer({
           surface may already be disabling everything and saying its own version
           of this, and naming that control would then point at something the
           user cannot reach. */}
-      {stackEditBlock && !disabled ? (
+      {stackEditBlock && !disabled && showEnvironmentsSlot ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
         >
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
+            : stackEditBlock === "models"
+              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+        </p>
+      ) : null}
+      {modelsEnabled && !disabled ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid={testId("target-count")}
+        >
+          {targetCount} of {maxTargets} targets
         </p>
       ) : null}
     </div>

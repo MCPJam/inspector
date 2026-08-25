@@ -60,7 +60,7 @@ type ServerGroupPickerProps = {
    * list and this is called to clear the now-dangling selection. Omit it
    * where the selection is persisted to a saved suite — there the in-use
    * group stays locked (the backend rejects it anyway). Passing it signals
-   * an unsaved selection (e.g. the create-suite dialog) that's safe to drop.
+   * an unsaved selection (e.g. the create-suite page) that's safe to drop.
    */
   onClearSelection?: () => void;
   /**
@@ -70,6 +70,10 @@ type ServerGroupPickerProps = {
    * and other non-modal surfaces so the dropdown can overflow freely.
    */
   inModal?: boolean;
+  /** `data-testid` on the trigger, for composer/lego-strip surfaces. */
+  triggerTestId?: string;
+  /** Accessible name for the trigger. Defaults to "Servers". */
+  triggerAriaLabel?: string;
 };
 
 export function ServerGroupPicker({
@@ -82,6 +86,8 @@ export function ServerGroupPicker({
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
   inModal = false,
+  triggerTestId,
+  triggerAriaLabel = "Servers",
 }: ServerGroupPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -276,6 +282,8 @@ export function ServerGroupPicker({
         <button
           type="button"
           disabled={disabled}
+          data-testid={triggerTestId}
+          aria-label={triggerAriaLabel}
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",

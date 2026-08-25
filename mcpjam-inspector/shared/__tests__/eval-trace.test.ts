@@ -219,6 +219,29 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts connection and discovery categories and rejects unknowns", () => {
+    const base = { id: "s", name: "connect", startMs: 0, endMs: 1 };
+    expect(
+      evalTraceSpanZ.safeParse({ ...base, category: "connection" }).success,
+    ).toBe(true);
+    expect(
+      evalTraceSpanZ.safeParse({
+        ...base,
+        name: "tools/list",
+        category: "discovery",
+      }).success,
+    ).toBe(true);
+    expect(
+      evalTraceSpanZ.safeParse({ ...base, category: "handshake" }).success,
+    ).toBe(false);
+    expect(
+      evalTraceSpanZ.safeParse({ ...base, category: "" }).success,
+    ).toBe(false);
+    expect(
+      evalTraceSpanZ.safeParse({ ...base, category: null }).success,
+    ).toBe(false);
+  });
 });
 
 describe("normalizeFinishReason", () => {

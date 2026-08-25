@@ -240,7 +240,7 @@ describe("useServerDirectory — query arguments", () => {
 });
 
 describe("useServerDirectory — curated overlap", () => {
-  it("drops rows a curated card already covers", () => {
+  it("keeps rows a retired curated card used to cover", () => {
     setPage([
       directoryServer({ _id: "a", displayName: "Keep" }),
       directoryServer({
@@ -250,7 +250,10 @@ describe("useServerDirectory — curated overlap", () => {
       }),
     ]);
     const { result } = renderDirectory();
-    expect(result.current.items.map((i) => i.displayName)).toEqual(["Keep"]);
+    expect(result.current.items.map((i) => i.displayName)).toEqual([
+      "Keep",
+      "Shadowed",
+    ]);
   });
 });
 

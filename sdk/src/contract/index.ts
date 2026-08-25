@@ -30,6 +30,10 @@
  *   - {@link opaqueIdSchema} / {@link mintCaseId} — declared, opaque identity.
  *   - {@link USER_VALUE_STAGES} and the other chain enums — the shared
  *     vocabulary the reporting and import surfaces mirror.
+ *   - {@link deriveStageResults} — the pure, versioned derivation that turns
+ *     one iteration's authored case plus captured evidence into those stages'
+ *     states, and {@link stageDerivationSchema}, the validator every write
+ *     boundary checks a reported derivation against.
  */
 
 export type {
@@ -136,6 +140,36 @@ export {
   userValueStageSchema,
 } from "./chain.js";
 
+// ── deriving a stage's state from a run ──────────────────────────────────────
+export type {
+  StageAuthoredCase,
+  StageDerivation,
+  StageDerivationInput,
+  StageEvidence,
+  StageEvidenceRefs,
+  StagePredicateResultLike,
+  StagePromptSummaryLike,
+  StageReason,
+  StageRenderObservationLike,
+  StageResultRow,
+  StageSetupPhaseSignal,
+  StageSetupSignals,
+  StageSpanLike,
+  StageToolErrorLike,
+} from "./stage-derivation.js";
+export {
+  MAX_EVIDENCE_REASONS,
+  MAX_EVIDENCE_REASON_CHARS,
+  STAGE_ANALYZER_VERSION,
+  STAGE_METADATA_KEYS,
+  STAGE_REASONS,
+  deriveStageResults,
+  stageDerivationSchema,
+  stageDerivationToMetadata,
+  stageReasonSchema,
+  stageResultRowSchema,
+} from "./stage-derivation.js";
+
 // ── the authored step union ──────────────────────────────────────────────────
 export type {
   AssertStep,
@@ -179,12 +213,27 @@ export type {
   EvalSuiteFileCase,
   EvalSuiteFileCaseImport,
   EvalSuiteFileDefaults,
+  EvalSuiteFileHost,
   EvalSuiteFileProvenance,
   EvalSuiteFileServer,
   EvalSuiteFileTarget,
   EvalSuiteFileToolPolicy,
   EvalSuiteFileValidity,
 } from "./suite-file.js";
+export type {
+  ToolPolicyDecision,
+  ToolPolicyDecisionReason,
+  ToolPolicySnapshot,
+  ToolSafetyClassification,
+} from "./tool-policy.js";
+export {
+  TOOL_POLICY_DECISION_REASONS,
+  buildToolPolicySnapshot,
+  classifyToolSafety,
+  decideToolPolicy,
+  decideToolPolicyFromSnapshot,
+  isToolPolicyDecisionReason,
+} from "./tool-policy.js";
 export {
   EVAL_SUITE_SCHEMA_ID,
   EVAL_SUITE_SCHEMA_VERSION,
@@ -199,6 +248,7 @@ export {
   evalSuiteFileCaseImportSchema,
   evalSuiteFileCaseSchema,
   evalSuiteFileDefaultsSchema,
+  evalSuiteFileHostSchema,
   evalSuiteFileProvenanceSchema,
   evalSuiteFileSchema,
   evalSuiteFileServerSchema,
@@ -218,3 +268,60 @@ export {
  * test proves it.
  */
 export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
+
+// ── the run verdict policy (v2) ──────────────────────────────────────────────
+export type {
+  EvalCaseVerdictAggregation,
+  EvalRateMeasurement,
+  EvalRateMeasurementState,
+  EvalRunVerdict,
+  EvalTaskDecisionReason,
+  EvalTrialExclusionReason,
+  EvalTrialExclusions,
+  EvalValidityCoverage,
+  EvalValidityDecisionReason,
+  EvalVerdictDecision,
+  EvalVerdictDecisionReason,
+  EvalVerdictPolicyVersion,
+  EvalVerdictValidity,
+  ResolvedEvalValidityPolicy,
+} from "./verdict-policy.js";
+export {
+  EVAL_RATE_MEASUREMENT_STATES,
+  EVAL_RUN_VERDICTS,
+  EVAL_TASK_DECISION_REASONS,
+  EVAL_TRIAL_EXCLUSION_REASONS,
+  EVAL_VALIDITY_DECISION_REASONS,
+  EVAL_VERDICT_DECISION_REASONS,
+  EVAL_VERDICT_POLICY_SCHEMA_ID,
+  EVAL_VERDICT_POLICY_VERSION,
+  evalCaseVerdictAggregationSchema,
+  evalCaseVerdictAggregationStructuralSchema,
+  evalFractionSchema,
+  evalRateMeasurementSchema,
+  evalRateMeasurementStateSchema,
+  evalRateMeasurementStructuralSchema,
+  evalRunVerdictSchema,
+  evalTrialExclusionReasonSchema,
+  evalTrialExclusionsSchema,
+  evalValidityCoverageSchema,
+  evalVerdictDecisionReasonSchema,
+  evalVerdictDecisionSchema,
+  evalVerdictDecisionStructuralSchema,
+  evalVerdictPolicyVersionSchema,
+  isEvalRunVerdict,
+  isEvalTrialExclusionReason,
+  isEvalValidityDecisionReason,
+  isEvalVerdictDecisionReason,
+  isEvalVerdictPolicyV2,
+  resolvedEvalValidityPolicySchema,
+} from "./verdict-policy.js";
+
+/**
+ * The generated JSON Schema (draft 2020-12) for a v2 verdict decision.
+ *
+ * STRUCTURAL only, for the reason its own docblock gives: the arithmetic and
+ * phase-ordering rules are zod refinements. Same `.ts`-twin rule as the suite
+ * file above.
+ */
+export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";

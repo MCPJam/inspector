@@ -9,8 +9,12 @@ on:
       - "package-lock.json"
       - ".github/workflows/deploy-soundcheck.yml"
   workflow_dispatch:
-  # Called from release.yml so a release redeploys Soundcheck after the
-  # inspector promote (same reasoning as deploy-slack-app.yml).
+  # Deliberately NOT called from release.yml. Soundcheck talks only to
+  # api.github.com — never to the inspector server — so it has no contract to
+  # keep behind the server deploy the way deploy-slack-app.yml does. A release
+  # still redeploys it: the version commit touches root package-lock.json,
+  # which is in the `paths` filter above. `workflow_call` is kept so it can be
+  # composed if that ever changes.
   workflow_call:
 
 concurrency:

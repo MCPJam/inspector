@@ -27,7 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
-  PlatformApiError,
+  resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
   runEvalSuiteOperation,
@@ -36,6 +36,7 @@ import {
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   type CreateEvalSuiteInput,
+  type PlatformEvalRunDisclosure,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
@@ -46,6 +47,7 @@ import {
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
+  CliError,
   cliError,
   operationalError,
   setProcessExitCode,
@@ -54,12 +56,14 @@ import {
 } from "../lib/output.js";
 import {
   buildCorpus,
+  buildEvalDecisionSummaryFromIterations,
+  buildEvalRunReport,
   buildRunCompareReport,
-  calculateLatencyStats,
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
   formatSuiteFileFindings,
+  gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
   MAX_SUITE_FILE_BYTES,
@@ -69,13 +73,20 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type StructuredCaseResult,
+  type StructuredEvalRunInput,
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
+  PlatformApiClient,
+  PlatformEnvironmentResolved,
   PlatformEvalCase,
   PlatformEvalIteration,
+  PlatformEvalRun,
   PlatformRunCompare,
+  RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
 import {
@@ -84,6 +95,10 @@ import {
   suiteFileTooLarge,
   type SuiteExportFinding,
 } from "../lib/eval-suite-export.js";
+import {
+  executeEvalRunFromFile,
+  looksLikeVersionedSuiteFile,
+} from "../lib/eval-run-file.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
@@ -100,15 +115,27 @@ import {
   EVAL_GATE_USAGE_EXIT_CODE,
   TERMINAL_RUN_STATUSES,
   evalGateExitCode,
+  isNonVerdictRunResult,
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  assertRunIdBaseline,
+  baselineNotFoundReason,
+  comparePolicyFromGateOptions,
+  evaluateBaselineComparison,
+  mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
-import { fetchAllIterations } from "../lib/eval-iterations.js";
+import {
+  classifyLaunchErrorExitCode,
+  evalRunWaitExitCode,
+  worstOf,
+  type EvalRunWaitRunOutcome,
+} from "../lib/eval-run-exit-code.js";
+import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -117,15 +144,20 @@ import {
 } from "../lib/eval-compare.js";
 import {
   parseReporterFormat,
-  writeJsonArtifact,
+  writeEvalDecisionSummary,
+  writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import { preflightCloudCredentials } from "../lib/cloud-context.js";
 import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "../lib/platform-client.js";
+  addProjectOption,
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  runCloudOp,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import { resolveCloudProjectArgs, appendProjectLinkHint } from "../lib/cloud-scope.js";
 import {
   getGlobalOptions,
   parsePositiveInteger,
@@ -134,11 +166,6 @@ import {
   detectInlineImageProtocol,
   encodeInlineImage,
 } from "../lib/terminal-image.js";
-
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -150,28 +177,6 @@ type CreateOptions = PlatformOptions & {
   server?: string[];
 };
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
-
-/**
- * Print a deep link to a run, after the command's own machine-readable
- * output.
- *
- * HUMAN FORMAT ONLY, and written separately rather than folded into
- * `writeResult`: that helper is format-generic and its `--format json` bytes
- * are a contract scripts parse. A trailing prose line would break every one
- * of them, so the gate lives here at the call site.
- *
- * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
- * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
- * the run path.
- */
 /**
  * A variadic selector maps to the SINGULAR op field for one value and the
  * PLURAL for several. The op rejects both together, and the singular field
@@ -200,23 +205,34 @@ function selectorField(
 function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
-  composeModel?: string;
+  composeModel?: string | string[];
   composeServerGroup?: string;
   composeSkill?: string[];
+  withClientDefault?: boolean;
+  saveTargets?: boolean;
 }): {
   compose?: {
     host: string;
     serverGroup?: string;
-    model?: string;
+    models?: string[];
+    includeClientDefault?: boolean;
+    saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
   };
 } {
+  const models = Array.isArray(options.composeModel)
+    ? options.composeModel
+    : options.composeModel
+      ? [options.composeModel]
+      : undefined;
   const refinements =
     options.composeComputer !== undefined ||
-    options.composeModel !== undefined ||
+    models !== undefined ||
     options.composeServerGroup !== undefined ||
-    (options.composeSkill?.length ?? 0) > 0;
+    (options.composeSkill?.length ?? 0) > 0 ||
+    options.withClientDefault === true ||
+    options.saveTargets === true;
   if (!options.composeHost) {
     if (refinements) {
       throw usageError(
@@ -231,9 +247,11 @@ function composeField(options: {
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
-      ...(options.composeModel !== undefined
-        ? { model: options.composeModel }
+      ...(models !== undefined ? { models } : {}),
+      ...(options.withClientDefault === true
+        ? { includeClientDefault: true }
         : {}),
+      ...(options.saveTargets === true ? { saveTargets: true } : {}),
       ...(options.composeComputer !== undefined
         ? { computer: options.composeComputer }
         : {}),
@@ -247,6 +265,12 @@ function composeField(options: {
         : {}),
     },
   };
+}
+
+function composeModelTail(modelId: string | undefined): string {
+  if (!modelId) return "default";
+  const slash = modelId.lastIndexOf("/");
+  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
 }
 
 /**
@@ -319,6 +343,10 @@ function writeRunGroupSummary(
     startedCount: number;
     failedCount: number;
     runGroupId?: string;
+    composed?: {
+      environments?: Array<{ id: string; modelId?: string }>;
+      environment?: { id: string; modelId?: string };
+    };
     targets: Array<
       | {
           status: "started";
@@ -354,18 +382,159 @@ function writeRunGroupSummary(
   }
   for (const target of result.targets) {
     if (target.status !== "failed") continue;
-    const label =
+    const cell = (
+      result.composed?.environments ??
+      (result.composed?.environment ? [result.composed.environment] : [])
+    ).find((entry) => entry.id === target.environment?.id);
+    const base =
       target.host?.name ??
       target.host?.id ??
       target.environment?.name ??
       target.environment?.id ??
       "target";
+    const label =
+      cell || result.composed
+        ? `${base} · ${composeModelTail(cell?.modelId)}`
+        : base;
     process.stderr.write(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
   }
 }
 
+/**
+ * Human-format block for the pre-run disclosure `run_eval_suite` fetched for
+ * this launch — the twin of `writeRunGroupSummary`, and printed BEFORE it: a
+ * `--format json` document already carries `disclosure` inside the single
+ * receipt, so appending prose to it would break the one-document rule the
+ * same way a second summary line would. This is the human-only rendering of
+ * exactly that field.
+ *
+ * `execution` vs `executionAbsence` render DIFFERENT copy on purpose — never
+ * collapse them. `'ingested-run'` means MCPJam did not execute this;
+ * `'plan-unresolved'` means a run that WILL execute and WILL call models this
+ * CLI simply cannot name yet. Printing the ingest wording for the second
+ * would tell someone about to launch that nothing leaves, which is the exact
+ * bug g4a fixed on the backend — reintroducing it here at the presentation
+ * layer would be the same bug in a different process.
+ */
+function writeRunDisclosure(
+  format: string,
+  disclosure: PlatformEvalRunDisclosure | undefined,
+  stream: NodeJS.WritableStream = process.stdout
+): void {
+  if (format !== "human" || !disclosure) return;
+  const lines: string[] = ["Pre-run disclosure:"];
+  if (disclosure.execution) {
+    const execution = disclosure.execution;
+    const locus =
+      execution.locus.known === true
+        ? execution.locus.hosted
+          ? "MCPJam-hosted"
+          : "your own machine"
+        : "unknown";
+    lines.push(`  Execution: ${execution.engine} · ${locus}`);
+    if (execution.models.length > 0) {
+      for (const model of execution.models) {
+        const destination = model.byok?.baseUrlHost
+          ? model.byok.baseUrlHost
+          : model.rail.managed
+            ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
+            : model.tenantEgress;
+        lines.push(`  Model: ${model.modelId} — ${destination}`);
+      }
+    } else if (execution.modelsUnresolved) {
+      lines.push(`  Models: not derivable — ${execution.modelsUnresolved.reason}`);
+    }
+    if (execution.sandbox.engaged) {
+      lines.push(`  Sandbox: engaged (${execution.sandbox.vendor ?? "?"})`);
+    }
+  } else if (disclosure.executionAbsence) {
+    const { kind, reason } = disclosure.executionAbsence;
+    lines.push(
+      kind === "ingested-run"
+        ? `  Execution: none — this run was ingested, MCPJam did not execute it (${reason})`
+        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
+    );
+  }
+  // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
+  // — it is what happens to content once it exists, not a fact about whether
+  // this run executed. This is the human's only pre-launch view (the
+  // standalone disclosure command is deliberately excluded), so a
+  // consequential setting like a non-DLP redaction module or a captureLevel
+  // of "full" must not be silently absent from the printed block.
+  lines.push(
+    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`
+  );
+  lines.push(
+    `  Redaction: ${disclosure.capture.redaction.kind}` +
+      (disclosure.capture.redaction.isDlp
+        ? ""
+        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
+  );
+  lines.push(
+    `  Export defaults: ${
+      disclosure.capture.exportDefaults.includeContent
+        ? "includes content"
+        : "excludes content"
+    } (${disclosure.capture.exportDefaults.note})`
+  );
+  const firingAnalysis = disclosure.analysis.filter(
+    (touchpoint) => typeof touchpoint.fires === "string"
+  );
+  if (firingAnalysis.length > 0) {
+    // One line PER touchpoint — different touchpoints can have different
+    // destinations, and pooling them under the first one's would misattribute
+    // where the others' evidence actually goes.
+    for (const touchpoint of firingAnalysis) {
+      // "fires automatically" vs "fires only if asked" are different consent
+      // stories — one sends evidence the moment the run completes, with no
+      // further action from anyone; the other only on request. A surface
+      // whose whole job is telling people what happens before they agree to
+      // it must not flatten that distinction just because both cases "fire".
+      const firesLabel =
+        touchpoint.fires === "auto-on-completion"
+          ? "fires automatically on completion"
+          : "fires only if explicitly requested";
+      lines.push(
+        `  Analysis: ${touchpoint.label} ${firesLabel}, may send evidence to ${touchpoint.destinations.join(", ")}`
+      );
+    }
+  } else {
+    lines.push("  Analysis: no analyzer/judge touchpoint can fire for this run");
+  }
+  lines.push(
+    disclosure.retention.effectiveToday === "kept-indefinitely"
+      ? "  Retention: kept indefinitely"
+      : `  Retention: swept after ${disclosure.retention.policyDays ?? "?"} day(s)`
+  );
+  lines.push(
+    disclosure.region.stated
+      ? `  Region: ${disclosure.region.value}`
+      : "  Region: not stated"
+  );
+  const engaged = disclosure.subprocessors.filter((entry) => entry.engaged);
+  if (engaged.length > 0) {
+    lines.push(
+      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
+    );
+  }
+  stream.write(`${lines.join("\n")}\n`);
+}
+
+/**
+ * Print a deep link to a run, after the command's own machine-readable
+ * output.
+ *
+ * HUMAN FORMAT ONLY, and written separately rather than folded into
+ * `writeResult`: that helper is format-generic and its `--format json` bytes
+ * are a contract scripts parse. A trailing prose line would break every one
+ * of them, so the gate lives here at the call site.
+ *
+ * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
+ * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
+ * the run path.
+ */
 function writeRunLink(
   format: string,
   webOrigin: string,
@@ -435,50 +604,6 @@ function writeJudgeSummary(format: string, judges: unknown): void {
   }
 }
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-    /** App origin matching the API base this call went to. */
-    webOrigin: string;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({
-      client,
-      signal: controller.signal,
-      webOrigin: webOriginForApiBaseUrl(baseUrl),
-    });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
-
 /**
  * Read a suite definition file by literal path (or `-` for stdin). Unlike the
  * `@file` convention in json-input.ts, `--file` points at a real path — the
@@ -513,6 +638,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     if (text.trim() === "") {
       throw usageError("--file input is empty.");
     }
+    if (looksLikeVersionedSuiteFile(text)) {
+      throw usageError(
+        "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+      );
+    }
     try {
       base = JSON.parse(text);
     } catch (error) {
@@ -529,6 +659,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
   }
   if (typeof base !== "object" || Array.isArray(base)) {
     throw usageError("Suite definition must be a JSON object.");
+  }
+  if ("schemaVersion" in (base as Record<string, unknown>)) {
+    throw usageError(
+      "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+    );
   }
 
   const merged = {
@@ -579,33 +714,77 @@ function loadBodyObject(options: {
   return base as Record<string, unknown>;
 }
 
+/**
+ * Operation schemas still require `project`. Cloud CLI fills that later
+ * from `--project` / env / link / automatic, so callers that validate
+ * before `executeOp` must drop the requirement.
+ */
+function schemaWithOptionalProject<TInput>(
+  schema: PlatformOperation<TInput, unknown>["inputSchema"]
+): PlatformOperation<TInput, unknown>["inputSchema"] {
+  const objectSchema = schema as {
+    shape?: Record<string, unknown>;
+    partial?: (
+      mask: { project: true }
+    ) => PlatformOperation<TInput, unknown>["inputSchema"];
+  };
+  if (
+    objectSchema.shape !== undefined &&
+    "project" in objectSchema.shape &&
+    typeof objectSchema.partial === "function"
+  ) {
+    return objectSchema.partial({ project: true });
+  }
+  return schema;
+}
+
 /** Validate a merged input object against an operation's schema (usage error on failure). */
 function validateOpInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
-  raw: unknown
+  raw: unknown,
+  extras: { projectOptional?: boolean } = {}
 ): TInput {
-  const parsed = op.inputSchema.safeParse(raw);
+  const schema = extras.projectOptional
+    ? schemaWithOptionalProject(op.inputSchema)
+    : op.inputSchema;
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
     throw usageError(`Invalid input: ${detail}`);
   }
-  return parsed.data;
+  return parsed.data as TInput;
 }
 
 /** Run an operation with a pre-validated input and print the result. */
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  options: PlatformOptions,
+  options: PlatformOptions & { project?: string },
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  const inputProject =
+    options.project === undefined &&
+    typeof (input as { project?: unknown }).project === "string"
+      ? (input as { project: string }).project
+      : undefined;
+  const resolved = resolveCloudProjectArgs(options, { inputProject });
+  const filled = { ...(input as TInput & { project?: string }) };
+  delete filled.project;
+  if (resolved.project !== undefined) {
+    filled.project = resolved.project;
+  }
   const result = await runPlatformCommand(
-    options,
+    platformOptionsOf(command),
     globalOptions.timeout,
-    ({ client, signal }) => op.execute(input, { client, signal })
+    ({ client, signal }) =>
+      op.execute(filled as TInput, { client, signal }),
+    {
+      projectScope: resolved.projectScope,
+      quiet: globalOptions.quiet,
+    }
   );
   writeResult(result, globalOptions.format);
 }
@@ -815,15 +994,105 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
+const RUN_POLL_INTERVAL_MS = 3000;
+
+async function waitForEvalRun(
+  client: Pick<PlatformApiClient, "getEvalRun">,
+  signal: AbortSignal,
+  projectId: string,
+  runId: string,
+  deadline: number
+) {
+  let run = await client.getEvalRun({ projectId, runId }, { signal });
+  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+    if (Date.now() >= deadline) {
+      throw operationalError(
+        `Eval run "${runId}" is still ${run.status} after waiting for completion.`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
+    run = await client.getEvalRun({ projectId, runId }, { signal });
+  }
+  return run;
+}
+
+function launchFailureCases(
+  result: RunEvalSuiteResult
+): StructuredCaseResult[] {
+  return result.targets.flatMap((target, index) => {
+    if (target.status !== "failed") return [];
+    const targetName =
+      target.environment?.name ?? target.host?.name ?? `target ${index + 1}`;
+    return [
+      {
+        id: `launch:${index + 1}`,
+        title: `${targetName}: launch`,
+        category: "launch",
+        passed: false,
+        error: target.error.message,
+        // `errorCode`, not `code`: the telemetry redactor treats any key
+        // normalizing to "code" as a possible OAuth authorization code and
+        // keeps only SCREAMING_SNAKE values. The v1 API's launch failures are
+        // lowercase snake_case (`billing_limit_reached`, `rate_limited`), so
+        // under the shorter name every one of them reached the CI artifact as
+        // "[REDACTED]" — the out-of-credits case included.
+        details: { errorCode: target.error.code },
+      },
+    ];
+  });
+}
+
+function gateReportCase(
+  report: GateReport,
+  baselineProvenance?: Record<string, unknown>
+): StructuredCaseResult {
+  const passed = report.outcome === "passed";
+  return {
+    id: "gate",
+    title: "Eval gate",
+    category: "gate",
+    passed,
+    // Only a real FAILED gate is a confirmed regression. `incomplete` and
+    // `usage_error` still fail this row (nothing was established either
+    // way), but reporting them as `breaking` — the same class a genuine
+    // failure gets — would claim a defect the run never observed. Mirrors
+    // `gateCase` in sdk/src/run-compare.ts.
+    classification:
+      report.outcome === "failed"
+        ? "breaking"
+        : passed
+          ? "non_breaking"
+          : "informational",
+    ...(passed
+      ? {}
+      : {
+          error: report.verdicts
+            .filter((verdict) => verdict.status !== "passed")
+            .map((verdict) => verdict.message)
+            .join("; "),
+        }),
+    // The baseline provenance rides along on the case row too, not only in
+    // the report's top-level metadata: `--reporter junit-xml` has no other
+    // place to carry it, and a regression visible in the exit code but
+    // absent from the artifact is a reporting bug.
+    details: baselineProvenance
+      ? { ...report, baseline: baselineProvenance }
+      : report,
+  };
+}
+
 const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
 
 async function runEvalGate(
   options: PlatformOptions &
     EvalGateOptions & {
-      project: string;
+      project?: string;
       run: string;
       wait?: boolean;
       waitTimeout?: string;
+      reporter?: string;
+      out?: string;
       /**
        * Commander models `--no-gating-score-errors` as the NEGATION of an
        * implicit `--gating-score-errors`, so the field is `gatingScoreErrors`
@@ -835,25 +1104,50 @@ async function runEvalGate(
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  const reporter = parseReporterFormat(options.reporter);
+  const needsReport = reporter !== undefined || options.out !== undefined;
   const policy = policyFromOptions({
     ...options,
     noGatingScoreErrors: options.gatingScoreErrors === false,
   });
+  // Parsed and validated BEFORE any network call, like `eval compare`'s own
+  // policy: a malformed baseline flag exits 2 without spending a request.
+  // The NORMALIZED value is what travels downstream — the raw one is never
+  // read again, so a whitespace-padded but otherwise valid `--baseline`
+  // cannot slip past validation and then fail to resolve on the wire.
+  const baseline =
+    options.baseline !== undefined
+      ? assertRunIdBaseline(options.baseline, options.run)
+      : undefined;
+  const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
       ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
       : DEFAULT_GATE_WAIT_TIMEOUT_MS;
+  const resolved = resolveCloudProjectArgs(options);
 
-  let report: GateReport;
+  let decisionSummary:
+    | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
+    | undefined;
+  let outcome: {
+    report: GateReport;
+    run?: PlatformEvalRun;
+    iterations?: PlatformEvalIteration[];
+    iterationsComplete?: boolean;
+    iterationError?: string;
+    baselineProvenance?: Record<string, unknown>;
+  };
   try {
-    report = await runPlatformCommand(
-      options,
+    outcome = await runPlatformCommand(
+      platformOptionsOf(command),
       Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
-        const resolution = resolveProject(projects.items, options.project);
+        const resolution = resolveProject(projects.items, resolved.project);
         if (!resolution.ok) {
-          throw usageError(resolution.message);
+          throw usageError(
+            appendProjectLinkHint(resolution.message, resolved.projectScope)
+          );
         }
         const project = resolution.project;
         const deadline = Date.now() + waitTimeoutMs;
@@ -868,15 +1162,17 @@ async function runEvalGate(
             // its PARTIAL summary — a confident verdict about an unfinished
             // run. Undecidable, not failed.
             return {
-              outcome: "incomplete" as const,
-              scoreIntegrity: "unknown" as const,
-              verdicts: [
-                {
-                  gate: "run",
-                  status: "non_gateable" as const,
-                  message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
-                },
-              ],
+              report: {
+                outcome: "incomplete" as const,
+                scoreIntegrity: "unknown" as const,
+                verdicts: [
+                  {
+                    gate: "run",
+                    status: "non_gateable" as const,
+                    message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
+                  },
+                ],
+              },
             };
           }
           if (Date.now() >= deadline) {
@@ -884,15 +1180,17 @@ async function runEvalGate(
             // pass. Reported as incomplete so it can never read as a
             // regression.
             return {
-              outcome: "incomplete" as const,
-              scoreIntegrity: "unknown" as const,
-              verdicts: [
-                {
-                  gate: "wait",
-                  status: "non_gateable" as const,
-                  message: `run still ${run.status} after ${waitTimeoutMs}ms`,
-                },
-              ],
+              report: {
+                outcome: "incomplete" as const,
+                scoreIntegrity: "unknown" as const,
+                verdicts: [
+                  {
+                    gate: "wait",
+                    status: "non_gateable" as const,
+                    message: `run still ${run.status} after ${waitTimeoutMs}ms`,
+                  },
+                ],
+              },
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -902,26 +1200,132 @@ async function runEvalGate(
           );
         }
 
-        if (isNonVerdictRunStatus(run.status)) {
+        let iterations:
+          | Awaited<ReturnType<typeof fetchAllIterations>>
+          | undefined;
+        let iterationError: string | undefined;
+        if (needsReport || policyNeedsIterations(policy)) {
+          try {
+            iterations = await fetchAllIterations(
+              client,
+              signal,
+              project.id,
+              options.run
+            );
+          } catch (error) {
+            iterationError =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
+
+        if (
+          isNonVerdictRunStatus(run.status) ||
+          isNonVerdictRunResult(run.result)
+        ) {
           // Cancelled / timed out: the run has not told us the server
-          // regressed, it has told us nothing.
+          // regressed, it has told us nothing. Same for a policy-2
+          // `inconclusive` result, where the platform itself declined to
+          // decide and its summary counts are the evidence it rejected.
           return {
-            outcome: "incomplete" as const,
-            scoreIntegrity: "unknown" as const,
-            verdicts: [
-              {
-                gate: "run",
-                status: "non_gateable" as const,
-                message: `run is ${run.status}; no verdict was established`,
-              },
-            ],
+            report: {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message: isNonVerdictRunResult(run.result)
+                    ? "run is inconclusive; no verdict was established"
+                    : `run is ${run.status}; no verdict was established`,
+                },
+              ],
+            },
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
           };
         }
 
-        const iterations = policyNeedsIterations(policy)
-          ? await fetchAllIterations(client, signal, project.id, options.run)
-          : undefined;
-        return reportForRun(run, iterations, policy);
+        if (iterations) {
+          decisionSummary = buildEvalDecisionSummaryFromIterations(
+            iterations.items,
+            {
+              total: run.summary?.total,
+              passed: run.summary?.passed,
+              failed: run.summary?.failed,
+              iterationWalkComplete: iterations.complete,
+            }
+          );
+        }
+        // A failed LOCAL iteration fetch makes the run's own threshold report
+        // incomplete, but it says nothing about `/compare`: that endpoint
+        // returns its own summary independently, and (absent a latency gate)
+        // `evaluateBaselineComparison` never touches these iterations at all.
+        // So this is an incomplete THRESHOLD report, not an early return —
+        // `--baseline` still gets its chance below, and a real regression
+        // there must still merge to `failed` (exit 1) rather than being
+        // silently downgraded to `incomplete` (exit 3) by an unrelated fetch
+        // hiccup on the other half of the report.
+        const thresholdReport = iterationError
+          ? {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "fetch",
+                  status: "non_gateable" as const,
+                  message: `could not read the run: ${iterationError}`,
+                },
+              ],
+            }
+          : reportForRun(
+              run,
+              policyNeedsIterations(policy) ? iterations : undefined,
+              policy
+            );
+
+        // A failed fetch is never "complete", whether or not a report was
+        // requested — `!needsReport` is a default for the "nobody asked"
+        // case, not for "asked and it broke".
+        const iterationsComplete = iterationError
+          ? false
+          : iterations?.complete ?? !needsReport;
+
+        // Baseline regression gating only makes sense once the run being
+        // gated has a verdict of its own; every early return above already
+        // skipped this. `--baseline` is optional, so a threshold-only
+        // invocation never pays for a `/compare` fetch it did not ask for.
+        if (!baseline) {
+          return {
+            report: thresholdReport,
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete,
+            ...(iterationError ? { iterationError } : {}),
+          };
+        }
+
+        const baselineResult = await evaluateBaselineComparison({
+          client,
+          signal,
+          projectId: project.id,
+          runId: options.run,
+          baseline,
+          policy: comparePolicy,
+          compareIterations: iterations,
+        });
+
+        return {
+          report: mergeGateReports(thresholdReport, baselineResult.report),
+          run,
+          iterations: iterations?.items ?? [],
+          iterationsComplete,
+          ...(iterationError ? { iterationError } : {}),
+          ...(baselineResult.provenance
+            ? { baselineProvenance: baselineResult.provenance }
+            : {}),
+        };
       }
     );
   } catch (error) {
@@ -938,31 +1342,89 @@ async function runEvalGate(
     // 1: a CI job that fails a release on a flaked request, and calls it a
     // regression, teaches people to ignore the gate.
     const detail = error instanceof Error ? error.message : String(error);
-    writeResult(
-      {
-        gate: {
-          outcome: "incomplete",
-          scoreIntegrity: "unknown",
-          verdicts: [
-            {
-              gate: "fetch",
-              status: "non_gateable",
-              message: `could not read the run: ${detail}`,
-            },
-          ],
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: "fetch",
+          status: "non_gateable",
+          message: `could not read the run: ${detail}`,
         },
-        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
-      },
-      globalOptions.format
-    );
+      ],
+    };
+    // `--reporter`/`--out` still need to be honored on an infrastructure
+    // failure: a CI step expecting the reporter-selected artifact must not
+    // find raw JSON on stdout, or find `--out` never written at all.
+    const structured = needsReport
+      ? buildEvalRunReport([], {
+          cases: [gateReportCase(report)],
+          verdict: gateOutcomeVerdict(report.outcome),
+        })
+      : undefined;
+    if (options.out && structured) {
+      await writeReporterArtifact(
+        options.out,
+        reporter ?? "json-summary",
+        structured
+      );
+    }
+    if (reporter && structured) {
+      writeReporterResult(reporter, structured);
+    } else {
+      writeResult(
+        { gate: report, exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE },
+        globalOptions.format
+      );
+    }
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
   }
 
-  const exitCode = evalGateExitCode(report);
-  writeResult({ gate: report, exitCode }, globalOptions.format);
-  if (globalOptions.format === "human") {
-    process.stderr.write(`${formatGateReport(report)}\n`);
+  const exitCode = evalGateExitCode(outcome.report);
+  const structured = needsReport
+    ? buildEvalRunReport(
+        outcome.run
+          ? [
+              {
+                run: outcome.run,
+                iterations: outcome.iterations ?? [],
+                iterationsComplete: outcome.iterationsComplete ?? false,
+                ...(outcome.iterationError
+                  ? { iterationError: outcome.iterationError }
+                  : {}),
+              },
+            ]
+          : [],
+        {
+          cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(outcome.report.outcome),
+          ...(decisionSummary ? { decisionSummary } : {}),
+          ...(outcome.baselineProvenance
+            ? { metadata: { baselineComparison: outcome.baselineProvenance } }
+            : {}),
+        }
+      )
+    : undefined;
+  if (options.out && structured) {
+    await writeReporterArtifact(
+      options.out,
+      reporter ?? "json-summary",
+      structured
+    );
+  }
+  if (reporter && structured) {
+    writeReporterResult(reporter, structured);
+  } else {
+    writeResult({ gate: outcome.report, exitCode }, globalOptions.format);
+  }
+  if (globalOptions.format === "human" && !reporter) {
+    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+    writeEvalDecisionSummary(
+      globalOptions.format,
+      decisionSummary,
+      process.stderr
+    );
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
@@ -970,7 +1432,7 @@ async function runEvalGate(
 }
 
 /**
- * `mcpjam eval compare` — this run against a baseline.
+ * `mcpjam cloud eval compare` — this run against a baseline.
  *
  * Deliberately has NO `--wait`. A comparison against a run that has not
  * finished compares against a partial population, and the honest answer is
@@ -980,7 +1442,7 @@ async function runEvalGate(
 async function runEvalCompare(
   options: PlatformOptions &
     EvalCompareOptions & {
-      project: string;
+      project?: string;
       run: string;
       baseRun?: string;
       reporter?: string;
@@ -993,23 +1455,27 @@ async function runEvalCompare(
   // spending a request — and cannot be mistaken for an infrastructure failure.
   const policy = comparePolicyFromOptions(options);
   const reporter = parseReporterFormat(options.reporter);
+  const resolved = resolveCloudProjectArgs(options);
 
   type CompareOutcome = {
     report: GateReport;
     compare?: PlatformRunCompare;
     flakyCases?: FlakyCase[];
+    decisionSummary?: ReturnType<typeof buildEvalDecisionSummaryFromIterations>;
   };
 
   let outcome: CompareOutcome;
   try {
     outcome = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
-        const resolution = resolveProject(projects.items, options.project);
+        const resolution = resolveProject(projects.items, resolved.project);
         if (!resolution.ok) {
-          throw usageError(resolution.message);
+          throw usageError(
+            appendProjectLinkHint(resolution.message, resolved.projectScope)
+          );
         }
         const project = resolution.project;
 
@@ -1087,6 +1553,17 @@ async function runEvalCompare(
         return {
           report: evaluateCompareGates(input, policy),
           compare,
+          decisionSummary: compareIterations
+            ? buildEvalDecisionSummaryFromIterations(
+                compareIterations.items,
+                {
+                  total: compare.compareRun.summary?.total,
+                  passed: compare.compareRun.summary?.passed,
+                  failed: compare.compareRun.summary?.failed,
+                  iterationWalkComplete: compareIterations.complete,
+                }
+              )
+            : undefined,
           // Reported, NEVER gated. See `detectFlakyCases`.
           flakyCases: compareIterations?.complete
             ? detectFlakyCases(flakyInputFrom(compareIterations.items))
@@ -1145,6 +1622,7 @@ async function runEvalCompare(
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
           flakyCases: outcome.flakyCases,
+          decisionSummary: outcome.decisionSummary,
         })
       : undefined
   );
@@ -1157,7 +1635,7 @@ async function runEvalCompare(
 }
 
 /**
- * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ * `mcpjam cloud eval pull` — materialize a hosted suite into a local corpus lock.
  *
  * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
  * fetches and only COMPARES, never writing. Sharing the fetch and
@@ -1180,6 +1658,7 @@ async function runEvalPull(
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const lockPath = resolveCorpusLockPath(options.lock);
+  const resolved = resolveCloudProjectArgs(options);
 
   // Read the existing lock BEFORE fetching. A `--frozen` run with no lock is
   // exit 3 whatever the server would have said, and discovering that after a
@@ -1194,11 +1673,13 @@ async function runEvalPull(
   };
   try {
     fetched = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       async ({ client, signal }) => {
         const selector = {
-          ...(options.project ? { project: options.project } : {}),
+          ...(resolved.project !== undefined
+            ? { project: resolved.project }
+            : {}),
           suite: options.suite,
         };
         const [detail, page] = await Promise.all([
@@ -1231,7 +1712,8 @@ async function runEvalPull(
             ? { suiteMatchOptions: detail.settings.matchOptions }
             : {}),
         };
-      }
+      },
+      { projectScope: resolved.projectScope }
     );
   } catch (error) {
     throw corpusFetchFailure(error);
@@ -1240,7 +1722,7 @@ async function runEvalPull(
   let corpus: LoadedCorpus;
   try {
     corpus = buildCorpus({
-      ...(options.project ? { project: options.project } : {}),
+      ...(resolved.project !== undefined ? { project: resolved.project } : {}),
       suite: fetched.suite,
       cases: fetched.cases,
       suiteChecks: fetched.suiteChecks,
@@ -1368,36 +1850,6 @@ const EMPTY_DIFF = {
   percentDelta: null,
 };
 
-/** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
-function p95Of(
-  iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined
-): number | undefined {
-  if (!iterations?.complete) return undefined;
-  const durations = iterations.items
-    .map((iteration) => iteration.durationMs)
-    .filter((ms): ms is number => typeof ms === "number");
-  if (durations.length === 0 || durations.length !== iterations.items.length) {
-    // A single missing duration makes the p95 describe a different set than
-    // the run — absent beats approximate.
-    return undefined;
-  }
-  return calculateLatencyStats(durations).p95;
-}
-
-/**
- * The server says "no baseline" with a 404 carrying
- * `details.reason: "BASELINE_NOT_FOUND"`. Read the machine field, not the
- * prose.
- */
-function baselineNotFoundReason(error: unknown): boolean {
-  const details = (error as { details?: unknown })?.details;
-  return (
-    typeof details === "object" &&
-    details !== null &&
-    (details as { reason?: unknown }).reason === "BASELINE_NOT_FOUND"
-  );
-}
-
 async function writeCompareResult(
   args: {
     report: GateReport;
@@ -1408,7 +1860,10 @@ async function writeCompareResult(
   structured: StructuredRunReport | undefined
 ): Promise<void> {
   if (args.out && structured) {
-    await writeJsonArtifact(args.out, structured);
+    // `--out` and `--reporter` are two terminals for the same artifact: the
+    // file gets whichever format `--reporter` selected (json-summary by
+    // default), same as `eval run`/`eval gate`, not always raw JSON.
+    await writeReporterArtifact(args.out, args.reporter ?? "json-summary", structured);
   }
   if (args.reporter && structured) {
     writeReporterResult(args.reporter, structured);
@@ -1447,10 +1902,18 @@ const SUITE_FILE_USAGE_EXIT_CODE = 2;
  * the buffer's length travels with the text rather than being re-derived from
  * it.
  */
-function readSuiteFileInput(value: string): { text: string; bytes: number } {
+function readSuiteFileInput(value: string): {
+  text: string;
+  bytes: number;
+  buffer: Buffer;
+} {
   try {
     const buffer = value === "-" ? readFileSync(0) : readFileSync(value);
-    return { text: buffer.toString("utf8"), bytes: buffer.byteLength };
+    return {
+      text: buffer.toString("utf8"),
+      bytes: buffer.byteLength,
+      buffer,
+    };
   } catch (error) {
     throw usageError(
       value === "-"
@@ -1567,6 +2030,7 @@ async function runEvalExport(
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  const resolved = resolveCloudProjectArgs(options);
 
   // Checked BEFORE the fetch when the caller named the path: refusing to
   // overwrite is not worth a round trip. With no `--out` the path is derived
@@ -1576,11 +2040,13 @@ async function runEvalExport(
   }
 
   const fetched = await runPlatformCommand(
-    options,
+    platformOptionsOf(command),
     globalOptions.timeout,
     async ({ client, signal }) => {
       const selector = {
-        ...(options.project ? { project: options.project } : {}),
+        ...(resolved.project !== undefined
+          ? { project: resolved.project }
+          : {}),
         suite: options.suite,
       };
       const [detail, page] = await Promise.all([
@@ -1600,8 +2066,26 @@ async function runEvalExport(
         );
       }
 
-      return { detail, cases: page.items };
-    }
+      let environment: PlatformEnvironmentResolved | undefined;
+      const environmentIds = detail.environmentIds ?? [];
+      const legacyServers = detail.environment?.servers ?? [];
+      if (environmentIds.length === 1 && legacyServers.length === 0) {
+        environment = await resolveEnvironmentOperation.execute(
+          {
+            project: detail.projectId ?? resolved.project,
+            environment: environmentIds[0]!,
+          },
+          { client, signal }
+        );
+      }
+
+      return {
+        detail,
+        cases: page.items,
+        ...(environment ? { environment } : {}),
+      };
+    },
+    { projectScope: resolved.projectScope }
   );
 
   const built = buildSuiteFileFromPlatform(fetched);
@@ -1705,8 +2189,7 @@ export function registerEvalCommands(program: Command): void {
     .command("eval")
     .description("Author and run eval suites in your hosted MCPJam projects");
 
-  addPlatformOptions(
-    evals
+      evals
       .command("create")
       .description(
         "Create a runnable eval suite from authored test cases (does not run it)"
@@ -1717,7 +2200,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--file <path>",
-        "Path to a suite definition JSON file (or - for stdin)"
+        "Path to a create-API JSON body (or - for stdin). A versioned suite file belongs on `eval run --file`"
       )
       .option(
         "--json <json>",
@@ -1733,45 +2216,48 @@ export function registerEvalCommands(program: Command): void {
         "Suite-level default provider (overrides the file; needed for bare/custom model ids)"
       )
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Project HTTP server names or IDs (overrides the file)"
-      )
-  ).action(async (options: CreateOptions, command) => {
+      ).action(async (options: CreateOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const input = loadSuiteDefinition(options);
+    const resolved = resolveCloudProjectArgs(options, {
+      inputProject:
+        options.project === undefined && typeof input.project === "string"
+          ? input.project
+          : undefined,
+    });
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
-        createEvalSuiteOperation.execute(input, { client, signal })
+        createEvalSuiteOperation.execute(
+          { ...input, project: resolved.project },
+          { client, signal }
+        ),
+      { projectScope: resolved.projectScope }
     );
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("list")
       .description("List the eval suites saved in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const result = await runPlatformCommand(
+    const result = await runCloudOp(
+      command,
       options,
-      globalOptions.timeout,
-      ({ client, signal }) =>
-        listEvalSuitesOperation.execute(
-          { project: options.project },
-          { client, signal }
-        )
+      ({ client, signal }, project) =>
+        listEvalSuitesOperation.execute(project, { client, signal })
     );
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("runs")
       .description("List a suite's run history, newest first")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -1783,8 +2269,7 @@ export function registerEvalCommands(program: Command): void {
         "--limit <n>",
         "Maximum number of runs to return (1-100)",
         (value) => Number.parseInt(value, 10)
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -1802,11 +2287,16 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("run")
-      .description("Start an eval run of an existing suite (asynchronous)")
-      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .description(
+        "Start an eval run of an existing suite, or upload a versioned suite file and run it"
+      )
+      .option("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--file <path>",
+        "Versioned suite file to upload and run (.yaml or .json, or - for stdin)"
+      )
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
@@ -1827,7 +2317,12 @@ export function registerEvalCommands(program: Command): void {
         "--all-targets",
         "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
       )
-      .option("--iterations <n>", "Run each case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run each case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -1854,17 +2349,38 @@ export function registerEvalCommands(program: Command): void {
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call returns the run it already started"
       )
+      .option("--wait", "Wait for every started run to reach a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Maximum time to wait for completion (default: 600000)"
+      )
+      .option(
+        "--reporter <json-summary|junit-xml|html>",
+        "Render the completed run report to stdout"
+      )
+      .option(
+        "--out <path>",
+        "Atomically write the completed report selected by --reporter (default: json-summary)"
+      )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
       )
       .option(
         "--compose-computer <id-or-name>",
         "Sandbox image to pin on the composed stack"
       )
       .option(
-        "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "--compose-model <id...>",
+        "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
+      )
+      .option(
+        "--with-client-default",
+        "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model"
+      )
+      .option(
+        "--save-targets",
+        "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
       )
       .option(
         "--compose-server-group <id>",
@@ -1873,21 +2389,24 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         composeHost?: string;
         composeComputer?: string;
-        composeModel?: string;
+        composeModel?: string[];
+        withClientDefault?: boolean;
+        saveTargets?: boolean;
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;
-        suite: string;
+        suite?: string;
+        file?: string;
         server?: string[];
         environment?: string[];
         host?: string[];
         allTargets?: boolean;
+        repetitions?: number;
         iterations?: number;
         case?: string[];
         excludeSkills?: boolean;
@@ -1896,20 +2415,152 @@ export function registerEvalCommands(program: Command): void {
         minPassRate?: number;
         matchOptions?: string;
         idempotencyKey?: string;
+        wait?: boolean;
+        waitTimeout?: string;
+        reporter?: string;
+        out?: string;
       },
       command
     ) => {
+      if (options.file && options.suite) {
+        throw usageError("Provide either --file or --suite, not both.");
+      }
+      if (!options.file && !options.suite) {
+        throw usageError("Provide --suite <id-or-name> or --file <path>.");
+      }
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
+      if (
+        (options.reporter !== undefined || options.out !== undefined) &&
+        !options.wait
+      ) {
+        throw usageError("--reporter and --out require --wait.");
+      }
+      if (options.waitTimeout !== undefined && !options.wait) {
+        throw usageError("--wait-timeout requires --wait.");
+      }
       const globalOptions = getGlobalOptions(command);
+      const reporter = parseReporterFormat(options.reporter);
+      const waitTimeoutMs =
+        options.waitTimeout !== undefined
+          ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+          : DEFAULT_RUN_WAIT_TIMEOUT_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
-      const result = await runPlatformCommand(
-        options,
+      const resolved = resolveCloudProjectArgs(options);
+      // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
+      // `runPlatformOperation` preflight (below) stays the chokepoint every
+      // other Cloud command relies on, including `eval gate`'s exit 3 =
+      // "incomplete". Calling the same check here first makes a missing
+      // credential unambiguous before the launch even starts; the internal
+      // preflight then passes identically.
+      if (options.wait) {
+        try {
+          preflightCloudCredentials(platformOptionsOf(command));
+        } catch (error) {
+          if (error instanceof CliError && error.exitCode === 2) throw error;
+          if (error instanceof CliError) {
+            throw new CliError(error.code, error.message, 3, error.details);
+          }
+          throw error;
+        }
+      }
+      let result: RunEvalSuiteResult;
+      try {
+        result = await runPlatformCommand(
+        platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          // Fired the moment the operation resolves the disclosure for the
+          // FROZEN launch plan — before it creates the run. Printing here,
+          // synchronously from the callback, is what makes this actually
+          // pre-run for a human watching the terminal: reading it off the
+          // finished receipt afterward would print it only after the run had
+          // already been created and had possibly already sent content.
+          //
+          // REDIRECTED TO STDERR when a reporter is configured: `--reporter`
+          // writes a single structured document (junit-xml/json-summary) to
+          // stdout later, and prepending human prose there would make that
+          // document unparseable. But fully suppressing the block would
+          // leave a CI user — the population most likely to want a record of
+          // what a run discloses — with no route to it at all, despite the
+          // fetch happening either way. Printing to stderr keeps stdout a
+          // single parseable document while still surfacing the disclosure
+          // somewhere a human or a log aggregator can see it. `--format
+          // json` without a reporter is unaffected — `writeRunDisclosure`
+          // already no-ops there regardless of stream.
+          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
+            writeRunDisclosure(
+              globalOptions.format,
+              disclosure,
+              reporter === undefined ? process.stdout : process.stderr
+            );
+          };
+          // The failure counterpart: without this, a fetch that failed and a
+          // build with no disclosure feature at all look IDENTICAL to a
+          // human running this command — no output either way. Same
+          // reporter-stream rule as onDisclosure: stderr under a reporter,
+          // stdout otherwise, never gates or delays the launch.
+          const onDisclosureUnavailable = (reason: string) => {
+            if (globalOptions.format !== "human") return;
+            const stream = reporter === undefined ? process.stdout : process.stderr;
+            stream.write(`Pre-run disclosure unavailable: ${reason}\n`);
+          };
+          if (options.file) {
+            const source = readSuiteFileInput(options.file);
+            return executeEvalRunFromFile(
+              {
+                client: context.client,
+                signal: context.signal,
+                onDisclosure,
+                onDisclosureUnavailable,
+              },
+              {
+                source,
+                label: options.file === "-" ? "<stdin>" : options.file,
+                projectSelector: resolved.project ?? options.project,
+                knobs: {
+                  ...(options.server ? { server: options.server } : {}),
+                  ...(options.environment
+                    ? { environment: options.environment }
+                    : {}),
+                  ...(options.host ? { host: options.host } : {}),
+                  ...(options.allTargets ? { allTargets: true } : {}),
+                  ...(options.repetitions !== undefined || options.iterations !== undefined
+                    ? { repetitions: options.repetitions ?? options.iterations }
+                    : {}),
+                  ...(options.case?.length ? { case: options.case } : {}),
+                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
+                  ...(options.notes !== undefined ? { notes: options.notes } : {}),
+                  ...(options.minPassRate !== undefined
+                    ? { minPassRate: options.minPassRate }
+                    : {}),
+                  ...(options.matchOptions
+                    ? {
+                        matchOptions: parseMatchOptionsOption(
+                          options.matchOptions
+                        ),
+                      }
+                    : {}),
+                  ...(options.idempotencyKey
+                    ? { idempotencyKey: options.idempotencyKey }
+                    : {}),
+                  ...composeField(options),
+                },
+              }
+            );
+          }
           return runEvalSuiteOperation.execute(
             {
-              project: options.project,
-              suite: options.suite,
+              project: resolved.project ?? options.project,
+              suite: options.suite!,
               ...(options.server ? { servers: options.server } : {}),
               // ONE value maps to the singular field, several to the plural:
               // the op rejects sending both, and the singular carries the
@@ -1917,8 +2568,10 @@ export function registerEvalCommands(program: Command): void {
               ...selectorField("environment", "environments", options.environment),
               ...selectorField("host", "hosts", options.host),
               ...(options.allTargets ? { allAttached: true } : {}),
-              ...(options.iterations !== undefined
-                ? { iterations: options.iterations }
+              ...(options.repetitions !== undefined
+                ? { repetitions: options.repetitions }
+                : options.iterations !== undefined
+                  ? { iterations: options.iterations }
                 : {}),
               ...(options.case?.length ? { cases: options.case } : {}),
               ...(options.excludeSkills ? { excludeSkills: true } : {}),
@@ -1935,45 +2588,359 @@ export function registerEvalCommands(program: Command): void {
                 : {}),
               ...composeField(options),
             },
-            { client: context.client, signal: context.signal }
+            {
+              client: context.client,
+              signal: context.signal,
+              onDisclosure,
+              onDisclosureUnavailable,
+            }
+          );
+        },
+        { projectScope: resolved.projectScope }
+        );
+      } catch (error) {
+        // Launch-phase remap, --wait only: a thrown CliError whose exitCode
+        // is not already 2 (usage error / invalid suite file — untouched)
+        // gets reclassified by wire code. `toCliError` drops the HTTP
+        // status, so classification reads the code string, not the status.
+        // `details` rides along too: a billing failure the v1 API collapsed
+        // onto the wire code FORBIDDEN is only distinguishable from a real
+        // credential rejection by `details.code`.
+        if (options.wait && error instanceof CliError && error.exitCode !== 2) {
+          throw new CliError(
+            error.code,
+            error.message,
+            classifyLaunchErrorExitCode(error.code, error.details),
+            error.details
           );
         }
-      );
+        throw error;
+      }
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
-      // stream unparseable for the CI callers that read it.
-      writeResult(result, globalOptions.format);
-      writeRunGroupSummary(globalOptions.format, webOrigin, result);
-      // A partial or wholly failed fan-out is not a success. Exiting 0 would
-      // let a pipeline treat "1 of 3 runs never started" as a clean launch.
-      if (result.outcome !== "started") {
-        setProcessExitCode(1);
+      // stream unparseable for the CI callers that read it. The human-mode
+      // block already printed from `onDisclosure`, ahead of the launch
+      // itself — nothing to print again here.
+      if (!options.wait) {
+        writeResult(result, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        // A partial or wholly failed fan-out is not a success. Exiting 0 would
+        // let a pipeline treat "1 of 3 runs never started" as a clean launch.
+        if (result.outcome !== "started") {
+          setProcessExitCode(1);
+        }
+        return;
       }
+
+      const needsReport = reporter !== undefined || options.out !== undefined;
+      // Re-checked explicitly, same as the launch-phase preflight above and
+      // for the same reason: `runPlatformOperation`'s own internal recheck
+      // is the ONE thing that can fail from this call's outer preamble
+      // (nothing inside the callback below escapes its own per-target
+      // catches), and a credential that died between the launch and here
+      // must read as 3 (auth), not whatever `toCliError` defaults to. The
+      // launch receipt is written first — it is the only record of run ids
+      // already paid for, and nothing else has reached stdout yet.
+      try {
+        preflightCloudCredentials(platformOptionsOf(command));
+      } catch (error) {
+        writeResult({ launch: result, runs: [] }, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        if (error instanceof CliError && error.exitCode === 2) throw error;
+        if (error instanceof CliError) {
+          throw new CliError(error.code, error.message, 3, error.details);
+        }
+        throw error;
+      }
+      const completion = await runPlatformCommand(
+        platformOptionsOf(command),
+        Math.max(globalOptions.timeout, waitTimeoutMs),
+        async ({ client, signal }) => {
+          const deadline = Date.now() + waitTimeoutMs;
+          const waited = await Promise.all(
+            result.targets
+              .filter((target) => target.status === "started")
+              .map(async (target) => {
+                try {
+                  return {
+                    ok: true as const,
+                    run: await waitForEvalRun(
+                      client,
+                      signal,
+                      result.project.id,
+                      target.runId,
+                      deadline
+                    )
+                  };
+                } catch (error) {
+                  // Capture the WIRE code before stringifying: `errorCode`,
+                  // never `code` — the telemetry redactor treats any key
+                  // normalizing to "code" as a possible OAuth authorization
+                  // code and keeps only SCREAMING_SNAKE values (see
+                  // launchFailureCases above). Only set for a real
+                  // PlatformApiError; a deadline timeout (a CliError from
+                  // waitForEvalRun) carries none, which is fine — the
+                  // classifier's "else" bucket already means "no valid
+                  // verdict observed".
+                  return {
+                    ok: false as const,
+                    runId: target.runId,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                    ...(isPlatformApiError(error)
+                      ? { errorCode: error.code }
+                      : {}),
+                  };
+                }
+              })
+          );
+          const runs = waited.flatMap((entry) => (entry.ok ? [entry.run] : []));
+          const waitErrors = waited.flatMap((entry) =>
+            !entry.ok
+              ? [
+                  {
+                    runId: entry.runId,
+                    error: entry.error,
+                    ...(entry.errorCode
+                      ? { errorCode: entry.errorCode }
+                      : {}),
+                  },
+                ]
+              : []
+          );
+
+          if (!needsReport) {
+            // Deliberately does NOT throw on `waitErrors` here. Throwing from
+            // inside the platform command skips the receipt below, and the
+            // receipt is the only place the launched run ids are printed: a
+            // `--wait --format json > out.json` that timed out would leave
+            // `out.json` EMPTY, with the ids surviving only as prose inside a
+            // stderr message. The caller cannot find, resume, or cancel the
+            // runs it just paid for. The shared exit path below raises the
+            // same failure after the receipt is on stdout.
+            return {
+              runs,
+              waitErrors,
+              reportInputs: [] as StructuredEvalRunInput[],
+              iterationErrorCodes: new Map<string, string>(),
+            };
+          }
+
+          // A run's own id, not `StructuredEvalRunInput` (a shared SDK type
+          // report-building also consumes), is what carries a fetch
+          // failure's wire code out of this loop — smuggling a new field
+          // onto that type would leak an eval.ts-only concern into it.
+          const iterationErrorCodes = new Map<string, string>();
+          const reportInputs = await Promise.all(
+            runs.map(async (run): Promise<StructuredEvalRunInput> => {
+              try {
+                const iterations = await fetchAllIterations(
+                  client,
+                  signal,
+                  result.project.id,
+                  run.id
+                );
+                return {
+                  run,
+                  iterations: iterations.items,
+                  iterationsComplete: iterations.complete,
+                };
+              } catch (error) {
+                if (isPlatformApiError(error)) {
+                  iterationErrorCodes.set(run.id, error.code);
+                }
+                return {
+                  run,
+                  iterations: [],
+                  iterationsComplete: false,
+                  iterationError:
+                    error instanceof Error ? error.message : String(error),
+                };
+              }
+            })
+          );
+          return { runs, waitErrors, reportInputs, iterationErrorCodes };
+        },
+        {
+          projectScope: resolved.projectScope,
+          quiet: true,
+        },
+      );
+
+      const report = needsReport
+        ? buildEvalRunReport(completion.reportInputs, {
+            cases: [
+              ...launchFailureCases(result),
+              ...completion.waitErrors.map((entry) => ({
+                id: `${entry.runId}:wait`,
+                title: `${entry.runId}: completion`,
+                category: "reporting",
+                passed: false,
+                error: entry.error,
+              })),
+            ],
+            metadata: {
+              project: result.project,
+              suite: result.suite,
+              ...(result.runGroupId ? { runGroupId: result.runGroupId } : {}),
+            },
+          })
+        : undefined;
+
+      // Computed BEFORE the `--out` write: a local write failure must MERGE
+      // into this verdict-derived code (worst-of), never overwrite it — a
+      // run that actually failed (1) or hit a mid-wait auth failure (3)
+      // outranks a plain local I/O problem (4), per the documented severity
+      // order. Assigning the write failure a flat 4 here would silently
+      // mask an already-known verdict failure the moment `--out` also
+      // happened to be unwritable.
+      const reportingErrors = completion.reportInputs.filter(
+        (input) => !input.iterationsComplete || input.iterationError
+      );
+      const reportingFailedRunIds = new Set(
+        reportingErrors.map((input) => input.run.id)
+      );
+      const runOutcomes: EvalRunWaitRunOutcome[] = completion.runs.map(
+        (run) => ({
+          status: run.status,
+          result: run.result,
+          reportingFailed: reportingFailedRunIds.has(run.id),
+          reportingFailedErrorCode: completion.iterationErrorCodes.get(run.id),
+        })
+      );
+      const code = evalRunWaitExitCode({
+        launchOutcome: result.outcome,
+        runs: runOutcomes,
+        waitErrors: completion.waitErrors,
+      });
+
+      // Captured, NOT thrown here: the receipt below (or the reporter
+      // stdout) carries the only copy of the launched run ids, and a local
+      // disk error must not cost the caller those ids the way an early
+      // throw would — same discipline the wait-error path above already
+      // follows, for the same reason.
+      let outWriteError: string | undefined;
+      if (options.out && report) {
+        try {
+          await writeReporterArtifact(
+            options.out,
+            reporter ?? "json-summary",
+            report
+          );
+        } catch (error) {
+          outWriteError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      if (reporter && report) {
+        writeReporterResult(reporter, report);
+      } else {
+        writeResult(
+          { launch: result, runs: completion.runs },
+          globalOptions.format
+        );
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+      }
+
+      // Everything above has already been written — report file, reporter
+      // stdout, or the launch receipt. Only now may this fail.
+      if (outWriteError !== undefined) {
+        // A local `--out` write failure is infrastructure the CLI itself
+        // observed, never a verdict — merged toward 4, not the
+        // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
+        // from `normalizeCliError`, and never allowed to outrank an
+        // already-computed verdict failure (1) or auth failure (3).
+        throw cliError("OUT_WRITE_FAILED", outWriteError, worstOf([code, 4]));
+      }
+      if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
+        const affectedRunIds = [
+          ...reportingErrors.map((input) => input.run.id),
+          ...completion.waitErrors.map((entry) => entry.runId),
+        ];
+        throw cliError(
+          "OPERATIONAL_ERROR",
+          needsReport
+            ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
+                ", "
+              )}.`
+            : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
+          code,
+          {
+            // Machine-readable, because the message is not: a pipeline that
+            // needs to resume or cancel these runs should not have to parse
+            // English out of stderr.
+            runIds: affectedRunIds,
+            ...(completion.waitErrors.length > 0
+              ? { waitErrors: completion.waitErrors }
+              : {}),
+          }
+        );
+      }
+
+      setProcessExitCode(code);
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+      let decisionSummary:
+        | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
+        | undefined;
+      const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
-        (context) => {
+        async (context) => {
           webOrigin = context.webOrigin;
-          return getEvalRunOperation.execute(
-            { project: options.project, runId: options.run },
+          const result = await getEvalRunOperation.execute(
+            {
+              runId: options.run,
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
+          if (
+            globalOptions.format === "human" &&
+            TERMINAL_RUN_STATUSES.has(result.run.status) &&
+            result.run.result === "failed"
+          ) {
+            try {
+              const iterations = await fetchAllIterations(
+                context.client,
+                context.signal,
+                result.project.id,
+                result.run.id
+              );
+              decisionSummary = buildEvalDecisionSummaryFromIterations(
+                iterations.items,
+                {
+                  total: result.run.summary?.total,
+                  passed: result.run.summary?.passed,
+                  failed: result.run.summary?.failed,
+                  iterationWalkComplete: iterations.complete,
+                }
+              );
+            } catch {
+              // The status result is already useful; an optional diagnostic
+              // read must never turn a successful status request into a failure.
+            }
+          }
+          return result;
+        },
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
         }
       );
       writeResult(result, globalOptions.format);
@@ -1983,50 +2950,56 @@ export function registerEvalCommands(program: Command): void {
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
+      writeEvalDecisionSummary(
+        globalOptions.format,
+        decisionSummary,
+        process.stdout
+      );
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("cancel")
       .description(
         "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       await executeOp(
         cancelEvalRunOperation,
-        { project: options.project, runId: options.run },
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as { project: string; runId: string },
         options,
         command
       );
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      )
       .option("--force", "Re-grade a run that already has a judge result")
       .option(
         "--enable",
         "Grade this run even though the judge was off when it ran"
       )
       .option("--judge-model <id>", "Judge model for this run only")
-      .option("--judge-threshold <0-1>", "Pass threshold for this run only")
-  ).action(
+      .option("--judge-threshold <0-1>", "Pass threshold for this run only").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         force?: boolean;
         enable?: boolean;
@@ -2039,17 +3012,26 @@ export function registerEvalCommands(program: Command): void {
         options.judgeThreshold !== undefined
           ? parseJudgeThreshold(options.judgeThreshold)
           : undefined;
-      const input = validateOpInput(requestEvalRunJudgeOperation, {
-        project: options.project,
-        runId: options.run,
-        ...(options.force ? { force: true } : {}),
-        ...(options.enable ? { enable: true } : {}),
-        ...(options.judgeModel !== undefined
-          ? { model: options.judgeModel }
-          : {}),
-        ...(threshold !== undefined ? { threshold } : {}),
-      });
-      await executeOp(requestEvalRunJudgeOperation, input, options, command);
+      const input = validateOpInput(
+        requestEvalRunJudgeOperation,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.force ? { force: true } : {}),
+          ...(options.enable ? { enable: true } : {}),
+          ...(options.judgeModel !== undefined
+            ? { model: options.judgeModel }
+            : {}),
+          ...(threshold !== undefined ? { threshold } : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        requestEvalRunJudgeOperation,
+        input,
+        options,
+        command
+      );
     }
   );
 
@@ -2063,14 +3045,12 @@ export function registerEvalCommands(program: Command): void {
     .command("checks")
     .description("Run an eval suite on a repository's pull requests");
 
-  addPlatformOptions(
-    checks
+      checks
       .command("list")
       .description(
         "List the repositories running an eval suite on their pull requests"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      .option("--project <id-or-name>", PROJECT_OPT).action(async (options: PlatformOptions & { project?: string }, command) => {
     await executeOp(
       listEvalCheckReposOperation,
       { project: options.project },
@@ -2079,8 +3059,7 @@ export function registerEvalCommands(program: Command): void {
     );
   });
 
-  addPlatformOptions(
-    checks
+      checks
       .command("connect")
       .description(
         "Run this suite on every pull request to a repository (affects everyone who opens one)"
@@ -2091,8 +3070,7 @@ export function registerEvalCommands(program: Command): void {
         "--outage-policy <fail-open|fail-closed>",
         "What the check reports when MCPJam cannot conclude"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2123,51 +3101,53 @@ export function registerEvalCommands(program: Command): void {
   );
 
   // ── Eval run iterations + traces ───────────────────────────────────
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("iterations")
       .description(
         "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option("--cursor <cursor>", "Pagination cursor from a previous response")
-      .option("--limit <n>", "Max iterations per page (1–200)")
-  ).action(
+      .option("--limit <n>", "Max iterations per page (1–200)").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         cursor?: string;
         limit?: string;
       },
       command
     ) => {
-      const input = validateOpInput(listEvalRunIterationsOperation, {
-        project: options.project,
-        runId: options.run,
-        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-        ...(options.limit !== undefined
-          ? { limit: Number(options.limit) }
-          : {}),
-      });
-      await executeOp(listEvalRunIterationsOperation, input, options, command);
+      const input = validateOpInput(
+        listEvalRunIterationsOperation,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+          ...(options.limit !== undefined
+            ? { limit: Number(options.limit) }
+            : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        listEvalRunIterationsOperation,
+        input,
+        options,
+        command
+      );
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("gate")
       .description(
         "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--min-pass-rate-percent <0-100>",
@@ -2189,19 +3169,48 @@ export function registerEvalCommands(program: Command): void {
         collectRepeatable,
         [] as string[]
       )
+      .option(
+        "--baseline <runId>",
+        "Baseline run ID to gate a regression delta against (SHA baselines are not supported yet)"
+      )
+      .option(
+        "--min-sample-size <n>",
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline"
+      )
+      .option(
+        "--min-effect-size-percent <0-100>",
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline"
+      )
+      .option(
+        "--gate-deterministic-regressions",
+        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline"
+      )
+      .option(
+        "--max-p95-latency-increase-ms <ms>",
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline"
+      )
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(
         "--wait-timeout <ms>",
         "Give up waiting after this many milliseconds (default 600000)"
       )
-  ).action(
+      .option(
+        "--reporter <json-summary|junit-xml|html>",
+        "Write a structured report to stdout instead of the default output"
+      )
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
+      ).action(
     async (
       options: PlatformOptions &
         EvalGateOptions & {
-          project: string;
+          project?: string;
           run: string;
           wait?: boolean;
           waitTimeout?: string;
+          reporter?: string;
+          out?: string;
         },
       command
     ) => {
@@ -2209,16 +3218,13 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("compare")
       .description(
         "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
       )
       .requiredOption("--run <id>", "Eval run ID to compare")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--base-run <id>",
@@ -2245,15 +3251,17 @@ export function registerEvalCommands(program: Command): void {
         "Fail if p95 end-to-end latency rose by more than this many milliseconds"
       )
       .option(
-        "--reporter <json-summary|junit-xml>",
+        "--reporter <json-summary|junit-xml|html>",
         "Write a structured report to stdout instead of the default output"
       )
-      .option("--out <path>", "Write the structured report to a JSON file")
-  ).action(
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
+      ).action(
     async (
       options: PlatformOptions &
         EvalCompareOptions & {
-          project: string;
+          project?: string;
           run: string;
           baseRun?: string;
           reporter?: string;
@@ -2278,8 +3286,7 @@ export function registerEvalCommands(program: Command): void {
       runEvalValidate(options, command);
     });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("export")
       .description(
         "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly"
@@ -2296,8 +3303,7 @@ export function registerEvalCommands(program: Command): void {
         "--out <path>",
         "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
       )
-      .option("--force", "Replace an existing file at the output path")
-  ).action(
+      .option("--force", "Replace an existing file at the output path").action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -2311,8 +3317,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("pull")
       .description(
         "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
@@ -2333,8 +3338,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--skip-unsupported",
         "Omit cases a local run cannot execute instead of failing"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -2349,8 +3353,8 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("trace")
       .description(
         "Fetch the full trace for one eval iteration (large: full message history + spans)"
@@ -2360,14 +3364,10 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
       },
@@ -2376,18 +3376,18 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalIterationTraceOperation,
         {
-          project: options.project,
           runId: options.run,
           iterationId: options.iteration,
-        },
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
         options,
         command
       );
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("steps")
       .description(
         "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why."
@@ -2397,14 +3397,10 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
       },
@@ -2413,18 +3409,18 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalRunStepsOperation,
         {
-          project: options.project,
           runId: options.run,
           iterationId: options.iteration,
-        },
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as Parameters<typeof getEvalRunStepsOperation.execute>[0],
         options,
         command
       );
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("screenshot")
       .description(
         "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL"
@@ -2434,19 +3430,15 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--out <path>",
         "Save the PNG(s) to a file or directory instead of rendering inline"
       )
-      .option("--index <n>", "Show only the Nth screenshot (1-based)")
-  ).action(
+      .option("--index <n>", "Show only the Nth screenshot (1-based)").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
         out?: string;
@@ -2460,18 +3452,25 @@ export function registerEvalCommands(program: Command): void {
           ? parsePositiveInteger(options.index, "--index")
           : undefined;
 
+      const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
-          )
+          ),
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       let shots = extractRenderedScreenshots(result);
@@ -2558,8 +3557,8 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      addProjectOption(
+      evals
       .command("video")
       .description(
         "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
@@ -2569,18 +3568,14 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--out <path>",
         "Download the .webm to this file instead of printing the URL"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
         out?: string;
@@ -2588,18 +3583,25 @@ export function registerEvalCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
-          )
+          ),
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       const videoUrl = extractIterationVideoUrl(result);
@@ -2644,13 +3646,11 @@ export function registerEvalCommands(program: Command): void {
   );
 
   // ── Suite settings: get / update / delete / schedule ───────────────
-  addPlatformOptions(
-    evals
+      evals
       .command("get")
       .description("Show an eval suite's full settings")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2664,8 +3664,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("update")
       .description(
         "Edit an eval suite's settings (only the flags you pass change)"
@@ -2677,14 +3676,14 @@ export function registerEvalCommands(program: Command): void {
       .option("--name <name>", "Rename the suite")
       .option("--description <text>", "Suite description")
       .option(
-        "--server <name...>",
-        "Replace the suite's server selection (project server names)"
+        "--server <id-or-name...>",
+        "Replace the suite's server selection (project server names or IDs)"
       )
       .option(
-        "--computer-image <name-or-id|off>",
-        "Sandbox image eval runs boot from (see `mcpjam images list`); off uses the default base image"
+        "--computer-image <id-or-name|off>",
+        "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
       )
-      .option("--host <name...>", "Replace host attachments (by name/ID)")
+      .option("--host <id-or-name...>", "Replace host attachments (by name or ID)")
       .option("--model <id>", "Execution model id")
       .option("--system-prompt <text>", "Execution system prompt")
       .option("--temperature <n>", "Execution temperature")
@@ -2701,8 +3700,7 @@ export function registerEvalCommands(program: Command): void {
         "Turn LLM-as-judge grading on/off (grades every run as it completes)"
       )
       .option("--judge-model <id>", "Judge model id")
-      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalSuiteOperation,
       buildSuiteUpdateInput(options)
@@ -2710,13 +3708,11 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(updateEvalSuiteOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("delete")
       .description("Permanently delete an eval suite (and its cases and runs)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2730,8 +3726,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("schedule")
       .description("Enable or disable scheduled runs for a suite")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -2742,8 +3737,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--environment <id-or-name>",
         "Project environment the scheduled runs launch (only with --enable)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2781,8 +3775,7 @@ export function registerEvalCommands(program: Command): void {
       "Attach or detach the project environments an eval suite runs against"
     );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("set")
       .description(
         "Replace the suite's attached environments (this sets the whole list)"
@@ -2792,8 +3785,7 @@ export function registerEvalCommands(program: Command): void {
         "--environment <id-or-name...>",
         "Project environments to attach, in order"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2815,15 +3807,13 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("clear")
       .description(
         "Detach every environment, reverting the suite to its saved server selection"
       )
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2846,13 +3836,11 @@ export function registerEvalCommands(program: Command): void {
     .command("cases")
     .description("List, author, and edit an eval suite's test cases");
 
-  addPlatformOptions(
-    cases
+      cases
       .command("list")
       .description("List a suite's test cases")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2866,14 +3854,12 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("get")
       .description("Show one test case")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .requiredOption("--case <id-or-title>", "Eval case title or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2891,8 +3877,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("run")
       .description(
         "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)"
@@ -2912,7 +3897,12 @@ export function registerEvalCommands(program: Command): void {
         "--host <id-or-name>",
         "Attached host to run against, so the run is stamped with that host's config"
       )
-      .option("--iterations <n>", "Run the case this many times (1-10)", (v) =>
+      .option(
+        "--repetitions <n>",
+        "Run the case this many times under verdict policy 2 (1-10)",
+        (v) => parseIntOption(v, "--repetitions")
+      )
+      .option("--iterations <n>", "Deprecated alias for --repetitions", (v) =>
         parseIntOption(v, "--iterations")
       )
       .option(
@@ -2921,7 +3911,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
       )
       .option(
         "--compose-computer <id-or-name>",
@@ -2929,7 +3919,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
       )
       .option(
         "--compose-server-group <id>",
@@ -2938,8 +3928,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         composeHost?: string;
@@ -2953,11 +3942,20 @@ export function registerEvalCommands(program: Command): void {
         server?: string[];
         environment?: string;
         host?: string;
+        repetitions?: number;
         iterations?: number;
         idempotencyKey?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
       await executeOp(
         runEvalCaseOperation,
         {
@@ -2967,8 +3965,10 @@ export function registerEvalCommands(program: Command): void {
           ...(options.server?.length ? { servers: options.server } : {}),
           ...(options.environment ? { environment: options.environment } : {}),
           ...(options.host ? { host: options.host } : {}),
-          ...(options.iterations !== undefined
-            ? { iterations: options.iterations }
+          ...(options.repetitions !== undefined
+            ? { repetitions: options.repetitions }
+            : options.iterations !== undefined
+              ? { iterations: options.iterations }
             : {}),
           ...(options.idempotencyKey
             ? { idempotencyKey: options.idempotencyKey }
@@ -2981,16 +3981,14 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("create")
       .description("Add a test case to a suite (definition via --file/--json)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--file <path>", "Case JSON body (or - for stdin)")
       .option("--json <json>", "Inline case JSON (or @file, or -)")
-      .option("--title <title>", "Case title (overrides the body)")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--title <title>", "Case title (overrides the body)").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       createEvalCaseOperation,
       buildCaseInput(options, { requireCase: false })
@@ -2998,8 +3996,7 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(createEvalCaseOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    cases
+      cases
       .command("update")
       .description("Edit a test case (definition via --file/--json)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -3007,8 +4004,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--file <path>", "Case JSON body (or - for stdin)")
       .option("--json <json>", "Inline case JSON (or @file, or -)")
-      .option("--title <title>", "Rename the case")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--title <title>", "Rename the case").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalCaseOperation,
       buildCaseInput(options, { requireCase: true })
@@ -3016,14 +4012,12 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(updateEvalCaseOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    cases
+      cases
       .command("delete")
       .description("Permanently delete a test case")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .requiredOption("--case <id-or-title>", "Eval case title or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -3041,8 +4035,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("generate")
       .description(
         "AI-generate test cases from the suite's tools (spends credits)"
@@ -3074,8 +4067,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;

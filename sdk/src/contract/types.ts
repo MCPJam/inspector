@@ -73,8 +73,12 @@ export type ScorerErrorPolicy = "fail" | "ignore";
  *     predicate above it renumbers it, so diffing and aggregation must not
  *     track a generated id across config edits, and {@link GatePolicy}-style
  *     selection by id must reject one.
+ *   - `"platform"`  — the hosted platform minted it from a stable, non-positional
+ *     key (`predicate:<criterionId>`, `toolCalls:match`, `judge:goalCompletion`).
+ *     Stable across config edits like `"explicit"`, but nobody authored it, so a
+ *     report can still say where the id came from.
  */
-export type ScorerIdSource = "explicit" | "generated";
+export type ScorerIdSource = "explicit" | "generated" | "platform";
 
 /**
  * What a scorer is and how its verdict is treated — the authored half of the

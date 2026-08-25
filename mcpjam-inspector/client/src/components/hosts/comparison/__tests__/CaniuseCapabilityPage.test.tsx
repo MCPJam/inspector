@@ -47,6 +47,15 @@ describe("CaniuseCapabilityPage", () => {
     );
   });
 
+  it("shows the flag-gated hosts — the flags gate creation, not this page", () => {
+    // `useFeatureFlagEnabled` is mocked false above: the anonymous-visitor
+    // case, and the one that used to hide these two from caniuse entirely.
+    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
+
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+  });
+
   it("renders a not-found state for unknown capability slugs", () => {
     render(<CaniuseCapabilityPage capabilitySlug="not-a-capability" />);
 

@@ -9,6 +9,7 @@ import {
   composerStateFromEnvironments,
   defaultComposerState,
   emptyEnvironmentStack,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
@@ -469,6 +470,7 @@ describe("defaultComposerState", () => {
         serverAttachmentId: "grp-1",
         skillSelection: null,
         computerEnvironmentId: null,
+        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       },
       customized: true,
     });
@@ -685,5 +687,272 @@ describe("named reuse — which matching row wins", () => {
       ensureAdhocEnvironments: ensureReturning([]),
     });
     expect(result.environmentIds).toEqual(["first"]);
+  });
+});
+
+describe("resolveComposerEnvironments — model axis", () => {
+  it("mints inherit then explicit, host-major", async () => {
+    const ensure = ensureReturning(["a", "b", "c", "d"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1", "h2"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["google/gemini-2.5-flash"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1" },
+        { hostId: "h1", modelId: "google/gemini-2.5-flash" },
+        { hostId: "h2" },
+        { hostId: "h2", modelId: "google/gemini-2.5-flash" },
+      ],
+    });
+    expect(result.environmentIds).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("dedupes explicit model ids before minting or counting the product", async () => {
+    const ensure = ensureReturning(["inherit", "override"]);
+    await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["google/gemini-2.5-flash", "google/gemini-2.5-flash"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1" },
+        { hostId: "h1", modelId: "google/gemini-2.5-flash" },
+      ],
+    });
+  });
+
+  it("omits modelId on inherit cells and sends it on explicit cells", async () => {
+    const ensure = ensureReturning(["inherit", "override"]);
+    await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["anthropic/claude-haiku-4.5"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    const stacks = (ensure as unknown as { mock: { calls: any[][] } }).mock
+      .calls[0][0].stacks;
+    expect("modelId" in stacks[0]).toBe(false);
+    expect(stacks[1].modelId).toBe("anthropic/claude-haiku-4.5");
+  });
+
+  it("refuses a product that exceeds the cap with an axis-aware message", async () => {
+    const err = await resolveComposerEnvironments({
+      ...base,
+      max: 10,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1", "h2", "h3"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["m1", "m2", "m3"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensureReturning([]),
+    }).catch((e) => e);
+    expect(err.code).toBe("TOO_MANY_TARGETS");
+    expect(err.message).toMatch(/3 clients × 4 model choices = 12 targets; limit 10/);
+  });
+
+  it("does not reuse a named override row for an inherit compose", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      state: composeState({ hostIds: ["h1"] }),
+      liveEnvironments: [
+        named({
+          environmentId: "curated",
+          hostId: "h1",
+          modelId: "google/gemini-2.5-flash",
+        }),
+      ],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(result.environmentIds).toEqual(["adhoc-1"]);
+    expect(ensure).toHaveBeenCalled();
+  });
+
+  it("reuses a named override row for the matching explicit cell", async () => {
+    const ensure = ensureReturning([]);
+    const result = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: false,
+          explicitModelIds: ["google/gemini-2.5-flash"],
+        },
+      }),
+      liveEnvironments: [
+        named({
+          environmentId: "curated",
+          hostId: "h1",
+          modelId: "google/gemini-2.5-flash",
+        }),
+      ],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(result.environmentIds).toEqual(["curated"]);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("refuses explicit models when the backend has no model matrix", async () => {
+    const ensure = ensureReturning([]);
+    const err = await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: false,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["google/gemini-2.5-flash"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    }).catch((e) => e);
+    expect(err.code).toBe("BACKEND_REJECTED");
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("does not mint a modelId when the selection is untouched inherit", async () => {
+    const ensure = ensureReturning(["adhoc-1"]);
+    await resolveComposerEnvironments({
+      ...base,
+      state: composeState({ hostIds: ["h1"] }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "h1" }],
+    });
+  });
+});
+
+describe("environmentsCarryModels and modelsEnabled gating", () => {
+  it("flags a single env that carries a model override", () => {
+    expect(
+      environmentsCarryModels([
+        named({ environmentId: "a", hostId: "h1", modelId: "m1" }),
+      ])
+    ).toBe(true);
+  });
+
+  it("does not collapse two same-host model cells when modelsEnabled", () => {
+    expect(
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1" }),
+          named({
+            environmentId: "b",
+            hostId: "h1",
+            modelId: "google/gemini-2.5-flash",
+          }),
+        ],
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
+      )
+    ).toBe(false);
+  });
+
+  it("collapses two same-host model cells when modelsEnabled is off", () => {
+    expect(
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1" }),
+          named({
+            environmentId: "b",
+            hostId: "h1",
+            modelId: "google/gemini-2.5-flash",
+          }),
+        ],
+        { skillsEnabled: true, computersEnabled: true }
+      )
+    ).toBe(true);
+  });
+
+  it("collapses per-host model-choice asymmetry", () => {
+    expect(
+      environmentsExceedOneStack(
+        [
+          named({ environmentId: "a", hostId: "h1" }),
+          named({
+            environmentId: "b",
+            hostId: "h1",
+            modelId: "m1",
+          }),
+          named({ environmentId: "c", hostId: "h2" }),
+        ],
+        { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
+      )
+    ).toBe(true);
+  });
+
+  it("reconstructs modelSelection when modelsEnabled", () => {
+    const state = composerStateFromEnvironments(
+      [
+        named({ environmentId: "a", hostId: "h1" }),
+        named({
+          environmentId: "b",
+          hostId: "h1",
+          modelId: "google/gemini-2.5-flash",
+        }),
+        named({ environmentId: "c", hostId: "h2" }),
+        named({
+          environmentId: "d",
+          hostId: "h2",
+          modelId: "google/gemini-2.5-flash",
+        }),
+      ],
+      { skillsEnabled: true, computersEnabled: true, modelsEnabled: true }
+    );
+    expect(state.stack.modelSelection).toEqual({
+      includeClientDefaults: true,
+      explicitModelIds: ["google/gemini-2.5-flash"],
+    });
+    expect(state.stack.hostIds).toEqual(["h1", "h2"]);
+  });
+
+  it("does not reconstruct modelSelection when the slot is off", () => {
+    const state = composerStateFromEnvironments([
+      named({
+        environmentId: "a",
+        hostId: "h1",
+        modelId: "google/gemini-2.5-flash",
+      }),
+    ]);
+    expect(state.stack.modelSelection).toEqual({
+      includeClientDefaults: true,
+      explicitModelIds: [],
+    });
   });
 });

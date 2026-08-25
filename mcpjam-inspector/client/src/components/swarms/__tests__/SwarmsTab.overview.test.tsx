@@ -910,3 +910,58 @@ describe("Overview — empty and loading states", () => {
     expect(screen.getByTestId("swarms-overview-panel")).toBeTruthy();
   });
 });
+
+describe("Swarm header body copy", () => {
+  // BB-120: the line explains what a swarm buys you, so it has to survive the
+  // page having data — it is not part of the empty state.
+  const SUBTITLE =
+    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
+
+  it("shows the body copy on the empty state", async () => {
+    personasData = [];
+    renderTab();
+    await screen.findByTestId("swarms-empty-hero");
+    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+  });
+
+  it("still shows it once the project has personas and runs", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+    expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
+    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+  });
+});
+
+describe("Swarm header body copy — per tab", () => {
+  // Personas is a library of reusable personas, not a run surface, so the swarm
+  // pitch says nothing about it (BB-123).
+  const SWARM_PITCH =
+    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
+  const PERSONAS_LINE = "The library of user personas you send into swarms.";
+
+  const switchTo = (label: RegExp) => {
+    const nav = screen.getByLabelText("Swarm view");
+    fireEvent.click(within(nav).getByRole("button", { name: label }));
+  };
+
+  it("swaps the line on the Personas tab", async () => {
+    renderTab();
+    await screen.findByTestId("swarms-tab-header-chrome");
+    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
+
+    switchTo(/personas/i);
+
+    expect(screen.getByText(PERSONAS_LINE)).toBeVisible();
+    expect(screen.queryByText(SWARM_PITCH)).not.toBeInTheDocument();
+  });
+
+  it("keeps the swarm pitch on Sessions", async () => {
+    renderTab();
+    await screen.findByTestId("swarms-tab-header-chrome");
+
+    switchTo(/sessions/i);
+
+    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
+    expect(screen.queryByText(PERSONAS_LINE)).not.toBeInTheDocument();
+  });
+});

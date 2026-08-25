@@ -86,6 +86,17 @@ describe("RunEvalsRequestSchema environmentId boundary", () => {
     expect(result.success).toBe(true);
     expect(result.success && result.data.runGroupId).toBe("group-1");
   });
+
+  it("accepts AND preserves ephemeralEnvironment", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+      ephemeralEnvironment: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.ephemeralEnvironment).toBe(true);
+  });
 });
 
 describe("RunEvalsRequestSchema runs cap", () => {
@@ -191,6 +202,34 @@ describe("RunEvalsRequestSchema runs cap", () => {
     expect(result.success).toBe(true);
     const steps = result.success ? result.data.tests[0].steps : [];
     expect(steps).toEqual([{ id: "t0-s0", kind: "prompt", prompt: "q" }]);
+  });
+});
+
+describe("RunEvalsRequestSchema sourceHash", () => {
+  it("accepts a lowercase 64-char SHA-256 hex digest", () => {
+    const result = RunEvalsRequestSchema.safeParse({
+      ...buildSuiteRequest(),
+      sourceHash: "a".repeat(64),
+    });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.sourceHash : undefined).toBe(
+      "a".repeat(64)
+    );
+  });
+
+  it("refuses uppercase or the wrong length", () => {
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "A".repeat(64),
+      }).success
+    ).toBe(false);
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "a".repeat(63),
+      }).success
+    ).toBe(false);
   });
 });
 

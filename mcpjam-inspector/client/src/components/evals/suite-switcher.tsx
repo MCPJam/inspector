@@ -31,8 +31,8 @@ interface SuiteSwitcherProps {
 }
 
 /**
- * Breadcrumb "Suites" label rendered as a dropdown — switching suites lives
- * here instead of a standalone list page. Search, jump, and create from one place.
+ * Breadcrumb "Suites" label rendered as a dropdown on suite-detail routes.
+ * Search, jump, and create from one place while already inside a suite.
  */
 export function SuiteSwitcher({
   suites,

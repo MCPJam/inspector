@@ -7,6 +7,7 @@ import {
   HOST_CONFIG_FIELDS,
   HOST_CONFIG_SECTIONS,
   NOT_SUPPORTED,
+  parseLightDarkPair,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 
@@ -385,5 +386,90 @@ describe("CSP subtype rows", () => {
     expect(
       fieldById("appsCap.cspConnectDomains.fetch").read(cfg)
     ).toBeUndefined();
+  });
+});
+
+describe("parseLightDarkPair", () => {
+  it("splits on the top-level comma, not the ones inside rgba()", () => {
+    expect(
+      parseLightDarkPair(
+        "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))"
+      )
+    ).toEqual({
+      light: "rgba(50, 102, 173, 1)",
+      dark: "rgba(128, 170, 221, 1)",
+    });
+  });
+
+  it("returns null for anything that is not a light-dark() call", () => {
+    expect(parseLightDarkPair("#fff")).toBeNull();
+    expect(
+      parseLightDarkPair("color-mix(in oklab,#fff 0%,transparent)")
+    ).toBeNull();
+    // Malformed: one argument, so there is no pair to report.
+    expect(parseLightDarkPair("light-dark(#fff)")).toBeNull();
+    expect(parseLightDarkPair("light-dark(#fff, )")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
+  });
+});
+
+describe("Apps · Styles rows", () => {
+  const field = () => fieldById("styles.--color-text-info");
+
+  it("reads a per-theme probe capture as the pair", () => {
+    const cfg = makeConfig({
+      styleVariablesByTheme: {
+        light: { "--color-text-info": "#3a83f7" },
+        dark: { "--color-text-info": "#539af8" },
+      },
+    } as Partial<HostConfigDtoV2>);
+    expect(field().read(cfg)).toEqual({ light: "#3a83f7", dark: "#539af8" });
+  });
+
+  it("decodes a light-dark() host into the same pair shape, keeping the literal", () => {
+    // The whole point of the normalization: this host and the one above are
+    // stating the same fact, so the matrix must not render them differently.
+    const cfg = makeConfig({
+      hostContext: {
+        styles: {
+          variables: {
+            "--color-text-info":
+              "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+          },
+        },
+      },
+    });
+    expect(field().read(cfg)).toEqual({
+      light: "rgba(50, 102, 173, 1)",
+      dark: "rgba(128, 170, 221, 1)",
+      raw: "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+    });
+  });
+
+  it("keeps a genuinely theme-agnostic value bare", () => {
+    const cfg = makeConfig({
+      hostContext: { styles: { variables: { "--color-text-info": "#fff" } } },
+    });
+    expect(field().read(cfg)).toEqual({ same: "#fff" });
+  });
+
+  it("reports an unsplittable value verbatim rather than guessing", () => {
+    const cfg = makeConfig({
+      hostContext: {
+        styles: { variables: { "--color-text-info": "light-dark(#fff)" } },
+      },
+    });
+    expect(field().read(cfg)).toEqual({ same: "light-dark(#fff)" });
   });
 });

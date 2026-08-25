@@ -25,6 +25,7 @@ import {
   createAiSdkEvalTraceContext,
   patchAiSdkRecordedSpansMessageRangesFromSteps,
 } from "./eval-trace-capture.js";
+import type { ToolPolicyGate } from "./tool-policy-gate.js";
 import { consumeFullStreamAsEvalEvents } from "./stream-adapter.js";
 import type { BrowserSessionContext } from "../browser-session-context.js";
 import type { UsageTotals } from "./types.js";
@@ -120,6 +121,7 @@ export type DriveLocalEvalTurnParams = {
   testCaseId: string | undefined;
   abortSignal: AbortSignal | undefined;
   toolChoice: EvalToolChoice | undefined;
+  toolPolicyGate?: ToolPolicyGate | null;
   extractToolCalls: (params: {
     steps?: ReadonlyArray<any>;
     messages: ModelMessage[];
@@ -185,6 +187,7 @@ export async function driveLocalEvalTurn(
     testCaseId,
     abortSignal,
     toolChoice,
+    toolPolicyGate,
     sinks,
   } = params;
 
@@ -205,6 +208,7 @@ export async function driveLocalEvalTurn(
       mcpClientManager,
       browser,
       promptIndex,
+      toolPolicyGate,
     });
     const accounting = buildPinnedTurnAccounting(pinned, pinnedResult);
     acc.conversationMessages.push(
@@ -268,6 +272,13 @@ export async function driveLocalEvalTurn(
   sinks?.onTurnStart?.();
 
   const promptInputLength = acc.activePromptInputMessages.length;
+  const mergedTools = {
+    ...prepared.allTools,
+    ...browser.computerWidgetTools,
+  } as ToolSet;
+  const toolsForTurn = toolPolicyGate
+    ? toolPolicyGate.wrap(mergedTools)
+    : mergedTools;
   const handle = runDirectChatTurn({
     llmModel,
     modelId: test.model,
@@ -286,7 +297,7 @@ export async function driveLocalEvalTurn(
     ...(prepared.resolvedTemperature == null
       ? {}
       : { temperature: prepared.resolvedTemperature }),
-    tools: { ...prepared.allTools, ...browser.computerWidgetTools } as ToolSet,
+    tools: toolsForTurn,
     progressivePlan: prepared.progressivePlan,
     discoveryState: prepared.discoveryState,
     ...(browser.prepareAdvertisedTools

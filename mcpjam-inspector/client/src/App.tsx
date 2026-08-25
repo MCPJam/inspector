@@ -33,6 +33,7 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  shouldQueryProjectId,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -49,6 +50,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceHistory,
+  ConformanceRunDetailPage,
+  ConformanceSharedPage,
+} from "./components/conformance/ConformanceHistory";
+import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -79,6 +86,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
   Alert,
   AlertDescription,
@@ -185,7 +193,7 @@ import {
   readProjectDeepLinkParam,
   resolveProjectDeepLinkAction,
 } from "./lib/project-deep-link";
-import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
+import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -258,6 +266,9 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@mcpjam/sdk/host-config/templates";
+import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
   HOST_VERIFY_TEMPLATE_PARAM,
@@ -927,6 +938,14 @@ export function HostsRoute() {
 }
 
 /**
+ * How long the verify deep-link waits for a gated template's rollout flag
+ * before treating it as off. PostHog seeds no bootstrap flag values, so a
+ * blocked or unreachable relay leaves the flag `undefined` for the life of the
+ * mount — without a deadline the link would silently do nothing at all.
+ */
+export const HOST_TEMPLATE_FLAG_WAIT_MS = 5_000;
+
+/**
  * "Verify against your server" deep-link from the public caniuse surface.
  * `/hosts?template=claude` opens that client's host, creating it from the
  * template (matched by name) when the account doesn't already have one — then
@@ -948,6 +967,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const claudeCodeEnabled = useClaudeCodeHostEnabledState();
+  const codexEnabled = useCodexHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -963,24 +984,75 @@ function useTemplateVerifyDeepLink({
     return parseHostVerifyTabParam(window.location.search);
   }, []);
   const handledRef = useRef(false);
+  // Bounded wait for a gated template's rollout flag — see
+  // `HOST_TEMPLATE_FLAG_WAIT_MS`. Once it expires an unresolved flag is read as
+  // off, so the link fails visibly (bounce + toast) instead of silently.
+  const [flagWaitExpired, setFlagWaitExpired] = useState(false);
+
+  useEffect(() => {
+    if (!requestedTemplateId) return;
+    const timer = setTimeout(
+      () => setFlagWaitExpired(true),
+      HOST_TEMPLATE_FLAG_WAIT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [requestedTemplateId]);
 
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
-    // Wait for the host list before deciding create-vs-open. `useHostList`
-    // stays loading while `projectId` is still a placeholder, so this also
-    // guards `createHost` from firing with a not-yet-real project id.
-    if (hostsLoading) return;
+    // The template id is captured at mount, but this component stays mounted
+    // across `/hosts` ↔ `/hosts/:hostId`. If the URL no longer asks for the
+    // captured template — gone, emptied, or now naming a different one — the
+    // link is stale: acting on it would create a host or bounce the user out of
+    // the one they opened, and `replace: true` would eat the history entry that
+    // leads back to it. Compared against the captured id rather than merely
+    // tested for presence, so a template swapped mid-load can never resolve to
+    // the host the user is no longer asking for.
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get(
+        HOST_VERIFY_TEMPLATE_PARAM
+      ) !== requestedTemplateId
+    ) {
+      handledRef.current = true;
+      return;
+    }
+    // Wait for the host list before deciding create-vs-open, and never mint a
+    // host against an id `createHost` would reject. The projectId check is
+    // stated here rather than left to `useHostList`'s loading flag: the two
+    // are separate hooks, and a change to that flag's skip semantics must not
+    // be able to let `createHost` fire with a not-yet-real project id.
+    if (hostsLoading || !shouldQueryProjectId(projectId)) return;
     const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
     if (!template) return;
-    handledRef.current = true;
 
     const existing = hosts.find((h) => h.name === template.label);
     if (existing) {
+      handledRef.current = true;
       navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
         replace: true,
       });
       return;
     }
+
+    const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+    });
+    // Gated templates remain visible on caniuse.dev as reference profiles, but
+    // they are not available for new-host creation until their rollout flags
+    // are enabled. Wait for PostHog before deciding so flagged users do not get
+    // bounced during a cold load — but only until the deadline, so a relay that
+    // never answers ends in the disabled path instead of a silent no-op.
+    if (templateEnabled === undefined && !flagWaitExpired) return;
+    if (!templateEnabled) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(`${template.label} is not available yet.`);
+      return;
+    }
+
+    handledRef.current = true;
 
     void (async () => {
       try {
@@ -997,8 +1069,11 @@ function useTemplateVerifyDeepLink({
           replace: true,
         });
       } catch (err) {
-        // Let the user retry (e.g. via the same link) after a transient failure.
-        handledRef.current = false;
+        // Leave the latch set. This effect also re-runs when the rollout flags
+        // resolve, so releasing it here let a failed create fire again with no
+        // user gesture — duplicating a host the first attempt may have
+        // committed before it timed out. Retrying means opening the link again,
+        // which remounts this hook and clears the latch.
         toast.error(
           err instanceof Error ? err.message : "Couldn't open that client"
         );
@@ -1011,6 +1086,9 @@ function useTemplateVerifyDeepLink({
     hosts,
     projectId,
     requestedFocusTab,
+    claudeCodeEnabled,
+    codexEnabled,
+    flagWaitExpired,
     themeMode,
     createHost,
     navigate,
@@ -1365,8 +1443,73 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry } = useAppRouteContext();
-  return <ConformanceTab server={selectedServerEntry ?? null} />;
+  const { selectedServerEntry, convexProjectId, isAuthenticated } =
+    useAppRouteContext();
+  const { serversByName } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const savedServerId = selectedServerEntry?.name
+    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    : null;
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {convexProjectId ? (
+        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+          <ConformanceHistory
+            projectId={convexProjectId}
+            serverId={savedServerId}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ConformanceTab
+          server={selectedServerEntry ?? null}
+          persist={
+            convexProjectId
+              ? { projectId: convexProjectId, serverId: savedServerId }
+              : undefined
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ConformanceRunDetailRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  const params = useParams<{ runId?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.runId ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return (
+    <ConformanceRunDetailPage
+      runId={decodeParam(raw) ?? raw}
+      projectId={convexProjectId}
+    />
+  );
+}
+
+export function ConformanceSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
+}
+
+export function EvalRunSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
 export function CompatibilityRoute() {
@@ -2312,6 +2455,8 @@ export default function App() {
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
@@ -2358,8 +2503,18 @@ export default function App() {
       ),
     [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
+  // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
+  // whose membership hasn't linked yet, so every org-scoped query for it is
+  // denied server-side — making it active crashed the route
+  // (Sentry INSPECTOR-CLIENT-24C). It stays in `effectiveOrganizations` so the
+  // switcher can list it as unavailable, but it must never become the
+  // active org, by route or by fallback.
+  const selectableOrganizations = useMemo(
+    () => effectiveOrganizations.filter((org) => !org.seatPending),
+    [effectiveOrganizations]
+  );
   const hasRouteOrganization = !!routeOrganizationId
-    ? effectiveOrganizations.some((org) => org._id === routeOrganizationId)
+    ? selectableOrganizations.some((org) => org._id === routeOrganizationId)
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
@@ -2709,9 +2864,9 @@ export default function App() {
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
-    hasOrganizations: effectiveOrganizations.length > 0,
+    hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
-    validOrganizations: effectiveOrganizations,
+    validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     requestSignIn: () => {
       void signIn();
@@ -3060,10 +3215,15 @@ export default function App() {
     activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+    canQueryProjectServerConfig
+      ? ({ projectId: convexProjectId } as never)
+      : "skip"
   ) as ProjectServerConfigDto | null | undefined;
+  // A skipped query reads as `undefined`, so this already covers the window
+  // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
     Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
@@ -3088,7 +3248,7 @@ export default function App() {
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
   const activeProjectBillingOrganizationId =
@@ -3412,7 +3572,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+    if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
     toast.error(`${activeTab} is not available in hosted mode.`);
@@ -3907,7 +4067,7 @@ export default function App() {
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      effectiveOrganizations,
+      selectableOrganizations,
       activeOrganizationId,
       projectOrgId
     );
@@ -3945,7 +4105,7 @@ export default function App() {
     routeOrganizationId,
     routeOrganizationSection,
     signIn,
-    effectiveOrganizations,
+    selectableOrganizations,
     workOsUser?.id,
   ]);
 
@@ -4096,7 +4256,7 @@ export default function App() {
           : [...currentIds, deletedOrganizationId]
       );
 
-      const remainingOrganizations = effectiveOrganizations.filter(
+      const remainingOrganizations = selectableOrganizations.filter(
         (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
@@ -4132,7 +4292,7 @@ export default function App() {
       activeProject?.organizationId,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      effectiveOrganizations,
+      selectableOrganizations,
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
@@ -4482,7 +4642,7 @@ export default function App() {
   const homeOrganizationId =
     !isLoadingOrganizations &&
     rawHomeOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawHomeOrganizationId)
       ? rawHomeOrganizationId
       : null;
 
@@ -4568,6 +4728,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4592,19 +4757,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4624,7 +4790,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}

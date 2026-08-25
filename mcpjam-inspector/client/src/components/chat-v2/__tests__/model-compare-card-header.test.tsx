@@ -197,8 +197,8 @@ describe("ModelCompareCardHeader", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
   });
 

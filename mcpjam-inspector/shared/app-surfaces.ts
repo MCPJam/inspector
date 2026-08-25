@@ -56,7 +56,11 @@ export interface AppSurfaceManifest {
   /** What users actually do here. Model-facing; keep to real actions. */
   userActivities: readonly string[];
   /**
-   * Not reachable in hosted deployments (see `HOSTED_HASH_BLOCKED_TABS`).
+   * Not reachable in hosted deployments — this field is the SOURCE OF TRUTH
+   * for that, and `hosted-tab-policy.ts` derives its block list from it. Set
+   * it only when the screen genuinely cannot work hosted (Tracing needs the
+   * local OTLP collector); a screen that merely isn't ready yet belongs
+   * behind a feature flag instead.
    * Kept out of the atlas when the atlas is built for a hosted surface, so
    * the model isn't handed a map to a door that is locked.
    */
@@ -197,14 +201,13 @@ export const APP_SURFACES = [
     navSegments: ["registry"],
     title: "Registry",
     purpose:
-      "Browse catalogs of MCP servers — MCPJam's curated registry, plus mirrors of the Claude and ChatGPT connector directories — and install them into the current project.",
+      "Browse organization-shared MCP servers and mirrors of the Claude and ChatGPT connector directories, and install them into the current project.",
     userActivities: [
-      "Search the registry for a server",
+      "Share a server with the organization",
       "Search a mirrored connector directory (Claude or ChatGPT) by name, description, tool or skill name",
       "Switch between the Claude and ChatGPT directories",
-      "Install a curated or directory server into the project",
+      "Install a directory or organization server into the project",
       "Choose which endpoint a multi-region connector uses, or enter their own instance URL",
-      "Star or unstar a registry server",
     ],
     hasSnapshotProvider: true,
     agentTools: { kind: "group" },
@@ -466,7 +469,7 @@ export const APP_SURFACES = [
   {
     id: "conformance",
     canonicalPath: "/conformance",
-    routePatterns: ["conformance"],
+    routePatterns: ["conformance", "conformance/runs/:runId"],
     navSegments: ["conformance"],
     title: "Conformance",
     purpose:
@@ -711,6 +714,23 @@ export function getAppSurfaceByNavSegment(
 export function listAppSurfaceNavSegments(): string[] {
   const out = new Set<string>();
   for (const surface of APP_SURFACES) {
+    for (const segment of surface.navSegments) out.add(segment);
+  }
+  return [...out];
+}
+
+/**
+ * Nav segments a hosted deployment cannot serve — the manifests are the
+ * source of truth, and `hosted-tab-policy.ts` is the only caller.
+ *
+ * Reads through `listAppSurfaces()` rather than `APP_SURFACES` directly:
+ * the const assertion narrows each entry to its own literal type, so an
+ * optional field is absent from the ones that never set it.
+ */
+export function listHostedBlockedNavSegments(): string[] {
+  const out = new Set<string>();
+  for (const surface of listAppSurfaces()) {
+    if (!surface.hostedBlocked) continue;
     for (const segment of surface.navSegments) out.add(segment);
   }
   return [...out];

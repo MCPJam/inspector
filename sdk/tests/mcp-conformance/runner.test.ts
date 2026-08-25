@@ -3,6 +3,11 @@ import {
   MCP_CHECK_IDS,
   MCPConformanceTest,
 } from "../../src/mcp-conformance/index.js";
+import {
+  conformanceProfile,
+  CONFORMANCE_CHECKER_VERSION,
+} from "../../src/conformance-profile.js";
+import { scoreFromProtocolResult } from "../../src/conformance-score.js";
 import { startConformanceMockServer } from "../mock-servers/conformance-mcp-server.js";
 
 describe("MCPConformanceTest", () => {
@@ -34,12 +39,51 @@ describe("MCPConformanceTest", () => {
         result.readiness.every((item) => item.severity === "warning"),
       ).toBe(true);
       expect(result.categorySummary.core.passed).toBe(5);
-      expect(result.categorySummary.protocol.passed).toBe(1);
+      // `protocol-invalid-method-error` plus `wire-schema-valid`: the schema
+      // check is era-neutral, so it runs and passes on this legacy fixture too.
+      expect(result.categorySummary.protocol.passed).toBe(2);
       expect(result.categorySummary.tools.passed).toBe(2);
       expect(result.categorySummary.prompts.passed).toBe(1);
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);
       expect(result.categorySummary.transport.passed).toBe(7);
+
+      // The run stamps WHICH questions it asked. Every check in today's pool is
+      // scored by the frozen profile, so nothing is pending and the score is
+      // computed over the full applicable set — the state PR 1 must preserve.
+      const profile = conformanceProfile("mcp-protocol");
+      expect(result.profile).toMatchObject({
+        profileId: "mcp-protocol",
+        profileVersion: profile.version,
+        checkerVersion: CONFORMANCE_CHECKER_VERSION,
+        // Every gap-program check ran (or era-skipped) and reported a real
+        // verdict, but this profile version scores none of them yet — so they
+        // are reported and excluded from the number.
+        pendingCheckIds: [
+          "modern-cache-hint-coverage",
+          "modern-cache-hint-values-valid",
+          "modern-cache-scope-stable-across-pages",
+          "modern-header-names-case-insensitive",
+          "modern-missing-method-header-rejected",
+          "modern-resource-read-no-empty-contents",
+          "modern-tool-output-schema-conformant",
+          "wire-schema-valid",
+        ],
+      });
+      // The digest is stamped only because the schema pass actually ran.
+      expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
+      const score = scoreFromProtocolResult(result);
+      expect(score.pending).toBe(8);
+      // Every legacy-applicable check EXCEPT the pending one is in the
+      // denominator; the modern-only checks era-skipped out of it, which is the
+      // pre-existing behavior this must not disturb.
+      const legacyApplicable = result.checks.filter(
+        (check) => CHECK_ERAS[check.id].includes("legacy"),
+      ).length;
+      // The modern-only pending checks era-skipped out of the legacy
+      // denominator already; only `wire-schema-valid` is both legacy-applicable
+      // and unscored, so exactly one comes off.
+      expect(score.applicable).toBe(legacyApplicable - 1);
     } finally {
       await mockServer.stop();
     }

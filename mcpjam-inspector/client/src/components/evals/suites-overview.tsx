@@ -1,263 +1,362 @@
-import { useMemo } from "react";
-import { Trash2, Loader2, X, Server } from "lucide-react";
-import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import { useMemo, type MouseEvent } from "react";
+import { formatDistanceToNow } from "date-fns";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import { getEffectiveSuiteServers } from "./helpers";
+import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 
 interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
-  onDelete: (suite: EvalSuite) => void;
-  connectedServerNames: Set<string>;
-  rerunningSuiteId: string | null;
-  cancellingRunId: string | null;
-  deletingSuiteId: string | null;
+  /**
+   * Deleting from the landing row is the only path that does not require
+   * opening the suite first. The in-suite path (Edit → settings → Delete)
+   * still exists; this is the one that works for a suite you never want to
+   * look at again, including one that has never run.
+   */
+  onDelete?: (suite: EvalSuite) => void;
+  /** Per-suite: creators and project admins only. Hides the control entirely. */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
+  rerunningSuiteId?: string | null;
+  cancellingRunId?: string | null;
+  deletingSuiteId?: string | null;
 }
 
-export function SuitesOverview({
+// Shared with User Testing's scenario list so the two landings read as one
+// product. Data cells use the same pad + cols; the trailing action column is
+// extra so Run/Cancel don't steal space from Suite/Client/Server.
+const ROW_PAD = "flex w-full items-center gap-4 px-3";
+const DATA_COLS =
+  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
+const ACTION_COL = "flex w-[7.5rem] shrink-0 items-center justify-end gap-1";
+
+export function SuitesOverview(props: SuitesOverviewProps) {
+  return (
+    <ErrorBoundary
+      fallback={
+        <div
+          className="flex flex-col items-center justify-center px-6 py-16 text-center"
+          data-testid="evals-suites-overview-error"
+        >
+          <AlertTriangle className="size-8 text-amber-500" />
+          <h2 className="mt-4 text-base font-semibold">
+            Couldn&apos;t show your suites
+          </h2>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            The list failed to render. Reload the page — this doesn&apos;t mean
+            anything happened to your suites.
+          </p>
+        </div>
+      }
+    >
+      <OverviewBody {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function OverviewBody({
   overview,
   onSelectSuite,
   onRerun,
   onCancelRun,
   onDelete,
-  connectedServerNames: _connectedServerNames,
-  rerunningSuiteId,
-  cancellingRunId,
-  deletingSuiteId,
+  canDeleteSuite,
+  rerunningSuiteId = null,
+  cancellingRunId = null,
+  deletingSuiteId = null,
 }: SuitesOverviewProps) {
-  if (overview.length === 0) {
-    return (
-      <div className="h-[calc(100vh-220px)] flex items-center justify-center rounded-xl border border-dashed">
-        <div className="text-center space-y-2">
-          <div className="text-lg font-semibold">No evaluation suites yet</div>
-          <p className="text-sm text-muted-foreground">
-            Trigger a test run to see your evaluation history here.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const sortedOverview = useMemo(
     () =>
       [...overview].sort((a, b) => {
-        const aTime =
-          a.suite.updatedAt ??
-          a.latestRun?.completedAt ??
-          a.latestRun?.createdAt ??
-          a.suite._creationTime ??
-          0;
-        const bTime =
-          b.suite.updatedAt ??
-          b.latestRun?.completedAt ??
-          b.latestRun?.createdAt ??
-          b.suite._creationTime ??
-          0;
+        const aTime = latestActivityAt(a);
+        const bTime = latestActivityAt(b);
         return bTime - aTime;
       }),
     [overview],
   );
 
-  const aggregateCounts = useMemo(() => {
-    let passing = 0, partial = 0, failing = 0;
-    for (const { latestRun } of sortedOverview) {
-      if (!latestRun?.summary) { failing++; continue; }
-      const rate = latestRun.summary.passRate;
-      if (rate >= 1) passing++;
-      else if (rate > 0) partial++;
-      else failing++;
-    }
-    return { total: sortedOverview.length, passing, partial, failing };
-  }, [sortedOverview]);
+  if (sortedOverview.length === 0) {
+    return null;
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Stats banner */}
-      <div className="flex items-stretch divide-x divide-border/50 rounded-xl border border-border/50 bg-card shadow-sm">
-        {[
-          { label: "Suites", value: aggregateCounts.total, cls: "" },
-          { label: "Passing", value: aggregateCounts.passing, cls: "text-success" },
-          { label: "Partial", value: aggregateCounts.partial, cls: "text-warning" },
-          { label: "Failing", value: aggregateCounts.failing, cls: "text-destructive" },
-        ].map(({ label, value, cls }) => (
-          <div key={label} className="flex flex-1 flex-col px-5 py-3.5">
-            <span className={cn("text-2xl font-semibold tabular-nums leading-none", cls)}>
-              {value}
-            </span>
-            <span className="mt-1 text-xs text-muted-foreground">{label}</span>
-          </div>
-        ))}
+    <div className="min-w-0" data-testid="evals-suites-overview">
+      <div
+        className={cn(
+          ROW_PAD,
+          "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
+        )}
+      >
+        <div className={DATA_COLS}>
+          <span>Suite</span>
+          <span>Client</span>
+          <span>Server</span>
+          <span className="text-right">Pass rate</span>
+          <span className="text-right">Last run</span>
+        </div>
+        <span className={ACTION_COL} aria-hidden />
       </div>
-
-      <div className="space-y-3">
-        {sortedOverview.map((entry) => {
-          const { suite, latestRun, totals } = entry;
-
-          const servers = suite.environment?.servers ?? [];
-          const hasServersConfigured = servers.length > 0;
-          const canRerun = hasServersConfigured;
-          const isRerunning = rerunningSuiteId === suite._id;
-
-          const latestPassRate = latestRun?.summary
-            ? Math.round(latestRun.summary.passRate * 100)
-            : 0;
-
-          const lastRunPassed = latestRun?.summary?.passed ?? 0;
-          const lastRunFailed = latestRun?.summary?.failed ?? 0;
-          const lastRunTotal = latestRun?.summary?.total ?? 0;
-
-          const runsLabel =
-            totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
-
-          const isRunInProgress =
-            latestRun?.status === "running" || latestRun?.status === "pending";
-
-          const isCancelling = cancellingRunId === latestRun?._id;
-
-          // Show running state if either local state OR actual run status indicates running
-          const showAsRunning = isRerunning || isRunInProgress;
-
-          const lastRunTimestamp =
-            latestRun?.completedAt ??
-            latestRun?.createdAt ??
-            suite.updatedAt ??
-            suite._creationTime ??
-            null;
-
-          const lastRunLabel = lastRunTimestamp
-            ? new Date(lastRunTimestamp).toLocaleString()
-            : "No runs yet";
-
-          return (
+      <ul className="mt-1">
+        {sortedOverview.map((entry) => (
+          <li key={entry.suite._id}>
             <div
-              key={suite._id}
-              className="rounded-xl border bg-card text-card-foreground shadow-sm hover:border-primary/40 transition-colors"
+              className={cn(
+                ROW_PAD,
+                "rounded-md border border-transparent py-3 transition-colors",
+                "hover:border-border/60 hover:bg-muted/40",
+              )}
             >
               <button
-                onClick={() => onSelectSuite(suite._id)}
-                className="w-full text-left"
+                type="button"
+                data-testid="evals-suites-overview-row"
+                data-suite-id={entry.suite._id}
+                onClick={() => onSelectSuite(entry.suite._id)}
+                className={cn(
+                  DATA_COLS,
+                  "text-left",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
               >
-                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex-1 space-y-2">
-                    <div className="flex flex-col gap-1">
-                      <h2 className="text-base font-semibold">
-                        {suite.name || "Untitled suite"}
-                      </h2>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      {showAsRunning ? (
-                        <>
-                          <span className="flex items-center gap-1.5 text-primary font-medium">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Run in progress
-                          </span>
-                          <span>•</span>
-                        </>
-                      ) : null}
-                      <span>{lastRunLabel}</span>
-                      <span>•</span>
-                      <span>{runsLabel}</span>
-                      {servers.length > 0 ? (
-                        <>
-                          <span>•</span>
-                          <span className="flex flex-wrap gap-1">
-                            {servers.map((s) => (
-                              <span
-                                key={s}
-                                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                              >
-                                <Server className="h-2.5 w-2.5" />
-                                {s}
-                              </span>
-                            ))}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6 sm:flex-col sm:items-end sm:gap-3">
-                    <div className="text-right">
-                      <div className="text-2xl font-semibold">
-                        {latestPassRate}%
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Last run {lastRunLabel}
-                      </div>
-                    </div>
-                    {latestRun && latestRun.summary ? (
-                      <div className="text-right">
-                        <div className="text-xs text-muted-foreground">
-                          {lastRunPassed} passed · {lastRunFailed} failed
-                          {lastRunTotal > 0 && (
-                            <span> · {lastRunTotal} total</span>
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {entry.suite.name || "Untitled suite"}
+                </span>
+                <ClientCell suite={entry.suite} themeMode={themeMode} />
+                <span className="min-w-0 truncate text-sm text-muted-foreground">
+                  {serverLabel(entry.suite)}
+                </span>
+                <span
+                  data-testid="evals-suites-overview-pass-rate"
+                  className="text-right text-sm tabular-nums text-foreground"
+                >
+                  {passRateLabel(entry)}
+                </span>
+                <span className="truncate text-right text-sm text-muted-foreground">
+                  {lastRunLabel(entry)}
+                </span>
               </button>
-              <div className="flex items-center justify-between border-t px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  {isRunInProgress && latestRun ? (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCancelRun(latestRun._id);
-                      }}
-                      disabled={isCancelling}
-                      className="flex items-center gap-1.5 text-xs font-medium text-destructive hover:underline disabled:opacity-60"
-                    >
-                      {isCancelling ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Cancelling...
-                        </>
-                      ) : (
-                        <>
-                          <X className="h-3 w-3" />
-                          Cancel run
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onRerun(suite)}
-                      disabled={!canRerun || showAsRunning}
-                      className={cn(
-                        "text-xs font-medium text-primary hover:underline disabled:opacity-60",
-                        !canRerun && "cursor-not-allowed",
-                      )}
-                    >
-                      {showAsRunning
-                        ? "Running..."
-                        : hasServersConfigured
-                          ? "Rerun suite"
-                          : "No servers configured"}
-                    </button>
-                  )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(suite);
-                    }}
-                    disabled={deletingSuiteId === suite._id}
-                    className="text-xs font-medium text-destructive hover:underline disabled:opacity-60"
-                    title="Delete suite"
-                  >
-                    {deletingSuiteId === suite._id ? (
-                      "Deleting..."
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
+              <div className={ACTION_COL}>
+                <RowRunControl
+                  suite={entry.suite}
+                  latestRun={entry.latestRun}
+                  onRerun={onRerun}
+                  onCancelRun={onCancelRun}
+                  rerunningSuiteId={rerunningSuiteId}
+                  cancellingRunId={cancellingRunId}
+                />
+                {onDelete && (canDeleteSuite?.(entry.suite) ?? true) ? (
+                  <RowDeleteControl
+                    suite={entry.suite}
+                    onDelete={onDelete}
+                    deletingSuiteId={deletingSuiteId}
+                  />
+                ) : null}
               </div>
             </div>
-          );
-        })}
-      </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
+}
+
+function stopRowClick(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function RowRunControl({
+  suite,
+  latestRun,
+  onRerun,
+  onCancelRun,
+  rerunningSuiteId,
+  cancellingRunId,
+}: {
+  suite: EvalSuite;
+  latestRun: EvalSuiteRun | null;
+  onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
+  rerunningSuiteId: string | null;
+  cancellingRunId: string | null;
+}) {
+  const suiteTitle = suite.name || "Untitled suite";
+  const hasServers = getEffectiveSuiteServers(suite).length > 0;
+  const latestRunInProgress =
+    latestRun?.status === "running" || latestRun?.status === "pending";
+  const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;
+  const isCancelling = Boolean(
+    latestRun && cancellingRunId === latestRun._id,
+  );
+
+  if (latestRunInProgress && latestRun) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 px-2.5"
+        data-testid="evals-suites-overview-cancel"
+        aria-label={`Cancel run for ${suiteTitle}`}
+        disabled={isCancelling}
+        onClick={(event) => {
+          stopRowClick(event);
+          onCancelRun(latestRun._id);
+        }}
+      >
+        {isCancelling ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : null}
+        Cancel
+      </Button>
+    );
+  }
+
+  if (isStarting) {
+    return (
+      <Button
+        type="button"
+        variant="default"
+        size="sm"
+        className="h-7 px-2.5"
+        data-testid="evals-suites-overview-running"
+        aria-label={`Running ${suiteTitle}`}
+        disabled
+      >
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="default"
+      size="sm"
+      className="h-7 px-2.5"
+      data-testid="evals-suites-overview-run"
+      aria-label={hasServers ? `Run ${suiteTitle}` : "No servers configured"}
+      title={hasServers ? undefined : "No servers configured"}
+      disabled={!hasServers}
+      onClick={(event) => {
+        stopRowClick(event);
+        onRerun(suite);
+      }}
+    >
+      Run
+    </Button>
+  );
+}
+
+function RowDeleteControl({
+  suite,
+  onDelete,
+  deletingSuiteId,
+}: {
+  suite: EvalSuite;
+  onDelete: (suite: EvalSuite) => void;
+  deletingSuiteId: string | null;
+}) {
+  const isDeleting = deletingSuiteId === suite._id;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      data-testid="evals-suites-overview-delete"
+      aria-label={`Delete ${suite.name || "Untitled suite"}`}
+      disabled={isDeleting}
+      onClick={(event) => {
+        stopRowClick(event);
+        // Confirmation is the caller's: `EvalsTab` arms `ConfirmationDialogs`,
+        // which is the same dialog every other delete path in evals uses.
+        onDelete(suite);
+      }}
+    >
+      {isDeleting ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      ) : (
+        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+      )}
+    </Button>
+  );
+}
+
+function ClientCell({
+  suite,
+  themeMode,
+}: {
+  suite: EvalSuite;
+  themeMode: "light" | "dark";
+}) {
+  const attachments = suite.hostAttachments ?? [];
+  if (attachments.length === 0) {
+    return <span className="text-sm text-muted-foreground">—</span>;
+  }
+
+  const name = attachments[0].hostName?.trim() || attachments[0].namedHostId;
+  const extra = attachments.length - 1;
+  const logoSrc = resolveHostLogoByDisplayName(name, themeMode);
+
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">
+        {logoSrc ? (
+          <img
+            src={logoSrc}
+            alt=""
+            className="size-3.5 object-contain"
+          />
+        ) : (
+          <span
+            aria-hidden
+            className="text-[8px] font-semibold uppercase text-muted-foreground"
+          >
+            {name.slice(0, 2)}
+          </span>
+        )}
+      </span>
+      <span className="min-w-0 truncate text-sm text-foreground">{name}</span>
+      {extra > 0 ? (
+        <span className="shrink-0 text-sm text-muted-foreground">+{extra}</span>
+      ) : null}
+    </span>
+  );
+}
+
+function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
+  return (
+    entry.suite.updatedAt ??
+    entry.latestRun?.completedAt ??
+    entry.latestRun?.createdAt ??
+    entry.suite._creationTime ??
+    0
+  );
+}
+
+function serverLabel(suite: EvalSuite): string {
+  const names = getEffectiveSuiteServers(suite);
+  if (names.length > 0) return names[0];
+  return "—";
+}
+
+function passRateLabel(entry: EvalSuiteOverviewEntry): string {
+  const rate = entry.latestRun?.summary?.passRate;
+  if (typeof rate !== "number") return "—";
+  return `${Math.round(rate * 100)}%`;
+}
+
+function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
+  const timestamp =
+    entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? null;
+  if (!timestamp) return "—";
+  return formatDistanceToNow(timestamp, { addSuffix: true });
 }

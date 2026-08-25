@@ -63,6 +63,7 @@ type RunResultBadgeKind =
   | "running"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending";
 
 function runResultBadge(result: RunResultBadgeKind) {
@@ -71,6 +72,12 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, never red: the backend refused to call this run either way.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":

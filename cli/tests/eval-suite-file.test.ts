@@ -36,9 +36,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
+  fractionToPercent,
   modalRepetitions,
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
+import {
+  deriveFileRunIdempotencyKey,
+  fileCaseToCreateBody,
+  fileCaseToUpdateBody,
+  looksLikeCreateEvalApiJson,
+  looksLikeVersionedSuiteFile,
+  sha256HexOfBuffer,
+} from "../src/lib/eval-run-file.js";
 import { main } from "../src/index.js";
 
 const telemetryDisabled = {
@@ -219,6 +228,50 @@ async function startSuiteFixture(state: {
       );
       return;
     }
+    if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
+      const environmentIds =
+        (state.detail.environmentIds as string[] | undefined) ?? [];
+      res.end(
+        JSON.stringify({
+          items: environmentIds.map((id, index) => ({
+            id,
+            name: index === 0 ? "Production" : `Environment ${index + 1}`,
+            projectId: "proj-alpha",
+            hostId: "h1",
+            standaloneServerIds: [],
+            selectedServerIds: [],
+            pluginPins: [],
+            modelId: null,
+            revision: 1,
+            archived: false,
+            createdAt: 1,
+            updatedAt: 2,
+          })),
+        })
+      );
+      return;
+    }
+    const environmentResolve =
+      /^\/api\/v1\/projects\/proj-alpha\/environments\/([^/]+)\/resolve$/.exec(
+        url.pathname
+      );
+    if (environmentResolve) {
+      res.end(
+        JSON.stringify({
+          environment: {
+            id: environmentResolve[1],
+            name: "Production",
+            revision: 1,
+          },
+          host: { id: "h1", name: "Claude Desktop" },
+          servers: [],
+          selectedServerIds: [],
+          plugins: [],
+          model: null,
+        })
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/eval-suites") {
       res.end(
         JSON.stringify({
@@ -280,6 +333,7 @@ function exportArgv(baseUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "eval",
     "export",
     ...args,
@@ -371,6 +425,73 @@ describe("percentToFraction", () => {
   });
 });
 
+describe("fractionToPercent", () => {
+  test("is the inverse of percentToFraction on the hosted values", () => {
+    const percents = [
+      0, 1, 7, 20, 80, 85, 99, 100, 0.5, 5.5, 12.345, 33.333333, 0.0001,
+      0.00001, 1e-7,
+    ];
+    for (const percent of percents) {
+      const fraction = percentToFraction(percent);
+      assert.notEqual(fraction, null, `${percent}%`);
+      assert.equal(fractionToPercent(fraction!), percent, `${percent}%`);
+    }
+  });
+
+  test("refuses anything it cannot represent without losing a digit", () => {
+    for (const fraction of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      // More significant digits than a double keeps after the two-place
+      // left-shift. `0.1 + 0.2` is the refuse case the OTHER direction
+      // (`percentToFraction`); shifting it left lands on a representable
+      // percent, so it is not a loss here.
+      Number("0.123456789012345678"),
+    ]) {
+      assert.equal(fractionToPercent(fraction), null, String(fraction));
+    }
+  });
+});
+
+describe("directed --file overload", () => {
+  test("sniffs a versioned suite file in YAML and JSON", () => {
+    assert.equal(looksLikeVersionedSuiteFile(VALID_SUITE_FILE), true);
+    assert.equal(
+      looksLikeVersionedSuiteFile(
+        JSON.stringify({
+          schemaVersion: "1",
+          mode: "agentWorkflow",
+          suite: { id: "s_billing", name: "Billing" },
+        })
+      ),
+      true
+    );
+    assert.equal(looksLikeVersionedSuiteFile('{"name":"smoke","cases":[]}'), false);
+  });
+
+  test("detects create-API JSON and ignores suite files", () => {
+    assert.equal(
+      looksLikeCreateEvalApiJson(
+        JSON.stringify({
+          name: "Authored smoke",
+          cases: [{ title: "echo", steps: [] }],
+        })
+      ),
+      true
+    );
+    assert.equal(
+      looksLikeCreateEvalApiJson(
+        JSON.stringify({
+          name: "Authored smoke",
+          tests: [{ title: "echo", steps: [] }],
+        })
+      ),
+      true
+    );
+    assert.equal(looksLikeCreateEvalApiJson(VALID_SUITE_FILE), false);
+  });
+});
+
 describe("modalRepetitions", () => {
   test("picks the most common count, smallest on a tie", () => {
     assert.equal(modalRepetitions([5, 5, 9]), 5);
@@ -398,6 +519,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -427,6 +549,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -457,6 +580,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -493,6 +617,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -529,6 +654,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -555,6 +681,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -582,6 +709,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -617,7 +745,7 @@ describe("eval validate", () => {
       (resolve, reject) => {
         const child = spawn(
           tsx,
-          [cli, "eval", "validate", "--file", "-", "--format", "json"],
+          [cli, "cloud", "eval", "validate", "--file", "-", "--format", "json"],
           {
             env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
             stdio: ["pipe", "pipe", "pipe"],
@@ -651,6 +779,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -678,6 +807,7 @@ describe("eval validate", () => {
       const argv = [
         "node",
         "mcpjam",
+        "cloud",
         "eval",
         "validate",
         "--file",
@@ -700,6 +830,23 @@ describe("eval validate", () => {
 // ── eval export ──────────────────────────────────────────────────────────────
 
 describe("eval export", () => {
+  test("writes declaredId as suite.id for a file-owned suite", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { declaredId: "s_billing_file" } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const loaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.equal(loaded.authored.suite.id, "s_billing_file");
+    });
+  });
+
   test("writes a file that reads back as the same suite", async () => {
     await withTempDir(async (dir) => {
       const run = await runExport({}, "--suite", "Billing smoke");
@@ -726,6 +873,60 @@ describe("eval export", () => {
       assert.deepEqual(reloaded.authored.defaults.validity, {});
       assert.equal(reloaded.authored.provenance, undefined);
       assert.equal(reloaded.authored.cases[0].import, undefined);
+    });
+  });
+
+  test("exports execution config, hosts, and one resolved environment", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        {
+          detail: {
+            environment: { servers: [], computerEnvironment: null },
+            environmentIds: ["env-a"],
+            executionConfig: {
+              model: "anthropic/claude-sonnet-4-6",
+              systemPrompt: "Be terse.",
+              temperature: 0.2,
+            },
+            hosts: [
+              {
+                id: "h1",
+                name: "Claude Desktop",
+                servers: ["billing"],
+              },
+            ],
+            settings: {
+              minimumAccuracy: 80,
+              matchOptions: null,
+              checks: [],
+              judge: {
+                enabled: true,
+                autoRun: false,
+                model: "anthropic/claude-sonnet-4-6",
+              },
+            },
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.target.environment, "Production");
+      assert.deepEqual(reloaded.authored.target.servers, undefined);
+      assert.deepEqual(reloaded.authored.target.hosts, [
+        {
+          id: "h1",
+          name: "Claude Desktop",
+          servers: [{ name: "billing" }],
+        },
+      ]);
+      assert.equal(reloaded.authored.defaults.systemPrompt, "Be terse.");
+      assert.equal(reloaded.authored.defaults.temperature, 0.2);
     });
   });
 
@@ -784,19 +985,12 @@ describe("eval export", () => {
       pointer: string;
     }> = [
       {
-        label: "host attachments have no field",
-        state: { detail: { hosts: [{ id: "h1", name: "Claude Desktop" }] } },
-        pointer: "hosts",
-      },
-      {
         label: "several attached environments",
-        state: { detail: { environmentIds: ["env-a", "env-b"] } },
-        pointer: "environmentIds",
-      },
-      {
-        label: "one attached environment, whose name needs a second fetch",
         state: {
-          detail: { environment: { servers: [] }, environmentIds: ["env-a"] },
+          detail: {
+            environment: { servers: [] },
+            environmentIds: ["env-a", "env-b"],
+          },
         },
         pointer: "environmentIds",
       },
@@ -809,22 +1003,6 @@ describe("eval export", () => {
         label: "no execution model to write as defaults.model",
         state: { detail: { executionConfig: null } },
         pointer: "executionConfig",
-      },
-      {
-        label: "an execution system prompt",
-        state: {
-          detail: {
-            executionConfig: { model: "m", systemPrompt: "Be terse." },
-          },
-        },
-        pointer: "executionConfig.systemPrompt",
-      },
-      {
-        label: "an execution temperature",
-        state: {
-          detail: { executionConfig: { model: "m", temperature: 0.2 } },
-        },
-        pointer: "executionConfig.temperature",
       },
       {
         label: "a pinned sandbox image",
@@ -841,7 +1019,7 @@ describe("eval export", () => {
       {
         label: "no server selection at all",
         state: { detail: { environment: { servers: [] } } },
-        pointer: "environment.servers",
+        pointer: "environment",
       },
       {
         label: "no minimum accuracy to become passThreshold",
@@ -898,7 +1076,11 @@ describe("eval export", () => {
               minimumAccuracy: 80,
               matchOptions: null,
               checks: [],
-              judge: { enabled: true, model: "anthropic/claude-sonnet-4-6" },
+              judge: {
+                enabled: true,
+                autoRun: true,
+                model: "anthropic/claude-sonnet-4-6",
+              },
             },
           },
         },
@@ -1027,7 +1209,10 @@ describe("eval export", () => {
   test("--format human names every reason it refused", async () => {
     await withTempDir(async (dir) => {
       const fixture = await startSuiteFixture({
-        detail: suiteDetail({ hosts: [{ id: "h1", name: "Claude Desktop" }] }),
+        detail: suiteDetail({
+          environment: { servers: [] },
+          environmentIds: ["env-a", "env-b"],
+        }),
         cases: [evalCase()],
       });
       try {
@@ -1036,6 +1221,7 @@ describe("eval export", () => {
             [
               "node",
               "mcpjam",
+              "cloud",
               "eval",
               "export",
               "--suite",
@@ -1052,7 +1238,10 @@ describe("eval export", () => {
         );
         assert.equal(run.result.exitCode, 1);
         assert.match(run.stdout, /Nothing was written/);
-        assert.match(run.stdout, /UNSUPPORTED_SUITE_EXPORT hosts: /);
+        assert.match(
+          run.stdout,
+          /UNSUPPORTED_SUITE_EXPORT environmentIds: /
+        );
         assert.deepEqual(await readdir(dir), []);
       } finally {
         await fixture.close();
@@ -1234,5 +1423,1314 @@ describe("eval export", () => {
       );
       assert.deepEqual(leftovers, []);
     });
+  });
+});
+
+// ── eval run --file ──────────────────────────────────────────────────────────
+
+function runFileArgv(baseUrl: string, ...args: string[]): string[] {
+  return [
+    "node",
+    "mcpjam",
+    "cloud",
+    "eval",
+    "run",
+    ...args,
+    "--api-key",
+    "sk_test",
+    "--api-url",
+    baseUrl,
+    "--format",
+    "json",
+  ];
+}
+
+function suiteFileWithCases(count: number): string {
+  const cases = Array.from({ length: count }, (_, i) =>
+    [
+      `  - id: c_case_${i}`,
+      `    title: Case ${i}`,
+      `    steps:`,
+      `      - id: step-${i}`,
+      `        kind: prompt`,
+      `        prompt: Do thing ${i}.`,
+    ].join("\n")
+  ).join("\n");
+  return `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_bulk
+  name: Bulk
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+cases:
+${cases}
+`;
+}
+
+async function startFileRunFixture(options?: {
+  existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  existingHosts?: Array<{
+    id: string;
+    name: string;
+    servers?: string[];
+  }>;
+  environmentName?: string;
+  /**
+   * Batch-create indexes to put in `failed` instead of `created`. Used to
+   * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
+   */
+  failCreateIndexes?: readonly number[];
+  failUpdates?: boolean;
+}): Promise<{
+  baseUrl: string;
+  authHeaders: string[];
+  fromFileBodies: unknown[];
+  batchBodies: unknown[];
+  updateBodies: unknown[];
+  deletedCaseIds: string[];
+  suitePatches: unknown[];
+  runBodies: unknown[];
+  close: () => Promise<void>;
+}> {
+  const authHeaders: string[] = [];
+  const fromFileBodies: unknown[] = [];
+  const batchBodies: unknown[] = [];
+  const updateBodies: unknown[] = [];
+  const deletedCaseIds: string[] = [];
+  const suitePatches: unknown[] = [];
+  const runBodies: unknown[] = [];
+  let environmentIds: string[] = [];
+  let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
+    ...(options?.existingHosts ?? []),
+  ];
+  const casesByDeclaredId = new Map<
+    string,
+    { id: string; declaredId: string; title: string }
+  >();
+  for (const row of options?.existingCases ?? []) {
+    casesByDeclaredId.set(row.declaredId, row);
+  }
+  const runsByKey = new Map<string, string>();
+  let runCounter = 0;
+
+  const server: Server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) {
+      raw += chunk;
+    }
+    authHeaders.push(req.headers.authorization ?? "");
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+    const method = req.method ?? "GET";
+
+    if (url.pathname === "/api/v1/projects") {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "proj-alpha",
+              name: "Alpha",
+              description: null,
+              icon: null,
+              organizationId: "org-1",
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 200,
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/from-file" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      fromFileBodies.push(body);
+      res.statusCode = fromFileBodies.length === 1 ? 201 : 200;
+      res.end(
+        JSON.stringify({
+          created: fromFileBodies.length === 1,
+          suite: {
+            id: "suite-file-1",
+            declaredId: body.declaredSuiteId,
+            name: body.name ?? "Billing smoke",
+            description: null,
+            projectId: "proj-alpha",
+            environment: { servers: ["billing"], computerEnvironment: null },
+            executionConfig: { model: body.defaultConfig?.modelId ?? "m" },
+            hosts,
+            environmentIds: [],
+            settings: {},
+            schedule: {},
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases" &&
+      method === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [...casesByDeclaredId.values()] }));
+      return;
+    }
+
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/batch" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      batchBodies.push(body);
+      const created: Array<{
+        index: number;
+        id: string;
+        declaredId: string;
+        title: string;
+        replayed: boolean;
+      }> = [];
+      const failed: Array<{
+        index: number;
+        declaredId: string;
+        code: string;
+        message: string;
+      }> = [];
+      const failCreate = new Set(options?.failCreateIndexes ?? []);
+      (body.cases as Array<{ id?: string; title: string }>).forEach(
+        (testCase, index) => {
+          const declaredId = testCase.id ?? `minted_${index}`;
+          if (failCreate.has(index)) {
+            failed.push({
+              index,
+              declaredId,
+              code: "CREATE_FAILED",
+              message: `fixture refused ${declaredId}`,
+            });
+            return;
+          }
+          const id = `row_${declaredId}`;
+          casesByDeclaredId.set(declaredId, {
+            id,
+            declaredId,
+            title: testCase.title,
+          });
+          created.push({
+            index,
+            id,
+            declaredId,
+            title: testCase.title,
+            replayed: false,
+          });
+        }
+      );
+      res.statusCode = 201;
+      res.end(JSON.stringify({ created, failed, duplicatePolicy: "block" }));
+      return;
+    }
+
+    if (
+      url.pathname.startsWith(
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/"
+      ) &&
+      method === "PATCH"
+    ) {
+      updateBodies.push(raw ? JSON.parse(raw) : {});
+      if (options?.failUpdates) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: { code: "UPDATE_FAILED", message: "fixture update failed" } }));
+        return;
+      }
+      res.end(JSON.stringify({ id: "row_c_refund", title: "updated" }));
+      return;
+    }
+
+    if (
+      url.pathname.startsWith(
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/"
+      ) &&
+      method === "DELETE"
+    ) {
+      const caseId = url.pathname.split("/").pop() ?? "";
+      deletedCaseIds.push(caseId);
+      for (const [declaredId, row] of casesByDeclaredId) {
+        if (row.id === caseId) {
+          casesByDeclaredId.delete(declaredId);
+          break;
+        }
+      }
+      res.statusCode = 200;
+      res.end(JSON.stringify({ id: caseId, deleted: true }));
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites" &&
+      method === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "suite-file-1",
+              name: "Billing smoke",
+              projectId: "proj-alpha",
+              createdAt: 1,
+              updatedAt: 2,
+              latestRun: null,
+              totals: { passed: 0, failed: 0, runs: 0 },
+              passRateTrend: [],
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/suite-file-1" &&
+      method === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "suite-file-1",
+          declaredId: "s_billing",
+          name: "Billing smoke",
+          description: null,
+          projectId: "proj-alpha",
+          environment: { servers: ["billing"] },
+          executionConfig: { model: "anthropic/claude-sonnet-4-6" },
+          hosts,
+          environmentIds,
+          settings: {},
+          schedule: {},
+          createdAt: 1,
+          updatedAt: 2,
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/environments" &&
+      method === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "env-prod",
+              name: options?.environmentName ?? "prod",
+              archived: false,
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/suite-file-1" &&
+      method === "PATCH"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      suitePatches.push(body);
+      if (Array.isArray(body.environmentIds)) {
+        environmentIds = body.environmentIds;
+      }
+      if (Array.isArray(body.hosts)) {
+        hosts = body.hosts.map(
+          (host: { host: string; servers?: string[] }, index: number) => ({
+            id: host.host,
+            name: index === 0 ? "Claude Desktop" : host.host,
+            ...(host.servers ? { servers: host.servers } : {}),
+          })
+        );
+      }
+      res.end(
+        JSON.stringify({
+          id: "suite-file-1",
+          declaredId: "s_billing",
+          name: "Billing smoke",
+          description: null,
+          projectId: "proj-alpha",
+          environment: { servers: ["billing"] },
+          executionConfig: { model: "anthropic/claude-sonnet-4-6" },
+          hosts,
+          environmentIds,
+          settings: {},
+          schedule: {},
+          createdAt: 1,
+          updatedAt: 2,
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      runBodies.push(body);
+      const key =
+        typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
+      let runId = runsByKey.get(key);
+      if (!runId) {
+        runCounter += 1;
+        runId = `run-file-${runCounter}`;
+        if (key) runsByKey.set(key, runId);
+      }
+      res.statusCode = 202;
+      res.end(
+        JSON.stringify({
+          runId,
+          suiteId: "suite-file-1",
+          status: "running",
+          caseUpsert: { committed: [], failed: [] },
+          servers: [{ id: "srv-billing", name: "billing" }],
+          environment: null,
+        })
+      );
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: { message: `no route ${url.pathname}` } }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address === "string" || address === null) {
+    throw new Error("fixture server did not bind a port");
+  }
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
+    authHeaders,
+    fromFileBodies,
+    batchBodies,
+    updateBodies,
+    deletedCaseIds,
+    suitePatches,
+    runBodies,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      ),
+  };
+}
+
+describe("eval run --file", () => {
+  test("invalid file exits 2 after auth and creates no run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace("id: c_refund", 'id: "not a valid id"'),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.ok(fixture.authHeaders.length > 0, "auth request must arrive first");
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+        assert.match(run.stderr, /SUITE_FILE_INVALID/);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("valid file creates one run with the declared ids", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const expectedHash = sha256HexOfBuffer(Buffer.from(VALID_SUITE_FILE));
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.fromFileBodies.length, 1);
+        const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
+        assert.equal(synced.declaredSuiteId, "s_billing");
+        assert.equal(synced.sourceHash, expectedHash);
+        assert.deepEqual(synced.defaultConfig, {
+          modelId: "anthropic/claude-sonnet-4-6",
+        });
+        assert.equal(fixture.batchBodies.length, 1);
+        const batch = fixture.batchBodies[0] as { cases: Array<{ id: string }> };
+        assert.equal(batch.cases[0].id, "c_refund");
+        assert.equal(fixture.runBodies.length, 1);
+        const launched = fixture.runBodies[0] as Record<string, unknown>;
+        assert.equal(launched.suiteId, "suite-file-1");
+        assert.equal(launched.sourceHash, expectedHash);
+        assert.equal(typeof launched.idempotencyKey, "string");
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+        const payload = JSON.parse(run.stdout);
+        assert.equal(payload.outcome, "started");
+        assert.equal(payload.runId, "run-file-1");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("sends authored execution config and launches attached hosts", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        const configured = VALID_SUITE_FILE.replace(
+          "target:\n  servers:\n    - name: billing\n",
+          "target:\n  servers:\n    - name: billing\n  hosts:\n    - id: h1\n      name: Claude Desktop\n      servers:\n        - id: srv_billing\n          name: billing\n"
+        ).replace(
+          "  model: anthropic/claude-sonnet-4-6\n",
+          "  model: anthropic/claude-sonnet-4-6\n  systemPrompt: Be terse.\n  temperature: 0.2\n"
+        );
+        await writeFile(file, configured, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const synced = fixture.fromFileBodies[0] as {
+          defaultConfig: Record<string, unknown>;
+        };
+        assert.deepEqual(synced.defaultConfig, {
+          modelId: "anthropic/claude-sonnet-4-6",
+          systemPrompt: "Be terse.",
+          temperature: 0.2,
+        });
+        assert.deepEqual(fixture.suitePatches, [
+          {
+            hosts: [
+              {
+                host: "h1",
+                servers: ["srv_billing"],
+              },
+            ],
+          },
+        ]);
+        assert.equal(
+          (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
+          "h1"
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an explicit host target does not replace the file's host attachments", async () => {
+    const fixture = await startFileRunFixture({
+      existingHosts: [{ id: "h-existing", name: "Existing Host" }],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        const configured = VALID_SUITE_FILE.replace(
+          "target:\n  servers:\n    - name: billing\n",
+          "target:\n  servers:\n    - name: billing\n  hosts:\n    - id: h-file\n      name: File Host\n"
+        );
+        await writeFile(file, configured, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--host",
+              "h-existing"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.deepEqual(fixture.suitePatches, []);
+        assert.equal(
+          (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
+          "h-existing"
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("same file twice with one idempotency key starts exactly one run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha",
+          "--idempotency-key",
+          "file-key-1"
+        );
+        const first = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const second = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        assert.equal(fixture.runBodies.length, 2);
+        const ids = [first, second].map(
+          (entry) => JSON.parse(entry.stdout).runId
+        );
+        assert.deepEqual(ids, ["run-file-1", "run-file-1"]);
+        assert.equal(
+          (fixture.runBodies[0] as { idempotencyKey: string }).idempotencyKey,
+          "file-key-1"
+        );
+        assert.equal(fixture.updateBodies.length, 1);
+        const updated = fixture.updateBodies[0] as Record<string, unknown>;
+        assert.equal(updated.id, undefined);
+        assert.equal(updated.title, "Refunds a duplicate charge");
+        assert.equal(updated.isNegative, false);
+        assert.equal(updated.checks, null);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("repetitions: 50 is refused naming the hosted cap of 10", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace("repetitions: 5", "repetitions: 50"),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /REPETITIONS_CAP/);
+        assert.match(run.stderr, /10/);
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("250-case file uploads in three batches", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, suiteFileWithCases(250), "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.batchBodies.length, 3);
+        const sizes = fixture.batchBodies.map(
+          (body) => (body as { cases: unknown[] }).cases.length
+        );
+        assert.deepEqual(sizes, [100, 100, 50]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--format json is byte-identical across two runs of the same file", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha",
+          "--idempotency-key",
+          "stable-json"
+        );
+        const first = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const second = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        assert.equal(first.stdout, second.stdout);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("create-API JSON on eval run --file points at eval create --file", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "create.json");
+        await writeFile(
+          file,
+          JSON.stringify({
+            name: "Authored smoke",
+            cases: [
+              {
+                title: "echo",
+                steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+              },
+            ],
+          }),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /eval create --file/);
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a disabled case with a passThreshold override does not refuse the run", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    passThreshold: 0.95\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.runBodies.length, 1);
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("CASE_SYNC_FAILED reports landed writes, not attempted totals", async () => {
+    const fixture = await startFileRunFixture({
+      failCreateIndexes: [1],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, suiteFileWithCases(2), "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_SYNC_FAILED/);
+        const jsonLine = run.stderr
+          .split("\n")
+          .reverse()
+          .find((line) => line.startsWith("{"));
+        assert.ok(jsonLine, run.stderr);
+        const payload = JSON.parse(jsonLine) as {
+          error: { details: { created: number; updated: number; deleted: number } };
+        };
+        assert.equal(payload.error.details.created, 1);
+        assert.equal(payload.error.details.updated, 0);
+        assert.equal(payload.error.details.deleted, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("CASE_SYNC_FAILED counts only updates that landed", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+      failUpdates: true,
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_SYNC_FAILED/);
+        const jsonLine = run.stderr
+          .split("\n")
+          .reverse()
+          .find((line) => line.startsWith("{"));
+        assert.ok(jsonLine, run.stderr);
+        const payload = JSON.parse(jsonLine) as {
+          error: { details: { created: number; updated: number } };
+        };
+        assert.equal(payload.error.details.created, 0);
+        assert.equal(payload.error.details.updated, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a per-case passThreshold override is uploaded, not silently dropped", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace(
+            "    title: Refunds a duplicate charge",
+            "    passThreshold: 0.95\n    title: Refunds a duplicate charge"
+          ),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const batch = fixture.batchBodies[0] as {
+          cases: Array<{ passThreshold?: number; repetitions?: number }>;
+        };
+        assert.equal(batch.cases[0].passThreshold, 0.95);
+        assert.equal(fixture.runBodies.length, 1);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a later file deletes a case that is no longer enabled", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_stale", declaredId: "c_stale", title: "Removed" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.deepEqual(fixture.deletedCaseIds, ["row_c_stale"]);
+        assert.equal(fixture.batchBodies.length, 0);
+        assert.equal(fixture.updateBodies.length, 1);
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a disabled case keeps its hosted history and simply does not run", async () => {
+    // `disabled: true` means "the loader skips this case (it stays in the
+    // file)". Deleting the hosted row would destroy the case's iterations the
+    // moment somebody parks a flaky test, and re-enabling it tomorrow would
+    // not bring them back. Declared-but-disabled is kept; only cases the file
+    // no longer declares AT ALL are stale.
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        // Kept — not deleted. The parked row is updated so the hosted
+        // definition matches the file; it is still left out of the launch.
+        assert.deepEqual(fixture.deletedCaseIds, []);
+        assert.equal(fixture.updateBodies.length, 2);
+        const parkedUpdate = fixture.updateBodies.find(
+          (body) => (body as { title?: string }).title === "Parked"
+        ) as { title: string; steps: Array<{ prompt: string }> };
+        assert.equal(parkedUpdate.steps[0]?.prompt, "Parked for now.");
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a newly declared disabled case is created but not launched", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.batchBodies.length, 1);
+        const created = (fixture.batchBodies[0] as { cases: Array<{ id: string }> })
+          .cases;
+        assert.deepEqual(
+          created.map((entry) => entry.id),
+          ["c_parked"]
+        );
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("updating a file-owned case clears removed negative and check fields", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        {
+          id: "row_c_refund",
+          declaredId: "c_refund",
+          title: "Refunds a duplicate charge",
+        },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.updateBodies.length, 1);
+        const body = fixture.updateBodies[0] as Record<string, unknown>;
+        assert.equal(body.isNegative, false);
+        assert.equal(body.checks, null);
+        assert.equal(body.expectedOutput, "");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("the same file with different --iterations is not treated as a retry", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const first = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--iterations",
+              "1"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        const second = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--iterations",
+              "10"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        const keys = fixture.runBodies.map(
+          (body) => (body as { idempotencyKey: string }).idempotencyKey
+        );
+        assert.equal(keys.length, 2);
+        assert.notEqual(keys[0], keys[1]);
+        const ids = [first, second].map(
+          (entry) => JSON.parse(entry.stdout).runId
+        );
+        assert.deepEqual(ids, ["run-file-1", "run-file-2"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a file with every case disabled is refused rather than run unscoped", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace(
+            "    title: Refunds a duplicate charge",
+            "    disabled: true\n    title: Refunds a duplicate charge"
+          ),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /NO_ENABLED_CASES/);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--case cannot launch a disabled case the file still declares", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--case",
+              "c_parked"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_DISABLED/);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("defaults.repetitions is uploaded as the v2 suite policy", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace(
+            "    title: Refunds a duplicate charge",
+            "    repetitions: 1\n    title: Refunds a duplicate charge"
+          ),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
+        assert.equal("minIterations" in synced, false);
+        assert.equal(synced.verdictPolicyVersion, 2);
+        assert.deepEqual(synced.verdictPolicyDefaults, {
+          repetitions: 5,
+          passThreshold: 0.8,
+          validity: {
+            coverage: {
+              kind: "allConfiguredTrialsAttempted",
+              minGradeableTrials: 1,
+            },
+            minCompletionRate: 0.8,
+            maxEvaluatorErrorRate: 0.1,
+          },
+        });
+        const batch = fixture.batchBodies[0] as {
+          cases: Array<{ iterations: number; repetitions: number; passThreshold: number }>;
+        };
+        assert.equal(batch.cases[0].iterations, 1);
+        assert.equal(batch.cases[0].repetitions, 1);
+        assert.equal(batch.cases[0].passThreshold, 0.8);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("authored toolPolicy is refused while validity gates are uploaded", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const policyFile = path.join(dir, "policy.yaml");
+        await writeFile(
+          policyFile,
+          VALID_SUITE_FILE.replace(
+            "  validity: {}",
+            "  toolPolicy:\n    mode: readOnly\n  validity: {}"
+          ),
+          "utf8"
+        );
+        const policy = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", policyFile, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(policy.result.exitCode, 2, policy.stderr);
+        assert.match(policy.stderr, /TOOL_POLICY_UNSUPPORTED/);
+
+        const validityFile = path.join(dir, "validity.yaml");
+        await writeFile(
+          validityFile,
+          VALID_SUITE_FILE.replace(
+            "  validity: {}",
+            "  validity:\n    minEligibleTrials: 3"
+          ),
+          "utf8"
+        );
+        const validity = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              validityFile,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(validity.result.exitCode, 0, validity.stderr);
+        const synced = fixture.fromFileBodies.at(-1) as Record<string, any>;
+        assert.deepEqual(synced.verdictPolicyDefaults.validity, {
+          coverage: {
+            kind: "minEligibleTrials",
+            minEligibleTrials: 3,
+          },
+          minCompletionRate: 0.8,
+          maxEvaluatorErrorRate: 0.1,
+        });
+        assert.equal(fixture.runBodies.length, 1);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an exported environment-only file runs with zero legacy servers", async () => {
+    await withTempDir(async () => {
+      const exported = await runExport(
+        {
+          detail: {
+            environment: { servers: [], computerEnvironment: null },
+            environmentIds: ["env-a"],
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(exported.exitCode, 0, exported.stderr);
+      const fixture = await startFileRunFixture({
+        environmentName: "Production",
+      });
+      try {
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              JSON.parse(exported.stdout).path,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.suitePatches.length, 1);
+        assert.deepEqual(
+          (fixture.suitePatches[0] as { environmentIds: string[] })
+            .environmentIds,
+          ["env-prod"]
+        );
+        assert.deepEqual(
+          (
+            fixture.fromFileBodies[0] as {
+              environment: { servers: string[] };
+            }
+          ).environment.servers,
+          []
+        );
+        const launched = fixture.runBodies[0] as { environmentId?: string };
+        assert.equal(launched.environmentId, "env-prod");
+      } finally {
+        await fixture.close();
+      }
+    });
+  });
+});
+
+describe("file-owned case bodies and idempotency", () => {
+  test("an update body clears isNegative and checks when the file dropped them", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const testCase = loaded.resolved.enabledCases[0];
+    const created = fileCaseToCreateBody(testCase);
+    assert.equal("isNegative" in created, false);
+    assert.equal("checks" in created, false);
+    const updated = fileCaseToUpdateBody(testCase);
+    assert.equal(updated.isNegative, false);
+    assert.equal(updated.checks, null);
+    assert.equal(updated.expectedOutput, "");
+  });
+
+  test("derived idempotency keys differ when run knobs differ", () => {
+    const shared = {
+      sourceHash: "a".repeat(64),
+      declaredSuiteId: "s_billing",
+      projectId: "proj-alpha",
+      target: { servers: [{ name: "billing" }] },
+    };
+    const one = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { iterations: 1 },
+    });
+    const ten = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { iterations: 10 },
+    });
+    const env = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { environment: ["prod"] },
+    });
+    assert.notEqual(one, ten);
+    assert.notEqual(one, env);
+    assert.equal(
+      deriveFileRunIdempotencyKey({ ...shared, knobs: { iterations: 1 } }),
+      one
+    );
   });
 });

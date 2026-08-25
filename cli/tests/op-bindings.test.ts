@@ -3,20 +3,9 @@ import assert from "node:assert/strict";
 import { Command } from "commander";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { CLI_BINDINGS } from "../src/lib/op-bindings.js";
-import { registerChatCommands } from "../src/commands/chat.js";
-import { registerEnvironmentsCommands } from "../src/commands/environments.js";
-import { registerEvalCommands } from "../src/commands/eval.js";
-import { registerHostsCommands } from "../src/commands/hosts.js";
-import { registerJourneysCommands } from "../src/commands/journeys.js";
-import { registerScenariosCommands } from "../src/commands/scenarios.js";
-import { registerSessionsCommands } from "../src/commands/sessions.js";
-import { registerImagesCommands } from "../src/commands/images.js";
-import { registerOrganizationsCommands } from "../src/commands/organizations.js";
-import { registerProjectsCommands } from "../src/commands/projects.js";
-import { registerTunnelCommands } from "../src/commands/tunnel.js";
+import { registerCloudCommands } from "../src/commands/cloud.js";
 import { registerReadinessCommands } from "../src/commands/readiness.js";
-import { registerSwarmAuthoringCommands } from "../src/commands/swarms.js";
-import { registerUserTestingCommands } from "../src/commands/user-testing.js";
+import { registerRegistryCommands } from "../src/commands/registry.js";
 
 /**
  * The CLI's half of the operation-exposure ratchet.
@@ -30,39 +19,55 @@ import { registerUserTestingCommands } from "../src/commands/user-testing.js";
 /** A program carrying every command group that binds platform operations. */
 function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
-  registerOrganizationsCommands(program);
-  registerProjectsCommands(program);
-  registerEvalCommands(program);
-  registerChatCommands(program);
-  registerSessionsCommands(program);
-  registerHostsCommands(program);
-  registerEnvironmentsCommands(program);
-  const journeys = registerJourneysCommands(program);
-  registerScenariosCommands(program);
-  // Swarms authoring hangs its journey subcommands off the SAME group, so the
-  // group has to be threaded through here exactly as `src/index.ts` does it —
-  // building a second `journeys` command would resolve paths that the real CLI
-  // does not have.
-  registerSwarmAuthoringCommands(program, journeys);
-  registerUserTestingCommands(program);
-  registerImagesCommands(program);
-  registerTunnelCommands(program);
+  registerCloudCommands(program);
   registerReadinessCommands(program);
+  registerRegistryCommands(program);
   return program;
 }
 
+/**
+ * Split a binding into the Commander path and any flag qualifiers.
+ *
+ * `registry install` is one visible command bound to TWO ops: directory by
+ * default, card when `--card` is set. The flag stays on the binding string
+ * so the test can prove both shelves exist without weakening the tree check
+ * to "the parent command is registered".
+ */
+function parseBindingCommand(command: string): {
+  path: string;
+  flags: string[];
+} {
+  const tokens = command.split(" ").filter(Boolean);
+  const path: string[] = [];
+  const flags: string[] = [];
+  for (const token of tokens) {
+    if (token.startsWith("-")) flags.push(token);
+    else path.push(token);
+  }
+  return { path: path.join(" "), flags };
+}
+
 /** Walk a command path like "eval cases run" through the Commander tree. */
-function resolveCommandPath(program: Command, path: string): boolean {
+function resolveCommandPath(
+  program: Command,
+  path: string,
+): Command | undefined {
   let node: Command = program;
   for (const segment of path.split(" ")) {
     const next: Command | undefined = node.commands.find(
       (candidate) =>
-        candidate.name() === segment || candidate.aliases().includes(segment)
+        candidate.name() === segment || candidate.aliases().includes(segment),
     );
-    if (!next) return false;
+    if (!next) return undefined;
     node = next;
   }
-  return true;
+  return node;
+}
+
+function commandDeclaresFlag(command: Command, flag: string): boolean {
+  return command.options.some(
+    (option) => option.long === flag || option.short === flag,
+  );
 }
 
 describe("CLI operation bindings", () => {
@@ -93,14 +98,44 @@ describe("CLI operation bindings", () => {
     );
   });
 
+  test("registry install flag-qualifies the two shelves on one Commander path", () => {
+    // Isolated from `registerCloudCommands` so this assertion does not depend
+    // on Commander.commandsGroup (Cloud help grouping). The dual-op binding
+    // is the I3-specific contract this file was extended to prove.
+    const program = new Command().name("mcpjam").exitOverride();
+    registerRegistryCommands(program);
+    const { path, flags } = parseBindingCommand("registry install --card");
+    const node = resolveCommandPath(program, path);
+    assert.ok(node, "registry install must exist");
+    assert.ok(
+      flags.every((flag) => commandDeclaresFlag(node!, flag)),
+      "registry install --card must declare --card",
+    );
+    assert.ok(resolveCommandPath(program, "registry uninstall"));
+    assert.ok(resolveCommandPath(program, "registry search"));
+    assert.ok(resolveCommandPath(program, "registry show"));
+    assert.ok(resolveCommandPath(program, "registry sources"));
+    assert.ok(resolveCommandPath(program, "registry servers"));
+    assert.ok(resolveCommandPath(program, "registry connections"));
+  });
+
   test("every advertised command actually resolves in the CLI", () => {
     // The point of the whole file. A map entry is a claim; this is the proof.
     const program = buildPlatformProgram();
     const missing: string[] = [];
     for (const [name, binding] of Object.entries(CLI_BINDINGS)) {
       if (!("command" in binding)) continue;
-      if (!resolveCommandPath(program, binding.command)) {
+      const { path, flags } = parseBindingCommand(binding.command);
+      const node = resolveCommandPath(program, path);
+      if (!node) {
         missing.push(`${name} -> "${binding.command}"`);
+        continue;
+      }
+      const undeclared = flags.filter((flag) => !commandDeclaresFlag(node, flag));
+      if (undeclared.length > 0) {
+        missing.push(
+          `${name} -> "${binding.command}" (missing flags: ${undeclared.join(", ")})`,
+        );
       }
     }
     assert.deepEqual(

@@ -460,7 +460,7 @@ async function executeTokenRequest(
   return (await response.json()) as OAuthTokens;
 }
 
-async function refreshAuthorization(
+export async function refreshAuthorization(
   authorizationServerUrl: string | URL,
   {
     metadata,

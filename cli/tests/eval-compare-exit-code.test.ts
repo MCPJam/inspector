@@ -1,5 +1,5 @@
 /**
- * The exit-code matrix for `mcpjam eval compare`.
+ * The exit-code matrix for `mcpjam cloud eval compare`.
  *
  * This is the contract CI actually depends on, so it is pinned END TO END —
  * from a wire DTO through the real derivation and the real gate engine to the

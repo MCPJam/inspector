@@ -59,7 +59,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  isHostedSidebarTabAllowed,
+  isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -92,6 +92,11 @@ interface NavItem {
 
 interface NavSection {
   id: string;
+  /**
+   * Section heading rendered above the items ("Explore", "Measure", …).
+   * The nav is grouped by what you do with a feature, not by internals.
+   */
+  label: string;
   items: NavItem[];
 }
 
@@ -183,11 +188,18 @@ export function applyBillingGateNavState(
 }
 
 // Define sections with their respective items.
+// Grouped by intent (Explore / Measure / Verify / Inspect / Educate) per the
+// Production Redesign, so the nav reads as five short lists instead of one flat
+// column. Flag-gated items that the design didn't enumerate are placed in the
+// section that matches what they do: Registry + Environments under Explore,
+// Sessions under Measure (it's the cross-surface run feed), Compatibility under
+// Verify next to its sibling Conformance.
 // Exported so tests can assert against the real nav data (e.g. that Skills is
 // not a sidebar item — it lives in the Connect tab switcher).
 export const navigationSections: NavSection[] = [
   {
-    id: "connection",
+    id: "explore",
+    label: "Explore",
     items: [
       {
         title: "Home",
@@ -229,10 +241,13 @@ export const navigationSections: NavSection[] = [
     ],
   },
   {
-    id: "mcp-apps",
+    id: "measure",
+    label: "Measure",
     items: [
       {
-        title: "User Testing",
+        // Labeled "Acceptance Testing" in the nav; the route stays
+        // /user-testing so existing links and hash tabs keep working.
+        title: "Acceptance Testing",
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
@@ -252,7 +267,7 @@ export const navigationSections: NavSection[] = [
         billingFeature: "evals",
       },
       {
-        // Cross-surface session feed (Playground + User Testing + Evals +
+        // Cross-surface session feed (Playground + Acceptance Testing + Evals +
         // Swarms). Route-guarded on the same flag (`SessionsRoute`).
         title: "Sessions",
         url: "/sessions",
@@ -262,16 +277,22 @@ export const navigationSections: NavSection[] = [
     ],
   },
   {
-    id: "others",
+    // Auth-flow debuggers and the spec checkers: everything that answers
+    // "is this implementation correct?".
+    id: "verify",
+    label: "Verify",
     items: [
-      // Skills is not a sidebar item: it's execution-context config, so it
-      // lives as a Connect tab (Servers | Client | Computer | Skills) and is
-      // reached through that switcher.
       {
-        title: "Learning",
-        url: "/learning",
-        icon: GraduationCap,
-        featureFlag: "mcpjam-learning",
+        title: "OAuth Debugger",
+        url: "/oauth-flow",
+        icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "/xaa-flow",
+        icon: ShieldCheck,
+        badge: "New",
+        featureFlag: "xaa",
       },
       {
         title: "Conformance",
@@ -289,34 +310,14 @@ export const navigationSections: NavSection[] = [
         // MCPJam-internal flag (same convention as `mcpjam-conformance`).
         featureFlag: "mcpjam-compatibility",
       },
-      // {
-      //   title: "Tracing",
-      //   url: "/tracing",
-      //   icon: Activity,
-      // },
     ],
   },
   {
-    // Auth-flow debuggers get their own section so they read as a related
-    // pair, separated from the surrounding nav by the section dividers.
-    id: "debuggers",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "/oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "XAA Debugger",
-        url: "/xaa-flow",
-        icon: ShieldCheck,
-        badge: "New",
-        featureFlag: "xaa",
-      },
-    ],
-  },
-  {
-    id: "primitives",
+    // Raw MCP primitives. Skills is deliberately absent: it's execution-context
+    // config, so it lives as a Connect tab (Servers | Client | Computer |
+    // Skills) and is reached through that switcher.
+    id: "inspect",
+    label: "Inspect",
     items: [
       {
         title: "Tools",
@@ -337,6 +338,18 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+    ],
+  },
+  {
+    id: "educate",
+    label: "Educate",
+    items: [
+      {
+        title: "Learning",
+        url: "/learning",
+        icon: GraduationCap,
+        featureFlag: "mcpjam-learning",
       },
     ],
   },
@@ -379,6 +392,13 @@ function SidebarNavSkeleton() {
   );
 }
 
+/**
+ * Drop the nav items a hosted deployment cannot serve. Only `hostedBlocked`
+ * surfaces are dropped: this filter runs BEFORE `filterByFeatureFlags`, so
+ * anything it removes is gone with no flag able to bring it back — which is
+ * how the Sessions item stayed invisible on app.mcpjam.com (#4210) while it
+ * was an allow-list.
+ */
 export function getHostedNavigationSections(
   sections: NavSection[]
 ): NavSection[] {
@@ -390,11 +410,11 @@ export function getHostedNavigationSections(
           item.url.replace(/^[#/]+/, "")
         );
 
-        if (isHostedSidebarTabAllowed(normalizedTab)) {
-          return [item];
+        if (isHostedTabBlocked(normalizedTab)) {
+          return [];
         }
 
-        return [];
+        return [item];
       }),
     }))
     .filter((section) => section.items.length > 0);
@@ -576,7 +596,20 @@ export function MCPSidebar({
 
   return (
     <>
-      <Sidebar collapsible="icon" {...props}>
+      {/* Production Redesign chrome (BB-127): no divider between the linen
+          sidebar and the linen top bar — the inset panel's rounded top edge and
+          shadow are what separate chrome from content.
+          Drop the width, not the color: the border sits on sidebar-container,
+          which has no fill of its own (the linen is on sidebar-inner), so a
+          transparent border still reveals a 1px strip of the page behind it.
+          The variant prefix has to match the primitive's
+          `group-data-[side=left]:border-r` or tailwind-merge keeps both and the
+          more specific variant rule wins. */}
+      <Sidebar
+        collapsible="icon"
+        className="group-data-[side=left]:border-r-0"
+        {...props}
+      >
         <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
@@ -606,9 +639,12 @@ export function MCPSidebar({
                   type="button"
                   onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
-                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
-                    /* Reserve space for the collapse control so the logo stays visually centered and
-                       clicks on the logo never compete with the invisible hit target. */
+                    "relative z-0 flex w-full cursor-pointer items-center justify-start py-2 transition-opacity duration-200",
+                    /* Left-aligned, which lands the mark 16px from the sidebar edge — the
+                       same inset the nav rows and the divider use, so the whole rail shares
+                       one left margin. It used to be centered, which read as pushed right.
+                       `pr-10` still reserves the collapse control's slot so a wider logo
+                       can never slide under its hit target. */
                     "px-2 pr-10 hover:opacity-80"
                   )}
                 >
@@ -687,6 +723,7 @@ export function MCPSidebar({
               return (
                 <React.Fragment key={section.id}>
                   <NavMain
+                    label={section.label}
                     items={section.items.map((item) => ({
                       ...item,
                       isActive: isNavItemActive(item),

@@ -58,6 +58,37 @@ export function reportScore(
 }
 
 /**
+ * Name the profile a run was scored against.
+ *
+ * Separate line, not folded into the score line: the number is what a human
+ * reads first, and the identity is what they need only when COMPARING two
+ * numbers. Read structurally so an older `@mcpjam/sdk` (no `profile`) prints
+ * nothing.
+ */
+export function reportProfile(
+  result: {
+    profile?: {
+      profileId: string;
+      profileVersion: string;
+      checkerVersion: string;
+      pendingCheckIds: string[];
+    };
+  },
+  command: { optsWithGlobals(): { quiet?: boolean } },
+): void {
+  const profile = result.profile;
+  if (!profile) return;
+  if (command.optsWithGlobals().quiet) return;
+  const pending =
+    profile.pendingCheckIds.length > 0
+      ? ` — ${profile.pendingCheckIds.length} check(s) ran unscored: ${profile.pendingCheckIds.join(", ")}`
+      : "";
+  process.stderr.write(
+    `Profile: ${profile.profileId}@${profile.profileVersion} (checker ${profile.checkerVersion})${pending}\n`,
+  );
+}
+
+/**
  * Surface the readiness channel (SHOULD/RECOMMENDED/MAY advice) for a human.
  * Advice lives beside the verdict, never inside it: it goes to stderr like
  * {@link reportIncomplete}, affects no exit code, and is read structurally so

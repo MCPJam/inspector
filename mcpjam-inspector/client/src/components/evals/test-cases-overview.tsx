@@ -45,6 +45,7 @@ import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 import {
   useCrossHostData,
   formatHostFallback,
+  type CrossHostEnvironment,
 } from "./cross-host/use-cross-host-data";
 import { HostCell } from "./cross-host/host-cell";
 import { HostChip } from "@/components/hosts/host-chip";
@@ -145,6 +146,12 @@ interface TestCasesOverviewProps {
    */
   hostNamesById?: Map<string, string | null>;
   /**
+   * The suite's project environments, owned by the parent for the same reason
+   * as `hostNamesById`. Without them a run can only be placed by its resolved
+   * host, so two model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
+  /**
    * Iteration override the per-case Run control will send (quick-run state).
    * Forwarded to the credit estimate so the number matches the run the button
    * will actually launch.
@@ -178,6 +185,7 @@ export function TestCasesOverview({
   isGeneratingTestCases = false,
   onCreateTestCase,
   hostNamesById,
+  environments,
   quickRunIterationOverride,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
@@ -397,7 +405,7 @@ export function TestCasesOverview({
     effectiveCases,
     runs ?? [],
     effectiveIterations,
-    { hostNamesById },
+    { hostNamesById, environments },
   );
   const clientColumns = useMemo(
     () =>
@@ -557,6 +565,7 @@ export function TestCasesOverview({
               onTestCaseClick={onTestCaseClick}
               onDeleteTestCasesBatch={onDeleteTestCasesBatch}
               hostNamesById={hostNamesById}
+              environments={environments}
             />
           </div>
         ) : (
@@ -579,14 +588,21 @@ export function TestCasesOverview({
                   <div className="grid shrink-0" style={clientRailStyle}>
                     {clientColumns.map((col) => (
                       <div
-                        key={col.hostId}
+                        key={col.columnKey ?? col.hostId}
                         className="flex justify-center border-l border-border/40 px-2"
                       >
-                        <HostChip
-                          name={col.hostName ?? formatHostFallback(col.hostId)}
-                          hostId={col.hostId}
-                          className="max-w-[8rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"
-                        />
+                        <div className="flex flex-col items-center gap-0.5">
+                          <HostChip
+                            name={col.hostName ?? formatHostFallback(col.hostId)}
+                            hostId={col.hostId}
+                            className="max-w-[8rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"
+                          />
+                          {col.modelLabel ? (
+                            <span className="max-w-[8rem] truncate font-mono text-[9px] text-muted-foreground">
+                              {col.modelLabel}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -704,7 +720,7 @@ export function TestCasesOverview({
                   // clients disagree, red when they all fail (mirrors the matrix).
                   const byHost = crossHost.matrix.get(testCase._id);
                   const cellsWithData = clientColumns
-                    .map((col) => byHost?.get(col.hostId))
+                    .map((col) => byHost?.get(col.columnKey ?? col.hostId))
                     .filter(
                       (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
                     );
@@ -723,10 +739,10 @@ export function TestCasesOverview({
                     <div className="grid shrink-0" style={clientRailStyle}>
                       {clientColumns.map((col) => (
                         <div
-                          key={col.hostId}
+                          key={col.columnKey ?? col.hostId}
                           className="border-l border-border/40"
                         >
-                          <HostCell data={byHost?.get(col.hostId)} />
+                          <HostCell data={byHost?.get(col.columnKey ?? col.hostId)} />
                         </div>
                       ))}
                     </div>

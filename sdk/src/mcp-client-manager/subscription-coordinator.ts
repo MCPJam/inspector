@@ -180,7 +180,7 @@ export interface SubscriptionInterestRejection {
     /**
      * A task-filtered listen was wanted but this connection cannot put the
      * extension's per-request eligibility declaration on the listen request,
-     * so sending it would earn `-32003`. Polling continues; the handle is not
+     * so sending it would earn `-32021`. Polling continues; the handle is not
      * lost. See `tasks-ext-listen-meta.ts`.
      */
     | "tasks-declaration-unavailable";
@@ -277,7 +277,7 @@ export interface SubscriptionClientPort {
    * per-request eligibility declaration.
    *
    * Separate from {@link listen} on purpose. A task-filtered listen without
-   * the declaration MUST be answered `-32003` (`tasks.md:797-799`), so a
+   * the declaration MUST be answered `-32021` (`tasks.md:797-799`), so a
    * connection that cannot declare must not send one at all — it drops the
    * `taskIds` selection, records it as `tasks-declaration-unavailable`, and
    * keeps polling. Absent method ⇒ exactly that.
@@ -944,7 +944,7 @@ export class SubscriptionCoordinator {
    *
    * Kept together so every caller — reconcile and re-listen alike — sees the
    * same filter. A re-listen that skipped the gate would resurrect a `taskIds`
-   * selection this connection cannot declare and earn a `-32003` on reconnect.
+   * selection this connection cannot declare and earn a `-32021` on reconnect.
    */
   private resolveFilter(): {
     requested: SubscriptionFilterShape;
@@ -963,7 +963,7 @@ export class SubscriptionCoordinator {
     }
 
     // Drop rather than downgrade: an undeclared task-filtered listen is a
-    // guaranteed -32003, and the polling fallback loses nothing but latency.
+    // guaranteed -32021, and the polling fallback loses nothing but latency.
     //
     // Only ONE reason is reachable here. `resolveRequestedFilter` was given the
     // era, so a legacy connection already had its `taskIds` rejected as

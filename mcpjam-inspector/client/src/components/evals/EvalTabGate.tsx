@@ -27,9 +27,8 @@ export function EvalTabGate({
   isDirectGuest?: boolean;
   /**
    * Chrome rendered ABOVE every gate state, including the sign-in wall and the
-   * loading spinner. The Suites | Runs switcher lives here: Runs mode is
-   * guest-reachable (it hosts the SDK quickstart), so a signed-out user stuck
-   * on the Suites wall must still be able to get there.
+   * loading spinner. The Evaluate header lives here so title, description, and
+   * Create suite stay visible while auth or project selection is still settling.
    */
   header?: ReactNode;
   children: ReactNode;

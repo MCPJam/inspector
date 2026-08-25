@@ -18,9 +18,8 @@ import {
  *
  * Two mirrors, one surface: Anthropic's Claude connectors directory (~2,000
  * entries, synced daily) and OpenAI's ChatGPT app directory (~2,900 entries,
- * uploaded weekly). Both sit beside — never instead of — the hand-curated
- * catalog `useRegistryServers` serves: those are cards MCPJam stands behind,
- * these are upstream facts about somebody else's listing.
+ * uploaded weekly). These sit beside the organization's own shelf as the
+ * public catalogs on the Registry tab.
  *
  * ONE SOURCE AT A TIME, Claude by default. The backend's browse and search are
  * source-scoped index reads, so a "both" mode would be a second query and a
@@ -28,10 +27,9 @@ import {
  * catalog they are looking at, which is information the cards themselves
  * cannot carry as clearly.
  *
- * Gated by the SAME `REGISTRY_FEATURE_ENABLED` switch as the curated half. A
- * directory that queries while the curated catalog is dark is precisely the
- * half-lit state that flag exists to prevent, so there is one constant and it
- * lives in `useRegistryServers`.
+ * Gated by the same `REGISTRY_FEATURE_ENABLED` switch as the rest of the
+ * Registry tab, so a directory that queries while the route is dark cannot
+ * half-light the screen. The constant still lives in `useRegistryServers`.
  */
 
 /** How many cards a page carries. Matches the grid's two-column rhythm. */
@@ -600,16 +598,10 @@ export function useServerDirectory({
     "serverCatalogConnect:connectCatalogServer" as any
   );
 
-  // Canonical-wins: a curated card shadows its directory twin. The backend
-  // flags the row rather than dropping it, so the filter lives here and the
-  // "show duplicates" affordance stays one boolean away.
+  // The curated global catalog is retired, so leftover overlap flags no
+  // longer hide a directory row. Show every result the page returned.
   const items = useMemo(
-    () =>
-      enabled
-        ? ((results ?? []) as DirectoryServer[]).filter(
-            (item) => !item.curatedOverlap
-          )
-        : [],
+    () => (enabled ? ((results ?? []) as DirectoryServer[]) : []),
     [enabled, results]
   );
 

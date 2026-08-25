@@ -1,0 +1,75 @@
+{
+  "convexRefs": {
+    "shares:getShareSettings": {
+      "args": ["resourceType", "resourceId"],
+      "returns": "ShareSettingsEnvelope | null"
+    },
+    "shares:setShareMode": {
+      "args": ["resourceType", "resourceId", "mode", "allowGuestAccess?"],
+      "returns": "ShareSettingsEnvelope"
+    },
+    "shares:rotateShareLink": {
+      "args": ["resourceType", "resourceId"],
+      "returns": "ShareSettingsEnvelope"
+    },
+    "shares:upsertShareMember": {
+      "args": ["resourceType", "resourceId", "email", "sendInviteEmail"],
+      "returns": "ShareSettingsEnvelope"
+    },
+    "shares:removeShareMember": {
+      "args": ["resourceType", "resourceId", "memberIdOrEmail"],
+      "returns": "ShareSettingsEnvelope"
+    },
+    "shares:revokeAllShares": {
+      "args": ["resourceType", "resourceId"],
+      "returns": "ShareSettingsEnvelope"
+    },
+    "orgSharePolicy:getOrgSharePolicy": {
+      "args": ["organizationId"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:setOrgSharePolicy": {
+      "args": ["organizationId", "maxShareMode", "inviteAudience"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:getEffectiveSharePolicyForProject": {
+      "args": ["projectId"],
+      "returns": "OrgSharePolicyKnobs"
+    }
+  },
+  "shareSettingsEnvelope": {
+    "resourceType": "conformanceRun",
+    "resourceId": "jd7…",
+    "organizationId": "jd7…",
+    "workspaceId": "jd7…",
+    "projectId": "jd7…",
+    "mode": "anyone_with_link",
+    "maxShareMode": "anyone_with_link",
+    "policyVersion": 1,
+    "inviteEpoch": 1,
+    "linkGrantEpoch": 1,
+    "link": { "token": "nanoid-token", "rotatedAt": 0 },
+    "artifactGeneration": 1,
+    "artifactStatus": "ready",
+    "members": [
+      {
+        "id": "jd7…",
+        "email": "invitee@example.com",
+        "role": "viewer",
+        "invitedAt": 0
+      }
+    ]
+  },
+  "shareRedeemResponse": {
+    "ok": true,
+    "resourceType": "conformanceRun",
+    "resourceId": "jd7…",
+    "role": "viewer",
+    "mode": "anyone_with_link",
+    "projectId": "jd7…",
+    "accessVersion": 1,
+    "payload": {}
+  },
+  "resourceTypes": ["scenario", "conformanceRun", "evalRun"],
+  "modes": ["project_members", "invited_only", "anyone_with_link"]
+}

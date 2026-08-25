@@ -87,6 +87,26 @@ const packageJson = JSON.parse(
 );
 const appVersion = packageJson.version;
 
+// The SDK's own `define` (see `sdk/tsup.config.ts`), MIRRORED here because
+// `@mcpjam/sdk/browser` is aliased to `src/browser.ts` above — this build
+// compiles the SDK from source, so nothing else replaces the token. The SDK
+// reads it defensively and falls back to "unknown", so a missing define is no
+// longer fatal; supplying it is what makes the value truthful rather than a
+// placeholder. `sdk/vitest.config.ts` mirrors it for the same reason.
+const sdkPackageJson = JSON.parse(
+  readFileSync(path.resolve(rootDir, "../sdk/package.json"), "utf-8"),
+);
+const sdkVersion = sdkPackageJson.version;
+// Fail the build rather than ship a placeholder. The token exists so a
+// conformance report can name the build that produced it; a define of
+// `undefined` would silently land the SDK on its "unknown" fallback, and
+// "unknown" in a stamp is worse than a build that stopped and said why.
+if (typeof sdkVersion !== "string" || sdkVersion.trim() === "") {
+  throw new Error(
+    "sdk/package.json has no usable `version`, so __MCPJAM_SDK_VERSION__ cannot be defined",
+  );
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, rootDir, "");
@@ -233,6 +253,7 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },
   };
 });

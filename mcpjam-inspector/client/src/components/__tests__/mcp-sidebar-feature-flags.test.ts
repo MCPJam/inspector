@@ -116,8 +116,8 @@ describe("filterByFeatureFlags", () => {
 
   it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
     // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
-    // now live under one Evaluate entry and switch in the page header, so the
-    // sidebar carries no eval sub-items and no eval flag.
+    // now live under one Evaluate entry, so the sidebar carries no eval
+    // sub-items and no eval flag.
     const evalsItems = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => item.url.startsWith("/evals"));
@@ -260,6 +260,21 @@ describe("declared nav flags are actually resolved", () => {
       .map((i) => i.title);
     expect(on).toContain("Sessions");
   });
+
+  it("Sessions lives in Measure, after Evaluate", () => {
+    const measure = navigationSections.find((section) => section.id === "measure");
+    const titles = measure?.items.map((item) => item.title) ?? [];
+
+    expect(titles).toContain("Evaluate");
+    expect(titles).toContain("Sessions");
+    expect(titles.indexOf("Sessions")).toBeGreaterThan(titles.indexOf("Evaluate"));
+    expect(
+      navigationSections
+        .filter((section) => section.id !== "measure")
+        .flatMap((section) => section.items)
+        .map((item) => item.title),
+    ).not.toContain("Sessions");
+  });
 });
 
 describe("applyBillingGateNavState", () => {
@@ -328,9 +343,9 @@ describe("getHostedNavigationSections", () => {
       {
         id: "others",
         items: [
-          // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Servers tab switcher — so it is dropped here.
-          { title: "Skills", url: "#skills", icon: FakeIcon },
+          // Tracing is the one surface hosted cannot serve (it needs the
+          // local OTLP collector), so it is the one item dropped here.
+          { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
@@ -352,7 +367,8 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      // Tasks are hosted-capable (reconnect-per-poll routes), so the item stays.
+      // Everything else survives: the filter is a block list now, so a tab
+      // nobody thought to list is reachable rather than silently missing.
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",

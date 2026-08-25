@@ -150,8 +150,13 @@ describe("workspace tool catalog", () => {
       "list_readiness_runs",
       "cancel_readiness_run",
       "get_readiness_report",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "get_eval_run_disclosure",
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
@@ -203,6 +208,14 @@ describe("workspace tool catalog", () => {
       "get_user_testing_insights",
       "dismiss_user_testing_finding",
       "undismiss_user_testing_finding",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);
@@ -528,5 +541,29 @@ describe("live server operations", () => {
     expect(approval("diagnose_server")).toBe(true);
     expect(approval("read_server_resource")).toBe(true);
     expect(approval("list_project_servers")).toBe(false);
+  });
+
+  it("requires approval for registry installs and uninstall", () => {
+    // install_registry_directory_server is create_project_server with
+    // different spelling — a caller-supplied endpointUrl that ends as a
+    // server row in the user's project — and uninstall is its
+    // delete_project_server sibling. Skipping the approval gate here would
+    // let a prompt-injected chat add or remove servers silently.
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("install_registry_directory_server")).toBe(true);
+    expect(approval("install_registry_server")).toBe(true);
+    expect(approval("uninstall_registry_server")).toBe(true);
+    // The registry reads stay approval-free.
+    expect(approval("search_registry_directory")).toBe(false);
+    expect(approval("list_registry_connections")).toBe(false);
   });
 });

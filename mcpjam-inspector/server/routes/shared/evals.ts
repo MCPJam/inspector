@@ -1,7 +1,9 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -74,6 +76,7 @@ import {
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
 import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
   countModelSteps,
@@ -187,6 +190,7 @@ export const RunEvalsRequestSchema = z.object({
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
+  toolPolicy: evalSuiteFileToolPolicySchema.optional(),
   tests: z.array(
     z
       .object({
@@ -354,6 +358,16 @@ export const RunEvalsRequestSchema = z.object({
    */
   idempotencyKey: z.string().min(1).max(256).optional(),
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Lowercase,
+   * 64 characters. Forwarded to Convex `startTestSuiteRun.sourceHash` so a
+   * file-owned run records the exact bytes it ran. Absent on UI / API
+   * launches that did not come from a file.
+   */
+  sourceHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, "sourceHash must be a 64-character lowercase SHA-256 hex digest")
+    .optional(),
+  /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
    * always sent explicitly, even single-env). `prepareEvalRun` resolves the
    * environment's closed server set via
@@ -366,6 +380,13 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   environmentId: z.string().optional(),
+  /**
+   * Compose-and-run opt-in: accept a project-scoped, non-archived environment
+   * that is NOT a suite member. Never mutates the suite. Absent / false keeps
+   * today's membership check. Older backends reject the unknown arg; clients
+   * probe `ephemeralEnvironmentLaunch` before sending it.
+   */
+  ephemeralEnvironment: z.boolean().optional(),
   /**
    * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
    * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
@@ -479,6 +500,7 @@ export const RunTestCaseRequestSchema = z.object({
    * NOT mutate the persisted case's `matchOptions`.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  toolPolicy: evalSuiteFileToolPolicySchema.optional(),
   /**
    * Scope this single-case run to a single host attached to the suite. Mirrors
    * suite-run host selection and reuses `loadSuiteHostConfig`.
@@ -1869,7 +1891,10 @@ export async function prepareEvalRun(
     resolvedEnvironment,
     source,
     idempotencyKey,
+    sourceHash,
     skillsOverride,
+    ephemeralEnvironment,
+    toolPolicy,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2062,7 +2087,9 @@ export async function prepareEvalRun(
       : undefined,
     source,
     idempotencyKey,
+    ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
+    ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -2186,6 +2213,30 @@ export async function prepareEvalRun(
       ErrorCode.VALIDATION_ERROR,
       harnessAdmission.reason,
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
+    );
+  }
+  // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
+  // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
+  // into the proxy token, so dropping the policy drops the credential. Refused
+  // only when this deployment cannot seal it. A host-executed adapter never
+  // mints that token (it enforces in-process), and the refusal reads its
+  // delivery off the adapter rather than off a bare "is a harness" boolean.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: harnessAdmission.harness,
+  });
+  if (harnessPolicyRefusal) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: harnessPolicyRefusal,
+    });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessPolicyRefusal,
+      {
+        reason: "TOOL_POLICY_UNSUPPORTED",
+        harness: harnessAdmission.harness,
+      }
     );
   }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
@@ -2380,6 +2431,7 @@ export async function prepareEvalRun(
       // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
     });
   };
 
@@ -2439,6 +2491,7 @@ export async function runEvalTestCaseWithManager(
     matchOptionsOverride,
     namedHostId,
     hostConfigOverride,
+    toolPolicy,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -2473,6 +2526,9 @@ export async function runEvalTestCaseWithManager(
     testCase.evalTestSuiteId,
     namedHostId
   );
+  const effectiveHostConfig =
+    (hostConfigOverride as Record<string, unknown> | undefined) ??
+    suiteHostConfig;
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined
@@ -2481,6 +2537,21 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: harnessOfHostConfig(effectiveHostConfig),
+  });
+  if (harnessPolicyRefusal) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessPolicyRefusal,
+      { reason: "TOOL_POLICY_UNSUPPORTED" }
+    );
+  }
 
   // The same honesty gate the suite path applies, with the surface named: a
   // single-case run passes `runId: null`, and both sandbox-provisioning sites
@@ -2619,6 +2690,7 @@ export async function runEvalTestCaseWithManager(
     hostExecutionPolicy: suiteHostPolicy,
     // PR 4d: see comment on the suite-run wire-up site above.
     suiteHostConfig,
+    ...(toolPolicy ? { toolPolicy } : {}),
   });
 
   const expectedIterationId =
@@ -2844,6 +2916,7 @@ export async function streamEvalTestCaseWithManager(
     matchOptionsOverride,
     namedHostId,
     hostConfigOverride,
+    toolPolicy,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -2878,6 +2951,9 @@ export async function streamEvalTestCaseWithManager(
     testCase.evalTestSuiteId,
     namedHostId
   );
+  const effectiveHostConfig =
+    (hostConfigOverride as Record<string, unknown> | undefined) ??
+    suiteHostConfig;
   const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
     suiteHostConfig,
     hostConfigOverride as Record<string, unknown> | undefined
@@ -2886,6 +2962,21 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
+  const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
+    hasToolPolicy: Boolean(toolPolicy),
+    harness: harnessOfHostConfig(effectiveHostConfig),
+  });
+  if (harnessPolicyRefusal) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessPolicyRefusal,
+      { reason: "TOOL_POLICY_UNSUPPORTED" }
+    );
+  }
 
   // The same honesty gate the suite path applies, with the surface named: a
   // single-case run passes `runId: null`, and both sandbox-provisioning sites
@@ -3046,18 +3137,20 @@ export async function streamEvalTestCaseWithManager(
     // the run's own teardown, which aborts through this signal.
     await: { signal: streamAbortController.signal },
   });
+  // `includeAppOnly` is tied to the PRESENCE of a host policy, not to
+  // `respectToolVisibility`: eval wants the full set so the visibility gate
+  // below can both filter and COUNT the drops honestly.
+  const singleCaseToolOptions = mcpToolOptionsFor({
+    includeAppOnly: Boolean(suiteHostPolicy),
+    modelVisibleMcpToolResults: suiteHostPolicy?.modelVisibleMcpToolResults,
+    tasks: singleCaseTasksSeam,
+  });
   const tools = (
-    suiteHostPolicy || singleCaseTasksSeam
-      ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          ...(suiteHostPolicy
-            ? {
-                includeAppOnly: true,
-                modelVisibleMcpToolResults:
-                  suiteHostPolicy.modelVisibleMcpToolResults,
-              }
-            : {}),
-          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
-        })
+    singleCaseToolOptions
+      ? await clientManager.getToolsForAiSdk(
+          resolvedServerIds,
+          singleCaseToolOptions
+        )
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
   const streamToolSignals = suiteHostPolicy
@@ -3102,6 +3195,7 @@ export async function streamEvalTestCaseWithManager(
           // `resolveExecutionContext`. PR 5 will reduce these runners
           // further; the threading still applies in the meantime.
           suiteHostConfig,
+          ...(toolPolicy ? { toolPolicy } : {}),
           toolSignals: streamToolSignals,
           environment: runtimeEnvironment,
           emit: (event: EvalStreamEvent) => {

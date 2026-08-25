@@ -15,6 +15,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
+import {
+  targetProductCapReason,
+  type TargetBudgetContext,
+} from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
@@ -28,6 +32,7 @@ export function ClientsPill({
   disabled,
   testId,
   inModal = false,
+  budget,
 }: {
   projectId: string;
   value: string[];
@@ -36,6 +41,8 @@ export function ClientsPill({
   max: number;
   disabled?: boolean;
   testId?: string;
+  /** Product-cap context from the composer. Absent ⇒ `selected.length >= max`. */
+  budget?: TargetBudgetContext;
   /**
    * Render the popover INLINE rather than portalled, for callers inside a Radix
    * Dialog — a portalled popover lands outside the dialog, where the modal
@@ -138,8 +145,16 @@ export function ClientsPill({
           <div className="max-h-64 space-y-0.5 overflow-y-auto">
             {hosts.map((host) => {
               const checked = selected.includes(host.hostId);
+              const productBlocked =
+                !single &&
+                !checked &&
+                budget != null &&
+                (selected.length + 1) * budget.choiceCount > budget.maxTargets;
               const capBlocked =
-                !single && !checked && selected.length >= max;
+                !single &&
+                !checked &&
+                (productBlocked ||
+                  (budget == null && selected.length >= max));
               return (
                 <Label
                   key={host.hostId}
@@ -148,6 +163,15 @@ export function ClientsPill({
                     (capBlocked || disabled) &&
                       "cursor-not-allowed opacity-60 hover:bg-transparent"
                   )}
+                  title={
+                    productBlocked && budget
+                      ? targetProductCapReason(
+                          selected.length + 1,
+                          budget.choiceCount,
+                          budget.maxTargets
+                        )
+                      : undefined
+                  }
                 >
                   <Checkbox
                     checked={checked}

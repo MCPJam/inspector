@@ -6,7 +6,7 @@
  *    the secret AND updates the URL stored on the server record — then
  *    reconnect. Capped to avoid remint loops.
  *  - 4001 (replaced) / 4002 (revoked by control plane): exit. A takeover
- *    by another `mcpjam tunnel` usually surfaces as 4002, not 4001: the
+ *    by another `mcpjam cloud tunnel` usually surfaces as 4002, not 4001: the
  *    mint disconnects the old socket at the edge before the new one
  *    registers.
  *  - Transient drops / 1012: the relay client's own backoff reconnect.
@@ -75,10 +75,10 @@ export interface TunnelSessionDeps {
 
 function permanentCloseMessage(reason: string, closeCode: number): string {
   if (closeCode === CLOSE_REPLACED) {
-    return "Tunnel taken over: another session registered a tunnel for this server. Re-run `mcpjam tunnel` here to take it back.";
+    return "Tunnel taken over: another session registered a tunnel for this server. Re-run `mcpjam cloud tunnel` here to take it back.";
   }
   if (closeCode === CLOSE_CONTROL_PLANE) {
-    return "Tunnel closed or re-created elsewhere (another `mcpjam tunnel` session for this server, or closed from the platform). Re-run `mcpjam tunnel` to recreate it.";
+    return "Tunnel closed or re-created elsewhere (another `mcpjam cloud tunnel` session for this server, or closed from the platform). Re-run `mcpjam cloud tunnel` to recreate it.";
   }
   return reason;
 }

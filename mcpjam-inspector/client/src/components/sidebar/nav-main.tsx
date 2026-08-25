@@ -2,6 +2,7 @@ import React from "react";
 import {
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -34,12 +35,14 @@ interface LearnMoreProps {
 
 interface NavMainProps {
   items: NavMainItem[];
+  /** Section heading ("Explore", "Measure", …). Hidden when collapsed to icons. */
+  label?: string;
   onItemClick?: (url: string) => void;
   /** Learn more hover card integration */
   learnMore?: LearnMoreProps | null;
 }
 
-export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
+export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
   const { open: sidebarOpen } = useSidebar();
 
   const handleClick = (url: string) => {
@@ -55,7 +58,9 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       item.disabled
         ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
         : isItemActive(item)
-        ? "[&[data-active=true]]:bg-accent cursor-pointer"
+        ? // Must be the *sidebar* accent: the linen ground (--sidebar) is the
+          // same value as --accent, so bg-accent would render invisible here.
+          "[&[data-active=true]]:bg-sidebar-accent cursor-pointer"
         : "cursor-pointer"
     );
 
@@ -120,6 +125,22 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
 
   return (
     <SidebarGroup className="py-1">
+      {label ? (
+        // Keep the primitive's `text-sidebar-foreground/70`: the design specs
+        // --secondary-foreground, but that token inverts in dark mode and the
+        // label lands at L 0.31 on an L 0.24 sidebar — invisible.
+        //
+        // `px-0` drops the primitive's own px-2 so the heading sits at the
+        // group's 8px inset while its rows start at 16px. Sharing 16px with the
+        // row icons aligned the two perfectly and left nothing to read the
+        // grouping by; the 8px step is what says these rows belong to it.
+        //
+        // -mt-5 must track h-5: the primitive collapses its own h-8 label with
+        // -mt-8 when the sidebar shrinks to icons.
+        <SidebarGroupLabel className="h-5 px-0 group-data-[collapsible=icon]:-mt-5">
+          {label}
+        </SidebarGroupLabel>
+      ) : null}
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {
