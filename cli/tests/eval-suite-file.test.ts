@@ -2245,7 +2245,7 @@ describe("eval run --file", () => {
     }
   });
 
-  test("a per-case passThreshold override is refused, not silently dropped", async () => {
+  test("a per-case passThreshold override is uploaded, not silently dropped", async () => {
     const fixture = await startFileRunFixture();
     try {
       await withTempDir(async (dir) => {
@@ -2263,11 +2263,12 @@ describe("eval run --file", () => {
             telemetry: telemetryDisabled,
           })
         );
-        assert.equal(run.result.exitCode, 2, run.stderr);
-        assert.match(run.stderr, /CASE_PASS_THRESHOLD/);
-        assert.match(run.stderr, /c_refund/);
-        assert.equal(fixture.fromFileBodies.length, 0);
-        assert.equal(fixture.runBodies.length, 0);
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const batch = fixture.batchBodies[0] as {
+          cases: Array<{ passThreshold?: number; repetitions?: number }>;
+        };
+        assert.equal(batch.cases[0].passThreshold, 0.95);
+        assert.equal(fixture.runBodies.length, 1);
       });
     } finally {
       await fixture.close();
@@ -2532,7 +2533,7 @@ describe("eval run --file", () => {
     }
   });
 
-  test("defaults.repetitions is not uploaded as a minIterations floor", async () => {
+  test("defaults.repetitions is uploaded as the v2 suite policy", async () => {
     const fixture = await startFileRunFixture();
     try {
       await withTempDir(async (dir) => {
@@ -2553,17 +2554,32 @@ describe("eval run --file", () => {
         assert.equal(run.result.exitCode, 0, run.stderr);
         const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
         assert.equal("minIterations" in synced, false);
+        assert.equal(synced.verdictPolicyVersion, 2);
+        assert.deepEqual(synced.verdictPolicyDefaults, {
+          repetitions: 5,
+          passThreshold: 0.8,
+          validity: {
+            coverage: {
+              kind: "allConfiguredTrialsAttempted",
+              minGradeableTrials: 1,
+            },
+            minCompletionRate: 0.8,
+            maxEvaluatorErrorRate: 0.1,
+          },
+        });
         const batch = fixture.batchBodies[0] as {
-          cases: Array<{ iterations: number }>;
+          cases: Array<{ iterations: number; repetitions: number; passThreshold: number }>;
         };
         assert.equal(batch.cases[0].iterations, 1);
+        assert.equal(batch.cases[0].repetitions, 1);
+        assert.equal(batch.cases[0].passThreshold, 0.8);
       });
     } finally {
       await fixture.close();
     }
   });
 
-  test("authored toolPolicy and validity gates are refused", async () => {
+  test("authored toolPolicy is refused while validity gates are uploaded", async () => {
     const fixture = await startFileRunFixture();
     try {
       await withTempDir(async (dir) => {
@@ -2606,9 +2622,17 @@ describe("eval run --file", () => {
             { telemetry: telemetryDisabled }
           )
         );
-        assert.equal(validity.result.exitCode, 2, validity.stderr);
-        assert.match(validity.stderr, /VALIDITY_UNSUPPORTED/);
-        assert.equal(fixture.runBodies.length, 0);
+        assert.equal(validity.result.exitCode, 0, validity.stderr);
+        const synced = fixture.fromFileBodies.at(-1) as Record<string, any>;
+        assert.deepEqual(synced.verdictPolicyDefaults.validity, {
+          coverage: {
+            kind: "minEligibleTrials",
+            minEligibleTrials: 3,
+          },
+          minCompletionRate: 0.8,
+          maxEvaluatorErrorRate: 0.1,
+        });
+        assert.equal(fixture.runBodies.length, 1);
       });
     } finally {
       await fixture.close();

@@ -51,6 +51,7 @@ import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
@@ -251,14 +252,17 @@ export function HostConfigCompareView({
     if (!codexEnabled) excluded.add("codex");
     return excluded;
   }, [claudeCodeEnabled, codexEnabled, presetOnly]);
-  // Public caniuse still displays flag-gated hosts as reference data, but
-  // must not offer their verify links because those links auto-create a host.
-  const disabledVerifyTemplateIds = useMemo(() => {
-    const disabled = new Set<string>();
-    if (presetOnly || !claudeCodeEnabled) disabled.add("claude-code");
-    if (presetOnly || !codexEnabled) disabled.add("codex");
-    return disabled;
-  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
+  // Public caniuse still displays flag-gated hosts as reference data, but must
+  // not offer their verify links because those links auto-create a host, and
+  // the app refuses to create one until the rollout flag is on. The flags
+  // cannot govern this decision: as the comment above says, they are scoped to
+  // @mcpjam.com users and read as off for every anonymous visitor. So the hide
+  // is unconditional here — drop an id from `FLAG_GATED_HOST_IDS` when it ships
+  // and its verify link comes back with it. Verify links exist only in this
+  // mode (`verifyBaseUrl` is undefined otherwise), so no set is needed there.
+  const disabledVerifyTemplateIds = presetOnly
+    ? FLAG_GATED_HOST_IDS
+    : undefined;
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
