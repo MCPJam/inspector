@@ -801,3 +801,83 @@ describe("D7: metadata-attribution rides the same second pass", () => {
     });
   });
 });
+
+// =============================================================================
+// CodeRabbit review — four findings, each pinned by the case that would have
+// caught it. None of these files are type-checked by any script or by CI
+// (`npm run typecheck` covers the SDK and sibling workspaces, not
+// `mcpjam-inspector`), so two of the four were type errors that shipped green.
+// Tests are the only guard these files actually have.
+// =============================================================================
+describe("the second pass keeps its contract with the run and the first pass", () => {
+  test("an off run returns the FULL result shape, not a partial literal", async () => {
+    // `JudgeSecondPassResult` requires `metadataAttributionOutcomes`. The
+    // off/shadow path built its own literal and omitted it — for most runs.
+    process.env[ENV_KEY] = "dual_write";
+    const { value } = ports({
+      fetchRun: vi.fn(async () => ({
+        ...runRow(),
+        configSnapshot: { gradingEngine: { mode: "off" } },
+      })),
+    });
+
+    const result = await runJudgeSecondPass("run1", value);
+
+    expect(result.reason).toBe("mode_off");
+    expect(result.metadataAttributionOutcomes).toEqual([]);
+    expect(result.outcomes).toEqual([]);
+  });
+
+  test("a stampless legacy row still derives, through stageCase", async () => {
+    // The fallback the row type had stopped declaring. A backend row carrying
+    // only the derived shape must still produce a chain.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => {
+        const row = runRow();
+        return {
+          ...row,
+          iterations: row.iterations.map(({ authoredCase: _drop, ...rest }) => ({
+            ...rest,
+            stageCase,
+          })),
+        };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    expect(applied[0]?.body?.stageResults).toBeDefined();
+  });
+
+  test("a legacy widget_probe with no turns stays MODEL-FREE", async () => {
+    // `isPinnedOnly` calls a zero-turn `widget_probe` model-free on the first
+    // pass. `isModelFree(undefined)` is `false`, so deriving from `steps` here
+    // would call it model-driven and invent a `selection` stage — and this
+    // post overwrites `stageResults` wholesale, replacing a correct chain.
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () => {
+        const row = runRow();
+        return {
+          ...row,
+          iterations: row.iterations.map((iteration) => ({
+            ...iteration,
+            authoredCase: { caseType: "widget_probe", expectedOutput: "done" },
+          })),
+        };
+      }),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    const stages = (applied[0]?.body?.stageResults ?? []) as Array<{
+      stage?: string;
+      state?: string;
+    }>;
+    const selection = stages.find((row) => row.stage === "selection");
+    // Either absent, or present and explicitly not-applicable — never a real
+    // selection verdict the first pass would not have produced.
+    expect(
+      selection === undefined || selection.state === "notApplicable"
+    ).toBe(true);
+  });
+});

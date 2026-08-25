@@ -35,7 +35,11 @@
 
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
-import type { StageSetupSignals, TestStep } from "@mcpjam/sdk/contract";
+import type {
+  StageAuthoredCase,
+  StageSetupSignals,
+  TestStep,
+} from "@mcpjam/sdk/contract";
 import type { ToolExposureSignals } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
 import { getInternalBackendConfig } from "../internal-backend.js";
@@ -189,6 +193,13 @@ export type JudgeSecondPassIterationRow = {
     steps?: readonly TestStep[];
     promptTurns?: ReadonlyArray<{ expectedToolCalls?: readonly unknown[] }>;
   };
+  /**
+   * The backend's OWN derived shape, still served beside the raw case for D7's
+   * consumer. Read only as a fallback when `authoredCase` is absent — a row
+   * that carries just this must still derive a chain, so the field has to stay
+   * on the contract as well as in the code that reads it.
+   */
+  stageCase?: StageAuthoredCase;
   /** Snapshotted per-case options, for the `toolCalls:match` definition hash. */
   matchOptions?: Record<string, unknown>;
   isNegativeTest?: boolean;

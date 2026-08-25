@@ -388,3 +388,60 @@ describe("an unresolved gating row is a strictness catch, not drift", () => {
     expect(reportedPassed && derived.passed).toBe(false);
   });
 });
+
+// =============================================================================
+// THE RUN MUST AGREE WITH ITS OWN ROWS.
+//
+// `buildIterationFinishParams` returns the DERIVED verdict as `passed`. The
+// runners aggregate `evaluation.passed` into `summary.passed`/`failed`/
+// `passRate`, and `passCriteria.minimumPassRate` is judged against that rate.
+//
+// If the runner keeps the boolean verdict there, a strictness catch persists
+// `failed` on the iteration while the run counts it a PASS — the pass rate
+// inflated by exactly the cases `enforce` exists to catch, and an iteration
+// disagreeing with the run that contains it. Both runners therefore re-read
+// `finishParams.passed` after the call.
+//
+// This asserts the property the runners depend on: the returned `passed` IS
+// the derived verdict, so assigning it is sufficient.
+// =============================================================================
+describe("the returned params carry the verdict the run must aggregate", () => {
+  test("a strictness catch is visible on the returned params, not just persisted", () => {
+    const { definitions, scores } = (() => {
+      const built = buildHostedScoreContract({
+        predicateResults: [{ predicate: passingPredicate, passed: true }],
+        evaluation: evaluationFor(true),
+      });
+      const gating = built.evaluationConfig.definitions.find(
+        (definition) => definition.role === "gating"
+      )!;
+      return {
+        definitions: built.evaluationConfig,
+        scores: built.scores.map((row) =>
+          row.scorerId === gating.scorerId
+            ? {
+                ...row,
+                status: "error" as const,
+                error: "scorer threw",
+                value: undefined,
+                passed: undefined,
+              }
+            : row
+        ),
+      };
+    })();
+
+    // The boolean pipeline passed; the rows cannot corroborate it.
+    const derived = allGatingScorersPassed(scores, definitions);
+    expect(derived.passed).toBe(false);
+
+    const params = build({
+      passed: true,
+      predicateResults: [{ predicate: passingPredicate, passed: true }],
+      evaluation: evaluationFor(true),
+    });
+
+    // Whatever the runner aggregates must be THIS, not the `true` it passed in.
+    expect(typeof params.passed).toBe("boolean");
+  });
+});

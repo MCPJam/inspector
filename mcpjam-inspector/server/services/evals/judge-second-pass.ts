@@ -44,7 +44,7 @@
 import type { StageEvidence } from "@mcpjam/sdk/contract";
 import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
-import { isModelFree } from "@/shared/steps";
+import { turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
 import { buildStageAuthoredCase } from "./stage-inputs.js";
@@ -301,7 +301,18 @@ function deriveIterationPayload(args: {
         ...(iteration.authoredCase.promptTurns
           ? { turns: iteration.authoredCase.promptTurns }
           : {}),
-        caseNeedsModel: !isModelFree(iteration.authoredCase.steps),
+        // THE SAME PREDICATE THE FIRST PASS USED, not a steps-shaped
+        // approximation of it. `turnsNeedModel` reads `caseType` +
+        // `promptTurns`; `isModelFree(steps)` returns false when `steps` is
+        // ABSENT, so a legacy `widget_probe` carrying neither — which
+        // `isPinnedOnly` classifies model-free on turn count alone — would be
+        // called model-driven here and gain a `selection` stage the first pass
+        // never derived. This post overwrites `stageResults` wholesale, so
+        // that invented stage would replace the correct chain.
+        caseNeedsModel: turnsNeedModel({
+          caseType: iteration.authoredCase.caseType,
+          promptTurns: iteration.authoredCase.promptTurns,
+        }),
       })
     : iteration.stageCase;
 
@@ -463,14 +474,11 @@ export async function runJudgeSecondPass(
   // in-process by the first pass, and a second-pass write is by definition a
   // real write. `enforce` runs exactly as `dual_write` does.
   if (!isDualWrite(mode)) {
-    return {
-      runId,
-      mode,
-      noop: true,
-      graded: 0,
-      outcomes: [],
-      reason: mode === "off" ? "mode_off" : "mode_shadow",
-    };
+    // Through `emptyResult`, which is the only place that knows the full shape
+    // — `JudgeSecondPassResult` requires `metadataAttributionOutcomes`, and a
+    // hand-built literal here silently omitted it for every `off` and `shadow`
+    // run, which is most of them.
+    return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
   }
 
   const goalCompletionJobId = run.goalCompletionJobId;

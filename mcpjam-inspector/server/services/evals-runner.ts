@@ -3772,6 +3772,22 @@ const runLocalIteration = async ({
           }
         : {}),
     });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+    //
+    // At `enforce` the iteration's result is the conjunction of the boolean
+    // pipeline and the gating score rows, computed inside
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+    // against — so a strictness catch would persist `failed` on the iteration
+    // while the run counted it a pass, and the pass rate would be inflated by
+    // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+    // during the soak, so this drift is reachable, not theoretical.
+    //
+    // Assigned AFTER the call, never before: the score rows derive the
+    // `toolCalls:match` row from `evaluation.passed`, which must remain the
+    // MATCHER's answer at derivation time.
+    evaluation.passed = finishParams.passed;
 
     await finalizeIterationWithBrowserArtifacts({
       browser,
@@ -4828,6 +4844,22 @@ const runHostedIterationWithBrowser = async (
       prepared.discoveryState
     ),
   });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+  //
+  // At `enforce` the iteration's result is the conjunction of the boolean
+  // pipeline and the gating score rows, computed inside
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+  // against — so a strictness catch would persist `failed` on the iteration
+  // while the run counted it a pass, and the pass rate would be inflated by
+  // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+  // during the soak, so this drift is reachable, not theoretical.
+  //
+  // Assigned AFTER the call, never before: the score rows derive the
+  // `toolCalls:match` row from `evaluation.passed`, which must remain the
+  // MATCHER's answer at derivation time.
+  evaluation.passed = finishParams.passed;
 
   await finalizeIterationWithBrowserArtifacts({
     browser,

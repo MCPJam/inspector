@@ -153,9 +153,20 @@ export function resolveGradingEngineMode(
 export function resolveFrozenRunGradingMode(
   runSnapshot: ModeCarrier
 ): GradingEngineMode {
-  return resolveGradingEngineMode({
-    runSnapshot: runSnapshot ?? { mode: "off" },
-  });
+  // A PRESENT stamp this build cannot spell is still a DECISION, and the safe
+  // reading of a decision we cannot read is the lowest position.
+  //
+  // The absent case was already handled; a carrier like `{}`, or one naming a
+  // mode a NEWER backend added, yields `undefined` from the parser — and
+  // `resolveGradingEngineMode` treats an unparseable position as "no opinion"
+  // and falls through to the env ceiling. That is the same promotion this
+  // function exists to prevent, reached by a different route. The module
+  // already resolves an unrecognized ENV value to `off` for exactly this
+  // reason; the run stamp gets the same direction.
+  const stamped = runSnapshot
+    ? (parseGradingEngineMode(runSnapshot.mode) ?? "off")
+    : "off";
+  return resolveGradingEngineMode({ runSnapshot: { mode: stamped } });
 }
 
 /**
