@@ -107,6 +107,24 @@ describe("the definition's precondition is not the row's", () => {
     );
   });
 
+  test("an EXPLICIT false is the same as absent", () => {
+    // The check is a truthiness test, so `false` already behaves like absent —
+    // but that is an implementation detail, and the next person to touch it
+    // could reasonably write `!== undefined` and silently declare a gating
+    // scorer for every case that passed the flag off. Cheap to pin, and the
+    // failure it prevents is a vacuous gate at `enforce`.
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      toolMatchAuthored: false,
+    });
+
+    expect(evaluationConfig.definitions.map((d) => d.scorerId)).not.toContain(
+      HOSTED_TOOL_MATCH_SCORER_ID
+    );
+    expect(scores.map((s) => s.scorerId)).not.toContain(
+      HOSTED_TOOL_MATCH_SCORER_ID
+    );
+  });
+
   test("evaluation with authored calls ⇒ both definition AND row", () => {
     const { scores, evaluationConfig } = buildHostedScoreContract({
       evaluation,
