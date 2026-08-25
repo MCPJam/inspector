@@ -52,6 +52,7 @@ export default defineConfig({
         SERVER_PORT: "6473",
         VITE_API_BASE_URL: "http://localhost:6473",
         WEB_ALLOWED_ORIGINS: "http://localhost:5373,http://127.0.0.1:5373",
+        CLIENT_CACHE_DIR: "node_modules/.vite-oauth-debugger-dev",
       },
     },
     {
@@ -67,6 +68,7 @@ export default defineConfig({
         VITE_API_BASE_URL: "http://localhost:6474",
         VITE_MCPJAM_HOSTED_MODE: "true",
         WEB_ALLOWED_ORIGINS: "http://localhost:5374,http://127.0.0.1:5374",
+        CLIENT_CACHE_DIR: "node_modules/.vite-oauth-debugger-hosted",
       },
     },
   ],
