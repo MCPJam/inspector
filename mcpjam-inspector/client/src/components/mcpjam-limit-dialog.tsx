@@ -8,6 +8,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagVariantKey } from "posthog-js/react";
 import { useEffect, useRef } from "react";
 import {
   canManageOrgCredits,
@@ -22,6 +23,23 @@ import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipie
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { track } from "@/lib/analytics";
 
+// BB-133 guest credit-wall A/B. PostHog multivariate flag: the "treatment"
+// variant renders the benefit-led modal (create-account primary + see-plans
+// secondary); anything else (undefined/off/"control") renders the original
+// single "Sign in" wall. The flag defaulting to control means the wall is safe
+// before the experiment exists in PostHog.
+const GUEST_WALL_FLAG = "guest-credit-wall-copy";
+
+// Guests aren't signed in and have no org, so there's no in-app billing route
+// to send them to. The public pricing page is the same marketing surface the
+// Enterprise CTA already links to (www.mcpjam.com/contact).
+const GUEST_PRICING_URL = "https://www.mcpjam.com/pricing";
+
+// Design owns the hero art (Figma node 136-92). It's dropped into client/public
+// by design; the modal degrades to no image if the asset isn't present yet, so
+// shipping the flag ahead of the export can't render a broken image.
+const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.svg";
+
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
   const intent = useMCPJamLimitDialogStore((s) => s.intent);
@@ -30,8 +48,17 @@ export function MCPJamLimitDialog() {
   );
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn, signUp } = useAuth();
   const { isAuthenticated } = useConvexAuth();
+  // Normalize the multivariate flag to control/treatment. Undefined (flags not
+  // yet loaded, PostHog disabled locally, or no experiment) falls to control.
+  // The guest wall only appears after a guest has spent their credits, so flags
+  // have long since resolved by the time it renders — no first-paint flip.
+  const guestVariant =
+    useFeatureFlagVariantKey(GUEST_WALL_FLAG) === "treatment"
+      ? "treatment"
+      : "control";
+  const isGuestTreatment = guestVariant === "treatment";
   // Look up the user's orgs as a fallback in case there is no stored
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
   // first by useOrganizationQueries.
@@ -136,10 +163,12 @@ export function MCPJamLimitDialog() {
       limit_kind: "credits",
       origin: "credits",
       audience: "guest",
-      primary_action: "sign_in",
+      variant: guestVariant,
+      primary_action: isGuestTreatment ? "create_account" : "sign_in",
+      secondary_action: isGuestTreatment ? "see_plans" : null,
       is_identified: false,
     });
-  }, [isLoading, showGuestDialog]);
+  }, [guestVariant, isGuestTreatment, isLoading, showGuestDialog]);
 
   useEffect(() => {
     if (!showTopupDialog) {
@@ -264,6 +293,7 @@ export function MCPJamLimitDialog() {
       limit_kind: "credits",
       origin: "credits",
       audience: "guest",
+      variant: guestVariant,
     });
   };
 
@@ -289,6 +319,35 @@ export function MCPJamLimitDialog() {
       limit_kind: "credits",
       origin: "credits",
       audience: "guest",
+      variant: guestVariant,
+    });
+  };
+
+  // Treatment primary CTA: start the WorkOS create-account flow rather than
+  // plain sign-in, matching the Figma "Create free account" button.
+  const handleCreateAccount = () => {
+    signUp();
+    track("plan_limit_create_account_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: guestVariant,
+    });
+  };
+
+  // Treatment secondary CTA: open the public pricing page in a new tab so the
+  // guest keeps their place in the app (mirrors the Enterprise CTA behavior).
+  const handleSeePlans = () => {
+    window.open(GUEST_PRICING_URL, "_blank", "noopener,noreferrer");
+    track("plan_limit_see_plans_clicked", {
+      location: "plan_limit_dialog",
+      wall_kind: "guest_credits",
+      limit_kind: "credits",
+      origin: "credits",
+      audience: "guest",
+      variant: guestVariant,
     });
   };
 
@@ -307,17 +366,57 @@ export function MCPJamLimitDialog() {
           }}
         >
           <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>You've used up your free guest credits.</DialogTitle>
-              <DialogDescription>
-                Sign in to get{" "}
-                <strong className="text-foreground font-medium">10×</strong> the
-                free credits.
-              </DialogDescription>
-            </DialogHeader>
-            <Button onClick={handleSignIn} className="w-full">
-              Sign in
-            </Button>
+            {isGuestTreatment ? (
+              <>
+                <img
+                  src={GUEST_WALL_ILLUSTRATION}
+                  alt=""
+                  aria-hidden
+                  className="w-full rounded-lg"
+                  // Degrade to no image if the asset hasn't been dropped in yet,
+                  // so the flag can ship ahead of the design export.
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+                <DialogHeader>
+                  <DialogTitle>There's so much more to jam on.</DialogTitle>
+                  <DialogDescription>
+                    You're out of guest credits. Create a free account to keep
+                    inspecting your traces, evaluating tool calls, and comparing
+                    clients.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleSeePlans}
+                    className="flex-1"
+                  >
+                    See paid plans
+                  </Button>
+                  <Button onClick={handleCreateAccount} className="flex-1">
+                    Create free account
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <DialogHeader>
+                  <DialogTitle>
+                    You've used up your free guest credits.
+                  </DialogTitle>
+                  <DialogDescription>
+                    Sign in to get{" "}
+                    <strong className="text-foreground font-medium">10×</strong>{" "}
+                    the free credits.
+                  </DialogDescription>
+                </DialogHeader>
+                <Button onClick={handleSignIn} className="w-full">
+                  Sign in
+                </Button>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       )}

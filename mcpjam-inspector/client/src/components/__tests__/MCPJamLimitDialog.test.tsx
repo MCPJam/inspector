@@ -6,7 +6,13 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
+const signUp = vi.fn();
 const trackMock = vi.hoisted(() => vi.fn());
+// Guest credit-wall A/B flag. Defaults to control (undefined); treatment tests
+// flip it to "treatment".
+const guestVariantMock = vi.hoisted(() =>
+  vi.fn<() => string | boolean | undefined>(() => undefined)
+);
 const upgradeHookOrganizationIdMock = vi.hoisted(() => vi.fn());
 const recipientHookOrganizationIdMock = vi.hoisted(() => vi.fn());
 const recipientsState = vi.hoisted(() => ({
@@ -77,7 +83,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
     isLoading: authState.isLoading,
     user: authState.user,
     signIn,
+    signUp,
   }),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagVariantKey: (...args: unknown[]) => guestVariantMock(...args),
 }));
 
 vi.mock("convex/react", () => ({
@@ -105,6 +116,9 @@ const originalHash = window.location.hash;
 
 beforeEach(() => {
   signIn.mockReset();
+  signUp.mockReset();
+  guestVariantMock.mockReset();
+  guestVariantMock.mockReturnValue(undefined);
   trackMock.mockReset();
   upgradeHookOrganizationIdMock.mockReset();
   recipientHookOrganizationIdMock.mockReset();
@@ -181,6 +195,7 @@ describe("MCPJamLimitDialog", () => {
       expect.objectContaining({
         wall_kind: "guest_credits",
         audience: "guest",
+        variant: "control",
         primary_action: "sign_in",
       })
     );
@@ -202,6 +217,81 @@ describe("MCPJamLimitDialog", () => {
 
     await user.click(screen.getByRole("button", { name: /close/i }));
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
+  it("renders the treatment copy and both CTAs when the flag is on", () => {
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^create free account$/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^see paid plans$/i })
+    ).toBeInTheDocument();
+    // The control headline and single Sign in button are gone in treatment.
+    expect(
+      screen.queryByRole("heading", {
+        name: /you've used up your free guest credits/i,
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^sign in$/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls signUp() (not signIn) from the treatment primary CTA", async () => {
+    const user = userEvent.setup();
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(
+      screen.getByRole("button", { name: /^create free account$/i })
+    );
+    expect(signUp).toHaveBeenCalledTimes(1);
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it("opens the pricing page from the treatment secondary CTA", async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByRole("button", { name: /^see paid plans$/i }));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://www.mcpjam.com/pricing",
+      "_blank",
+      "noopener,noreferrer"
+    );
+    openSpy.mockRestore();
+  });
+
+  it("tags the treatment impression with variant and create_account", () => {
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    const impressions = trackMock.mock.calls.filter(
+      ([event]) => event === "plan_limit_dialog_shown"
+    );
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0]?.[1]).toEqual(
+      expect.objectContaining({
+        wall_kind: "guest_credits",
+        audience: "guest",
+        variant: "treatment",
+        primary_action: "create_account",
+        secondary_action: "see_plans",
+      })
+    );
   });
 
   it("does not render while auth state is loading", () => {
