@@ -1198,11 +1198,12 @@ run before evaluating it.
 | `--no-gating-score-errors` | No | Fail if any gating scorer errored |
 | `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
 | `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
-| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. SHA baselines are not supported yet — pass a run id |
-| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` |
-| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` |
-| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` |
-| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` |
+| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. Mutually exclusive with `--baseline-sha` |
+| `--baseline-sha <sha>` | No | Baseline **source commit SHA**, resolved server-side to the completed run in this suite recorded against it. Mutually exclusive with `--baseline` |
+| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` or `--baseline-sha` |
+| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
+| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
+| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
@@ -1211,17 +1212,40 @@ run before evaluating it.
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
 
-**`--baseline`.** Passing a run ID fetches the same run comparison
-`cloud eval compare` uses and folds a regression verdict into the same report
-and exit code as the threshold flags above — `--baseline` alone enables the
-pass-rate regression gate with its default tuning; the four tuning flags need
-`--baseline` to mean anything and are a usage error without it. A case set
-that changed, was added or removed, or ran an unequal iteration count between
-the two runs makes the whole-run pass-rate and p95-latency gates
+**`--baseline` / `--baseline-sha`.** Either flag fetches the same run
+comparison `cloud eval compare` uses and folds a regression verdict into the
+same report and exit code as the threshold flags above — either one alone
+enables the pass-rate regression gate with its default tuning; the four tuning
+flags need a baseline to mean anything and are a usage error without one. A
+case set that changed, was added or removed, or ran an unequal iteration count
+between the two runs makes the whole-run pass-rate and p95-latency gates
 non-gateable (exit `3`) rather than a silent pass or a misread regression;
 the deterministic per-case regression gate is exempt and can still fail
-(exit `1`) on a matching case. SHA baselines (`--baseline <sha>`) are not
-supported yet and are rejected as a usage error.
+(exit `1`) on a matching case.
+
+The two are **mutually exclusive** — passing both is a usage error (exit `2`).
+There is deliberately no single flag that guesses which kind you meant: a
+Convex run ID is an opaque string with no documented format, and an
+abbreviated commit SHA is indistinguishable from one by construction, so the
+kind is named by the flag rather than inferred. A commit SHA passed to
+`--baseline` is rejected with a pointer to `--baseline-sha` instead of being
+sent as a doomed run lookup.
+
+A SHA that matches no completed run in the suite is **not** an error: it is the
+ordinary "no baseline" outcome, `incomplete` (exit `3`), which means the
+comparison established nothing — never a regression. When the SHA matched more
+than one eligible run, or the lookup was truncated before it could prove
+uniqueness, the gate report's baseline provenance records `baselineMatchCount`
+alongside `baselineMatchCountTruncated`; the count is a **floor**, not a total,
+so the two are always read together. An absent count means the match was
+unambiguous.
+
+Baseline provenance records both what was requested and what it resolved to —
+`requestedBaselineKind`, `requestedBaselineRunId` or
+`requestedBaselineCommitSha`, the backend-echoed `resolvedBaselineCommitSha`,
+and the resolved `baseRunId` — so an archived report can answer "which run did
+commit X compare against?" without the invocation that produced it. There is no
+automatic baseline selection: a baseline is compared only when one is pinned.
 
 **Exit codes.** `eval gate` is the command that fails a build, so it is the one
 that maps a verdict onto an exit code. It keeps four:

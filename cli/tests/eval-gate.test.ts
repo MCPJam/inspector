@@ -10,6 +10,8 @@ import {
 import {
   assertRunIdBaseline,
   buildBaselineProvenance,
+  compareBaseSelector,
+  resolveBaselineSelector,
   comparePolicyFromGateOptions,
   evaluateBaselineComparison,
   mergeGateReports,
@@ -1024,4 +1026,257 @@ test("buildBaselineProvenance: a run-level evaluation config change excludes eve
       reasons: ["evaluation_config_changed"],
     },
   ]);
+});
+
+// ── --baseline-sha (source-SHA half) ───────────────────────────────────────
+
+const SHA = "9f1a2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2";
+
+test("resolveBaselineSelector: neither flag is not an error", () => {
+  // `--baseline` is optional — a threshold-only gate is a legitimate
+  // invocation and must not be forced to name a baseline it never wanted.
+  assert.equal(resolveBaselineSelector({ runId: RUN_ID }), undefined);
+});
+
+test("resolveBaselineSelector: names the KIND rather than inferring it", () => {
+  assert.deepEqual(resolveBaselineSelector({ baseline: "run_base", runId: RUN_ID }), {
+    kind: "run",
+    runId: "run_base",
+  });
+  assert.deepEqual(resolveBaselineSelector({ baselineSha: SHA, runId: RUN_ID }), {
+    kind: "commitSha",
+    commitSha: SHA,
+  });
+});
+
+test("resolveBaselineSelector: the two flags are mutually exclusive", () => {
+  // Refused HERE, before any request. The v1 route and the Convex action
+  // refuse the same pair; none of the three is allowed to win silently by
+  // picking one, because a baseline that resolves the way the caller did not
+  // ask for is a verdict computed against the wrong run.
+  assert.throws(
+    () =>
+      resolveBaselineSelector({
+        baseline: "run_base",
+        baselineSha: SHA,
+        runId: RUN_ID,
+      }),
+    /mutually exclusive/,
+  );
+});
+
+test("resolveBaselineSelector: --baseline-sha is TRIMMED, like --baseline", () => {
+  // Same failure mode the run-id half already guards: a padded value that
+  // passed validation but travelled raw would be refused on the wire, or
+  // resolve to nothing and report `incomplete` (exit 3) — a comparability
+  // answer for what is really a usage error.
+  assert.deepEqual(
+    resolveBaselineSelector({ baselineSha: `  ${SHA}  `, runId: RUN_ID }),
+    { kind: "commitSha", commitSha: SHA },
+  );
+});
+
+test("resolveBaselineSelector: a blank --baseline-sha is a usage error", () => {
+  // `--baseline-sha "$GITHUB_SHA"` with the variable unset hands Commander an
+  // empty string: `!== undefined` but falsy, so unchecked it would silently
+  // disable the whole comparison and exit 0 on nothing the caller asked for.
+  for (const blank of ["", "   ", "\t"]) {
+    assert.throws(
+      () => resolveBaselineSelector({ baselineSha: blank, runId: RUN_ID }),
+      /must not be blank/,
+      JSON.stringify(blank),
+    );
+  }
+});
+
+test("resolveBaselineSelector: a SHA is NOT validated for shape", () => {
+  // Deliberate. SHAs are matched byte-for-byte as CI reported them, so a
+  // client-side shape rule would veto a source identifier the backend would
+  // have resolved — an abbreviated SHA being the obvious case.
+  assert.deepEqual(resolveBaselineSelector({ baselineSha: "9f1a2b3", runId: RUN_ID }), {
+    kind: "commitSha",
+    commitSha: "9f1a2b3",
+  });
+});
+
+test("comparePolicyFromGateOptions: --baseline-sha enables the regression gate", () => {
+  // Reading only `baseline` here would make every comparative flag silently
+  // inert under `--baseline-sha`.
+  const policy = comparePolicyFromGateOptions({ baselineSha: SHA });
+  assert.ok(policy.passRateRegression, "SHA baseline must enable the gate");
+  assert.doesNotThrow(() =>
+    comparePolicyFromGateOptions({
+      baselineSha: SHA,
+      gateDeterministicRegressions: true,
+    }),
+  );
+});
+
+test("comparePolicyFromGateOptions: tuning flags still need SOME baseline", () => {
+  assert.throws(
+    () => comparePolicyFromGateOptions({ gateDeterministicRegressions: true }),
+    /--baseline or --baseline-sha/,
+  );
+});
+
+test("evaluateBaselineComparison: a SHA baseline sends baseCommitSha, not baseRunId", async () => {
+  let sent: Record<string, unknown> | undefined;
+  const client = {
+    async compareEvalRun(params: Record<string, unknown>) {
+      sent = params;
+      return compareWire({
+        baseline: {
+          policy: "commit_sha",
+          baseRunId: "run_base",
+          baseCommitSha: SHA,
+        },
+      });
+    },
+    async listEvalRunIterations() {
+      return { items: [], nextCursor: undefined };
+    },
+  };
+  const result = await evaluateBaselineComparison({
+    client: client as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: { kind: "commitSha", commitSha: SHA },
+    policy: { passRateRegression: {} },
+  });
+
+  // Exactly one selector on the wire.
+  assert.equal(sent?.baseCommitSha, SHA);
+  assert.equal(sent?.baseRunId, undefined);
+
+  // The pin requires a gate to record baseline run id AND source SHA. Keeping
+  // only one loses the audit trail: the SHA is what CI asked for, the run id
+  // is what the verdict was actually computed against.
+  assert.equal(result.provenance?.requestedBaselineKind, "commitSha");
+  assert.equal(result.provenance?.requestedBaselineCommitSha, SHA);
+  assert.equal(result.provenance?.resolvedBaselineCommitSha, SHA);
+  assert.equal(result.provenance?.baseRunId, "run_base");
+});
+
+test("provenance: an absent matchCount records uniqueness, and invents no count", async () => {
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: { policy: "commit_sha", baseRunId: "run_base", baseCommitSha: SHA },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {},
+  );
+  assert.equal(provenance.baselineMatchUnique, true);
+  // Absent means unambiguous — it must NOT be defaulted to 1, which would
+  // read as a count the backend actually reported.
+  assert.equal(provenance.baselineMatchCount, undefined);
+});
+
+test("provenance: an AMBIGUOUS match is recorded, not silently compared", async () => {
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: {
+        policy: "commit_sha",
+        baseRunId: "run_base",
+        baseCommitSha: SHA,
+        matchCount: 3,
+      },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {},
+  );
+  assert.equal(provenance.baselineMatchCount, 3);
+  assert.equal(provenance.baselineMatchUnique, false);
+  assert.equal(provenance.baselineMatchCountTruncated, false);
+});
+
+test("provenance: matchCount 1 + truncated is NOT recorded as unique", async () => {
+  // The case the flag exists for. A floor of 1 is not a proof of 1: older
+  // eligible runs may exist beyond the bounded lookup. Recording this as
+  // unique would be a false claim — and a regression verdict rests on it.
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: {
+        policy: "commit_sha",
+        baseRunId: "run_base",
+        baseCommitSha: SHA,
+        matchCount: 1,
+        matchCountTruncated: true,
+      },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {},
+  );
+  assert.equal(provenance.baselineMatchCount, 1);
+  assert.equal(provenance.baselineMatchCountTruncated, true);
+  assert.equal(
+    provenance.baselineMatchUnique,
+    false,
+    "a truncated count of 1 must never be recorded as an established unique match",
+  );
+});
+
+test("an UNRESOLVABLE SHA is incomplete (exit 3), never a regression (exit 1)", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient({
+      reject: Object.assign(new Error("no run for that commit"), {
+        details: { reason: "BASELINE_NOT_FOUND" },
+      }),
+    }) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: { kind: "commitSha", commitSha: SHA },
+    policy: { passRateRegression: {} },
+  });
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.status, "non_gateable");
+  assert.equal(evalGateExitCode(result.report), EVAL_GATE_INCOMPLETE_EXIT_CODE);
+  assert.notEqual(evalGateExitCode(result.report), 1);
+});
+
+test("compareBaseSelector: eval compare refuses the pair but allows NEITHER", () => {
+  // `eval compare` differs from `eval gate` in exactly one way: omitting both
+  // is its documented default (nearest earlier completed run), not an error.
+  assert.deepEqual(compareBaseSelector({}), {});
+  assert.deepEqual(compareBaseSelector({ baseRun: " run_base " }), {
+    baseRunId: "run_base",
+  });
+  assert.deepEqual(compareBaseSelector({ baseSha: ` ${SHA} ` }), {
+    baseCommitSha: SHA,
+  });
+  assert.throws(
+    () => compareBaseSelector({ baseRun: "run_base", baseSha: SHA }),
+    /mutually exclusive/,
+  );
 });
