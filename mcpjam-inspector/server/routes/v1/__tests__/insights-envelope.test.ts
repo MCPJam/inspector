@@ -41,7 +41,14 @@ import journeys from "../journeys.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
-const PROJECT = "proj_a";
+// Id-SHAPED, like `RUN` below, and for the same reason the run/suite fixtures
+// were reshaped: `proj_a` is a value production cannot produce, and fixtures
+// that cannot be produced are how a suite ends up never exercising the shape
+// its routes actually receive — which is why an unparseable id reached Convex
+// in the first place. No route in THIS file gates `projectId` today (it is
+// gated at the three sites that forward it to a `v.id('projects')` argument,
+// none of which these routes reach), so this is realism, not a fix.
+const PROJECT = "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const RUN = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 function makeApp(router: Parameters<Hono["route"]>[1]) {
@@ -158,7 +165,12 @@ describe("eval-run insights retry", () => {
 
   it("404s across projects before requesting anything", async () => {
     vi.clearAllMocks();
-    answerQueries({ getTestSuiteRun: { ...RUN_ROW, projectId: "proj_b" } });
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        projectId: "proj2xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      },
+    });
     const res = await makeApp(evals).request(
       `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
       { method: "POST" },
@@ -495,7 +507,12 @@ describe("eval-run judge request", () => {
 
   it("404s across projects before requesting anything", async () => {
     vi.clearAllMocks();
-    answerQueries({ getTestSuiteRun: { ...RUN_ROW, projectId: "proj_b" } });
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        projectId: "proj2xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      },
+    });
     const res = await makeApp(evals).request(
       `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
       { method: "POST" },

@@ -13,11 +13,16 @@
  * decoration.
  *
  * Rewritten in node for the same reason `check-bundled-runtime-paths.mjs` is:
- * no external binary to be absent, no shell semantics to invert, a missing scan
- * root is a hard error rather than a pass, and the output names the file and
- * line rather than leaving the reader to re-run rg by hand. Same walker shape
- * and same skip conventions as that file — the two are peers and should read
- * like it.
+ * no external binary to be absent, no shell semantics to invert, and the output
+ * names the file and line rather than leaving the reader to re-run rg by hand.
+ * Same walker shape and same skip conventions as that file — the two are peers
+ * and should read like it.
+ *
+ * Three things are FAILURES here that a scanner usually treats as skips, and
+ * they are the whole point: a missing scan root, a scan that reads zero files,
+ * and a path the process could not read (see `scanErrors`). Each one is a way of
+ * inspecting nothing while reporting success, which is the bug being fixed
+ * rather than a lesser version of it.
  *
  * Usage: `node scripts/check-runtime-guards.mjs <check-name>`
  */
@@ -123,6 +128,21 @@ function lineForOffset(source, offset) {
   return line;
 }
 
+/**
+ * Paths the scan could not read, which are FAILURES rather than skips.
+ *
+ * A guard that cannot read a subtree has not cleared it, and swallowing the
+ * error is the same fail-open bug in a different costume: with one unreadable
+ * directory and one readable file elsewhere, `scannedFiles > 0` and the run
+ * reports "clean" for a tree it never opened. An unreadable path is exactly
+ * where a violation would be least likely to be noticed.
+ *
+ * Collected rather than thrown on the spot so one run reports EVERY unreadable
+ * path, the same way it reports every violation — someone fixing permissions
+ * wants the whole list, not the first entry and another run.
+ */
+const scanErrors = [];
+
 function* walk(dir, check) {
   const skipDirs = new Set([
     ...alwaysSkippedDirectoryNames,
@@ -132,7 +152,8 @@ function* walk(dir, check) {
   let entries;
   try {
     entries = readdirSync(dir);
-  } catch {
+  } catch (error) {
+    scanErrors.push({ path: dir, reason: `readdir failed: ${error.message}` });
     return;
   }
 
@@ -141,7 +162,11 @@ function* walk(dir, check) {
     let stat;
     try {
       stat = lstatSync(fullPath);
-    } catch {
+    } catch (error) {
+      scanErrors.push({
+        path: fullPath,
+        reason: `lstat failed: ${error.message}`,
+      });
       continue;
     }
 
@@ -205,7 +230,13 @@ for (const root of check.roots) {
     let source;
     try {
       source = readFileSync(fullPath, "utf8");
-    } catch {
+    } catch (error) {
+      // Not a skip. An unread file is an uninspected file, and this guard's
+      // only claim is that it inspected everything it was pointed at.
+      scanErrors.push({
+        path: relative,
+        reason: `read failed: ${error.message}`,
+      });
       continue;
     }
     scannedFiles += 1;
@@ -232,6 +263,21 @@ if (scannedFiles === 0) {
       `${check.roots.join(", ")}. A guard that inspects nothing must not ` +
       `report success.`,
   );
+  process.exit(1);
+}
+
+// Reported before violations and fatal on its own: "I could not read part of
+// this tree" is a different and worse answer than "I read it and found
+// nothing", and collapsing the two is the fail-open behaviour this script
+// exists to remove.
+if (scanErrors.length > 0) {
+  console.error(
+    `check-runtime-guards [${name}]: ${scanErrors.length} path(s) could not ` +
+      `be scanned. Refusing to report success on a tree this run did not read.`,
+  );
+  for (const failure of scanErrors) {
+    console.error(`  ${failure.path}  ${failure.reason}`);
+  }
   process.exit(1);
 }
 
