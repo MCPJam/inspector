@@ -14,6 +14,11 @@
 
 import { randomUUID } from "node:crypto";
 import { logger } from "../logger.js";
+import {
+  probeSerializedSize,
+  truncateRpcPayload,
+  type TruncatedRpcPayload,
+} from "../../../shared/rpc-log-truncation.js";
 
 /** Stable per-PROCESS id. The reader excludes its own instance so bus-delivered
  *  (same-instance) frames aren't also pulled from Convex — the dedup that lets
@@ -62,15 +67,33 @@ export function isRpcLogSinkConfigured(): boolean {
   return Boolean(convexBase() && serviceToken());
 }
 
+/**
+ * Sized with the bounded probe rather than `JSON.stringify(message).length`.
+ *
+ * Serializing a frame to find out whether it is too big allocates exactly the
+ * string the cap exists to prevent — the same mistake that took the Electron
+ * main process down in INSPECTOR-ELECTRON-VG and -V0. The probe stops at the
+ * cap, so an oversized frame costs 16 KB of walking instead of a full copy.
+ *
+ * The exact size is no longer known, which is why the marker reports the ceiling
+ * it crossed instead. A cyclic value terminates at the probe's node ceiling and
+ * reads as oversized, so the flush below can never be handed something it
+ * cannot serialize.
+ */
 function capMessage(message: unknown): unknown {
   try {
-    const s = JSON.stringify(message);
-    if (s.length > MESSAGE_CAP_BYTES) {
-      return { _truncated: true, bytes: s.length };
+    if (probeSerializedSize(message, MESSAGE_CAP_BYTES).exceeded) {
+      return truncateRpcPayload(message, MESSAGE_CAP_BYTES);
     }
     return message;
   } catch {
-    return { _truncated: true, reason: "unserializable" };
+    // The probe walks own properties, so a throwing getter can still reach
+    // here. Never let an observation-only path fail a proxy request.
+    const unserializable: TruncatedRpcPayload = {
+      _truncated: true,
+      reason: "unserializable",
+    };
+    return unserializable;
   }
 }
 
@@ -91,11 +114,9 @@ export function enqueueHarnessRpcLog(entry: HarnessRpcLogEntry): void {
       message: capMessage(entry.message),
     };
     buffer.push(capped);
-    try {
-      bufferBytes += JSON.stringify(capped).length;
-    } catch {
-      bufferBytes += MESSAGE_CAP_BYTES;
-    }
+    // `capped` is already at or under the per-frame cap, so the probe settles
+    // in a few hundred nodes and never serializes anything.
+    bufferBytes += probeSerializedSize(capped, MESSAGE_CAP_BYTES).bytes;
     if (
       buffer.length >= MAX_BUFFER_ENTRIES ||
       bufferBytes >= MAX_BUFFER_BYTES

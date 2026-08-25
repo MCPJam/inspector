@@ -100,8 +100,38 @@ describe("enqueue + batched flush", () => {
     await flushHarnessRpcLogs();
 
     const body = lastFetchBody(fetchMock);
+    expect(body.entries[0].message).toMatchObject({
+      _truncated: true,
+      // The ceiling, not the exact size: sizing is done by a bounded probe that
+      // stops at the cap rather than serializing the frame to measure it.
+      limitBytes: 16 * 1024,
+    });
+    // The KEY survives with a nested marker, the 20 KB value does not: a frame
+    // whose field names were dropped too is one nobody can identify afterwards.
+    expect(body.entries[0].message.big).toEqual({ _truncated: true });
+  });
+
+  // A cycle used to be caught by the `JSON.stringify` that sized the frame. The
+  // probe never serializes, so it has to reach the same verdict on its own —
+  // otherwise a cyclic frame would reach the flush and throw there.
+  it("caps a cyclic message instead of letting it reach the flush", async () => {
+    configure();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cyclic: Record<string, unknown> = { serverId: "srv-a" };
+    cyclic.self = cyclic;
+
+    enqueueHarnessRpcLog({
+      serverId: "srv-a",
+      direction: "send",
+      loggedAt: "t",
+      message: cyclic,
+    });
+    await expect(flushHarnessRpcLogs()).resolves.not.toThrow();
+
+    const body = lastFetchBody(fetchMock);
     expect(body.entries[0].message).toMatchObject({ _truncated: true });
-    expect(body.entries[0].message.big).toBeUndefined();
   });
 
   it("swallows a failing flush — never throws to the caller (observation-only)", async () => {

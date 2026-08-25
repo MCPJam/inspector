@@ -203,6 +203,12 @@ servers.delete("/:serverId", async (c) => {
     }
 
     mcpClientManager.removeServer(serverId);
+    // The replay buffer is keyed by server id and nothing ever removed a key,
+    // so every disconnect used to leave its retained frames behind for the life
+    // of the process. Dropped HERE rather than inside `removeServer` on
+    // purpose: a failed connect removes the entry too, and those frames are the
+    // ones the Logs panel is open to show.
+    rpcLogBus.forgetServer(serverId);
     // The plugin bundle this entry may have been running from is now
     // unreferenced, so cache GC may reclaim it. No-op for ordinary servers.
     releasePluginLease(serverId);

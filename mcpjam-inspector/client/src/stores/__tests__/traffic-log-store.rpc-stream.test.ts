@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isTruncatedRpcPayload } from "@/shared/rpc-log-truncation";
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
@@ -130,6 +131,59 @@ describe("traffic-log-store rpc stream (local mode)", () => {
     unsubscribe();
 
     expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(5);
+  });
+
+  // `MAX_ITEMS` bounds the row count and nothing else. 1000 rows of tool
+  // results carrying base64 images is how the renderer hit its own heap
+  // ceiling (INSPECTOR-ELECTRON-VJ on /tools, -VT on /playground).
+  it("keeps a marker instead of an oversized payload, and keeps the row", async () => {
+    const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const unsubscribe = subscribeToRpcStream();
+    const source = FakeEventSource.last!;
+    source.emit({
+      ...rpcFrame("rpc:big:1", 14),
+      message: {
+        jsonrpc: "2.0",
+        id: 14,
+        method: "tools/call",
+        params: { data: "A".repeat(400_000) },
+      },
+    });
+    unsubscribe();
+
+    const [item] = useTrafficLogStore.getState().mcpServerItems;
+    expect(isTruncatedRpcPayload(item.payload)).toBe(true);
+    // The row survives with its label, so it stays findable in the list — the
+    // body is what was dropped, not the event.
+    expect(item.method).toBe("tools/call");
+    expect(item.payload).toEqual({
+      jsonrpc: "2.0",
+      id: 14,
+      method: "tools/call",
+      params: { _truncated: true },
+      _truncated: true,
+      limitBytes: 256 * 1024,
+    });
+  });
+
+  it("keeps the full payload of a frame under the cap", async () => {
+    const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const unsubscribe = subscribeToRpcStream();
+    const source = FakeEventSource.last!;
+    source.emit(rpcFrame("rpc:small:1", 14));
+    unsubscribe();
+
+    const [item] = useTrafficLogStore.getState().mcpServerItems;
+    expect(isTruncatedRpcPayload(item.payload)).toBe(false);
+    expect(item.payload).toEqual({
+      jsonrpc: "2.0",
+      id: 14,
+      method: "tools/call",
+    });
   });
 
   it("still records events from a server that sends no eventId", async () => {
