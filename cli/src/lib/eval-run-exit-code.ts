@@ -147,8 +147,15 @@ export interface EvalRunWaitExitInput {
 /** Severity order, most severe first. Anything absent from `codes` loses to 0. */
 const SEVERITY_ORDER = [1, 3, 4, 5, 0] as const;
 
-/** Worst-of merge: the code with the lowest index in {@link SEVERITY_ORDER}. */
-function worstOf(codes: number[]): number {
+/**
+ * Worst-of merge over raw exit codes, by {@link SEVERITY_ORDER}. Exported so
+ * a caller that must fold in a code from OUTSIDE this module's own inputs —
+ * e.g. a local `--out` write failure discovered after `evalRunWaitExitCode`
+ * would otherwise have been the last word — can do it without re-deriving
+ * the severity order, or worse, overwriting an already-computed verdict
+ * code with a flat infrastructure one.
+ */
+export function worstOf(codes: number[]): number {
   for (const code of SEVERITY_ORDER) {
     if (codes.includes(code)) return code;
   }

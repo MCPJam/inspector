@@ -120,6 +120,7 @@ import {
 import {
   classifyLaunchErrorExitCode,
   evalRunWaitExitCode,
+  worstOf,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import {
@@ -2519,36 +2520,13 @@ export function registerEvalCommands(program: Command): void {
           })
         : undefined;
 
-      if (options.out && report) {
-        try {
-          await writeReporterArtifact(
-            options.out,
-            reporter ?? "json-summary",
-            report
-          );
-        } catch (error) {
-          // A local `--out` write failure is infrastructure the CLI itself
-          // observed, never a verdict — 4, not the INTERNAL_ERROR default of
-          // 1 a bare fs error would otherwise get from `normalizeCliError`.
-          throw cliError(
-            "OUT_WRITE_FAILED",
-            error instanceof Error ? error.message : String(error),
-            4
-          );
-        }
-      }
-      if (reporter && report) {
-        writeReporterResult(reporter, report);
-      } else {
-        writeResult(
-          { launch: result, runs: completion.runs },
-          globalOptions.format
-        );
-        writeRunGroupSummary(globalOptions.format, webOrigin, result);
-      }
-
-      // Everything above has already been written — report file, reporter
-      // stdout, or the launch receipt. Only now may this fail.
+      // Computed BEFORE the `--out` write: a local write failure must MERGE
+      // into this verdict-derived code (worst-of), never overwrite it — a
+      // run that actually failed (1) or hit a mid-wait auth failure (3)
+      // outranks a plain local I/O problem (4), per the documented severity
+      // order. Assigning the write failure a flat 4 here would silently
+      // mask an already-known verdict failure the moment `--out` also
+      // happened to be unwritable.
       const reportingErrors = completion.reportInputs.filter(
         (input) => !input.iterationsComplete || input.iterationError
       );
@@ -2567,6 +2545,39 @@ export function registerEvalCommands(program: Command): void {
         runs: runOutcomes,
         waitErrors: completion.waitErrors,
       });
+
+      if (options.out && report) {
+        try {
+          await writeReporterArtifact(
+            options.out,
+            reporter ?? "json-summary",
+            report
+          );
+        } catch (error) {
+          // A local `--out` write failure is infrastructure the CLI itself
+          // observed, never a verdict — merged toward 4, not the
+          // INTERNAL_ERROR default of 1 a bare fs error would otherwise get
+          // from `normalizeCliError`, and never allowed to outrank an
+          // already-computed verdict failure (1) or auth failure (3).
+          throw cliError(
+            "OUT_WRITE_FAILED",
+            error instanceof Error ? error.message : String(error),
+            worstOf([code, 4])
+          );
+        }
+      }
+      if (reporter && report) {
+        writeReporterResult(reporter, report);
+      } else {
+        writeResult(
+          { launch: result, runs: completion.runs },
+          globalOptions.format
+        );
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+      }
+
+      // Everything above has already been written — report file, reporter
+      // stdout, or the launch receipt. Only now may this fail.
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
         const affectedRunIds = [
           ...reportingErrors.map((input) => input.run.id),

@@ -3869,3 +3869,43 @@ test("eval run --wait exits 4 on a local --out write failure", async () => {
     await fixture.close();
   }
 });
+
+test("merge: a local --out write failure never masks a real verdict failure", async () => {
+  // The write failure is discovered AFTER the run's own outcome is known.
+  // Per the documented severity order (1 > 3 > 4 > 5 > 0), the verdict
+  // failure must still win the exit code, even though the write failure is
+  // what actually threw.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const blockerFile = path.join(directory, "blocker");
+  await writeFile(blockerFile, "not a directory");
+  const outPath = path.join(blockerFile, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          outPath,
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OUT_WRITE_FAILED");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
