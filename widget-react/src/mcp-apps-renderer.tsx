@@ -9,6 +9,7 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   useRef,
   useState,
@@ -2636,9 +2637,7 @@ export function MCPAppsRendererSurface({
     allowFeatures: Record<string, string> | undefined;
     cspDirectives: Record<string, string[]> | undefined;
     cspSubtypePolicy: CspSubtypePolicy | undefined;
-    browserStorage:
-      | { localStorage?: boolean; sessionStorage?: boolean; indexedDB?: boolean }
-      | undefined;
+    browserStorage: BrowserStoragePolicy | undefined;
   }>(() => {
     const cspSubtypePolicy: CspSubtypePolicy | undefined =
       earlyEffectiveMcpAppsCapabilities.cspConnectDomains ||

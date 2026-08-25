@@ -13,6 +13,7 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   stableStringifyJson,
   buildOuterAllowAttribute,
@@ -99,11 +100,7 @@ interface SandboxedIframeProps {
    * `allow-same-origin` does. Not a CSP concern — applies in permissive mode
    * too.
    */
-  browserStorage?: {
-    localStorage?: boolean;
-    sessionStorage?: boolean;
-    indexedDB?: boolean;
-  };
+  browserStorage?: BrowserStoragePolicy;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /**

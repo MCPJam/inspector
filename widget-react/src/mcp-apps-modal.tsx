@@ -13,6 +13,7 @@ import {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
   applyToolResultPolicy,
+  type BrowserStoragePolicy,
   extractMethod,
   LoggingTransport,
   type ToolResultPolicy,
@@ -67,9 +68,7 @@ export interface McpAppsModalProps {
    * pushes itself, below.
    */
   widgetToolResult: ToolResultPolicy | undefined;
-  widgetBrowserStorage:
-    | { localStorage?: boolean; sessionStorage?: boolean; indexedDB?: boolean }
-    | undefined;
+  widgetBrowserStorage: BrowserStoragePolicy | undefined;
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;

@@ -7,7 +7,10 @@
 //
 // These types are STRUCTURAL replicas of the inspector shapes (the profile/store
 // systems stay in the inspector by design, so the package can't import them).
-import type { ToolResultPolicy } from "@mcpjam/sdk/widget-runtime";
+import type {
+  BrowserStoragePolicy,
+  ToolResultPolicy,
+} from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
 // contract, so any source-shape drift fails typecheck there.
@@ -478,11 +481,7 @@ export interface WidgetHostProfileSandbox {
    * `SecurityError` on access. This projection is minimal by design, so a
    * field missing here silently disappears before reaching the renderer.
    */
-  browserStorage?: {
-    localStorage?: boolean;
-    sessionStorage?: boolean;
-    indexedDB?: boolean;
-  };
+  browserStorage?: BrowserStoragePolicy;
 }
 
 /**

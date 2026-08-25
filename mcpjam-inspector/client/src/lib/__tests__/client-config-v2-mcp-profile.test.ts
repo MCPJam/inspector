@@ -437,6 +437,22 @@ describe("isMcpProfileEmpty (shared by every profile write path)", () => {
     }
   });
 
+  it("treats a profile whose only content was a storage toggle as empty", () => {
+    // The BrowserStorageCard setter deletes the leaf when an API is switched
+    // back on, leaving `{ profileVersion: 1, apps: undefined }`. If that does
+    // not read as empty, flipping a switch off and on again mints a config
+    // row whose hash differs from the absent profile it started from.
+    expect(
+      isMcpProfileEmpty({ profileVersion: 1, apps: undefined })
+    ).toBe(true);
+    expect(
+      isMcpProfileEmpty({
+        profileVersion: 1,
+        apps: { sandbox: { browserStorage: { localStorage: false } } },
+      })
+    ).toBe(false);
+  });
+
   it("treats an all-absent toolListChanged record as empty", () => {
     // A record with no leaves carries nothing the canonicalizer would keep,
     // so persisting it would mint a row hashing identically to no profile.

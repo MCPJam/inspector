@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   hostCapabilitiesOverrideToMatrix,
+  isMcpProfileEmpty,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
   setMcpAppsOverridesOnDraft,
@@ -1830,9 +1831,14 @@ function BrowserStorageCard({
         ...base,
         apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
       };
+      // Collapse to absence like every ProtocolTab setter. Without this,
+      // toggling an API off and back on leaves `{ profileVersion: 1 }`
+      // behind, which canonicalizes to a DIFFERENT hash than the absent
+      // profile the config started with — a user who changed nothing would
+      // mint a new config row just by flipping a switch twice.
       return {
         ...prev,
-        mcpProfile: updated,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
       };
     });
   };

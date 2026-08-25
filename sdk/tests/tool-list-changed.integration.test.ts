@@ -80,6 +80,62 @@ describe("tool list changed knobs", () => {
     expect(listenStreamRequests().length).toBeGreaterThan(0);
   });
 
+  it("does NOT guard the fetch handed to the legacy SSE transport", async () => {
+    // Regression: the guard refuses "a GET with Accept: text/event-stream",
+    // which under Streamable HTTP is the standalone listen stream — but under
+    // SSEClientTransport is how the transport OPENS the connection. Guarding
+    // both made every SSE-only server unreachable for any profile carrying
+    // `listens: false`, including the shipped ChatGPT template. Header
+    // inspection cannot tell the two apart, so the call site declares which
+    // transport is asking; this asserts that opt-out is honored.
+    const seen: string[] = [];
+    const baseFetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const mgr = new MCPClientManager();
+    const config = {
+      url: "https://example.test/mcp",
+      suppressListenChannel: true,
+      baseFetch,
+    } as never;
+    const sseRequest = {
+      method: "GET",
+      headers: { accept: "text/event-stream" },
+    };
+
+    // Streamable HTTP (default): the listen stream is refused locally and
+    // never reaches the network.
+    const guarded = (
+      mgr as unknown as {
+        buildTransportFetch: (
+          id: string,
+          c: unknown,
+          o?: { listenGuard?: boolean }
+        ) => typeof fetch;
+      }
+    ).buildTransportFetch("fixture", config);
+    const refused = await guarded("https://example.test/mcp", sseRequest);
+    expect(refused.status).toBe(405);
+    expect(seen).toHaveLength(0);
+
+    // Legacy SSE transport: the very same request must go through, or the
+    // connection cannot be established at all.
+    const unguarded = (
+      mgr as unknown as {
+        buildTransportFetch: (
+          id: string,
+          c: unknown,
+          o?: { listenGuard?: boolean }
+        ) => typeof fetch;
+      }
+    ).buildTransportFetch("fixture", config, { listenGuard: false });
+    const passed = await unguarded("https://example.test/mcp", sseRequest);
+    expect(passed.status).toBe(200);
+    expect(seen).toHaveLength(1);
+  });
+
   it("still serves tool calls with the channel refused", async () => {
     // The refusal must not break the connection: a real client that does not
     // listen still works over the POST channel.

@@ -90,3 +90,24 @@ export function applyToolResultPolicy<T extends Partial<CallToolResult>>(
   }
   return next;
 }
+
+/**
+ * Which browser storage APIs a widget can reach inside the host's sandbox.
+ *
+ * NOT an MCP concept — the MCP Apps spec's `sandbox` defines only
+ * `permissions` and `csp`. This is an observed consequence of the sandboxed
+ * iframe the spec does mandate, measured because widgets that persist state
+ * break silently on a host that blocks it.
+ *
+ * Named and exported because the same shape crosses five seams (profile
+ * type, widget-host projection, renderer, sandboxed-iframe prop, modal
+ * prop). Adding a fourth API — cookies, OPFS — must be a one-line change,
+ * not five edits in lockstep where a missed copy drops the field silently.
+ *
+ * Absent or `true` means available; only an explicit `false` blocks.
+ */
+export interface BrowserStoragePolicy {
+  localStorage?: boolean;
+  sessionStorage?: boolean;
+  indexedDB?: boolean;
+}

@@ -2850,7 +2850,11 @@ export class MCPClientManager {
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
-      fetch: this.buildTransportFetch(serverId, config),
+      // `listenGuard: false` — see `buildTransportFetch`. On this transport a
+      // GET SSE is the connection, not the listen channel, so `listens:false`
+      // is a documented no-op here rather than a connection failure (a real
+      // client on HTTP+SSE cannot not-listen either).
+      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
@@ -3680,7 +3684,20 @@ export class MCPClientManager {
    */
   private buildTransportFetch(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    /**
+     * Streamable HTTP only. The listen guard identifies the notification
+     * stream as "a GET with `Accept: text/event-stream`" — under Streamable
+     * HTTP that IS the standalone listen stream, but under the legacy
+     * `SSEClientTransport` the very same request is how the transport OPENS
+     * the connection (`_startOrAuth` in @modelcontextprotocol/client sends it
+     * through this injected fetch with that header). Guarding it there would
+     * 405 the connection itself and make every SSE-only server unreachable
+     * for any profile carrying `listens: false` — including the shipped
+     * ChatGPT template. Header inspection cannot separate the two cases, so
+     * the CALLER declares which transport is asking.
+     */
+    options?: { listenGuard?: boolean }
   ): typeof fetch {
     const httpLogger = this.resolveHttpLogger(config);
     // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
@@ -3695,7 +3712,7 @@ export class MCPClientManager {
     // network, so logging it would invent a request that was not made. The
     // absence in the log IS the observation.
     const listenGuarded =
-      config.suppressListenChannel === true
+      config.suppressListenChannel === true && options?.listenGuard !== false
         ? wrapFetchForNoListenChannel(logged)
         : logged;
     return wrapFetchForTaskRouting(listenGuarded);
