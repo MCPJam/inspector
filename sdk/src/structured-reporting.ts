@@ -361,10 +361,17 @@ export function renderStructuredRunJUnitXml(
 
   const tests = effectiveCases.length;
   const failures = effectiveCases.filter((entry) => !entry.passed).length;
-  // Declared on the suite as well as marked on the case. A parser that only
+  // Declared on the suite as well as marked on the case: a parser that only
   // reads the attributes must still be able to see that something here was
   // overridden rather than run clean.
-  const skipped = effectiveCases.filter((entry) => entry.waiver).length;
+  //
+  // OMITTED when zero, rather than written as `skipped="0"`. This XML is
+  // consumed by CI systems and asserted as a literal, and an attribute that
+  // appears on every report ever rendered would be a wire change for every
+  // existing consumer in exchange for saying nothing. A parser that finds it
+  // absent reads zero, which is the fact.
+  const skippedCount = effectiveCases.filter((entry) => entry.waiver).length;
+  const skipped = skippedCount > 0 ? ` skipped="${skippedCount}"` : "";
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const suiteName = escapeXml(redactedReport.kind);
 
@@ -372,7 +379,7 @@ export function renderStructuredRunJUnitXml(
     .map((caseResult) => renderJUnitTestCase(redactedReport.kind, caseResult))
     .join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${casesXml}\n  </testsuite>\n</testsuites>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n  <testsuite name="${suiteName}" tests="${tests}" failures="${failures}"${skipped} time="${time}">\n${casesXml}\n  </testsuite>\n</testsuites>\n`;
 }
 
 /** `who`, `why`, `until when` — the charter's three facts, on one line. */
