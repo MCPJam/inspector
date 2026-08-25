@@ -612,11 +612,32 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
-  // THE FLIP. At `enforce` the iteration's verdict comes from its gating score
-  // rows; in every other mode `passed` is what it always was. `resultSource`
-  // stays `"reported"` either way — the inspector is still the thing reporting
-  // the verdict, it has simply changed what it derives that verdict from.
-  const effectivePassed = derived ? derived.passed : passed;
+  // THE FLIP, and the ONE DIRECTION IT MAY MOVE.
+  //
+  // At `enforce` the gating score rows decide — but only ever toward FAILED.
+  // The rows are a projection of the evaluation, and that projection is NOT
+  // YET TOTAL: `buildEvalIterationVerdict` also gates on `failOnToolError`,
+  // pinned tool errors, `iterationError` and `scriptedCheckFailures`, and none
+  // of those produce a score row today. A case with one passing predicate and
+  // no authored tool-call expectations that fails on a scripted check has an
+  // all-passing row set — so reading the rows as the SOLE authority would turn
+  // that failure into a pass.
+  //
+  // Promoting a failure to a pass is the one thing this cutover must never do,
+  // and it is not detectable downstream: the backend's verify seam derives
+  // from the same incomplete projection and would agree. So the conjunction is
+  // the guard, and it is structural rather than a policy someone can tune.
+  //
+  // What `enforce` still adds is real and is the whole point of the step: the
+  // STRICT reading fails an iteration whose gating evidence is missing or
+  // unscorable (`unresolvedScorerIds`), where the boolean pipeline would have
+  // passed it. Zero evidence never passes.
+  //
+  // The conjunction comes OUT when the remaining legacy gates are projected as
+  // gating rows; until then it is what keeps N1 honest. `resultSource` stays
+  // `"reported"` either way — the inspector is still the thing reporting the
+  // verdict, it has changed what it derives it from.
+  const effectivePassed = derived ? passed && derived.passed : passed;
   return {
     iterationId,
     passed: effectivePassed,

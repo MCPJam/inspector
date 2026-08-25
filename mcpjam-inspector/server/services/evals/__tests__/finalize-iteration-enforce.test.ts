@@ -71,7 +71,7 @@ function build(over: Record<string, unknown> = {}) {
     iterationMetadataBase: {},
     gradingMode: "enforce",
     ...over,
-  } as Parameters<typeof buildIterationFinishParams>[0]);
+  } as unknown as Parameters<typeof buildIterationFinishParams>[0]);
 }
 
 afterEach(() => {
@@ -154,7 +154,8 @@ describe("at enforce, the result IS the shared derivation over the gating rows",
         metadata.scores as never,
         metadata.evaluationConfig as never
       );
-      expect(params.passed).toBe(expected.passed);
+      // Conjunction, not replacement — see below.
+      expect(params.passed).toBe(entry.reportedPassed && expected.passed);
     });
   }
 
@@ -260,5 +261,62 @@ describe("at enforce, the result IS the shared derivation over the gating rows",
       (call) => call[0] === "grading_shadow_mismatch"
     );
     expect(mismatches).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// THE ONE DIRECTION THE ROWS MAY MOVE A VERDICT.
+//
+// The score contract is a projection of the evaluation, and that projection is
+// NOT YET TOTAL. `buildEvalIterationVerdict` also gates on `failOnToolError`,
+// pinned tool errors, `iterationError` and `scriptedCheckFailures`, and none of
+// those produce a gating score row. So an iteration that failed on one of them
+// arrives here with an all-passing row set.
+//
+// Reading the rows as the SOLE authority would turn that failure into a pass —
+// the one thing this cutover must never do, and undetectable downstream because
+// the backend's verify seam derives from the same incomplete projection and
+// would agree. The conjunction is the structural guard, and it comes out when
+// those gates are projected as rows.
+// =============================================================================
+describe("at enforce the rows may only make a verdict stricter", () => {
+  test("a legacy-gate failure with all-passing rows STAYS failed", () => {
+    // One passing predicate, no authored tool-call expectations ⇒ every gating
+    // row passes. The boolean pipeline failed it on a gate the contract cannot
+    // see, and that failure must survive.
+    const params = build({
+      passed: false,
+      predicateResults: [{ predicate: passingPredicate, passed: true }],
+      evaluation: {
+        passed: true,
+        toolsCalled: [],
+        turnCount: 1,
+        failedTurnCount: 0,
+        expectedToolCalls: [],
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [],
+      },
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+
+    expect(
+      allGatingScorersPassed(
+        metadata.scores as never,
+        metadata.evaluationConfig as never,
+      ).passed,
+      "precondition: the rows really do all pass",
+    ).toBe(true);
+    expect(params.passed).toBe(false);
+  });
+
+  test("the rows still FAIL an iteration the boolean pipeline passed", () => {
+    // This is what `enforce` adds, and why the conjunction does not make it a
+    // no-op: a gating row that failed flips a reported pass to failed.
+    const params = build({
+      passed: true,
+      predicateResults: [{ predicate: failingPredicate, passed: false }],
+    });
+    expect(params.passed).toBe(false);
   });
 });

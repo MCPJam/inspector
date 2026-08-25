@@ -37,6 +37,7 @@ import { buildStageMetadata } from "./finalize-iteration.js";
 import { buildStageAuthoredCase } from "./stage-inputs.js";
 import {
   isDualWrite,
+  resolveFrozenRunGradingMode,
   resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
@@ -312,9 +313,14 @@ export async function runJudgeSecondPass(
     throw error;
   }
 
-  const mode = resolveGradingEngineMode({
-    runSnapshot: run.configSnapshot?.gradingEngine ?? run.gradingEngine,
-  });
+  // Through the SAME translation the first-pass and replay paths use: an absent
+  // stamp is the backend's `off`, not an absent opinion. Resolving it as
+  // "unconstrained" would fall through to this process's env ceiling and run
+  // the REAL-WRITE second pass for a run whose frozen position was `off`,
+  // contaminating the off and legacy cohorts with real score rows.
+  const mode = resolveFrozenRunGradingMode(
+    run.configSnapshot?.gradingEngine ?? run.gradingEngine
+  );
   // `shadow` deliberately writes NOTHING here: a shadow row is produced
   // in-process by the first pass, and a second-pass write is by definition a
   // real write. `enforce` runs exactly as `dual_write` does.
