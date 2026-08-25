@@ -27,11 +27,13 @@ missing baseline is the existing `BASELINE_NOT_FOUND` → incomplete → exit 3
 path. `eval gate`'s four-code contract is unchanged.
 
 The report (`--reporter`/`--out`) carries baseline provenance — both run
-ids, the resolved baseline policy, and every compatibility signal that was
-evaluated. Dimensions the comparison wire does not carry yet (model/provider,
-host/harness, server/environment identity, config hashes beyond the
-evaluation config hash) are recorded explicitly as `"notRecorded"` rather
-than omitted.
+ids, the resolved baseline policy, every compatibility signal that was
+evaluated, and the comparable case ids the verdict actually covers (plus
+the added/removed ones behind a `caseSetChanged: true`, named rather than
+left for the reader to re-derive). Dimensions the comparison wire does not
+carry yet (model/provider, host/harness, server/environment identity,
+config hashes beyond the evaluation config hash) are recorded explicitly as
+`"notRecorded"` rather than omitted.
 
 SHA baselines are not supported yet — a 40-hex `--baseline` argument is
 rejected with a usage error naming the follow-up; only run ids resolve today.

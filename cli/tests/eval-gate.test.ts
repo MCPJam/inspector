@@ -618,5 +618,96 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     iterationWeightingEqual: false,
     baseScoreIntegrity: "valid",
     compareScoreIntegrity: "valid",
+    // The PINNED CONTRACT names "comparable case ids" explicitly: an
+    // archived report's `caseSetChanged: true` alone does not say WHICH
+    // cases still measure the same thing, or which ones do not.
+    comparableCaseIds: ["ck_a"],
+    incompatibleCases: [],
   });
+});
+
+test("buildBaselineProvenance: names the added/removed cases behind caseSetChanged", () => {
+  const compare = compareWire({
+    cases: [
+      {
+        caseKey: "ck_shared",
+        title: "Shared",
+        status: "unchanged_passed",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b1"],
+          representativeIterationId: "b1",
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c1"],
+          representativeIterationId: "c1",
+          error: null,
+        },
+      },
+      {
+        caseKey: "ck_new",
+        title: "New",
+        status: "new_case",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "absent",
+          iterationIds: [],
+          representativeIterationId: null,
+          error: null,
+        },
+        compare: {
+          outcome: "passed",
+          iterationIds: ["c2"],
+          representativeIterationId: "c2",
+          error: null,
+        },
+      },
+      {
+        caseKey: "ck_removed",
+        title: "Removed",
+        status: "removed_case",
+        configChanged: false,
+        evaluationConfigChanged: false,
+        scoreDeltas: [],
+        base: {
+          outcome: "passed",
+          iterationIds: ["b2"],
+          representativeIterationId: "b2",
+          error: null,
+        },
+        compare: {
+          outcome: "absent",
+          iterationIds: [],
+          representativeIterationId: null,
+          error: null,
+        },
+      },
+    ],
+  });
+  const provenance = buildBaselineProvenance("run_base", compare, {
+    base: { iterations: { total: 70, passed: 56 } },
+    compare: { iterations: { total: 80, passed: 48 } },
+    deterministicScoreRegressions: [],
+    scoreDeltasAvailable: false,
+    caseSetChanged: true,
+    scenarioConfigChanged: false,
+    evaluationConfigChanged: false,
+    iterationWeightingEqual: true,
+  });
+  const compatibility = provenance.compatibility as {
+    comparableCaseIds: string[];
+    incompatibleCases: Array<{ caseKey: string; status: string }>;
+  };
+  assert.deepEqual(compatibility.comparableCaseIds, ["ck_shared"]);
+  assert.deepEqual(compatibility.incompatibleCases, [
+    { caseKey: "ck_new", status: "new_case" },
+    { caseKey: "ck_removed", status: "removed_case" },
+  ]);
 });

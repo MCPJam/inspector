@@ -2865,6 +2865,9 @@ test("eval gate --baseline writes provenance into the JSON report, notRecorded i
     assert.equal(provenance.baseRunId, "run-baseline");
     assert.equal(provenance.compareRunId, "run-1");
     assert.equal(provenance.compatibility.caseSetChanged, false);
+    // The pin names "comparable case ids" explicitly — not just the boolean.
+    assert.deepEqual(provenance.compatibility.comparableCaseIds, ["ck_a"]);
+    assert.deepEqual(provenance.compatibility.incompatibleCases, []);
     // Dimensions the pinned contract requires but the `/compare` wire does not
     // carry yet must be explicit, never silently dropped.
     assert.equal(provenance.notRecorded.modelProvider, "notRecorded");

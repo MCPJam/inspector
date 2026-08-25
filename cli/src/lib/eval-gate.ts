@@ -333,6 +333,19 @@ export function buildBaselineProvenance(
       iterationWeightingEqual: input.iterationWeightingEqual,
       baseScoreIntegrity: compare.scoreContract.base.scoreIntegrity,
       compareScoreIntegrity: compare.scoreContract.compare.scoreIntegrity,
+      // The pin names "comparable case ids" explicitly: which cases an
+      // archived report's verdict actually covers, and which ones a
+      // `caseSetChanged: true` flag alone does not name.
+      comparableCaseIds: compare.cases
+        .filter(
+          (row) => row.status !== "new_case" && row.status !== "removed_case"
+        )
+        .map((row) => row.caseKey),
+      incompatibleCases: compare.cases
+        .filter(
+          (row) => row.status === "new_case" || row.status === "removed_case"
+        )
+        .map((row) => ({ caseKey: row.caseKey, status: row.status })),
     },
     // Dimensions the pinned contract requires but the `/compare` wire does
     // not carry today (E4b / backend follow-up work). Never invented, never
