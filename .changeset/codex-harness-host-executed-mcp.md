@@ -24,6 +24,19 @@ with a server attached, and therefore every Codex eval suite) is gone; a Codex
 host that requires tool approval is still refused, because Codex cannot pause a
 host-executed tool.
 
+Scope step-up (SEP-2350) is carried on this path too. A host-executed call never
+touches the signed proxy that extracts an `insufficient_scope` challenge on the
+native path, so the projected tools observe it in-process with the same shared
+extractor and publish into the same turn-level bridge. A hosted-OAuth server that
+needs a step-up therefore pauses a Codex turn and offers re-authorization, rather
+than reporting an ordinary tool failure to the model.
+
+Tool-approval refusals no longer depend on whether MCP servers happen to be
+selected. The pre-flight and the in-turn backstop now ask one shared helper, so a
+runtime that cannot pause on its own native tools is refused under
+`requireToolApproval` either way — closing a gap where an eval or synthetic run
+(which skips the pre-flight) could execute host-executed built-ins unapproved.
+
 Fidelity caveat: this is not equivalent to Claude Code's native MCP client. The
 bridge injects each tool's description into the prompt and the model invokes
 them through a CLI shim, so tool-selection behavior differs from a native MCP

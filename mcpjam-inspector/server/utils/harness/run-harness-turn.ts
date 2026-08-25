@@ -157,6 +157,7 @@ import {
   emitInsufficientScopeChunk,
   emitScopeStepUpRequiredChunk,
 } from "../../routes/web/hosted-elicitation.js";
+import { harnessToolApprovalRefusalReason } from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -795,22 +796,36 @@ export async function runHarnessTurn(
           emitInsufficientScopeChunk(writer, undefined, challenge);
         });
     };
+    /**
+     * The turn's ONE scope step-up intake, with two publishers:
+     *
+     *  - NATIVE delivery — the signed proxy, which saw the sandbox's own
+     *    `tools/call` and publishes under this turn's correlation id
+     *    (subscription below);
+     *  - HOST-EXECUTED delivery — the in-process projected tools, which raise
+     *    the challenge inside `execute()` and hand it straight here
+     *    (`onScopeStepUpChallenge`, wired at the projection below).
+     *
+     * Both arrive as the same event and take the same path, so a Codex turn
+     * pauses for a step-up exactly like a Claude Code turn does. Ordering
+     * against the tool-call observation is handled by `tryCreate…` being called
+     * from both sides — whichever lands second completes the correlation.
+     */
+    const receiveScopeStepUpChallenge = (info: HarnessScopeStepUpEvent) => {
+      if (!harnessScopeStepUpServerMatches(selectedServers, info.serverId)) {
+        return;
+      }
+      pendingScopeChallenge = info;
+      if (!info.toolName || !createHarnessScopeStepUpContinuation) {
+        emitInsufficientScopeChunk(writer, undefined, info);
+        return;
+      }
+      tryCreateHarnessScopeStepUp();
+    };
     const stopScopeStepUpBridge = harnessMcpProxy
       ? subscribeHarnessScopeStepUp(
           turnId,
-          (info) => {
-            if (
-              !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
-            ) {
-              return;
-            }
-            pendingScopeChallenge = info;
-            if (!info.toolName || !createHarnessScopeStepUpContinuation) {
-              emitInsufficientScopeChunk(writer, undefined, info);
-              return;
-            }
-            tryCreateHarnessScopeStepUp();
-          },
+          receiveScopeStepUpChallenge,
           selectedServers
         )
       : () => {};
@@ -918,26 +933,22 @@ export async function runHarnessTurn(
             "support but has no deliverPluginBundles strategy (adapter misconfigured)."
         );
       }
-      //   (b) approval invariant for HOST-EXECUTED MCP delivery (COMP-39).
-      //       On that path the host's MCP tools run through the agent's
-      //       host-executed `tools`, which are only approval-gated when the
-      //       adapter declares `supportsHostExecutedToolApproval`. Codex does
-      //       not, so an approval host must fail closed HERE rather than have
-      //       its MCP calls silently bypass approval. The route preflight
-      //       already refuses this combination; eval/synthetic/unified paths
-      //       skip that preflight, which is exactly what this backstops.
-      //       (Advertise = enforce.)
-      if (
-        harnessAdapter.mcpDelivery === "host-executed" &&
-        requireToolApproval &&
-        !harnessAdapter.supportsHostExecutedToolApproval &&
-        (selectedServers?.length ?? 0) > 0
-      ) {
-        throw new Error(
-          `The ${harnessAdapter.displayName} harness runs the host's MCP tools ` +
-            "on MCPJam's server and can't pause them for approval — turn off " +
-            "requireToolApproval on this host to run it."
-        );
+      //   (b) approval invariant (advertise = enforce). The route pre-flight
+      //       already refuses every unsound approval combination; the eval,
+      //       synthetic and unified paths never call it, which is exactly what
+      //       this backstops. It asks the SAME helper the pre-flight asks, so
+      //       the two can't drift — and it is deliberately NOT conditioned on
+      //       there being selected servers: a runtime that can't pause on its
+      //       own native tools (Codex) is unsound under approval whether or not
+      //       any MCP server is attached, and its host-executed built-ins
+      //       (web_search) would otherwise run unapproved here.
+      const approvalRefusal = harnessToolApprovalRefusalReason({
+        adapter: harnessAdapter,
+        requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+      });
+      if (approvalRefusal) {
+        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
       }
 
       // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
@@ -1033,6 +1044,11 @@ export async function runHarnessTurn(
               // IN-PROCESS instead of by a sealed proxy token — same decision
               // function, same block envelope.
               ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+              // …and, for the same reason, no proxy to extract a SEP-2350
+              // challenge either. Publish straight into the turn's step-up
+              // intake so a hosted-OAuth server pauses this turn instead of
+              // reporting an ordinary tool failure to the model.
+              onScopeStepUpChallenge: receiveScopeStepUpChallenge,
             })
           : { tools: {}, keyToServerId: {} };
       // The attribution map is whichever mode produced one; they are the same

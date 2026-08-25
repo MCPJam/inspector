@@ -41,6 +41,10 @@
  *  - Schemas are enumerated ONCE, at turn start. There is no `tools/list_changed`
  *    subscription: a server that adds or removes a tool mid-turn is not
  *    reflected until the next turn.
+ *  - Scope step-up (SEP-2350) IS carried: an `insufficient_scope` challenge
+ *    raised by an in-process call is extracted with the same shared helper the
+ *    proxy path uses and handed to the turn's existing bridge (see
+ *    {@link projectSelectedMcpServersAsHostTools}'s `onScopeStepUpChallenge`).
  *  - Every projected tool's description is injected into the PROMPT by the
  *    bridge, so a server with many tools inflates every turn of the
  *    conversation. There is no cap here — MCPJam has no tool-count budget to
@@ -59,6 +63,8 @@ import {
   type HarnessPolicyBlockMarker,
 } from "./harness-proxy-policy-enforcement.js";
 import { selectDeliverableServerIds } from "./plugin-delivery.js";
+import { scopeStepUpInfoFromToolError } from "../insufficient-scope-step-up.js";
+import type { HarnessScopeStepUpEvent } from "./harness-scope-step-up.js";
 import type { RuntimePluginVersion } from "../../services/environments/effective-capabilities.js";
 
 /** The harness tool-name prefix. Claude Code's native scheme, reused verbatim so
@@ -94,6 +100,18 @@ export async function projectSelectedMcpServersAsHostTools(args: {
   /** Per-server resolved `toolPolicy` decisions for this run. A server with a
    *  snapshot gets its calls gated IN-PROCESS before they reach the server. */
   toolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * Sink for an actionable SEP-2350 scope challenge raised by one of these
+   * calls. Publishes into the turn's EXISTING harness scope step-up bridge —
+   * the same one the proxy publishes into on the native path — so a hosted-OAuth
+   * server that needs a step-up pauses the turn here exactly as it does there,
+   * instead of surfacing to the model as an ordinary tool failure.
+   *
+   * Omitted (eval/synthetic callers with no writer) ⇒ tools are passed through
+   * unwrapped and a challenge stays an ordinary error, which is the pre-existing
+   * behaviour for a turn that cannot pause anyway.
+   */
+  onScopeStepUpChallenge?: (event: HarnessScopeStepUpEvent) => void;
 }): Promise<HostExecutedMcpProjection> {
   const configured = selectDeliverableServerIds({
     selectedServerIds: args.selectedServerIds,
@@ -133,12 +151,83 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     const serverTools = await args.manager.getToolsForAiSdk([serverId]);
     const snapshot = args.toolPolicy?.[serverId];
     for (const [toolName, tool] of Object.entries(serverTools)) {
-      tools[harnessMcpToolName(key, toolName)] = snapshot
-        ? withToolPolicyGate({ tool, toolName, snapshot })
-        : tool;
+      // Layered inward-out, and the order is load-bearing: the policy gate must
+      // be OUTERMOST so a denied call short-circuits to the block envelope
+      // without ever entering the observer (a blocked call reaches no server and
+      // so can raise no scope challenge). With neither layer in force the
+      // manager's own tool object is passed through by IDENTITY, keeping exactly
+      // one execution path for an MCP call.
+      let projected: unknown = tool;
+      if (args.onScopeStepUpChallenge) {
+        projected = withScopeStepUpObserver({
+          tool: projected,
+          serverId,
+          toolName,
+          onChallenge: args.onScopeStepUpChallenge,
+        });
+      }
+      if (snapshot) {
+        projected = withToolPolicyGate({ tool: projected, toolName, snapshot });
+      }
+      tools[harnessMcpToolName(key, toolName)] = projected;
     }
   }
   return { tools, keyToServerId };
+}
+
+/**
+ * Carry an actionable SEP-2350 scope challenge out of an in-process MCP call.
+ *
+ * The native path gets this for free: the sandbox's call goes through the signed
+ * proxy, which extracts the challenge and publishes it under the turn's
+ * correlation id. A host-executed call never touches the proxy — it runs right
+ * here — so without this wrapper an `insufficient_scope` response degrades into
+ * a plain tool error and the user is never offered the step-up.
+ *
+ * The extraction and the actionability gate are NOT re-implemented: this calls
+ * {@link scopeStepUpInfoFromToolError}, the same helper the proxy path calls,
+ * so "which challenges are worth surfacing" has exactly one answer.
+ *
+ * `toolName` is the UN-NAMESPACED name and `toolInput` the raw arguments,
+ * because that is the tuple the turn's bridge correlates a challenge against the
+ * observed tool call on (serverId + toolName + input). Errors are always
+ * rethrown — this observes, it never swallows.
+ */
+function withScopeStepUpObserver(args: {
+  tool: unknown;
+  serverId: string;
+  toolName: string;
+  onChallenge: (event: HarnessScopeStepUpEvent) => void;
+}): unknown {
+  const tool = args.tool as {
+    execute?: (input: unknown, options: unknown) => unknown;
+  };
+  const originalExecute = tool.execute?.bind(tool);
+  if (!originalExecute) return args.tool;
+  return {
+    ...tool,
+    execute: async (input: unknown, options: unknown) => {
+      try {
+        return await originalExecute(input, options);
+      } catch (error) {
+        const toolCallId = (options as { toolCallId?: unknown } | undefined)
+          ?.toolCallId;
+        const info = scopeStepUpInfoFromToolError({
+          error,
+          serverId: args.serverId,
+          ...(typeof toolCallId === "string" ? { toolCallId } : {}),
+        });
+        if (info) {
+          args.onChallenge({
+            ...info,
+            toolName: args.toolName,
+            toolInput: input,
+          });
+        }
+        throw error;
+      }
+    },
+  };
 }
 
 /**

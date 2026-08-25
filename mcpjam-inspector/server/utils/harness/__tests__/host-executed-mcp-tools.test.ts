@@ -235,6 +235,177 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       expect(result._meta["mcpjam/policyBlock"]!.reason).toBe("unknownAtLaunch");
     });
   });
+
+  describe("a projection failure fails the turn instead of quietly shrinking it", () => {
+    const plugin = {
+      pluginId: "p1",
+      pluginVersionId: "pv1",
+      name: "Calendar Pack",
+      bundleHash: "abc",
+    };
+
+    it("refuses when a PLUGIN-contributed server has no live connection", async () => {
+      // Hosts are plugin-blind: the environment pinned this version precisely to
+      // get these tools, so a silently reduced tool set would surface only as
+      // the agent "not doing the thing". Name the plugin and refuse.
+      const manager = fakeManager({ live: { t: tool() } });
+      await expect(
+        projectSelectedMcpServersAsHostTools({
+          manager,
+          selectedServerIds: ["live", "from-plugin"],
+          pluginOrigins: { "from-plugin": plugin },
+        })
+      ).rejects.toThrow(/Calendar Pack/);
+    });
+
+    it("propagates an enumeration failure rather than returning a partial set", async () => {
+      // Half a tool set is worse than none: the model would silently plan
+      // around tools the user believes are attached.
+      const manager = fakeManager({ ok: { t: tool() }, broken: {} });
+      (manager.getToolsForAiSdk as unknown as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(async () => ({ t: tool() }))
+        .mockImplementationOnce(async () => {
+          throw new Error("server went away mid-enumeration");
+        });
+      await expect(
+        projectSelectedMcpServersAsHostTools({
+          manager,
+          selectedServerIds: ["ok", "broken"],
+        })
+      ).rejects.toThrow(/server went away mid-enumeration/);
+    });
+  });
+
+  describe("scope step-up (SEP-2350) survives in-process execution", () => {
+    /** What a live 403 `insufficient_scope` surfaces as, per the SDK's
+     *  `isInsufficientScopeNode` (branded class name + challenge fields). */
+    function insufficientScope(): Error {
+      const error = new Error("Forbidden");
+      error.name = "InsufficientScopeError";
+      return Object.assign(error, {
+        requiredScope: "calendar.write",
+        resourceMetadataUrl: new URL(
+          "https://cal.example/.well-known/oauth-protected-resource"
+        ),
+      });
+    }
+
+    function throwing(error: Error): FakeTool {
+      return {
+        description: "d",
+        execute: vi.fn(async () => {
+          throw error;
+        }),
+      };
+    }
+
+    it("publishes the exact tuple the turn correlates a challenge on", async () => {
+      const error = insufficientScope();
+      const manager = fakeManager({ cal: { create_event: throwing(error) } });
+      const seen: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["cal"],
+        onScopeStepUpChallenge: (event) => seen.push(event),
+      });
+
+      const t = projected.tools["mcp__cal__create_event"] as FakeTool;
+      // The error still reaches the caller — this observes, never swallows.
+      await expect(
+        t.execute({ title: "x" }, { toolCallId: "call-1" })
+      ).rejects.toBe(error);
+
+      // `runHarnessTurn` matches a challenge to its observed tool call on
+      // exactly (serverId, UN-namespaced toolName, raw input). Anything else
+      // here and the correlation silently never fires.
+      expect(seen).toEqual([
+        {
+          serverId: "cal",
+          toolCallId: "call-1",
+          requiredScope: "calendar.write",
+          resourceMetadataUrl:
+            "https://cal.example/.well-known/oauth-protected-resource",
+          errorDescription: undefined,
+          toolName: "create_event",
+          toolInput: { title: "x" },
+        },
+      ]);
+    });
+
+    it("stays quiet on an ordinary tool failure", async () => {
+      const manager = fakeManager({
+        srv: { t: throwing(new Error("upstream 500")) },
+      });
+      const seen: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        onScopeStepUpChallenge: (event) => seen.push(event),
+      });
+      await expect(
+        (projected.tools["mcp__srv__t"] as FakeTool).execute({}, {})
+      ).rejects.toThrow("upstream 500");
+      expect(seen).toEqual([]);
+    });
+
+    it("passes the manager's tool through by identity when no sink is given", async () => {
+      // Eval/synthetic callers supply no sink and cannot pause anyway; they must
+      // not pay a wrapper, so the single-execution-path property still holds.
+      const inner = tool();
+      const manager = fakeManager({ srv: { ping: inner } });
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+      });
+      expect(projected.tools["mcp__srv__ping"]).toBe(inner);
+    });
+
+    it("still observes when a policy snapshot is also in force", async () => {
+      const error = insufficientScope();
+      const manager = fakeManager({ srv: { read_thing: throwing(error) } });
+      const seen: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        toolPolicy: {
+          srv: buildToolPolicySnapshot({
+            policy: { mode: "default", deny: ["delete_all"] },
+            tools: [{ name: "delete_all" }, { name: "read_thing" }],
+          }),
+        },
+        onScopeStepUpChallenge: (event) => seen.push(event),
+      });
+      await expect(
+        (projected.tools["mcp__srv__read_thing"] as FakeTool).execute({}, {})
+      ).rejects.toBe(error);
+      expect(seen).toHaveLength(1);
+    });
+
+    it("does not fire for a call the policy blocked (gate is outermost)", async () => {
+      // A denied call reaches no server, so there is no challenge to raise —
+      // and it returns the block envelope rather than throwing at all.
+      const manager = fakeManager({
+        srv: { delete_all: throwing(insufficientScope()) },
+      });
+      const seen: unknown[] = [];
+      const projected = await projectSelectedMcpServersAsHostTools({
+        manager,
+        selectedServerIds: ["srv"],
+        toolPolicy: {
+          srv: buildToolPolicySnapshot({
+            policy: { mode: "default", deny: ["delete_all"] },
+            tools: [{ name: "delete_all" }],
+          }),
+        },
+        onScopeStepUpChallenge: (event) => seen.push(event),
+      });
+      const result = (await (
+        projected.tools["mcp__srv__delete_all"] as FakeTool
+      ).execute({}, {})) as { _meta: Record<string, { reason: string }> };
+      expect(result._meta["mcpjam/policyBlock"]!.reason).toBe("denyList");
+      expect(seen).toEqual([]);
+    });
+  });
 });
 
 describe("harnessMcpToolName", () => {
