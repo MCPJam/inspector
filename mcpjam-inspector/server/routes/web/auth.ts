@@ -43,6 +43,10 @@ import {
 import type { ExecutionScope } from "../../utils/execution-scope.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
+  isUserServerHopFault,
+  markUserServerHop,
+} from "../../utils/route-error-report.js";
+import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "../../utils/internal-log-context.js";
@@ -2076,6 +2080,17 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
 
   try {
     return await fn(manager, body);
+  } catch (error) {
+    // The span boundary, and the reason it is HERE rather than on the whole
+    // route catch. Everything above this line is MCPJam's hop —
+    // `getConvexBearerForRequest`, `fetchScenarioRuntimeConfig` and
+    // `createAuthorizedManager` all reach our own Convex deployment, and a
+    // Convex outage must keep paging us. `createAuthorizedManager` returns
+    // without awaiting its connects (the constructor queues them as
+    // microtasks), so the first thing that actually touches the user's server
+    // is the manager op inside `fn` — which makes this the narrowest span that
+    // still catches connect failures.
+    throw markUserServerHop(error);
   } finally {
     await manager.disconnectAllServers();
   }
@@ -2308,11 +2323,27 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
+    // Only a failure the span above positively marked is the user's hop.
+    // Anything else — a malformed body, an authorize failure, our own Convex
+    // refusing — reaches here unmarked and stays unattributed, because absent
+    // means unknown and never "the user's".
+    //
+    // Attribution only: the status is deliberately unchanged. Answering 424
+    // here, as `chat-v2` already does for an unreachable target, goes through
+    // `namesAnMcpServer` and so needs the server name threaded to this catch
+    // rather than recovered from the message. That is the one user-visible
+    // change in this program and it ships on its own.
+    const userServerHop = isUserServerHopFault(error);
     const routeError = mapRuntimeError(error);
     return webErrorFromRoute(
       c,
       routeError,
-      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
+      {
+        ...((rpcCollector?.buildEnvelope() as
+          | Record<string, unknown>
+          | undefined) ?? {}),
+        ...(userServerHop ? { hop: "user_server_hop" as const } : {}),
+      }
     );
   }
 }

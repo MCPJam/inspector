@@ -204,7 +204,15 @@ export function markUserServerHop(error: unknown): unknown {
 /** How far to walk a `.cause` chain before giving up. Mirrors the capture walk. */
 const MAX_CAUSE_DEPTH = 8;
 
-function isUserServerHopFault(error: unknown): boolean {
+/**
+ * Read the mark {@link markUserServerHop} leaves.
+ *
+ * Exported so a route catch can record the hop on `http.request.failed`, not
+ * only suppress a Sentry capture. `route-error-report.ts` used the mark for
+ * the capture decision and nothing else, which is why the one declaration
+ * meaning "this hop was not ours" reached no telemetry at all.
+ */
+export function isUserServerHopFault(error: unknown): boolean {
   const seen = new Set<unknown>();
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
