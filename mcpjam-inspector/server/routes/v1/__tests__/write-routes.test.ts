@@ -115,7 +115,7 @@ function request(
 // `environmentIds` = a legacy suite, which is what most of these tests are.
 const SUITE_DOC = {
   _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-  projectId: "p1",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   name: "Smoke",
 };
 
@@ -141,7 +141,7 @@ function mockConvexQueries(
 const RUN_DOC = {
   _id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-  projectId: "p1",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   runNumber: 3,
   status: "completed",
   result: "passed",
@@ -181,7 +181,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/tools/call",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/tools/call",
         { parameters: {} }
       );
       expect(res.status).toBe(400);
@@ -194,7 +194,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/prompts/get",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/prompts/get",
         {}
       );
       expect(res.status).toBe(400);
@@ -209,7 +209,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", hostIds: ["h1"] }
       );
       expect(res.status).toBe(400);
@@ -223,7 +223,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { serverIds: ["s1"] }
       );
       expect(res.status).toBe(400);
@@ -236,7 +236,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         {
           suiteName: "fresh suite",
           tests: [
@@ -283,14 +283,14 @@ describe("v1 write routes", () => {
           "testSuites:getSuiteRunServerSelection": () => ({
             serverIds: ["s_alpha", "s_beta"],
             serverNames: ["alpha", "beta"],
-            source: "host_config",
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
           }),
         });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -344,7 +344,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -371,7 +371,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suiteotherxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -388,7 +388,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -411,7 +411,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -446,7 +446,7 @@ describe("v1 write routes", () => {
           "testSuites:getSuiteRunServerSelection": () => ({
             serverIds: ["s_alpha"],
             serverNames: ["alpha"],
-            source: "host_config",
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
           }),
         });
         return { execute, disconnectAllServers };
@@ -460,7 +460,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
@@ -487,7 +487,7 @@ describe("v1 write routes", () => {
           const res = await request(
             makeApp(),
             "POST",
-            "/api/v1/projects/p1/eval-runs",
+            "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
             { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: `key_${i}` }
           );
           expect(res.status).toBe(202);
@@ -503,7 +503,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
@@ -533,14 +533,14 @@ describe("v1 write routes", () => {
           "testSuites:getSuiteRunServerSelection": () => ({
             serverIds: ["s_alpha"],
             serverNames: ["alpha"],
-            source: "host_config",
+            source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
           }),
         });
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
         );
 
@@ -556,10 +556,10 @@ describe("v1 write routes", () => {
     describe("environment-backed runs", () => {
       // Attach-ordered environments on the suite; the route's selection rule
       // reads this, not the caller's word.
-      const ENV_SUITE_DOC = { ...SUITE_DOC, environmentIds: ["env_1"] };
+      const ENV_SUITE_DOC = { ...SUITE_DOC, environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"] };
       const PROJECT_ENVIRONMENTS = [
-        { environmentId: "env_1", name: "Staging" },
-        { environmentId: "env_2", name: "Prod" },
+        { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+        { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
       ];
 
       /**
@@ -567,7 +567,7 @@ describe("v1 write routes", () => {
        * succeed. `projectEnvironments:listEnvironments` is stubbed too — it is
        * what the 400s read to name the attached candidates.
        */
-      function mockEnvSuite(environmentIds: string[] = ["env_1"]): void {
+      function mockEnvSuite(environmentIds: string[] = ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"]): void {
         mockConvexQueries({
           "testSuites:getTestSuite": () => ({
             ...SUITE_DOC,
@@ -581,11 +581,11 @@ describe("v1 write routes", () => {
 
       const RESOLVED_ENVIRONMENT = {
         environmentRef: {
-          environmentId: "env_1",
+          environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "Staging",
           revision: 7,
         },
-        hostId: "host_1",
+        hostId: "host1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         hostConfigId: "hc_1",
         selectedServerIds: ["s_env"],
         // Live-healed projection, plus a server contributed by a pinned
@@ -628,18 +628,18 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(202);
         // The 202 names the environment the run is pinned to.
         expect(
           ((await res.json()) as { environment?: unknown }).environment
-        ).toEqual({ id: "env_1", name: "Staging", revision: 7 });
+        ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "projectEnvironments:resolveEnvironmentForLaunch",
-          { projectId: "p1", environmentId: "env_1" }
+          { projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
         // The suite's saved selection is never consulted for an env run.
         expect(convexQueryMock).not.toHaveBeenCalledWith(
@@ -668,8 +668,8 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1", serverIds: ["s_bogus"] }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s_bogus"] }
         );
 
         expect(res.status).toBe(400);
@@ -686,10 +686,10 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "fresh suite",
-            environmentId: "env_1",
+            environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             tests: [inlineTest],
           }
         );
@@ -710,8 +710,8 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_other" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(400);
@@ -736,8 +736,8 @@ describe("v1 write routes", () => {
             environmentIds: [],
           }),
           "projectEnvironments:getEnvironment": () => ({
-            environmentId: "env_other",
-            projectId: "p1",
+            environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
+            projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
             name: "Adhoc",
           }),
           "projectEnvironments:resolveEnvironmentForLaunch": () =>
@@ -747,17 +747,17 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-            environmentId: "env_other",
+            environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
             ephemeralEnvironment: true,
           }
         );
 
         expect(res.status).toBe(202);
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
-          environmentId: "env_other",
+          environmentId: "envotherxxxxxxxxxxxxxxxxxxxxxxxx",
           ephemeralEnvironment: true,
         });
       });
@@ -769,14 +769,14 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(202);
         expect(
           ((await res.json()) as { environment?: unknown }).environment
-        ).toEqual({ id: "env_1", name: "Staging", revision: 7 });
+        ).toEqual({ id: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 7 });
         // Never falls back to the legacy saved selection — that is exactly the
         // drift this rule closes (connect one set, snapshot another).
         expect(convexQueryMock).not.toHaveBeenCalledWith(
@@ -784,19 +784,19 @@ describe("v1 write routes", () => {
           expect.anything()
         );
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
-          environmentId: "env_1",
+          environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverIds: ["s_env_live", "s_plugin"],
         });
       });
 
       it("requires a choice when several environments are attached", async () => {
         mockHappyCreate();
-        mockEnvSuite(["env_1", "env_2"]);
+        mockEnvSuite(["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"]);
 
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
@@ -819,7 +819,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s_bogus"] }
         );
 
@@ -852,8 +852,8 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(409);
@@ -883,8 +883,8 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_1" }
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
         );
 
         expect(res.status).toBe(404);
@@ -936,7 +936,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -960,7 +960,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -975,7 +975,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -991,7 +991,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           {
             suiteName: "smoke",
             serverIds: ["s1"],
@@ -1024,7 +1024,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
 
@@ -1042,7 +1042,7 @@ describe("v1 write routes", () => {
       // prepareEvalRun received the public->internal request mapping.
       const prepareArgs = prepareEvalRunMock.mock.calls[0][1];
       expect(prepareArgs).toMatchObject({
-        projectId: "p1",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         suiteRerun: true,
         source: "api",
         convexAuthToken: "tok",
@@ -1081,7 +1081,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
@@ -1115,7 +1115,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(202);
@@ -1138,7 +1138,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] }
       );
       expect(res.status).toBe(500);
@@ -1188,7 +1188,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
         "sk_live_secret"
       );
@@ -1227,7 +1227,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"], suiteRerun: false }
       );
       expect(res.status).toBe(202);
@@ -1257,7 +1257,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-runs",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           serverIds: ["s1"],
@@ -1309,7 +1309,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1329,7 +1329,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1349,7 +1349,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1368,7 +1368,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1389,7 +1389,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1422,7 +1422,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
         {
           name: "Fresh suite",
           serverIds: ["s1"],
@@ -1493,7 +1493,7 @@ describe("v1 write routes", () => {
         request(
           app,
           "POST",
-          "/api/v1/projects/p1/eval-runs",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
           { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", serverIds: ["s1"] },
           token
         );
@@ -1535,8 +1535,8 @@ describe("v1 write routes", () => {
     const HOST_SUITE = {
       ...SUITE_DOC,
       hostAttachments: [
-        { namedHostId: "host_claude", hostName: "Claude" },
-        { namedHostId: "host_chatgpt", hostName: "ChatGPT" },
+        { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx", hostName: "Claude" },
+        { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx", hostName: "ChatGPT" },
       ],
     };
 
@@ -1578,7 +1578,7 @@ describe("v1 write routes", () => {
         "testSuites:getSuiteRunServerSelection": () => ({
           serverIds: ["s_alpha"],
           serverNames: ["alpha"],
-          source: "host_config",
+          source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
         }),
         // The group's dry pass resolves each target's host config to run the
         // static admission checks. A plain (non-harness) host by default;
@@ -1606,17 +1606,17 @@ describe("v1 write routes", () => {
           environmentIds: [],
         }),
         "projectEnvironments:getEnvironment": () => ({
-          environmentId: "env_adhoc",
-          projectId: "p1",
+          environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "Adhoc",
         }),
         "projectEnvironments:resolveEnvironmentForLaunch": () => ({
           environmentRef: {
-            environmentId: "env_adhoc",
+            environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
             name: "Adhoc",
             revision: 1,
           },
-          hostId: "host_claude",
+          hostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
           hostConfigId: "hc_1",
           selectedServerIds: ["s_env"],
           effectiveServerIds: ["s_env"],
@@ -1629,17 +1629,17 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           ephemeralEnvironment: true,
-          targets: [{ environmentId: "env_adhoc" }],
+          targets: [{ environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx" }],
         }
       );
 
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
-        environmentId: "env_adhoc",
+        environmentId: "envadhocxxxxxxxxxxxxxxxxxxxxxxxx",
         ephemeralEnvironment: true,
       });
       await drain(releaseGates, disconnectAllServers, 1);
@@ -1652,12 +1652,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_chatgpt" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1691,7 +1691,7 @@ describe("v1 write routes", () => {
       expect(groupIds[0]).toBe(body.runGroupId);
       expect(
         prepareEvalRunMock.mock.calls.map((call) => call[1].namedHostId)
-      ).toEqual(["host_claude", "host_chatgpt"]);
+      ).toEqual(["hostclaudexxxxxxxxxxxxxxxxxxxxxx", "hostchatgptxxxxxxxxxxxxxxxxxxxxx"]);
 
       await drain(releaseGates, disconnectAllServers, 2);
     });
@@ -1704,12 +1704,12 @@ describe("v1 write routes", () => {
       const group = await request(
         app,
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_chatgpt" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1718,14 +1718,14 @@ describe("v1 write routes", () => {
       // Two targets under ONE slot: with the cap at 2, a single further launch
       // still fits. Charging per target would have exhausted the cap here,
       // which is what makes a 3-target fan-out unlaunchable.
-      const single = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+      const single = await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
         suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverIds: ["s1"],
       });
       expect(single.status).toBe(202);
 
       // …and the next one is gated, so the group's slot is genuinely held.
-      const gated = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+      const gated = await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
         suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverIds: ["s1"],
       });
@@ -1738,7 +1738,7 @@ describe("v1 write routes", () => {
       );
       expect(
         (
-          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
             suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
@@ -1748,7 +1748,7 @@ describe("v1 write routes", () => {
       await drain(releaseGates, disconnectAllServers, 3);
       expect(
         (
-          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
             suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
@@ -1764,7 +1764,7 @@ describe("v1 write routes", () => {
       for (let i = 0; i < 2; i += 1) {
         expect(
           (
-            await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+            await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
               suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               serverIds: ["s1"],
             })
@@ -1774,8 +1774,8 @@ describe("v1 write routes", () => {
       const res = await request(
         app,
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
-        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", targets: [{ namedHostId: "host_claude" }] }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }] }
       );
       expect(res.status).toBe(429);
       expect(await res.json()).toMatchObject({
@@ -1813,12 +1813,12 @@ describe("v1 write routes", () => {
       const res = await request(
         app,
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_chatgpt" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1839,7 +1839,7 @@ describe("v1 write routes", () => {
       await drain(releaseGates, disconnectAllServers, 1);
       expect(
         (
-          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+          await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
             suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
             serverIds: ["s1"],
           })
@@ -1862,12 +1862,12 @@ describe("v1 write routes", () => {
       const res = await request(
         app,
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_chatgpt" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1885,7 +1885,7 @@ describe("v1 write routes", () => {
       for (let i = 0; i < 2; i += 1) {
         expect(
           (
-            await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+            await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
               suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               serverIds: ["s1"],
             })
@@ -1901,12 +1901,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_nope" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostnopexxxxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1926,12 +1926,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { environmentId: "env_1" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -1948,7 +1948,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: Array.from({ length: MAX_RUN_GROUP_TARGETS + 1 }, (_, i) => ({
@@ -1977,12 +1977,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_chatgpt" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -2002,15 +2002,15 @@ describe("v1 write routes", () => {
       mockConvexQueries({
         "testSuites:getTestSuite": () => ({
           ...SUITE_DOC,
-          environmentIds: ["env_1", "env_2"],
+          environmentIds: ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
         }),
         "projectEnvironments:listEnvironments": () => [
-          { environmentId: "env_1", name: "Staging" },
-          { environmentId: "env_2", name: "Prod" },
+          { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging" },
+          { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Prod" },
         ],
         "projectEnvironments:resolveEnvironmentForLaunch": () => ({
-          environmentRef: { environmentId: "env_1", name: "Staging", revision: 1 },
-          hostId: "host_harness",
+          environmentRef: { environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Staging", revision: 1 },
+          hostId: "hostharnessxxxxxxxxxxxxxxxxxxxxx",
           selectedServerIds: ["s_env"],
         }),
         "testSuites:getSuiteRunServerSelection": () => ({
@@ -2022,7 +2022,7 @@ describe("v1 write routes", () => {
         // carries the harness. A gate reading the wrong one answers 202.
         "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
         "hosts:getHost": (args: any) =>
-          args?.hostId === "host_harness"
+          args?.hostId === "hostharnessxxxxxxxxxxxxxxxxxxxxx"
             ? { config: { harness: "claude-code" } }
             : { config: { hostStyle: "mcpjam" } },
       });
@@ -2031,10 +2031,10 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-          targets: [{ environmentId: "env_1" }, { environmentId: "env_2" }],
+          targets: [{ environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }, { environmentId: "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" }],
         }
       );
       expect(res.status).toBe(400);
@@ -2054,10 +2054,10 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "POST",
-          "/api/v1/projects/p1/eval-run-groups",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
           {
             suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-            targets: [{ namedHostId: "host_claude" }],
+            targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
             ...knob,
           }
         );
@@ -2075,12 +2075,12 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           targets: [
-            { namedHostId: "host_claude" },
-            { namedHostId: "host_claude" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
           ],
         }
       );
@@ -2096,10 +2096,10 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-run-groups",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
         {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-          targets: [{ namedHostId: "host_claude" }],
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
           iterationOverride: 3,
           caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
           matchOptionsOverride: {
@@ -2134,14 +2134,14 @@ describe("v1 write routes", () => {
       const body = {
         suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         targets: [
-          { namedHostId: "host_claude" },
-          { namedHostId: "host_chatgpt" },
+          { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+          { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
         ],
         idempotencyKey: "trigger-42",
       };
 
       const first = (await (
-        await request(app, "POST", "/api/v1/projects/p1/eval-run-groups", body)
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
       ).json()) as any;
       const firstKeys = prepareEvalRunMock.mock.calls.map(
         (call) => call[1].idempotencyKey
@@ -2157,7 +2157,7 @@ describe("v1 write routes", () => {
       const { releaseGates: gates2, disconnectAllServers: d2 } =
         mockPendingLaunches();
       const replay = (await (
-        await request(app, "POST", "/api/v1/projects/p1/eval-run-groups", body)
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
       ).json()) as any;
       expect(replay.runGroupId).toBe(first.runGroupId);
       expect(
@@ -2176,7 +2176,7 @@ describe("v1 write routes", () => {
       const { releaseGates, disconnectAllServers } = mockPendingLaunches();
       const app = makeApp();
       const post = () =>
-        request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+        request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs", {
           suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
           runGroupId: "client-minted",
         });
@@ -2202,25 +2202,25 @@ describe("v1 write routes", () => {
       mockConvexQueries();
       convexMutationMock.mockResolvedValue({
         attached: true,
-        environmentIds: ["env_a", "env_b"],
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
       });
 
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
-        { environmentId: "env_b" }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         attached: true,
-        environmentIds: ["env_a", "env_b"],
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
       });
       expect(convexMutationMock).toHaveBeenCalledWith(
         "testSuites:attachEnvironment",
-        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "env_b" }
+        { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
     });
 
@@ -2229,13 +2229,13 @@ describe("v1 write routes", () => {
       mockConvexQueries();
       convexMutationMock.mockResolvedValue({
         attached: false,
-        environmentIds: ["env_a"],
+        environmentIds: ["envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
       });
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
-        { environmentId: "env_a" }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
       expect(res.status).toBe(200);
       expect(((await res.json()) as any).attached).toBe(false);
@@ -2251,8 +2251,8 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
-        { environmentId: "env_b" }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
       expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -2266,13 +2266,131 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
-        { environmentId: "env_b" }
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        { environmentId: "envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
       expect(body.details.reason).toBe("ATTACH_UNAVAILABLE");
       expect(body.message).toContain("environmentIds");
+    });
+
+    it("404s a malformed body environmentId WITHOUT calling the mutation", async () => {
+      // The path `suiteId` was gated and the BODY id next to it was not, so a
+      // joined pair here reached `v.id('projectEnvironments')` and came back as
+      // production's redacted string — which the WRITE translator has no
+      // argument-validation branch for, so it answered its terminal 500:
+      // `origin=mcpjam`, captured, paging. The absent mutation call is the
+      // assertion that pins this to the boundary rather than to a translator.
+      mockConvexQueries();
+      convexMutationMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/environments",
+        {
+          environmentId:
+            "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The grouped-launch route is where the incident's shape came FROM: it hands
+   * a model N run ids, and `operations.ts` tells it to poll "the returned
+   * runId" (singular). Its own request body took the same treatment the run-id
+   * path segment did — a plain string — so the identical joined-ids value
+   * arrived here and produced the identical page.
+   */
+  describe("POST /eval-run-groups — target id shapes", () => {
+    const JOINED_ENV =
+      "envaxxxxxxxxxxxxxxxxxxxxxxxxxxxx envbxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    const JOINED_HOST =
+      "hostclaudexxxxxxxxxxxxxxxxxxxxxx hostchatgptxxxxxxxxxxxxxxxxxxxxx";
+
+    it("404s a joined environmentId before any run starts", async () => {
+      mockConvexQueries();
+      prepareEvalRunMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          ephemeralEnvironment: true,
+          targets: [{ environmentId: JOINED_ENV }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      // ZERO runs started, which is this route's whole contract: a group that
+      // starts target 1 and then rejects target 2 has already spent.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("404s a joined namedHostId before any run starts", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          hostAttachments: [
+            {
+              namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+              hostName: "Claude",
+            },
+          ],
+        }),
+      });
+      prepareEvalRunMock.mockClear();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: JOINED_HOST }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps the 400 for a WELL-SHAPED id that is merely unattached", async () => {
+      // The two answers must stay distinguishable. "Not a Convex id" is a 404
+      // like any unnameable resource; "a real id, not attached to this suite"
+      // keeps its 400 and its list of what IS acceptable — which is the only
+      // one of the two a caller can act on.
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          hostAttachments: [
+            {
+              namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx",
+              hostName: "Claude",
+            },
+          ],
+        }),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostnopexxxxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).details.reason).toBe("HOST_NOT_ATTACHED");
     });
   });
 
@@ -2282,7 +2400,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
@@ -2335,7 +2453,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(200);
       expect((await res.json()) as any).toMatchObject({
@@ -2349,7 +2467,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
@@ -2362,7 +2480,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       expect(res.status).toBe(404);
     });
@@ -2397,7 +2515,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations?limit=1"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations?limit=1"
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -2425,7 +2543,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace"
       );
       expect(res.status).toBe(404);
       expect(await res.json()).toMatchObject({
@@ -2450,7 +2568,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/oauth/import-tokens",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
         {
           serverUrl: "https://server.example.com/mcp",
           tokens: { access_token: "at", refresh_token: "rt" },
@@ -2463,7 +2581,7 @@ describe("v1 write routes", () => {
       const forwarded = JSON.parse(String(init.body));
       // Path params win over the body; kind pinned to generic.
       expect(forwarded).toMatchObject({
-        projectId: "p1",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         serverId: "s1",
         kind: "generic",
         tokens: { access_token: "at" },
@@ -2474,7 +2592,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "POST",
-        "/api/v1/projects/p1/servers/s1/oauth/import-tokens",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
         { serverUrl: "https://server.example.com/mcp" }
       );
       expect(res.status).toBe(400);

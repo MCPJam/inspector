@@ -86,7 +86,7 @@ function request(
 
 const SUITE_DOC = {
   _id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-  projectId: "p1",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   createdBy: "user_1",
   workspaceId: "ws_1",
   name: "My Suite",
@@ -130,7 +130,7 @@ const EXEC_CONFIG = {
 const CASE_DOC = {
   _id: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   testSuiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
-  projectId: "p1",
+  projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
   createdBy: "user_1",
   workspaceId: "ws_1",
   caseKey: "ui_abc",
@@ -262,7 +262,7 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("GET suite returns a scrubbed public DTO (no internal columns)", async () => {
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.id).toBe("suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
@@ -295,14 +295,14 @@ describe("v1 eval-edit routes", () => {
         ? Promise.resolve({ ...SUITE_DOC, projectId: "p2" })
         : defaultQueryImpl(name)
     );
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(404);
   });
 
   it("PATCH suite maps public settings to internal updateTestSuite args", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         name: "Renamed",
         settings: {
@@ -338,7 +338,7 @@ describe("v1 eval-edit routes", () => {
   it("PATCH minimumIterations sets the floor, and null clears it", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { minimumIterations: 3 } }
     );
     expect(res.status).toBe(200);
@@ -361,7 +361,7 @@ describe("v1 eval-edit routes", () => {
     // reports success and changes nothing.
     const cleared = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { minimumIterations: null } }
     );
     expect(cleared.status).toBe(200);
@@ -380,7 +380,7 @@ describe("v1 eval-edit routes", () => {
       );
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         { settings: { minimumIterations: value } }
       );
       expect(res.status).toBe(400);
@@ -391,7 +391,7 @@ describe("v1 eval-edit routes", () => {
   it("GET reports minimumIterations, null when the suite has no floor", async () => {
     const unset = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     expect(((await unset.json()) as any).settings.minimumIterations).toBeNull();
 
@@ -400,7 +400,7 @@ describe("v1 eval-edit routes", () => {
         ? Promise.resolve({ ...SUITE_DOC, minIterations: 4 })
         : defaultQueryImpl(name)
     );
-    const set = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const set = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(((await set.json()) as any).settings.minimumIterations).toBe(4);
   });
 
@@ -410,7 +410,7 @@ describe("v1 eval-edit routes", () => {
     // API had while it accepted only `enabled` + `model`.
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { judge: { autoRun: true, threshold: 0.85 } } }
     );
     expect(res.status).toBe(200);
@@ -447,7 +447,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { judge: { model: "openai/gpt-5" } } }
     );
     expect(res.status).toBe(200);
@@ -473,7 +473,7 @@ describe("v1 eval-edit routes", () => {
         ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined })
         : defaultQueryImpl(name)
     );
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.settings.judge).toEqual({
@@ -489,7 +489,7 @@ describe("v1 eval-edit routes", () => {
     // be preserved from the suite's current settings.
     const resJudge = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { judge: { model: "openai/gpt-5" } } }
     );
     expect(resJudge.status).toBe(200);
@@ -511,7 +511,7 @@ describe("v1 eval-edit routes", () => {
 
     const resMatch = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { settings: { matchOptions: { arguments: "partial" } } }
     );
     expect(resMatch.status).toBe(200);
@@ -529,7 +529,7 @@ describe("v1 eval-edit routes", () => {
   it("PATCH suite environment uses bindings, never a live connection", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         environment: { servers: ["Excalidraw (App)"] },
       }
@@ -555,15 +555,15 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "computerEnvironments:listEnvironments") {
         return Promise.resolve([
-          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
-          { environmentId: "img_2", projectId: "p1", name: "Node 22" },
+          { environmentId: "img_1", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Playwright" },
+          { environmentId: "img_2", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Node 22" },
         ]);
       }
       return defaultQueryImpl(name);
     });
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { environment: { computerEnvironment: "playwright" } }
     );
     expect(res.status).toBe(200);
@@ -596,7 +596,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { environment: { computerEnvironment: null } }
     );
     expect(res.status).toBe(200);
@@ -623,7 +623,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { environment: { servers: ["Excalidraw (App)", "Other"] } }
     );
     expect(res.status).toBe(200);
@@ -638,14 +638,14 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "computerEnvironments:listEnvironments") {
         return Promise.resolve([
-          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+          { environmentId: "img_1", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Playwright" },
         ]);
       }
       return defaultQueryImpl(name);
     });
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { environment: { computerEnvironment: "ghost" } }
     );
     expect(res.status).toBe(404);
@@ -660,15 +660,15 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "computerEnvironments:listEnvironments") {
         return Promise.resolve([
-          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
-          { environmentId: "img_2", projectId: "p1", name: "playwright" },
+          { environmentId: "img_1", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "Playwright" },
+          { environmentId: "img_2", projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx", name: "playwright" },
         ]);
       }
       return defaultQueryImpl(name);
     });
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       { environment: { computerEnvironment: "Playwright" } }
     );
     expect(res.status).toBe(400);
@@ -689,13 +689,13 @@ describe("v1 eval-edit routes", () => {
       if (name === "computerEnvironments:getEnvironment") {
         return Promise.resolve({
           environmentId: "img_1",
-          projectId: "p1",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
           name: "Playwright",
         });
       }
       return defaultQueryImpl(name);
     });
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.environment.computerEnvironment).toEqual({
@@ -705,7 +705,7 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("GET reports an unpinned suite's computer image as null", async () => {
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     const body = (await res.json()) as any;
     expect(body.environment.computerEnvironment).toBeNull();
   });
@@ -738,7 +738,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         environment: { servers: ["New Server"] },
         hosts: [{ host: "Prod", servers: ["New Server"] }],
@@ -764,7 +764,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         hosts: [{ host: "host_1", servers: ["srv_1"] }],
       }
@@ -783,7 +783,7 @@ describe("v1 eval-edit routes", () => {
     // hosts: [] and zero mutations. Strict body + path-aware errors name them.
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         hostIds: ["host_1"],
         servers: ["Excalidraw (App)"],
@@ -800,7 +800,7 @@ describe("v1 eval-edit routes", () => {
   it("PATCH execution config round-trips getSuiteConfig and preserves servers", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         executionConfig: { temperature: 0.9 },
       }
@@ -821,7 +821,7 @@ describe("v1 eval-edit routes", () => {
   it("schedule disable preserves the stored interval", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
       { enabled: false }
     );
     expect(res.status).toBe(200);
@@ -843,7 +843,7 @@ describe("v1 eval-edit routes", () => {
     // SUITE_DOC.schedule.intervalMinutes === 60 (e.g. after a disable).
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
       { enabled: true }
     );
     expect(res.status).toBe(200);
@@ -876,7 +876,7 @@ describe("v1 eval-edit routes", () => {
       mockEnvSuite(["env_1", "env_2"]);
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: true, intervalMinutes: 60, environmentId: "env_2" }
       );
       expect(res.status).toBe(200);
@@ -895,7 +895,7 @@ describe("v1 eval-edit routes", () => {
       mockEnvSuite(["env_1"]);
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: true }
       );
       expect(res.status).toBe(200);
@@ -909,7 +909,7 @@ describe("v1 eval-edit routes", () => {
       mockEnvSuite(["env_1", "env_2"]);
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: true }
       );
       expect(res.status).toBe(400);
@@ -931,7 +931,7 @@ describe("v1 eval-edit routes", () => {
       mockEnvSuite(["env_1"]);
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: true, environmentId: "env_ghost" }
       );
       expect(res.status).toBe(400);
@@ -945,7 +945,7 @@ describe("v1 eval-edit routes", () => {
       mockEnvSuite(["env_1"]);
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: false, environmentId: "env_1" }
       );
       expect(res.status).toBe(400);
@@ -957,7 +957,7 @@ describe("v1 eval-edit routes", () => {
     it("PATCH suite forwards environmentIds to setSuiteEnvironments", async () => {
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           environmentIds: ["env_1", "env_2"],
         }
@@ -975,7 +975,7 @@ describe("v1 eval-edit routes", () => {
     it("PATCH suite clears attachments with an explicit null", async () => {
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           environmentIds: null,
         }
@@ -990,7 +990,7 @@ describe("v1 eval-edit routes", () => {
     it("PATCH suite rejects [] instead of treating it as a clear", async () => {
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           environmentIds: [],
         }
@@ -1021,7 +1021,7 @@ describe("v1 eval-edit routes", () => {
 
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           name: "Renamed",
           environmentIds: ["env_1"],
@@ -1050,7 +1050,7 @@ describe("v1 eval-edit routes", () => {
 
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           environmentIds: ["env_1", "env_2"],
         }
@@ -1083,7 +1083,7 @@ describe("v1 eval-edit routes", () => {
 
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           environmentIds: ["env_1"],
         }
@@ -1099,7 +1099,7 @@ describe("v1 eval-edit routes", () => {
     it("PATCH suite leaves attachments alone when the field is omitted", async () => {
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         {
           name: "Renamed",
         }
@@ -1127,7 +1127,7 @@ describe("v1 eval-edit routes", () => {
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
       );
       const body = (await res.json()) as any;
       expect(body.environmentIds).toEqual(["env_1", "env_2"]);
@@ -1143,7 +1143,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
       { enabled: true }
     );
     expect(res.status).toBe(400);
@@ -1165,7 +1165,7 @@ describe("v1 eval-edit routes", () => {
           })
         : defaultQueryImpl(name)
     );
-    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const res = await request("GET", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx");
     const body = (await res.json()) as any;
     expect(body.settings.matchOptions.extraToolCalls).toBe("unlimited");
   });
@@ -1173,7 +1173,7 @@ describe("v1 eval-edit routes", () => {
   it("PATCH case merges partial match options onto the existing override", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       { matchOptions: { arguments: "exact" } }
     );
     expect(res.status).toBe(200);
@@ -1193,7 +1193,7 @@ describe("v1 eval-edit routes", () => {
     // and must not forward caseType to updateTestCase (which rejects it).
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       { steps: [{ id: "s1", kind: "prompt", prompt: "updated" }] }
     );
     expect(res.status).toBe(200);
@@ -1213,7 +1213,7 @@ describe("v1 eval-edit routes", () => {
     // change and must be rejected.
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         steps: [
           {
@@ -1247,7 +1247,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         steps: [
           {
@@ -1301,7 +1301,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     const body = (await res.json()) as any;
     expect(body.steps[0]).toMatchObject({
@@ -1319,7 +1319,7 @@ describe("v1 eval-edit routes", () => {
   it("DELETE suite returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", deleted: true });
@@ -1339,7 +1339,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "bare",
         steps: [
@@ -1390,7 +1390,7 @@ describe("v1 eval-edit routes", () => {
       // local Ollama instead.
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
         {
           title: "vendor",
           steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -1409,7 +1409,7 @@ describe("v1 eval-edit routes", () => {
     // author wrote is strictly better information than a guess.
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "unknown vendor",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -1438,7 +1438,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "inherits",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -1454,7 +1454,7 @@ describe("v1 eval-edit routes", () => {
     // would resolve to the right provider and then match nothing downstream.
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "padded",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -1488,7 +1488,7 @@ describe("v1 eval-edit routes", () => {
   ])("REJECTS a model id that carries no value — %s", async (_label, entry) => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "blank",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -1506,7 +1506,7 @@ describe("v1 eval-edit routes", () => {
   it("GET cases returns scrubbed public case DTOs", async () => {
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases"
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -1530,7 +1530,7 @@ describe("v1 eval-edit routes", () => {
   it("PATCH case clears match options when passed null", async () => {
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       { matchOptions: null, checks: null }
     );
     expect(res.status).toBe(200);
@@ -1558,7 +1558,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "PATCH",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       {
         steps: [
           {
@@ -1588,7 +1588,7 @@ describe("v1 eval-edit routes", () => {
   it("DELETE case returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: "case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", deleted: true });
@@ -1620,7 +1620,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "normal" }
     );
     expect(res.status).toBe(200);
@@ -1685,7 +1685,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "normal" }
     );
     expect(res.status).toBe(200);
@@ -1740,7 +1740,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {}
     );
 
@@ -1771,7 +1771,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { servers: ["srv_1"] }
     );
 
@@ -1786,7 +1786,7 @@ describe("v1 eval-edit routes", () => {
   it("generate rejects environmentId together with servers at the schema", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { environmentId: "env_1", servers: ["srv_1"] }
     );
     expect(res.status).toBe(400);
@@ -1815,7 +1815,7 @@ describe("v1 eval-edit routes", () => {
     });
 
     const res = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -1869,7 +1869,7 @@ describe("v1 eval-edit routes", () => {
     // "The generator ran and produced nothing" is a spend too — without the
     // checkpoint every keyed retry would pay for it again.
     const res = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -1898,7 +1898,7 @@ describe("v1 eval-edit routes", () => {
       return defaultQueryImpl(name);
     });
     const blocked = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -1937,7 +1937,7 @@ describe("v1 eval-edit routes", () => {
     });
 
     const res = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -1999,7 +1999,7 @@ describe("v1 eval-edit routes", () => {
     generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
     withNoPriorLedger();
     return makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -2095,7 +2095,7 @@ describe("v1 eval-edit routes", () => {
     });
 
     const res = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         method: "POST",
         headers: {
@@ -2123,7 +2123,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "normal", servers: ["Excalidraw (App)"] }
     );
     expect(res.status).toBe(200);
@@ -2154,7 +2154,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "normal" }
     );
     expect(res.status).toBe(200);
@@ -2181,7 +2181,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       {
         caseMix: { simple: 3, negative: 1 },
         varyUserStyles: true,
@@ -2211,7 +2211,7 @@ describe("v1 eval-edit routes", () => {
 
     await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "normal" }
     );
     const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
@@ -2238,7 +2238,7 @@ describe("v1 eval-edit routes", () => {
 
     await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "negative", caseMix: { negative: 4 } }
     );
     // Routed to the plan-driven generator, NOT the legacy negative-only one.
@@ -2284,7 +2284,7 @@ describe("v1 eval-edit routes", () => {
 
       await request(
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
         { mode: "negative", caseMix }
       );
       // A caseMix with no bucket > 0 must not supersede mode: the negative-only
@@ -2332,7 +2332,7 @@ describe("v1 eval-edit routes", () => {
 
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
       { mode: "negative", caseMix: { simple: 1, negative: 1 } }
     );
     expect(res.status).toBe(200);
@@ -2365,7 +2365,7 @@ describe("v1 eval-edit routes", () => {
   it("mints a declared id for a create that does not carry one", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         title: "no id",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
@@ -2379,7 +2379,7 @@ describe("v1 eval-edit routes", () => {
   it("forwards a caller-supplied id as the declared case id, unchanged", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         id: "c_from_suite_file",
         title: "declared",
@@ -2396,7 +2396,7 @@ describe("v1 eval-edit routes", () => {
   it("rejects an id outside the opaque-id charset at the boundary", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         id: "not a valid id",
         title: "bad id",
@@ -2434,7 +2434,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       {
         id: "c_taken",
         title: "dupe",
@@ -2469,7 +2469,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
       { title: "bad", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] }
     );
     expect(res.status).toBe(400);
@@ -2483,7 +2483,7 @@ describe("v1 eval-edit routes", () => {
     );
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     const body = (await res.json()) as any;
     // Two DIFFERENT identities: the row id addresses the case in a URL, the
@@ -2495,7 +2495,7 @@ describe("v1 eval-edit routes", () => {
   it("omits declaredId for a case authored before declared identity existed", async () => {
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
     const body = (await res.json()) as any;
     expect(body).not.toHaveProperty("declaredId");
@@ -2504,7 +2504,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch authors every case in ONE mutation", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2580,7 +2580,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2624,7 +2624,7 @@ describe("v1 eval-edit routes", () => {
     });
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2645,7 +2645,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch forwards the duplicate policy and its override reason", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2664,7 +2664,7 @@ describe("v1 eval-edit routes", () => {
 
   it("POST /cases/batch keys each case by its declared id, else by position", async () => {
     const res = await makeApp().request(
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         method: "POST",
         headers: {
@@ -2696,7 +2696,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch sends no idempotency key when the caller supplied none", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2710,7 +2710,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch refuses more than the cap in one call", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: Array.from({ length: MAX_CASES_PER_BATCH + 1 }, (_, i) => ({
           title: `case-${i}`,
@@ -2729,7 +2729,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch refuses an empty cases array", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       { cases: [] }
     );
     expect(res.status).toBe(400);
@@ -2738,7 +2738,7 @@ describe("v1 eval-edit routes", () => {
   it("POST /cases/batch names the offending entry when one has no steps", async () => {
     const res = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
       {
         cases: [
           { title: "ok", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
@@ -2765,28 +2765,28 @@ describe("v1 eval-edit routes", () => {
       [
         "PATCH /eval-suites/:suiteId",
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         { name: "Renamed", hostz: [] },
         "hostz",
       ],
       [
         "PATCH /eval-suites/:suiteId/schedule",
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/schedule",
         { enabled: false, interval: 60 },
         "interval",
       ],
       [
         "POST /cases",
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases",
         { title: "t", steps: [PROMPT_STEP], kind: "prompt" },
         "kind",
       ],
       [
         "POST /cases/batch",
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/batch",
         {
           cases: [{ title: "t", steps: [PROMPT_STEP] }],
           dryRun: true,
@@ -2796,14 +2796,14 @@ describe("v1 eval-edit routes", () => {
       [
         "PATCH /cases/:caseId",
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
         { title: "n", query: "old field" },
         "query",
       ],
       [
         "POST /cases/generate",
         "POST",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/cases/generate",
         { mode: "normal", count: 5 },
         "count",
       ],
@@ -2822,7 +2822,7 @@ describe("v1 eval-edit routes", () => {
     it("names the field path on a typed-wrong declared key", async () => {
       const res = await request(
         "PATCH",
-        "/api/v1/projects/p1/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
         { name: 12 }
       );
       expect(res.status).toBe(400);

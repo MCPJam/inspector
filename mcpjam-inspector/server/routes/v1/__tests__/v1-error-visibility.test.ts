@@ -520,3 +520,67 @@ describe("a malformed id parameter must not page", () => {
     });
   });
 });
+
+/**
+ * The gate logs the value it rejected, and the value is whatever a client put
+ * in an id slot — including what a MIS-BUILT URL puts there. This line is
+ * designed to fire on high-volume retry loops, so anything it forwards
+ * verbatim accumulates in Axiom.
+ */
+describe("the id gate redacts before it truncates", () => {
+  // Assembled at runtime, and NOT with a real provider's prefix. A literal
+  // `sk_live_…` in a fixture is indistinguishable from a leaked Stripe key to
+  // GitHub's push protection, which blocks the push — so the fixture uses this
+  // repo's own service-credential prefix (`slk_`, `surface-service-auth.ts`)
+  // and builds it from parts. `CREDENTIAL_PATTERN` covers `sk|slk|dsc|api`
+  // identically, so the assertion is unchanged.
+  const FAKE_SECRET = ["notareal", "servicekey", "fixture", "0123456789"].join(
+    ""
+  );
+  const FAKE_CREDENTIAL = `slk${"_"}${FAKE_SECRET}`;
+
+  it("does not put a caller-supplied credential in the log line", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      requireConvexIdShape(FAKE_CREDENTIAL, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch {
+      // expected
+    }
+
+    const detail = String(
+      (warn.mock.calls[0]?.[1] as Record<string, unknown> | undefined)?.detail ??
+        ""
+    );
+    expect(detail).not.toContain(FAKE_SECRET);
+    // Still says WHICH credential shape was rejected — that is the diagnostic
+    // value, and it is what makes a mis-built client identifiable at all.
+    expect(detail).toContain("redacted");
+  });
+
+  it("redacts BEFORE the 64-character cut, not after", () => {
+    // Order is the whole finding. Slicing first can cut a secret in half and
+    // leave a fragment `CREDENTIAL_PATTERN` no longer recognizes — which is how
+    // a scrubber silently stops scrubbing. The padding here pushes the secret
+    // across the 64-character boundary so the wrong order is observable.
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      requireConvexIdShape(`${"p".repeat(50)} ${FAKE_CREDENTIAL}`, "runId", {
+        scope: "v1.evals",
+        notFoundMessage: "Eval run not found",
+      });
+    } catch {
+      // expected
+    }
+
+    const detail = String(
+      (warn.mock.calls[0]?.[1] as Record<string, unknown> | undefined)?.detail ??
+        ""
+    );
+    expect(detail).not.toContain(FAKE_SECRET.slice(0, 12));
+  });
+});

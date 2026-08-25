@@ -22,6 +22,7 @@
 import type { Context } from "hono";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
+import { redactForLog } from "./redact-log-message.js";
 
 /**
  * Convex document ids are lowercase unhyphenated base32-ish tokens of ~32
@@ -30,6 +31,21 @@ import { logger } from "../../utils/logger.js";
  * over-tight gate turns a backend id-format change into a uniform 404 for
  * every caller. Do not narrow it to `{32}` — the `logger.warn` below is how
  * such a change is meant to surface instead.
+ *
+ * WHAT THIS DOES AND DOES NOT CATCH, because the width has a cost. The window
+ * exists for deploy resilience, not for accuracy: it catches the failure that
+ * motivated it — a caller sending MORE THAN ONE id in one slot, which is
+ * always far outside it — and it deliberately does not catch a near-miss, a
+ * 31-character truncation or a 33-character value with a stray byte. Those
+ * still reach Convex and still fail the way this module exists to prevent, so
+ * a caller with an off-by-one id shape is not covered here and must be found
+ * from the Axiom counter instead.
+ *
+ * `cli/src/commands/registry.ts` holds a deliberately DIFFERENT copy pinned to
+ * `{32}`. That one only decides which query parameter to serialize a value
+ * into and never rejects, so a tight shape is free there; here a false
+ * negative is a 404. Neither should be "corrected" into the other — see that
+ * file's header.
  */
 export function looksLikeConvexId(value: string): boolean {
   return /^[a-z0-9]{30,36}$/.test(value);
@@ -61,6 +77,15 @@ export interface ConvexIdParamOptions {
  * The value is logged by LENGTH plus a truncated prefix, never whole: it is
  * unvalidated caller input, and the incident that motivated this arrived as a
  * 165-character path segment. The length alone identifies the multi-id case.
+ *
+ * REDACTED before truncated, and in that order. The value is whatever a client
+ * put in an id slot, which includes what a mis-built URL puts there — a bearer
+ * token, an `sk_`/`slk_` key, a signed share secret — and this line is designed
+ * to fire on high-volume retry loops, so a leak here accumulates. Truncation is
+ * not redaction: slicing first can cut a credential in half and leave the
+ * remaining fragment unrecognizable to `CREDENTIAL_PATTERN`, which is exactly
+ * how a scrubber silently stops scrubbing. Same redactor the read and write
+ * translators use, for the same reason they share it.
  */
 export function requireConvexIdShape(
   value: string | undefined,
@@ -68,7 +93,7 @@ export function requireConvexIdShape(
   options: ConvexIdParamOptions
 ): string {
   if (value !== undefined && looksLikeConvexId(value)) return value;
-  const sample = String(value ?? "").slice(0, 64);
+  const sample = redactForLog(value ?? "").slice(0, 64);
   // `detail`, NOT `message`: `ingestToAxiom` spreads the context and THEN sets
   // `message` from its first argument, so a `message` key here is silently
   // overwritten and the diagnosis — the point of the line — never lands.

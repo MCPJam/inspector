@@ -14,6 +14,7 @@ beforeEach(() => {
 
 const queryMock = vi.fn();
 const mutationMock = vi.fn();
+const actionMock = vi.fn();
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
@@ -23,6 +24,9 @@ vi.mock("convex/browser", () => ({
     }
     mutation(...args: unknown[]) {
       return mutationMock(...args);
+    }
+    action(...args: unknown[]) {
+      return actionMock(...args);
     }
   },
 }));
@@ -644,5 +648,113 @@ describe("a malformed run id is not an incident", () => {
 
     expect(res.status).toBe(200);
     expect(queryMock).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The gate's boundary conditions, which the shape check alone gets wrong.
+ *
+ * A shape gate has two failure directions, and the incident only motivated
+ * one of them. Rejecting a malformed id is the fix; rejecting a value that was
+ * never an id in the first place is a new bug wearing the fix's clothes.
+ */
+describe("the id gate must not reject an ABSENT optional id", () => {
+  const DIFF = { cases: [], scorers: [] };
+
+  it("treats ?baseRunId= as no baseline, not as a malformed one", async () => {
+    // `?baseRunId=` is how a caller that always writes the key serializes an
+    // unset value — `sdk/src/platform/client.ts` drops only `undefined` from a
+    // query object, and a CI script interpolating an empty variable produces
+    // exactly this. Every consumer of `baseRunId` in the handler is
+    // truthiness-based, so the empty string has always MEANT "pick the previous
+    // completed run". Gating on `!== undefined` alone turned that into a 404.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    actionMock.mockResolvedValue({
+      status: "ok",
+      diff: DIFF,
+      baseline: { policy: "previous_completed", baseRunId: "other" },
+    });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/compare?baseRunId=`,
+    );
+
+    expect(res.status).toBe(200);
+    // The assertion that separates "absent" from "rejected": the action ran,
+    // and it ran WITHOUT a baseRunId argument.
+    expect(actionMock).toHaveBeenCalledTimes(1);
+    expect(actionMock.mock.calls[0]?.[1]).not.toHaveProperty("baseRunId");
+  });
+
+  it("still rejects a malformed baseRunId before the action", async () => {
+    // The other direction, so the fix above cannot be "stop gating it".
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/compare?baseRunId=${encodeURIComponent(
+        `${RUN} ${RUN}`,
+      )}`,
+    );
+
+    expect(res.status).toBe(404);
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The steps route's evidence read is documented as best-effort. It was not,
+ * in production: the only refusal shapes it swallowed were the UNREDACTED
+ * ones, and production Convex redacts the refusal this call actually produces
+ * ("Iteration not found or unauthorized", a plain Error) to the same
+ * "[Request ID: …] Server Error" a crash produces. So the degradation path
+ * worked in dev and answered 500 — captured, paging — in prod.
+ */
+describe("iteration steps degrade to verdicts-only on a REDACTED refusal", () => {
+  const ITERATION = "iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx";
+  const ITERATION_ROW = {
+    _id: ITERATION,
+    suiteRunId: RUN,
+    testCaseSnapshot: { steps: [] },
+    metadata: { stepResults: [] },
+  };
+
+  it("returns 200 when the blob action fails with production's redacted text", async () => {
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: RUN_ROW,
+      getTestIteration: ITERATION_ROW,
+    });
+    actionMock.mockRejectedValue(
+      new Error("[Request ID: 182db601667cf972] Server Error"),
+    );
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/iterations/${ITERATION}/steps`,
+    );
+
+    // Not 500. The two reads above already established that this caller may
+    // see this iteration, so there is nothing left to refuse and nothing to
+    // leak — and the response is otherwise complete.
+    expect(res.status).toBe(200);
+  });
+
+  it("still fails on a TRANSPORT failure, which is a real outage", async () => {
+    // The line that keeps the swallow honest: `fetch failed` classifies
+    // `upstream`, never `redacted`, so a genuine outage does not get reported
+    // as "this run has no evidence".
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: RUN_ROW,
+      getTestIteration: ITERATION_ROW,
+    });
+    actionMock.mockRejectedValue(new Error("fetch failed"));
+
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/iterations/${ITERATION}/steps`,
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
   });
 });
