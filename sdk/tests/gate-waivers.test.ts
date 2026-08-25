@@ -22,6 +22,7 @@ import {
   type GateReport,
   type GateWaiver,
 } from "../src/gates.js";
+import { parseJUnitXmlArtifact } from "../src/artifact-parsers/index.js";
 import {
   renderStructuredRunHtml,
   renderStructuredRunJson,
@@ -258,6 +259,35 @@ describe("JUnit reporter", () => {
   it("declares the skip on the suite, and does not fail the suite", () => {
     expect(xml).toContain('failures="0"');
     expect(xml).toContain('skipped="1"');
+  });
+
+  it("round-trips through this repo's own JUnit parser as NOT passed", () => {
+    // The `<skipped>` element is hand-written into a template string, so a
+    // string-contains assertion would still pass on markup no parser accepts.
+    // Reading it back through `parseJUnitXmlArtifact` proves it is real — and
+    // proves the classification a CI system actually derives: the parser marks
+    // a `<skipped>` case `passed: false`, so a waived gate does not read as a
+    // clean pass to a machine either.
+    const [gate] = parseJUnitXmlArtifact(xml);
+    expect(gate).toBeDefined();
+    expect(gate!.passed).toBe(false);
+    expect(gate!.caseTitle).toContain("Eval gate (WAIVED)");
+    // The parser lifts the skip message, so who/why/until reaches a consumer
+    // that never reads the raw XML.
+    expect(gate!.error).toContain("Gate WAIVED by alice@example.com");
+  });
+
+  it("stays well-formed XML with a hostile reason in the skip message", () => {
+    // `reason` is caller-authored and lands inside an XML attribute.
+    const report = waivedRunReport();
+    report.cases[0]!.waiver!.reason = 'he said "ship it" & <hurry> \u0000';
+    const hostile = renderStructuredRunJUnitXml(report);
+    expect(hostile).toContain("&quot;ship it&quot;");
+    expect(hostile).toContain("&amp;");
+    expect(hostile).toContain("&lt;hurry&gt;");
+    // A raw NUL cannot appear in XML 1.0 even as a character reference.
+    expect(hostile).not.toMatch(/\u0000/);
+    expect(parseJUnitXmlArtifact(hostile)).toHaveLength(1);
   });
 
   it("omits `skipped` entirely when nothing was waived", () => {
