@@ -13,6 +13,7 @@ import type {
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
   UserValueStage,
@@ -507,7 +508,15 @@ export interface PlatformEvalRun {
   runNumber: number | null;
   /** Poll until terminal: "completed" | "failed" | "cancelled". */
   status: string;
-  /** Pass/fail verdict once terminal: "passed" | "failed" | null. */
+  /**
+   * Verdict once terminal: `"passed" | "failed" | "inconclusive" | null`.
+   *
+   * `"inconclusive"` exists only under `verdictPolicyVersion: 2` and is NOT a
+   * failure: the run did not measure the server well enough to say (too few
+   * gradeable trials, too many evaluator errors), so a gate that folds it into
+   * `failed` reports a server defect the run never observed. Read
+   * `verdictSummary.reasons` for which check withheld the verdict.
+   */
   result: string | null;
   summary: {
     total?: number;
@@ -551,6 +560,32 @@ export interface PlatformEvalRun {
    * `"invalid"`: absent evidence is not valid evidence.
    */
   scoreIntegrity?: "valid" | "invalid" | null;
+  /**
+   * The verdict policy this run was decided under, frozen at run start.
+   *
+   * ABSENT means legacy percent-threshold grading — the run's `result` cannot
+   * be `"inconclusive"` and there is no `verdictSummary` to read. A caller
+   * that gates on fractions or on validity must check this first rather than
+   * assume a missing summary means a clean run.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * How the verdict was reached: the resolved validity policy, the measured
+   * rates with their denominators and exclusions, the per-case and
+   * per-execution-variant aggregates, and the exact reasons.
+   *
+   * Absent when the run was not decided under policy 2, or when the stored
+   * summary failed contract validation at the boundary — a public caller never
+   * receives a partially-valid decision, since a gate cannot tell the
+   * difference between a missing field and a satisfied check.
+   */
+  verdictSummary?: EvalVerdictDecision;
+  /**
+   * Why a policy-2 run could not be decided from its own evidence (a missing
+   * or malformed policy snapshot, mixed evaluator configs). Accompanies an
+   * `"inconclusive"` result; it is never a task failure.
+   */
+  verdictPolicyIntegrityError?: string;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -639,6 +674,221 @@ export interface PlatformEvalRunGroundednessCase
   extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
+}
+
+// ── Pre-run disclosure ───────────────────────────────────────────────────
+//
+// Hand-mirrored from the backend's `RunDisclosure` contract
+// (mcpjam-backend `convex/lib/evalDisclosure.ts`), field names identical on
+// purpose — this is the one copy the SDK keeps in sync by hand rather than
+// importing, since the backend module is server-only. `execution.locus` is
+// the one field the backend cannot fill in itself (see
+// `PlatformEvalRunDisclosureLocus`); everything else here is a direct
+// projection of what `GET /projects/{p}/eval-suites/{id}/run-disclosure`
+// returns.
+
+/** The closed set `resolveChatProvider` can return, named so a surface can
+ * exhaust it. */
+export type PlatformDisclosureRailDestination = "gateway" | "openrouter";
+
+export interface PlatformManagedRailDisclosure {
+  managed: true;
+  possibleDestinations: readonly PlatformDisclosureRailDestination[];
+  /** VOLATILE: the routing mode is read per request, so this can differ from
+   * the destination the run actually uses minutes later. */
+  outcomeIfRunNow: {
+    destination: PlatformDisclosureRailDestination;
+    observedAt: number;
+    volatile: true;
+  };
+  inputs: {
+    mode: string;
+    gatewayEligible: boolean;
+    hasOpenRouterFallback: boolean | null;
+  };
+  ruleLocation: string;
+  authoritativePerRequestRecord: string;
+}
+
+export interface PlatformNotApplicableRailDisclosure {
+  managed: false;
+  notApplicable: true;
+  reason: string;
+  authoritativePerRequestRecord: string;
+}
+
+export type PlatformRailDisclosure =
+  | PlatformManagedRailDisclosure
+  | PlatformNotApplicableRailDisclosure;
+
+export type PlatformDisclosureTenantEgress =
+  | "mcpjam-hosted"
+  | "byok-cloud"
+  | "byok-local"
+  | "unknown";
+
+export interface PlatformByokDisclosure {
+  providerKey: string;
+  runtimeLocation: "cloud" | "local";
+  /** HOST ONLY, never the full configured URL. */
+  baseUrlHost?: string;
+}
+
+export interface PlatformDisclosedModel {
+  modelId: string;
+  /** `null` when the classifier declines to classify. Kept as `string` rather
+   * than a closed union so a newly recognised provider on the backend does
+   * not need a matching SDK release to pass through. */
+  provider: string | null;
+  customProviderName?: string;
+  tenantEgress: PlatformDisclosureTenantEgress;
+  byok?: PlatformByokDisclosure;
+  rail: PlatformRailDisclosure;
+}
+
+/**
+ * The closed value set of `execution.engine`. `'mixed'` is reachable only on
+ * an environment fan-out that resolved more than one distinct engine —
+ * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
+ * a fourth runtime kind.
+ */
+export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
+
+/**
+ * Whether this run executes MCPJam-hosted or on the caller's own machine.
+ *
+ * RESERVED for the inspector to fill in: the backend contract cannot answer
+ * this (only the executing process knows), so the inspector route composes
+ * it onto every `execution` section it returns. `known: false` is kept in
+ * the union defensively — a caller MUST NOT treat it as `hosted: false`.
+ */
+export type PlatformEvalRunDisclosureLocus =
+  | { known: true; hosted: boolean }
+  | { known: false; reason: string };
+
+export interface PlatformExecutionDisclosure {
+  engine: PlatformDisclosureEngine;
+  engines?: readonly PlatformDisclosureEngine[];
+  sandbox: {
+    engaged: boolean;
+    vendor?: "e2b";
+    because: string;
+  };
+  locus: PlatformEvalRunDisclosureLocus;
+  models: readonly PlatformDisclosedModel[];
+  /** Present when the plan resolved but its models did not — the empty list
+   * then reads as "not derivable here" rather than "no model runs". */
+  modelsUnresolved?: { reason: string };
+}
+
+export type PlatformEvalLlmTouchpointId =
+  | "goalCompletion"
+  | "groundedness"
+  | "serverQuality"
+  | "runInsights"
+  | "runGroupQuality";
+
+export type PlatformDisclosureFires =
+  | "auto-on-completion"
+  | "explicit-request-only"
+  | { disabled: true; reason: string };
+
+export interface PlatformAnalysisTouchpointDisclosure {
+  touchpoint: PlatformEvalLlmTouchpointId;
+  label: string;
+  model: string;
+  rail: { fixed: "openrouter"; because: string };
+  destinations: readonly string[];
+  evidenceSent: readonly string[];
+  fires: PlatformDisclosureFires;
+}
+
+export interface PlatformCaptureDisclosure {
+  captureLevel: string;
+  reportingMode: string;
+  tiersImplemented: boolean;
+  redaction: {
+    kind: string;
+    module: string;
+    isDlp: boolean;
+    limitation: string;
+    appliesTo: readonly string[];
+  };
+  exportDefaults: {
+    includeContent: boolean;
+    ruleLocation: string;
+    note: string;
+  };
+}
+
+export interface PlatformRetentionDisclosure {
+  planName: string;
+  /** The POLICY number from plan entitlements. `null` ⇒ uncapped by policy. */
+  policyDays: number | null;
+  source: string;
+  enforced: boolean;
+  enforcementBlockers: readonly string[];
+  /** What actually happens today — never re-derive this from `policyDays`,
+   * an unenforced policy keeps data indefinitely regardless of its number. */
+  effectiveToday: "kept-indefinitely" | "swept-after-policy-days";
+  evidentiaryClasses: readonly string[];
+  backupStatement: {
+    vendor: string;
+    capturedAt: string;
+    sourceUrl: string;
+    statements: readonly string[];
+  };
+}
+
+export type PlatformRegionDisclosure =
+  | { stated: false; reason: string }
+  | { stated: true; value: string; derivedFrom: string };
+
+export interface PlatformSubprocessorDisclosure {
+  vendor: string;
+  role: string;
+  dataCategories: readonly string[];
+  capturedAt: string;
+  sourceUrl: string;
+  statements: readonly string[];
+  engaged: boolean;
+  because: string;
+}
+
+/**
+ * WHY there is no `execution` section. Never interchangeable:
+ *  * `'ingested-run'` — the SDK uploaded a run MCPJam did not execute;
+ *  * `'plan-unresolved'` — a launchable plan whose environments did not
+ *    resolve, so models ARE called, just not derivable at this point.
+ *
+ * A surface that renders `'ingested-run'` copy for a `'plan-unresolved'`
+ * disclosure tells a user about to launch that nothing leaves — that exact
+ * bug was caught and fixed in the backend half (g4a) and must not be
+ * reintroduced at the presentation layer.
+ */
+export type PlatformExecutionAbsenceKind = "ingested-run" | "plan-unresolved";
+
+/**
+ * The pre-run disclosure contract: what happens to a run's content, computed
+ * once by the backend and projected identically by every surface (pre-run
+ * dialog, CLI, MCP tools, the `eval.run.launched` audit row).
+ *
+ * `execution` is present ONLY when a launch plan resolved; `executionAbsence`
+ * exactly when it is absent. `analysis` is ALWAYS present — stored evidence
+ * still reaches the judges even when nothing was executed here — so never
+ * hide it just because `execution` is missing.
+ */
+export interface PlatformEvalRunDisclosure {
+  contractVersion: number;
+  computedAt: number;
+  digest: string;
+  execution?: PlatformExecutionDisclosure;
+  executionAbsence?: { kind: PlatformExecutionAbsenceKind; reason: string };
+  analysis: readonly PlatformAnalysisTouchpointDisclosure[];
+  capture: PlatformCaptureDisclosure;
+  retention: PlatformRetentionDisclosure;
+  region: PlatformRegionDisclosure;
+  subprocessors: readonly PlatformSubprocessorDisclosure[];
 }
 
 /**
@@ -859,6 +1109,47 @@ export interface PlatformEvalSuiteSettings {
      */
     threshold?: number;
   };
+  /**
+   * The verdict policy this suite's runs are decided under.
+   *
+   * `2` is the fraction-and-validity policy: each case is graded against a
+   * `passThreshold` FRACTION over its own `repetitions`, and a run is decided
+   * valid-first (an invalid run is `"inconclusive"`, not failed).
+   *
+   * ABSENT means legacy: runs are graded by `minimumAccuracy` (a suite-wide
+   * PERCENT) over `max(case.iterations, minimumIterations)`. The two are not
+   * convertible, which is why absence is reported rather than defaulted —
+   * reading a historical percent as a fraction silently moves every bar.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * Suite defaults a case inherits under policy 2. Present only with
+   * `verdictPolicyVersion: 2`, and only as a whole: `repetitions` without
+   * `passThreshold` cannot answer what a case is graded against.
+   */
+  verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+}
+
+/** Suite-level defaults under verdict policy 2. Fractions, never percents. */
+export interface PlatformEvalVerdictPolicyDefaults {
+  /** Trials per case unless the case overrides `repetitions`. */
+  repetitions: number;
+  /** Fraction of a case's trials that must pass, in [0, 1]. */
+  passThreshold: number;
+  /**
+   * When a run's measurement counts as trustworthy enough to decide.
+   *
+   * DECLARED, not resolved: an omitted field is not "no minimum" but the
+   * contract's default — `minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1,
+   * and an omitted `minEligibleTrials` requiring every configured trial
+   * attempted plus at least one gradeable trial. The resolved policy a run was
+   * actually decided under is on the run's `verdictSummary.validity`.
+   */
+  validity?: {
+    minEligibleTrials?: number;
+    minCompletionRate?: number;
+    maxEvaluatorErrorRate?: number;
+  };
 }
 
 /** The sandbox image a suite's eval runs boot from. */
@@ -984,6 +1275,24 @@ export interface PlatformEvalCase {
   expectedOutput?: string;
   /** Iterations to run per eval run (← internal runs). */
   iterations: number;
+  /**
+   * Trials this case runs under verdict policy 2, overriding the suite
+   * default. Absent means the case inherits it.
+   *
+   * NOT a second spelling of `iterations`: that one is the legacy count, which
+   * the legacy resolver reads as a FLOOR (`max(iterations, minimumIterations)`)
+   * and which a policy-2 case still reports for compatibility. This one is
+   * exact.
+   */
+  repetitions?: number;
+  /**
+   * Fraction of this case's trials that must pass, in [0, 1], overriding the
+   * suite default. Absent means the case inherits it.
+   *
+   * Never derived from the suite's `minimumAccuracy`, which is a percent under
+   * a different resolver.
+   */
+  passThreshold?: number;
   isNegative: boolean;
   scenario?: string;
   /** Execution models (plural — preserves compare behavior). */
@@ -1638,7 +1947,18 @@ export interface PlatformEvalIteration {
   testCaseId: string | null;
   title: string | null;
   iterationNumber: number;
+  /**
+   * LIFECYCLE, not verdict: `pending`, `running`, `completed`, `failed`,
+   * `cancelled`, `timed_out`, `setup_failed`, `skipped`.
+   *
+   * A normally-executed trial that graded badly is `completed` with
+   * `result: "failed"` — reading `status === "failed"` as "the case failed"
+   * counts harness noise as server defects. `setup_failed` (environment never
+   * came up) and `skipped` (deliberately not run) are the two states an older
+   * deployment cannot emit.
+   */
   status: string;
+  /** Task verdict once terminal: `"passed" | "failed" | null`. */
   result: string | null;
   model: string | null;
   provider: string | null;
