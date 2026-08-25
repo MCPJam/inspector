@@ -1232,9 +1232,17 @@ async function runEvalGate(
             }
           );
         }
-        if (iterationError) {
-          return {
-            report: {
+        // A failed LOCAL iteration fetch makes the run's own threshold report
+        // incomplete, but it says nothing about `/compare`: that endpoint
+        // returns its own summary independently, and (absent a latency gate)
+        // `evaluateBaselineComparison` never touches these iterations at all.
+        // So this is an incomplete THRESHOLD report, not an early return —
+        // `--baseline` still gets its chance below, and a real regression
+        // there must still merge to `failed` (exit 1) rather than being
+        // silently downgraded to `incomplete` (exit 3) by an unrelated fetch
+        // hiccup on the other half of the report.
+        const thresholdReport = iterationError
+          ? {
               outcome: "incomplete" as const,
               scoreIntegrity: "unknown" as const,
               verdicts: [
@@ -1244,19 +1252,19 @@ async function runEvalGate(
                   message: `could not read the run: ${iterationError}`,
                 },
               ],
-            },
-            run,
-            iterations: [],
-            iterationsComplete: false,
-            iterationError,
-          };
-        }
+            }
+          : reportForRun(
+              run,
+              policyNeedsIterations(policy) ? iterations : undefined,
+              policy
+            );
 
-        const thresholdReport = reportForRun(
-          run,
-          policyNeedsIterations(policy) ? iterations : undefined,
-          policy
-        );
+        // A failed fetch is never "complete", whether or not a report was
+        // requested — `!needsReport` is a default for the "nobody asked"
+        // case, not for "asked and it broke".
+        const iterationsComplete = iterationError
+          ? false
+          : iterations?.complete ?? !needsReport;
 
         // Baseline regression gating only makes sense once the run being
         // gated has a verdict of its own; every early return above already
@@ -1267,7 +1275,8 @@ async function runEvalGate(
             report: thresholdReport,
             run,
             iterations: iterations?.items ?? [],
-            iterationsComplete: iterations?.complete ?? !needsReport,
+            iterationsComplete,
+            ...(iterationError ? { iterationError } : {}),
           };
         }
 
@@ -1285,7 +1294,8 @@ async function runEvalGate(
           report: mergeGateReports(thresholdReport, baselineResult.report),
           run,
           iterations: iterations?.items ?? [],
-          iterationsComplete: iterations?.complete ?? !needsReport,
+          iterationsComplete,
+          ...(iterationError ? { iterationError } : {}),
           ...(baselineResult.provenance
             ? { baselineProvenance: baselineResult.provenance }
             : {}),

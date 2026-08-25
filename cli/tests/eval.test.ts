@@ -202,6 +202,8 @@ interface EvalFixtureOptions {
   runCaseStatus?: "running" | "completed";
   runCaseIterationFetchError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
+  /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
+  runOneIterationFetchError?: boolean;
   /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
   disclosureUnavailable?: boolean;
   /**
@@ -894,6 +896,16 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations" &&
       (req.method ?? "GET") === "GET"
     ) {
+      if (options.runOneIterationFetchError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            code: "ITERATIONS_FETCH_FAILED",
+            message: "iteration results unavailable",
+          }),
+        );
+        return;
+      }
       const result = options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
@@ -2714,6 +2726,56 @@ test("eval gate --baseline exits 1 on a statistically significant regression", a
       (v: { gate: string }) => v.gate === "passRateRegression",
     );
     assert.equal(regression?.status, "failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline still evaluates the comparison when the run's own iterations fail to fetch", async () => {
+  // `--out` forces the iteration fetch for `run-1` itself (needed for the
+  // report), and that fetch fails. `/compare` is a SEPARATE request that
+  // does not depend on those iterations — the regression it finds must still
+  // reach exit 1, not be silently downgraded to exit 3 by an unrelated fetch
+  // hiccup on the other half of the report.
+  const fixture = await startEvalFixture({ runOneIterationFetchError: true });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-fetch-error-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "run-baseline",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1, run.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const gateCase = report.cases.find((c: { id: string }) => c.id === "gate");
+    const gates = gateCase.details.verdicts.map(
+      (v: { gate: string }) => v.gate,
+    );
+    // Both survive: the local fetch failure AND the real regression.
+    assert.ok(gates.includes("fetch"));
+    assert.ok(gates.includes("passRateRegression"));
+    const regression = gateCase.details.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression.status, "failed");
   } finally {
     await fixture.close();
   }
