@@ -100,9 +100,7 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
   });
 
-  it("parses the feature-flagged findings tab", () => {
-    // Always parses — SwarmRunDetail coerces it to insights when the flag is
-    // off, so the URL layer stays flag-agnostic.
+  it("parses the findings tab", () => {
     expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
     expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
       "/swarms/wave-1?tab=findings"

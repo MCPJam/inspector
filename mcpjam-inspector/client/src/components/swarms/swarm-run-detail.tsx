@@ -60,11 +60,11 @@ import {
   type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
-import { useSwarmFindingsTabEnabled } from "@/hooks/useSwarmFindingsTabEnabled";
 
 const DETAIL_TAB_OPTIONS = [
   { value: "insights" as const, label: "Insights" },
   { value: "sessions" as const, label: "Sessions" },
+  { value: "findings" as const, label: "Findings" },
 ] as const;
 
 export interface SwarmRunDetailProps {
@@ -101,10 +101,9 @@ export function SwarmRunDetail({
   const tabParam = useCurrentSearchParam("tab");
   const sessionParam = useCurrentSearchParam("session");
   const selParam = useCurrentSearchParam("sel");
-  const findingsEnabled = useSwarmFindingsTabEnabled();
   // Pass both tab and session: a `?session=` deep-link without `tab` must open
   // Sessions. Building `?tab=` alone used to strip session and land on Insights.
-  const parsedTab: SwarmDetailTab = parseSwarmDetailTab(
+  const tab: SwarmDetailTab = parseSwarmDetailTab(
     (() => {
       const search = new URLSearchParams();
       if (tabParam) search.set("tab", tabParam);
@@ -112,20 +111,6 @@ export function SwarmRunDetail({
       const query = search.toString();
       return query ? `?${query}` : "";
     })()
-  );
-  // Flag off ⇒ a `?tab=findings` deep link lands on Insights — no surface
-  // outside this component knows the feature exists.
-  const tab: SwarmDetailTab =
-    parsedTab === "findings" && !findingsEnabled ? "insights" : parsedTab;
-  const tabOptions = useMemo(
-    () =>
-      findingsEnabled
-        ? [
-            ...DETAIL_TAB_OPTIONS,
-            { value: "findings" as const, label: "Findings" },
-          ]
-        : [...DETAIL_TAB_OPTIONS],
-    [findingsEnabled]
   );
   const urlSelection = useMemo(() => parseSelectionParam(selParam), [selParam]);
   const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
@@ -376,7 +361,7 @@ export function SwarmRunDetail({
         }
         tabs={{
           value: tab,
-          options: tabOptions,
+          options: DETAIL_TAB_OPTIONS,
           onChange: handleTabChange,
           ariaLabel: "Swarm run view",
           indicatorId: "swarm-run-detail",

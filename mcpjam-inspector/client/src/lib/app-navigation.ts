@@ -270,11 +270,7 @@ export function parseUserTestingDetailTab(
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/**
- * Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab.
- * Findings is feature-flagged: the URL always parses, and `SwarmRunDetail`
- * coerces it back to Insights when the flag is off.
- */
+/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
 export type SwarmDetailTab = "insights" | "sessions" | "findings";
 
 /**

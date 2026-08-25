@@ -17,17 +17,11 @@ import { SwarmRunDetail } from "../swarm-run-detail";
  *  1. `SwarmFindingsTab` — pure props, no convex: defaults land on the
  *     trouble (failing persona → failing goal → diagnosis stage), the
  *     empty-stage copy refuses to read as a pass, sentiment is a pill only.
- *  2. `SwarmRunDetail` gating — the PostHog flag is the only thing that
- *     makes the tab exist: flag off means no tab option AND `?tab=findings`
- *     lands on Insights.
+ *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions and
+ *     a `?tab=findings` deep link renders it.
  */
 
-// ── Flag + convex plumbing (SwarmRunDetail layer) ───────────────────────────
-
-let findingsFlagEnabled: boolean | undefined = true;
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => findingsFlagEnabled,
-}));
+// ── Convex plumbing (SwarmRunDetail layer) ──────────────────────────────────
 
 const NOW = 1_700_000_000_000;
 
@@ -167,7 +161,6 @@ function wave() {
 }
 
 beforeEach(() => {
-  findingsFlagEnabled = true;
   window.history.replaceState({}, "", "/swarms/wave-1");
 });
 
@@ -279,10 +272,10 @@ describe("SwarmFindingsTab", () => {
   });
 });
 
-// ── SwarmRunDetail flag gating ──────────────────────────────────────────────
+// ── SwarmRunDetail wiring ───────────────────────────────────────────────────
 
-describe("SwarmRunDetail findings gating", () => {
-  it("shows the Findings tab and renders it on ?tab=findings when the flag is on", () => {
+describe("SwarmRunDetail findings wiring", () => {
+  it("offers the Findings tab beside Insights | Sessions and renders it on ?tab=findings", () => {
     window.history.replaceState({}, "", "/swarms/wave-1?tab=findings");
     renderDetail();
     const nav = screen.getByRole("navigation", { name: "Swarm run view" });
@@ -295,14 +288,8 @@ describe("SwarmRunDetail findings gating", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the tab and coerces ?tab=findings to Insights when the flag is off", () => {
-    findingsFlagEnabled = undefined; // loading OR missing — both fail closed
-    window.history.replaceState({}, "", "/swarms/wave-1?tab=findings");
+  it("still lands on Insights by default", () => {
     renderDetail();
-    const nav = screen.getByRole("navigation", { name: "Swarm run view" });
-    expect(
-      within(nav).queryByRole("button", { name: "Findings" })
-    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("swarm-findings-tab")).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-insights-workbench")).toBeInTheDocument();
   });
