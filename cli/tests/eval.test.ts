@@ -208,6 +208,24 @@ interface EvalFixtureOptions {
   runOneResult?: "passed" | "failed" | "inconclusive";
   /** A terminal execution state distinct from the result verdict. */
   runOneStatus?: "completed" | "cancelled";
+  /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
+  runOneIterationFetchError?: boolean;
+  /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
+  disclosureUnavailable?: boolean;
+  /**
+   * Drives `GET /eval-runs/run-1/compare` for `eval gate --baseline` /
+   * `eval compare` tests. Absent means the endpoint is never hit.
+   */
+  compare?: {
+    /** 404 with `details.reason: "BASELINE_NOT_FOUND"`, no baseline resolves. */
+    notFound?: boolean;
+    basePassed?: number;
+    baseTotal?: number;
+    comparePassed?: number;
+    compareTotal?: number;
+    /** Adds a `new_case` row, breaking the population rule. */
+    caseSetChanged?: boolean;
+  };
   /**
    * Per-target-run overrides for a grouped (`--all-targets` / `--host` x2)
    * launch, keyed by the fixture's deterministic `run-group-<n>` id.
@@ -246,8 +264,6 @@ interface EvalFixtureOptions {
    * started.
    */
   closeAfterLaunch?: boolean;
-  /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
-  disclosureUnavailable?: boolean;
   /**
    * Delete `process.env.MCPJAM_API_KEY` the moment the single-target launch
    * POST is handled, simulating a credential that dies in the window
@@ -1036,6 +1052,16 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations" &&
       (req.method ?? "GET") === "GET"
     ) {
+      if (options.runOneIterationFetchError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            code: "ITERATIONS_FETCH_FAILED",
+            message: "iteration results unavailable",
+          }),
+        );
+        return;
+      }
       const result = options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
@@ -1058,6 +1084,149 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               error: result === "failed" ? "goal completion failed" : null,
             },
           ],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/compare" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.compare?.notFound) {
+        res.statusCode = 404;
+        res.end(
+          JSON.stringify({
+            code: "NOT_FOUND",
+            message: "no baseline resolves for this run",
+            details: { reason: "BASELINE_NOT_FOUND" },
+          }),
+        );
+        return;
+      }
+      const cmp = options.compare ?? {};
+      const baseRunId = url.searchParams.get("baseRunId") ?? "run-baseline";
+      // These defaults are the SAME oracle-pinned 56/70 -> 48/80 regression
+      // `eval-compare-exit-code.test.ts` checks against statsmodels, reused
+      // here rather than re-derived. They deliberately do NOT track run-1's
+      // own (tiny, 1-2 iteration) `/eval-runs/run-1` summary: the code under
+      // test never cross-checks the two summaries against each other — one
+      // feeds `reportForRun`'s threshold gate, the other feeds
+      // `evaluateBaselineComparison`'s comparative gate — and collapsing them
+      // to the same small sample would make every baseline test below
+      // "insufficient_data" instead of exercising a real regression.
+      const baseTotal = cmp.baseTotal ?? 70;
+      const compareTotal = cmp.compareTotal ?? 80;
+      const basePassed = cmp.basePassed ?? 56;
+      const comparePassed = cmp.comparePassed ?? 48;
+      const zero = {
+        base: null,
+        compare: null,
+        delta: null,
+        percentDelta: null,
+      };
+      const caseSide = (iterationId: string) => ({
+        outcome: "passed" as const,
+        iterationIds: [iterationId],
+        representativeIterationId: iterationId,
+        error: null,
+      });
+      res.end(
+        JSON.stringify({
+          suite: { id: "suite-1", name: "Smoke" },
+          baseline: { policy: "run", baseRunId },
+          baseRun: {
+            id: baseRunId,
+            runNumber: 2,
+            result: "passed",
+            createdAt: 1,
+            completedAt: 2,
+            summary: {
+              total: baseTotal,
+              passed: basePassed,
+              failed: baseTotal - basePassed,
+              passRate: basePassed / baseTotal,
+            },
+          },
+          compareRun: {
+            id: "run-1",
+            runNumber: 3,
+            result: comparePassed === compareTotal ? "passed" : "failed",
+            createdAt: 3,
+            completedAt: 4,
+            summary: {
+              total: compareTotal,
+              passed: comparePassed,
+              failed: compareTotal - comparePassed,
+              passRate: comparePassed / compareTotal,
+            },
+          },
+          passSummary: {
+            passRatePercent: zero,
+            total: zero,
+            passed: zero,
+            failed: zero,
+          },
+          metrics: {
+            wallDurationMs: zero,
+            totalTokens: zero,
+            estimatedCostUsd: zero,
+          },
+          scoreContract: {
+            base: {
+              evaluationConfigHash: "cfg",
+              scoreIntegrity: "valid",
+              scoredIterations: baseTotal,
+              quarantinedIterations: 0,
+            },
+            compare: {
+              evaluationConfigHash: "cfg",
+              scoreIntegrity: "valid",
+              scoredIterations: compareTotal,
+              quarantinedIterations: 0,
+            },
+            evaluationConfigChanged: false,
+            scorers: [],
+          },
+          cases: cmp.caseSetChanged
+            ? [
+                {
+                  caseKey: "ck_a",
+                  title: "Case A",
+                  status: "unchanged_passed",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: caseSide("b1"),
+                  compare: caseSide("c1"),
+                },
+                {
+                  caseKey: "ck_new",
+                  title: "Case New",
+                  status: "new_case",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: {
+                    outcome: "absent",
+                    iterationIds: [],
+                    representativeIterationId: null,
+                    error: null,
+                  },
+                  compare: caseSide("c2"),
+                },
+              ]
+            : [
+                {
+                  caseKey: "ck_a",
+                  title: "Case A",
+                  status: "unchanged_passed",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: caseSide("b1"),
+                  compare: caseSide("c1"),
+                },
+              ],
         }),
       );
       return;
@@ -2883,6 +3052,413 @@ test("eval compare --reporter html --out writes the reporter-selected format to 
     assert.equal(run.stdout, html);
     assert.match(html, /badge-neutral">inconclusive/);
     assert.equal(html.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// ── eval gate --baseline ────────────────────────────────────────────────────
+
+test("eval gate rejects a SHA-shaped --baseline before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "a".repeat(40),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /SHA baselines are not supported yet/);
+    // A usage error caught before parsing must never spend a request.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects a blank --baseline, e.g. an unset CI variable interpolated into the flag", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /must not be blank/);
+    // A usage error caught before parsing must never spend a request, and
+    // MUST NOT silently fall through to a threshold-only, exit-0 gate.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects using the gated run as its own baseline", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "run-1",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /cannot be its own baseline/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects a comparative tuning flag without --baseline", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-sample-size",
+          "10",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /pass --baseline/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 3 when no baseline resolves", async () => {
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "incomplete");
+    assert.match(
+      payload.gate.verdicts
+        .map((v: { message: string }) => v.message)
+        .join("; "),
+      /no baseline to compare against/,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 1 on a statistically significant regression", async () => {
+  // `run-1` passes its own (absent) threshold trivially; the baseline's
+  // 56/70 -> 48/80 is the oracle-pinned regression from `eval-compare-exit-
+  // code.test.ts`, so the merged exit code comes ENTIRELY from the
+  // comparative half.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "failed");
+    const regression = payload.gate.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression?.status, "failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline still evaluates the comparison when the run's own iterations fail to fetch", async () => {
+  // `--out` forces the iteration fetch for `run-1` itself (needed for the
+  // report), and that fetch fails. `/compare` is a SEPARATE request that
+  // does not depend on those iterations — the regression it finds must still
+  // reach exit 1, not be silently downgraded to exit 3 by an unrelated fetch
+  // hiccup on the other half of the report.
+  const fixture = await startEvalFixture({ runOneIterationFetchError: true });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-fetch-error-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "run-baseline",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1, run.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const gateCase = report.cases.find((c: { id: string }) => c.id === "gate");
+    const gates = gateCase.details.verdicts.map(
+      (v: { gate: string }) => v.gate,
+    );
+    // Both survive: the local fetch failure AND the real regression.
+    assert.ok(gates.includes("fetch"));
+    assert.ok(gates.includes("passRateRegression"));
+    const regression = gateCase.details.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression.status, "failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline: a threshold miss and a baseline regression fold into one report", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--min-pass-rate-percent",
+            "100",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stdout);
+    const gates = payload.gate.verdicts.map((v: { gate: string }) => v.gate);
+    // Both families' verdicts survive the merge — neither buries the other.
+    assert.ok(gates.includes("minimumPassRate"));
+    assert.ok(gates.includes("passRateRegression"));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline writes provenance into the JSON report, notRecorded included", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "run-baseline",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.requestedBaseline, "run-baseline");
+    assert.equal(provenance.baseRunId, "run-baseline");
+    assert.equal(provenance.compareRunId, "run-1");
+    assert.equal(provenance.compatibility.caseSetChanged, false);
+    // The pin names "comparable case ids" explicitly — not just the boolean.
+    assert.deepEqual(provenance.compatibility.comparableCaseIds, ["ck_a"]);
+    assert.deepEqual(provenance.compatibility.incompatibleCases, []);
+    // Dimensions the pinned contract requires but the `/compare` wire does not
+    // carry yet must be explicit, never silently dropped.
+    assert.equal(provenance.notRecorded.modelProvider, "notRecorded");
+    assert.equal(provenance.notRecorded.hostHarness, "notRecorded");
+    assert.equal(
+      provenance.notRecorded.serverEnvironmentIdentity,
+      "notRecorded"
+    );
+    // The same provenance rides on the "gate" case row, so `--reporter
+    // junit-xml` (which has no metadata section) still carries it.
+    const gateCase = report.cases.find((c: { id: string }) => c.id === "gate");
+    assert.equal(
+      gateCase.details.baseline.notRecorded.modelProvider,
+      "notRecorded"
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline sends the TRIMMED value on the wire, not the padded one", async () => {
+  // Validation checks the trimmed value; if the raw one were forwarded
+  // instead, `baseRunId` on the wire (and so the provenance echoed back)
+  // would still carry the padding — observable proof of the bug even though
+  // this fixture's mock backend does not itself reject an unknown run id.
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-trim-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "  run-baseline  ",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.requestedBaseline, "run-baseline");
+    assert.equal(provenance.baseRunId, "run-baseline");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 3 when the case set changed, not 1", async () => {
+  // Same regressed pass-rate numbers as the exit-1 test above, but the case
+  // set churned — the population rule makes the whole-run rate incomparable,
+  // and that must never read as a regression.
+  const fixture = await startEvalFixture({ compare: { caseSetChanged: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "incomplete");
+    const regression = payload.gate.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression?.status, "non_gateable");
   } finally {
     await fixture.close();
   }

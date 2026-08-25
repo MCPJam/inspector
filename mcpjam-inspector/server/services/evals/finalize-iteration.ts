@@ -67,7 +67,18 @@ import { isTerminalIterationStatus } from "./run-status.js";
  */
 type IterationStatus = ContractIterationStatus;
 
-type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type ToolCallRecord = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * Mirrors the runner's `ToolCall.toolCallId`. This type describes exactly
+   * what goes over the wire as `updateTestIteration.actualToolCalls`, so it
+   * has to name every field the runner actually sends — the whole reason
+   * `toolCallId` reached a validator that rejected it is that no type on this
+   * path admitted the field existed.
+   */
+  toolCallId?: string;
+};
 type PolicyBlockRecord = { reason?: unknown };
 
 /**
@@ -596,7 +607,7 @@ export type FinalizeEvalIterationParams = {
   convexClient: ConvexHttpClient;
   iterationId?: string;
   passed: boolean;
-  toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
+  toolsCalled: ToolCallRecord[];
   usage: UsageTotals;
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
