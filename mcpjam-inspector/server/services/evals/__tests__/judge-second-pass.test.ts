@@ -445,6 +445,12 @@ describe("metadataAttributionEvidenceFromVerdict", () => {
     ).toEqual({ status: "pending", pendingKind: "scheduled" });
   });
 
+  test("not_applicable is its own terminal outcome, never relabeled as pending", () => {
+    expect(
+      metadataAttributionEvidenceFromVerdict({ status: "not_applicable" })
+    ).toEqual({ status: "not_applicable" });
+  });
+
   test("no verdict at all yields no evidence", () => {
     expect(metadataAttributionEvidenceFromVerdict(undefined)).toBeUndefined();
   });

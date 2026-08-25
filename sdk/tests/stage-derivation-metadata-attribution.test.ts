@@ -133,6 +133,24 @@ describe("what does NOT recategorize a failed selection", () => {
     expect(deriveMissing(undefined).failureCategory).toBe("selection");
   });
 
+  test("attributed: true with no reasons stays failureCategory: selection — an unaudited attribution is not a recategorization", () => {
+    const { failureCategory, stageResults } = deriveMissing({
+      status: "scored",
+      attributed: true,
+    });
+    expect(failureCategory).toBe("selection");
+    expect(selection(stageResults).evidence?.predicateReasons).toBeUndefined();
+  });
+
+  test("attributed: true with only empty/whitespace reasons stays failureCategory: selection", () => {
+    const { failureCategory } = deriveMissing({
+      status: "scored",
+      attributed: true,
+      reasons: ["", "   "],
+    });
+    expect(failureCategory).toBe("selection");
+  });
+
   test("unrelated evidence never adds a selection evidence.predicateReasons key", () => {
     const { stageResults } = deriveMissing({
       status: "scored",

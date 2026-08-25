@@ -51,6 +51,30 @@ describe("buildSelectionToolCatalog", () => {
     expect(catalog).toHaveLength(MAX_SELECTION_TOOL_CATALOG_ENTRIES);
   });
 
+  test("interleaves expected/actual so a long expected list never crowds out every actual entry", () => {
+    // A 6+-turn case with a distinct expected tool missing per turn: without
+    // interleaving, all MAX_SELECTION_TOOL_CATALOG_ENTRIES slots go to
+    // `expected` before `actual` (the tool the model actually, wrongly,
+    // called — the most load-bearing evidence for D7's judgment) is ever
+    // considered.
+    const expectedNames = Array.from({ length: 10 }, (_, i) => `expected_${i}`);
+    const catalog = buildSelectionToolCatalog({
+      tools: {
+        ...Object.fromEntries(expectedNames.map((n) => [n, {}])),
+        delete_all_files: { description: "the tool actually called" },
+      },
+      expectedToolNames: expectedNames,
+      actualToolNames: ["delete_all_files"],
+    });
+    expect(catalog).toHaveLength(MAX_SELECTION_TOOL_CATALOG_ENTRIES);
+    expect(catalog.some((e) => e.role === "actual")).toBe(true);
+    expect(catalog[1]).toEqual({
+      name: "delete_all_files",
+      role: "actual",
+      description: "the tool actually called",
+    });
+  });
+
   test("a tool absent from the live registry still gets a name-only entry", () => {
     const catalog = buildSelectionToolCatalog({
       tools: {},

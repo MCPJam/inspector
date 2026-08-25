@@ -118,8 +118,17 @@ export function buildSelectionToolCatalog(args: {
     out.push(catalogEntry(name, role, args.tools[name]));
   };
 
-  for (const name of args.expectedToolNames) add(name, "expected");
-  for (const name of args.actualToolNames) add(name, "actual");
+  // Interleaved, not expected-then-actual: a long `expected` list (a
+  // multi-turn case with a distinct expected tool missing per turn) would
+  // otherwise fill the cap before `actual` is ever considered, silently
+  // dropping the tool the model actually (wrongly) called — the single most
+  // load-bearing entry for "did the metadata mislead the model" judgment.
+  const expected = [...args.expectedToolNames];
+  const actual = [...args.actualToolNames];
+  while (expected.length > 0 || actual.length > 0) {
+    if (expected.length > 0) add(expected.shift()!, "expected");
+    if (actual.length > 0) add(actual.shift()!, "actual");
+  }
 
   return out;
 }

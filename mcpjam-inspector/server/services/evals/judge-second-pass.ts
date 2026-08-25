@@ -198,6 +198,13 @@ export function metadataAttributionEvidenceFromVerdict(
       ...(reasons && reasons.length > 0 ? { reasons } : {}),
     };
   }
+  if (status === "not_applicable") {
+    // A terminal, already-decided outcome ("the judge doesn't apply here")
+    // — distinct from `pending`, which means a verdict is still owed. Fell
+    // through to `pending` before this branch existed, which would have
+    // misled any retry/sweep logic that distinguishes the two.
+    return { status: "not_applicable" };
+  }
   return { status: "pending", pendingKind: "scheduled" };
 }
 

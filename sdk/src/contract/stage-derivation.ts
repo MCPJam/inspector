@@ -815,7 +815,14 @@ function categoryFor(
       return "setup";
     case "selection": {
       const attribution = evidence.metadataAttribution;
-      return attribution?.status === "scored" && attribution.attributed === true
+      // Quoted evidence is required, not optional decoration: a `metadata`
+      // classification with nothing backing it is unauditable, and
+      // `mergeMetadataAttributionEvidence` below already no-ops without it —
+      // so recoloring here without the same check would claim a category
+      // whose own row carries no supporting evidence at all.
+      return attribution?.status === "scored" &&
+        attribution.attributed === true &&
+        boundedJudgeReasons(attribution.reasons) !== undefined
         ? "metadata"
         : "selection";
     }
