@@ -4,7 +4,9 @@ description: "Create, inspect, answer and watch MCP Tasks from the CLI — legac
 icon: "list-todo"
 ---
 
-The `tasks` commands give the CLI the manual-testing loop the Inspector's Tasks tab has: create a task from a tool call, read it, answer its input, cancel it, and watch it run to a terminal status — on whichever tasks wire the server resolves to.
+MCP Tasks let a server answer a tool call with a task id instead of a result, then keep working while the client polls for status, answers any input the task asks for, and collects the result when it finishes.
+
+The `tasks` commands give the CLI the manual-testing loop the Inspector's Tasks tab has: create a task from a tool call, read it, answer its input, cancel it, and watch it run to a terminal status — on whichever tasks wire the server resolves to. Use them when you are developing or debugging a server that creates tasks and you want to drive one by hand.
 
 For judging a server's *conformance* to the tasks spec, see [MCP Tasks Conformance](/cli/tasks-conformance). These commands do the opposite job: they assume the server works and let you drive it.
 
@@ -12,8 +14,10 @@ For judging a server's *conformance* to the tasks spec, see [MCP Tasks Conforman
   Every task command connects directly to the server you name, exactly like `tools call`. Tasks are not available in hosted mode.
 </Note>
 
-## The two wires
+## Run one task end to end
 
+<Steps>
+<Step title="Ask which wire the server resolves to">
 A connection resolves to exactly one tasks wire, and the verbs differ between them. Ask before you assume:
 
 ```bash
@@ -23,6 +27,30 @@ mcpjam tasks capabilities --url https://your-server.com/mcp
 ```json
 { "wire": "extension", "toolCalls": true, "list": false, "cancel": true, "update": true, "inlineResult": true }
 ```
+
+<Check>
+You know whether you are on the `legacy` or `extension` wire, and which verbs the server declared. See [The two wires](#the-two-wires) for what differs between them.
+</Check>
+</Step>
+
+<Step title="Create a task and watch it in one command">
+```bash
+mcpjam tools call --url … --tool-name long_job --task --task-watch
+```
+
+This runs over one connection and emits `{ "created": …, "watch": … }`, exiting with the watch's code. Split the two halves apart — [`--task`](#creating-a-task) alone, then [`tasks watch`](#watching-a-task) — when you want to inspect or answer the task in between.
+</Step>
+
+<Step title="Read the outcome">
+The watch envelope carries `outcome` and the terminal task, and the exit code follows it: `0` for `completed`, `1` for `failed` / `cancelled` / `expired` / `unreachable`, `6` when the task needed input this run could not answer, `7` on timeout, `130` on interrupt. The full table is in [Watch exit codes](#watch-exit-codes).
+
+<Check>
+`outcome` is `completed` and the result is in the envelope. If it is `input-required`, answer the task with [`tasks update`](#answering-input_required) and watch again.
+</Check>
+</Step>
+</Steps>
+
+## The two wires
 
 `tasks capabilities` always exits `0` — `"wire": "none"` is a valid answer, not a failure. Every other task command exits `1` on a server with no tasks wire.
 
@@ -112,15 +140,13 @@ mcpjam tasks watch --url https://your-server.com/mcp --task-id ext-task-1
 }
 ```
 
-Or create and watch in one invocation, over one connection:
+Interrupting before the task exists — Ctrl-C while the `tools/call` is still in flight during a combined `--task --task-watch` run — emits `{ "status": "aborted", "phase": "create", "wire": … }` and exits `130`, the same code an interrupted watch uses. There is no task id to report yet, so `phase` says where the interrupt landed instead.
 
-```bash
-mcpjam tools call --url … --tool-name long_job --task --task-watch
-```
+Ctrl-C (or `SIGTERM`) aborts the watch cleanly: you still get an envelope, with `"outcome": "aborted"` and exit `130`.
 
-which emits `{ "created": …, "watch": … }` and exits with the watch's code.
-
-Interrupting before the task exists — Ctrl-C while the `tools/call` is still in flight — emits `{ "status": "aborted", "phase": "create", "wire": … }` and exits `130`, the same code an interrupted watch uses. There is no task id to report yet, so `phase` says where the interrupt landed instead.
+<Note>
+  `tasks watch` does not consult the host tasks policy. Like the Inspector's Tools tab, it is a debugging affordance — the policy is a modelling concern for hosts, not a boundary on manual testing.
+</Note>
 
 ### Pacing
 
@@ -135,12 +161,6 @@ Interrupting before the task exists — Ctrl-C while the `tools/call` is still i
 <Warning>
   **`--interactive` answers task input on the extension wire only.** The legacy wire has no `tasks/update`, and its `Task` carries no `inputRequests` — the request arrives out of band as an `elicitation/create` stamped with `relatedTaskId`, which a polling loop cannot correlate with the task it is watching. `tasks watch` therefore reports `input_required` on that wire and exits `6` rather than polling an unchanging status until `--duration-ms` runs out. Drive a legacy task that needs input from the Inspector UI, which reads the elicitation off a live stream.
 </Warning>
-
-Ctrl-C (or `SIGTERM`) aborts the watch cleanly: you still get an envelope, with `"outcome": "aborted"` and exit `130`.
-
-<Note>
-  `tasks watch` does not consult the host tasks policy. Like the Inspector's Tools tab, it is a debugging affordance — the policy is a modelling concern for hosts, not a boundary on manual testing.
-</Note>
 
 ### Watch exit codes
 
