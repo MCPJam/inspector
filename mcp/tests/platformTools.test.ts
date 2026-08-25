@@ -134,6 +134,7 @@ const PLAIN_TOOLS = [
   "create_eval_suite",
   // Eval suite/case editing: agent-oriented payloads, no widget view.
   "get_eval_suite",
+  "get_eval_run_disclosure",
   "update_eval_suite",
   "delete_eval_suite",
   "set_eval_suite_schedule",
@@ -373,6 +374,7 @@ describe("platform tool registration", () => {
       "run_eval_suite",
       "create_eval_suite",
       "get_eval_suite",
+      "get_eval_run_disclosure",
       "update_eval_suite",
       "delete_eval_suite",
       "set_eval_suite_schedule",
