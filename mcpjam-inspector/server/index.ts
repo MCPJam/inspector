@@ -10,6 +10,7 @@ import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
+import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -836,6 +837,7 @@ const server = serve({
 // class the 08-11 Cloudflare 502 fell into. Must be attached before traffic
 // arrives; it also owns the `clientError` response (see the module).
 attachSocketDiagnostics(server);
+startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
