@@ -42,7 +42,7 @@ different contract than the one the audit stamp records. The refusal now
 names that limit rather than the retired "no host selector" one.
 
 **Requires a backend carrying the `namedHostId` argument** (mcpjam-backend
-#1131), and the ordering matters in one direction. The runner capability
+`#1131`), and the ordering matters in one direction. The runner capability
 handshake is sent on EVERY disclosure request, not only host-targeted ones —
 the backend gates the disclosed engine on it for the environment axis too — so
 against a deployment that predates #1131, strict argument validation rejects
