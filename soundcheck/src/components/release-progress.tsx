@@ -57,7 +57,6 @@ const JOB_ORDER = [
   "deploy-webapp / deploy",
   "deploy-webapp / smoke / smoke",
   "deploy-slack-app / Deploy to Railway",
-  "deploy-soundcheck / Deploy to Railway",
   "finalize"
 ];
 
