@@ -116,6 +116,30 @@ export interface RunAssistantTurnOptions {
   requireToolApproval?: boolean;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Host-level SEP-1865 `_meta.ui.visibility` switch, forwarded to the HARNESS
+   * engine only (`MCPJamHandlerOptions.respectToolVisibility` is read by
+   * `runHarnessTurn` and by nothing else — the emulated engine consumes the
+   * tool set `prepareChatV2` already built under this same policy).
+   *
+   * Exposed here because a harness turn REBUILDS its MCP tool set from the
+   * manager (`projectSelectedMcpServersAsHostTools`). A caller that omits this
+   * does not get "the host's default" — it gets the SDK's, which is how an
+   * explicit visibility opt-out came to be ignored on host-executed delivery.
+   * Only an explicit `false` opts out; `undefined`/`true` filter (spec default).
+   */
+  respectToolVisibility?: MCPJamHandlerOptions["respectToolVisibility"];
+  /**
+   * Resolved MCP Tasks seam for this turn, forwarded to the HARNESS engine only
+   * (same read-site rule as `respectToolVisibility` above).
+   *
+   * The MODE is resolved by the CALLER — each surface owns its own row in the
+   * policy matrix (`task-seam.ts`) — and is never re-derived downstream.
+   * Absent keeps a harness turn on the pre-existing no-`_meta` path,
+   * byte-for-byte; dropping it on a surface whose host DID enable tasks
+   * silently degrades that surface to the same path with no way to notice.
+   */
+  tasks?: MCPJamHandlerOptions["tasks"];
 
   /**
    * Which real agent harness runs this turn. Absent ⇒ MCPJam's emulated engine
@@ -471,6 +495,13 @@ function buildHandlerOptions(
     ...(opts.modelVisibleMcpToolResults !== undefined
       ? { modelVisibleMcpToolResults: opts.modelVisibleMcpToolResults }
       : {}),
+    // Harness-only tool-CONSTRUCTION inputs (see the option docblocks). Both
+    // are forwarded on DEFINEDNESS, not truthiness: `respectToolVisibility:
+    // false` IS the opt-out, and would vanish under a truthy check.
+    ...(opts.respectToolVisibility !== undefined
+      ? { respectToolVisibility: opts.respectToolVisibility }
+      : {}),
+    ...(opts.tasks !== undefined ? { tasks: opts.tasks } : {}),
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
       : {}),
