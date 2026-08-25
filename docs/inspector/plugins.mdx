@@ -4,13 +4,110 @@ description: "Import Agent Plugins 1.0 bundles as versioned, read-only projectio
 icon: "package"
 ---
 
+A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
+
+Reach for a plugin when a set of skills and MCP servers should travel together as one versioned unit: you hand your project a single bundle instead of registering each server by hand, and every run records exactly which bundle it used.
+
 <Note>
 Plugins are available on accounts where the feature has been enabled. The **Add plugin** entry and the Plugins section only appear when the feature is active for your account. Importing a plugin requires **project admin** — it creates shared executable capabilities, so it carries the same bar as managing shared OAuth connections. Project members can view installed plugins; the feature flag only controls whether the surface appears, never who may import.
 </Note>
 
-A **plugin** is an [Agent Plugins 1.0](https://agent-plugins.org) bundle — a ZIP archive or folder — that MCPJam stores and projects as a versioned set of skills and MCP servers. Importing a plugin does not run any code from the bundle; MCPJam creates a read-only projection of the bundle's declared components and makes them available to your project.
+## What gets imported
 
-## Bundle layout
+```mermaid
+flowchart LR
+    Bundle["Bundle<br/>ZIP or folder"] --> Inspect["Inspect<br/>no code runs"]
+    Inspect --> Preview["Import preview<br/>identity, census, warnings"]
+    Preview --> Revision["Stored revision<br/>content-addressed"]
+    Revision --> Skills["Skills"]
+    Revision --> Servers["MCP servers"]
+```
+
+## The smallest valid plugin
+
+A bundle needs one file: a `plugin.json` at the root with `$schema` and `name`.
+
+```
+my-plugin/
+└── plugin.json
+```
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "com.example.deploy"
+}
+```
+
+That imports cleanly and gives you a plugin with no components. Add an `mcp.json` at the root, and the same bundle now projects a server:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "deploy-remote": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+## Import and verify it
+
+Plugin import needs a cloud project — signed-in or guest. Fully local, unsynced mode shows an explanation instead of the import picker.
+
+<Steps>
+<Step title="Open the import dialog">
+Open the **Connect** tab (Servers), click the **⋯** actions menu in the top-right of the server list, and click **Add plugin**.
+</Step>
+
+<Step title="Choose your source">
+In the dialog, choose:
+
+- **Choose a ZIP** — select a `.zip` plugin bundle up to 25 MB compressed.
+- **Choose a folder** — select the plugin's root folder; MCPJam zips it locally before uploading.
+
+Review any preflight warnings shown before the upload starts, then click **Continue** to upload and inspect the bundle.
+</Step>
+
+<Step title="Read the import preview">
+The preview is your last look before anything is stored. Check the **Census** for the component counts you expect, and read **Warnings** — every skipped component is listed there with its reason.
+
+<Check>
+Identity shows your plugin name and a short revision ID, and the census counts match what your bundle declares.
+</Check>
+</Step>
+
+<Step title="Install and connect">
+Choose how to install:
+
+- **Install only** — stores the revision without making it the active one.
+- **Install and connect** — stores the revision and makes it the active one, so new attachments offer it.
+
+<Check>
+A **Plugins** section now appears above the server grid on the Connect tab, with your plugin as a group card. Expand the card to see the active revision's servers and skills.
+</Check>
+</Step>
+</Steps>
+
+<Info>
+If you import a bundle whose bytes are identical to one already stored, MCPJam reuses the existing revision instead of creating a new one. The success screen says **Already imported** rather than **Plugin installed** to make this clear.
+</Info>
+
+### If the import fails
+
+The dialog stays open across close and reopen so an in-progress import is not lost.
+
+| Failure | What to click |
+|---|---|
+| **Commit failed** (the bundle was already inspected and previewed) | **Retry install** to recommit the same import without re-uploading |
+| **Inspection failed** (uploaded but not yet inspected) | **Resume inspection** to re-drive the inspect step |
+| **Terminal failure** | **Start a new import** to upload the bundle again |
+
+## Bundle reference
+
+### Layout
 
 Agent Plugins fixes where each component lives. MCPJam discovers components **only** from these locations:
 
@@ -34,7 +131,7 @@ The manifest requires two fields:
 - **`$schema`** — the canonical Agent Plugins schema identifier, for example `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`. MCPJam uses it to select its locally supported validation rules; the URL is **never fetched** during import. A missing or unsupported `$schema` rejects the bundle.
 - **`name`** — the plugin's stable identity: 1–64 lowercase characters from `a-z`, `0-9`, `-`, and `.`. Dots are legal (`com.example.deploy` is a valid name), separators may not lead or trail, and the same separator may not repeat (`--` and `..` are invalid — mixed pairs like `foo.-bar` are allowed by the spec).
 
-`version` is a free-form string — the format imposes no semver rule. The manifest is a **closed object**: unknown top-level fields are reported in the import preview and ignored — with one exception. A handful of *execution-ambiguous* names (`command`, `entrypoint`, `exec`, `install`, `install_script`, `postinstall`, `preinstall`, `run`, `script`, `scripts`) **reject the bundle outright** rather than being ignored, because silently dropping something that looks like an install or run hook is the wrong failure mode. Remove them from `plugin.json`; there is no preview to fix them from. The `extensions` field carries client-specific data under reverse-domain namespaces; MCPJam reads its own presentation metadata (display name, icon, logo) from the `com.mcpjam` namespace and preserves other namespaces without validating their *shape*. Two hygiene rules still apply to every namespace: secret-looking values are dropped rather than stored (reported as `MANIFEST_SECRET_FIELD_OMITTED`), and a namespace nested beyond the depth cap rejects the bundle with `VALUE_TOO_DEEP`. Round-tripping client-specific metadata is safe as long as it carries no credentials and stays reasonably flat.
+`version` is a free-form string — the format imposes no semver rule.
 
 ```json
 {
@@ -47,6 +144,16 @@ The manifest requires two fields:
   }
 }
 ```
+
+<AccordionGroup>
+<Accordion title="Unknown and execution-ambiguous fields">
+The manifest is a **closed object**: unknown top-level fields are reported in the import preview and ignored — with one exception. A handful of *execution-ambiguous* names (`command`, `entrypoint`, `exec`, `install`, `install_script`, `postinstall`, `preinstall`, `run`, `script`, `scripts`) **reject the bundle outright** rather than being ignored, because silently dropping something that looks like an install or run hook is the wrong failure mode. Remove them from `plugin.json`; there is no preview to fix them from.
+</Accordion>
+
+<Accordion title="The `extensions` field">
+The `extensions` field carries client-specific data under reverse-domain namespaces; MCPJam reads its own presentation metadata (display name, icon, logo) from the `com.mcpjam` namespace and preserves other namespaces without validating their *shape*. Two hygiene rules still apply to every namespace: secret-looking values are dropped rather than stored (reported as `MANIFEST_SECRET_FIELD_OMITTED`), and a namespace nested beyond the depth cap rejects the bundle with `VALUE_TOO_DEEP`. Round-tripping client-specific metadata is safe as long as it carries no credentials and stays reasonably flat.
+</Accordion>
+</AccordionGroup>
 
 ### `mcp.json`
 
@@ -91,6 +198,13 @@ Two placeholders are defined by the format, both resolved by MCPJam at launch ti
 
 Placeholders expand **only in `args`, `env` values, and `cwd`** — a placeholder in `command` invalidates that server entry. Commands are single executable tokens: a `./`-prefixed command resolves against the plugin root with containment enforced, so `./bin/server` points at the file shipped in the bundle and `./bin/../../outside` invalidates the entry. Materialization does not carry archive permission bits, so on macOS and Linux a shipped binary is written without its executable bit and will not spawn — prefer an interpreter command (`node`, `python`) with the script passed in `args`. `cwd` must start with `./`, `${PLUGIN_ROOT}`, or `${PLUGIN_DATA}`. A bundle's `env` may not define `PLUGIN_ROOT` or `PLUGIN_DATA` — those variables are client-controlled.
 
+### Where plugin servers run
+
+- **`stdio` components run on the local MCPJam runtime today.** At connect time the bundle is materialized into a local content-addressed cache, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` are substituted, and the process spawns on your machine. Hosted VM execution for plugin stdio components is coming; the plugin card shows a **Local runtime** badge in the meantime.
+- **`streamable-http` and `sse` components** are remote connections and work from any client.
+
+## Validation reference
+
 ### Failure isolation
 
 Problems are contained at the narrowest boundary the format defines:
@@ -114,31 +228,9 @@ MCPJam screens every literal `env` and `headers` value in the bundle:
 
 The setup section of the install summary lists these names. Values are always provided by you, per server; MCPJam never reads or stores credential values from a bundle.
 
-## Where plugin servers run
+After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
 
-- **`stdio` components run on the local MCPJam runtime today.** At connect time the bundle is materialized into a local content-addressed cache, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` are substituted, and the process spawns on your machine. Hosted VM execution for plugin stdio components is coming; the plugin card shows a **Local runtime** badge in the meantime.
-- **`streamable-http` and `sse` components** are remote connections and work from any client.
-
-## Importing a plugin
-
-Plugin import needs a cloud project — signed-in or guest. Fully local, unsynced mode shows an explanation instead of the import picker.
-
-1. Open the **Connect** tab (Servers).
-2. Click the **⋯** actions menu in the top-right of the server list.
-3. Click **Add plugin**.
-4. In the dialog, choose your source:
-   - **Choose a ZIP** — select a `.zip` plugin bundle up to 25 MB compressed.
-   - **Choose a folder** — select the plugin's root folder; MCPJam zips it locally before uploading.
-5. Review any preflight warnings shown before the upload starts.
-6. Click **Continue** to upload and inspect the bundle.
-7. Review the import preview (see [Preview](#preview) below).
-8. Choose how to install:
-   - **Install only** — stores the revision without making it the active one.
-   - **Install and connect** — stores the revision and makes it the active one, so new attachments offer it.
-
-### Preview
-
-Before you confirm the install, MCPJam shows a preview of what the bundle declares:
+### What the import preview shows
 
 | Section | What it shows |
 |---------|---------------|
@@ -152,25 +244,9 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 | App mappings | Metadata entries preserved from `.app.json` files |
 | Assets | Icons and other static files included in the bundle |
 
-### Content-addressed re-import
+## Managing installed plugins
 
-If you import a bundle whose bytes are identical to one already stored, MCPJam reuses the existing revision instead of creating a new one. The success screen says **Already imported** rather than **Plugin installed** to make this clear.
-
-### Retrying a failed import
-
-The dialog stays open across close and reopen so an in-progress import is not lost. If an import fails:
-
-- **Commit failed** (the bundle was already inspected and previewed) — click **Retry install** to recommit the same import without re-uploading.
-- **Inspection failed** (the bundle was uploaded but not yet inspected) — click **Resume inspection** to re-drive the inspect step.
-- **Terminal failure** — click **Start a new import** to upload the bundle again.
-
-## Plugins section
-
-Once at least one plugin is installed, a **Plugins** section appears above the server grid on the Connect tab. Each plugin is shown as a group card.
-
-### Plugin group card
-
-The card shows the plugin's name and a rolled-up health badge:
+Once at least one plugin is installed, a **Plugins** section appears above the server grid on the Connect tab. Each plugin is shown as a group card with a rolled-up health badge:
 
 | Badge | Meaning |
 |-------|---------|
@@ -190,16 +266,10 @@ Click the card header to expand it and see the active revision's components:
 - **Unsupported components** — a count of the same inert components the import preview itemizes. Only the count appears here; the per-component keys and reasons are shown at import time.
 - **Other revisions** — ready revisions of the same plugin that are not currently active. Click **Activate** next to a revision to make it the active one.
 
-### Plugin actions
-
 Click the **⋮** menu on a plugin card to:
 
 - **Disable / Enable** — temporarily disable a plugin without uninstalling it.
 - **Uninstall** — soft-uninstall the plugin. Revisions already used by runs and sessions are preserved so existing history stays reproducible. Uninstall is blocked while a live environment still pins one of the plugin's versions.
-
-## Credential setup
-
-After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
 
 ## Plugin provenance in runs and sessions
 
