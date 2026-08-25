@@ -3408,7 +3408,7 @@ test("eval gate --baseline: a threshold miss and a baseline regression fold into
 });
 
 test("eval gate --baseline-sha resolves a SHA end to end and gates on it", async () => {
-  const fixture = await startEvalFixture({ result: "failed" });
+  const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
@@ -3434,7 +3434,7 @@ test("eval gate --baseline-sha resolves a SHA end to end and gates on it", async
 });
 
 test("eval gate --baseline-sha records the SHA AND the run it resolved to", async () => {
-  const fixture = await startEvalFixture({ result: "failed" });
+  const fixture = await startEvalFixture();
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "mcpjam-eval-gate-sha-")
   );
@@ -3480,10 +3480,7 @@ test("eval gate --baseline-sha records the SHA AND the run it resolved to", asyn
 });
 
 test("eval gate --baseline-sha surfaces an AMBIGUOUS match in the report", async () => {
-  const fixture = await startEvalFixture({
-    result: "failed",
-    compare: { matchCount: 4 },
-  });
+  const fixture = await startEvalFixture({ compare: { matchCount: 4 } });
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "mcpjam-eval-gate-sha-ambiguous-")
   );
@@ -3522,7 +3519,6 @@ test("eval gate --baseline-sha: a TRUNCATED count of 1 is not recorded as unique
   // it as an established unique match would be a false claim, and a
   // regression verdict rests on exactly that claim.
   const fixture = await startEvalFixture({
-    result: "failed",
     compare: { matchCount: 1, matchCountTruncated: true },
   });
   const directory = await mkdtemp(
