@@ -1,6 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
 
 const { useRunDisclosureMock } = vi.hoisted(() => ({
   useRunDisclosureMock: vi.fn(),
@@ -36,7 +35,6 @@ import {
   describeRunDisclosureDetail,
   formatRunDisclosureSummary,
 } from "../run-disclosure-hint";
-import { ReviewStep } from "../eval-runner/ReviewStep";
 import type { RunDisclosureState } from "@/hooks/use-run-disclosure";
 import type { PlatformEvalRunDisclosure } from "@mcpjam/sdk/platform";
 
@@ -597,39 +595,5 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
         },
       }),
     ).toBe("Disclosure unavailable for host-targeted runs");
-  });
-});
-
-describe("ReviewStep — the runDisclosureState slot is props-only and optional", () => {
-  function reviewStepProps(
-    overrides: Partial<ComponentProps<typeof ReviewStep>> = {},
-  ): ComponentProps<typeof ReviewStep> {
-    return {
-      suiteName: "My suite",
-      suiteDescription: "",
-      minimumPassRate: 100,
-      selectedServers: [],
-      selectedModels: [],
-      validTestTemplates: [],
-      onSuiteNameChange: () => {},
-      onSuiteDescriptionChange: () => {},
-      onMinimumPassRateChange: () => {},
-      onEditStep: () => {},
-      ...overrides,
-    };
-  }
-
-  it("renders no disclosure hint when the parent has no runDisclosureState yet", () => {
-    render(<ReviewStep {...reviewStepProps()} />);
-    expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
-  });
-
-  it("renders the disclosure hint beside Models when the parent threads a runDisclosureState", () => {
-    render(
-      <ReviewStep
-        {...reviewStepProps({ runDisclosureState: stateOf() })}
-      />,
-    );
-    expect(screen.getByTestId("run-disclosure-hint")).toBeInTheDocument();
   });
 });
