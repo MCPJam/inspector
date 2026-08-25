@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ModelMessage } from "ai";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import { allGatingScorersPassed } from "@mcpjam/sdk/contract";
+import { allGatingScorersPassed, definitionHash } from "@mcpjam/sdk/contract";
 import { buildIterationFinishParams } from "../finalize-iteration.js";
 import { buildHostedScoreContract } from "../score-rows.js";
 import { resetShadowMismatchStateForTests } from "../shadow-mismatch.js";
@@ -436,22 +436,39 @@ describe("every gating definition this pass builds also gets a scored row", () =
     expect(verdict.unresolvedScorerIds).toEqual([]);
 
     // And the reason: every gating definition has a row, and every row scored.
-    const rowIds = new Set(scores.map((row) => row.scorerId));
+    //
+    // Joined BY `definitionHash`, which is what `allGatingScorersPassed` joins
+    // on. Matching on `scorerId` would let this pass while a definition was
+    // genuinely unresolved: two definitions can share an id under different
+    // hashes (that is exactly what a version or match-option change produces),
+    // and only one of them having a row is the case worth catching.
+    const rowHashes = new Set(scores.map((row) => row.definitionHash));
     const gating = evaluationConfig.definitions.filter(
       (definition) => definition.role === "gating"
     );
     expect(gating.length).toBeGreaterThan(0);
-    expect(gating.filter((d) => !rowIds.has(d.scorerId))).toEqual([]);
+    expect(
+      gating
+        .filter((d) => !rowHashes.has(definitionHash(d)))
+        .map((d) => d.scorerId)
+    ).toEqual([]);
     expect(
       scores.filter((row) => row.status !== "scored").map((r) => r.scorerId)
     ).toEqual([]);
   });
 
-  test("so a first-pass disagreement only happens where the boolean also failed", () => {
-    // The corollary. `disagreeingScorerIds` fires on a row that scored FALSE,
-    // and those same failures are what `buildEvalIterationVerdict` gates on —
-    // which is why the conjunction is currently the only thing `enforce`
-    // changes here.
+  test("a disagreeing row carries the SAME verdict the boolean gate reads", () => {
+    // The mechanism behind "a first-pass disagreement only happens where the
+    // boolean also failed" — asserted directly, rather than by re-deriving the
+    // boolean verdict through `buildEvalIterationVerdict` (which needs a full
+    // turn/trace harness, and is pinned by `iteration-verdict-pinned.test.ts`).
+    //
+    // The rows are a PROJECTION of the same evaluation: a predicate row's
+    // `passed` IS the `PredicateResult.passed` the boolean gate consumes, and
+    // the tool-match row's is `evaluation.passed`. So a row can only disagree
+    // where the value the boolean also read was false. If that projection ever
+    // stops being faithful, this fails — and the claim in `buildScoreMetadata`
+    // that the two "cannot honestly disagree" stops being true with it.
     const { scores, evaluationConfig } = buildHostedScoreContract({
       predicateResults: [{ predicate: failingPredicate, passed: false }],
       evaluation: evaluationFor(true),
@@ -461,6 +478,14 @@ describe("every gating definition this pass builds also gets a scored row", () =
     expect(verdict.passed).toBe(false);
     expect(verdict.disagreeingScorerIds.length).toBeGreaterThan(0);
     expect(verdict.unresolvedScorerIds).toEqual([]);
+
+    // Every disagreeing row scored FALSE on the input the boolean gate also
+    // reads — never on evidence the boolean never saw.
+    const disagreeing = new Set(verdict.disagreeingScorerIds);
+    const rows = scores.filter((row) => disagreeing.has(row.scorerId));
+    expect(rows.length).toBe(disagreeing.size);
+    expect(rows.every((row) => row.status === "scored")).toBe(true);
+    expect(rows.every((row) => row.passed === false)).toBe(true);
   });
 });
 
