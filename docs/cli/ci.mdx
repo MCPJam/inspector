@@ -384,6 +384,12 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
           echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
 
       - name: Gate and write JUnit
+        # Always run this step, even if the run above exited 1 on a failed
+        # verdict: a default `if:` is `success()`, and skipping this step
+        # would lose the gate's configurable policy and its JUnit report
+        # exactly when the run failed. The job still ends up failed either
+        # way — the run step above already exited nonzero.
+        if: always()
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
