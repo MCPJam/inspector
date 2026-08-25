@@ -1247,12 +1247,33 @@ and the resolved `baseRunId` — so an archived report can answer "which run did
 commit X compare against?" without the invocation that produced it. There is no
 automatic baseline selection: a baseline is compared only when one is pinned.
 
+**Gate waivers.** A run whose gate failed can be overridden by an authorized
+user, on the record, until an expiry they name — see
+[`cloud eval gate waive`](#cloud-eval-gate-waive) below. When a waiver is in
+force, `eval gate` reports the outcome as **`waived`** and exits `0`.
+
+`waived` is deliberately not the same as `passed`. The run keeps its own failed
+result, the failing verdicts stay in the report, and the waiver — **who** granted
+it, **why**, and **until when** — is named in every output format: the human
+report, `json-summary`, `junit-xml` (as a `<skipped>` element on the gate
+testcase, which does not fail the build and does not render as a clean green
+row), and `html` (its own badge and section, neither green nor red).
+
+Only a real verdict failure can be waived. An `incomplete` gate — a cancelled
+run, a `--wait` timeout, a network failure, non-gateable score evidence — keeps
+exit `3` no matter what waiver is on the run: a waiver granted because the evals
+regressed is not consent to ship on an infrastructure failure. A `usage_error`
+keeps exit `2` for the same reason.
+
+The CLI also re-derives the waiver's expiry itself rather than trusting the
+platform's `active` flag, so a lapsed waiver cannot keep a gate green.
+
 **Exit codes.** `eval gate` is the command that fails a build, so it is the one
 that maps a verdict onto an exit code. It keeps four:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Every requested gate passed |
+| `0` | Every requested gate passed, **or** a failed gate was waived |
 | `1` | An eval **verdict** failed. Reserved for exactly that |
 | `2` | Usage error — an unknown scorer, or a threshold out of range |
 | `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable (its score evidence did not verify) |
@@ -1267,6 +1288,62 @@ remapping it to the six-code scheme would invert pipelines that already
 retry on `3`. This is a deliberate compatibility exception for v1 — a
 six-code migration for `gate` is deferred behind a future opt-in flag, kept
 here so the exception stays documented rather than silently diverging.
+
+### `cloud eval gate waive`
+
+Override a **failing** run's gate until an expiry you name. Requires the manage
+tier, enforced by the platform — whoever launched the run gets no exception for
+having launched it.
+
+This does **not** make the run pass. The run keeps its `result`, and the waiver
+is reported by both things that read the gate: the GitHub Check Run and
+`eval gate` itself.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--reason <text>` | Yes | Why the gate is being overridden. Max 500 characters |
+| `--expires-in <duration>` | Yes | How long the waiver lasts: `30m`, `12h`, `7d`. Capped at 30 days |
+
+```bash
+mcpjam cloud eval gate waive --run run_123 --reason "hotfix ships today; regression tracked in ENG-4821" --expires-in 3d
+```
+
+<Warning>
+**The reason is stored unredacted, for the life of the suite.** It is readable
+by anyone who can see the suite and has no independent retention window. Never
+paste secrets, tokens, or customer data into it. The CLI prints this notice
+before it accepts a reason.
+</Warning>
+
+A bare number is rejected: `--expires-in 7` is ambiguous between seven minutes
+and seven days, and the difference is a gate that reopens before lunch or three
+weeks later. The 30-day cap is enforced by the platform, so the refusal names
+the cap and what to do instead.
+
+Waiving a run that already has a waiver in force is a **conflict**, not a second
+waiver: the existing one is reported back and is left untouched, because two
+active waivers would make "which reason is on the check" a race.
+
+### `cloud eval gate unwaive`
+
+Revoke a waiver, putting the gate and the GitHub Check Run back.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--waiver <id>` | No | Waiver to revoke. Omit to revoke whichever is in force over `--run` |
+
+```bash
+mcpjam cloud eval gate unwaive --run run_123
+```
+
+Idempotent. A second revoke reports the **original** revocation rather than
+restamping it — that is a success, not an error, and it preserves the record of
+who actually ended the waiver. An already-expired waiver can still be revoked;
+the audit trail distinguishes "this was wrong" from "this ran out".
 
 ### `cloud eval trace`
 

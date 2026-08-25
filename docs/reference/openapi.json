@@ -10222,6 +10222,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -10230,9 +10233,6 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -10267,6 +10267,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -10275,9 +10278,6 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -10785,6 +10785,180 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/gate-waivers": {
+      "post": {
+        "operationId": "createGateWaiver",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Waive a run gate",
+        "description": "Override a FAILING run's release gate until an expiry you name. This does NOT make the run pass: the run keeps its `result`, the waiver is a separate audited record, and every surface that honors it — the GitHub Check Run and the CLI's `eval gate` — reports the gate as waived, by whom, why, and until when.\n\nRequires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists.\n\n`400` covers five distinct refusals, each with a message written for the caller: the suite belongs to no organization, the reason is blank, the reason exceeds 500 characters, the expiry is not in the future, or the expiry is more than 30 days out. `403` means the caller can see the suite but lacks the manage tier — deliberately not collapsed to `404`, which would send a legitimate member hunting for a run sitting in front of them.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "expiresAt"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the gate is being overridden. Non-blank, at most 500 characters, and THE RECORD of the decision. Stored unredacted for the life of the suite."
+                  },
+                  "expiresAt": {
+                    "type": "integer",
+                    "description": "When the waiver lapses, as epoch milliseconds. Must be in the future and at most 30 days out."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The waiver was granted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateWaiverWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The waiver was refused. The message names which of the five conditions failed and what would fix it."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A waiver is already in force over this run. The body carries that EXISTING waiver; no second one was granted, because two active waivers would make \"which reason is on the check\" a race.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateWaiverWriteResult"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getGateWaiver",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get a run's gate waiver",
+        "description": "The waiver in force over this run, or `null`. Available to anyone who can VIEW the run, not only to those who can grant one — a waiver its readers cannot see is not a visible waiver.\n\nA client gating on this run does not need this endpoint: `GET /eval-runs/{runId}` already carries `gateWaiver`, so a gate can fold one in without a second round trip.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The active waiver, or null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateWaiverRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}": {
+      "delete": {
+        "operationId": "revokeGateWaiver",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Revoke a gate waiver",
+        "description": "End a waiver early, putting the gate and the GitHub Check Run back. Requires the manage tier.\n\nIDEMPOTENT, and `already_revoked` is a SUCCESS: it reports the ORIGINAL revocation rather than restamping it, so a retry cannot overwrite the record of who actually ended the waiver. An already-expired waiver may still be revoked — the audit trail distinguishes \"this was wrong\" from \"this ran out\".",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "$ref": "#/components/parameters/waiverId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revoked waiver.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateWaiverWriteResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10966,6 +11140,15 @@
         "schema": {
           "type": "string"
         }
+      },
+      "waiverId": {
+        "name": "waiverId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Gate waiver ID, as returned when the waiver was granted or read."
       }
     },
     "requestBodies": {
@@ -13721,6 +13904,17 @@
               }
             ],
             "description": "Advisory LLM graders on this run. Present on the DETAIL response only — lists stay compact — and absent on deployments that predate the envelope."
+          },
+          "gateWaiver": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GateWaiver"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The waiver currently in force over this run's gate, or `null`. Gated on being able to VIEW the run, deliberately not on being able to grant a waiver — a waiver only its grantors can see is not a visible one. Carried on the run so a client computing its own gate can fold a waiver in and name it, without a second round trip."
           }
         }
       },
@@ -23202,6 +23396,138 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "GateWaiver": {
+        "type": "object",
+        "description": "An audited, time-boxed override of an eval run's release gate. A waiver never changes the run's own `result` — the run keeps its verdict and every surface that honors the waiver says so out loud, which is what makes \"no silent waiver\" checkable rather than promised.",
+        "required": [
+          "id",
+          "suiteId",
+          "runId",
+          "reason",
+          "expiresAt",
+          "createdAt",
+          "createdBy",
+          "createdByEmail",
+          "revokedAt",
+          "revokedBy",
+          "active",
+          "policySnapshot"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The run this waiver covers. Suite-wide waivers are not honored."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the gate was overridden, as the granter wrote it. Stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it."
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "Epoch ms. Always in the future when granted, and capped at 30 days out — there is no permanent waiver."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdByEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null`, never absent, when it cannot be resolved — a deleted user must not make a waiver look authorless."
+          },
+          "revokedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "revokedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Whether it is in force right now — neither revoked nor expired. Computed at read time; a client that must not honor a lapsed waiver should re-derive it from `expiresAt` rather than trust it."
+          },
+          "policySnapshot": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "WHAT was overridden, captured at waive time so a later edit to the suite cannot rewrite the record. `null` for a run decided by the v2 verdict policy, whose identity is recorded on the audit event instead — this shape cannot hold it, and filling it in would be a false record rather than an incomplete one.",
+            "required": [
+              "minimumPassRate"
+            ],
+            "properties": {
+              "minimumPassRate": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "GateWaiverRead": {
+        "type": "object",
+        "description": "The waiver in force over a run, or `null` when there is none.",
+        "required": [
+          "waiver"
+        ],
+        "properties": {
+          "waiver": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GateWaiver"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "GateWaiverWriteResult": {
+        "type": "object",
+        "description": "The result of granting or revoking a waiver. `conflict` and `already_revoked` are IDEMPOTENT no-op successes, not failures.",
+        "required": [
+          "status",
+          "republishedChecks",
+          "waiver"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "created",
+              "conflict",
+              "revoked",
+              "already_revoked"
+            ],
+            "description": "`conflict` — a waiver was already in force, and `waiver` is that EXISTING one rather than a second row. `already_revoked` — this waiver had already been revoked, and `waiver` reports the original revocation rather than restamping it, so the record of who actually ended it survives a second call."
+          },
+          "republishedChecks": {
+            "type": "integer",
+            "description": "GitHub Check Runs brought back in line by this write. A published check is a persisted verdict, not a live read, so `0` on a repository with checks connected means the status that gates the merge did not move."
+          },
+          "waiver": {
+            "$ref": "#/components/schemas/GateWaiver"
           }
         }
       }

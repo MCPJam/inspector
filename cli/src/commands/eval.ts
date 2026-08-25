@@ -55,6 +55,7 @@ import {
   writeResult,
 } from "../lib/output.js";
 import {
+  applyGateWaiver,
   buildCorpus,
   buildEvalDecisionSummaryFromIterations,
   buildEvalRunReport,
@@ -62,7 +63,10 @@ import {
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
+  formatGateWaiverLine,
   formatSuiteFileFindings,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
@@ -119,6 +123,7 @@ import {
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
+  activeWaiverForRun,
   resolveBaselineSelector,
   compareBaseSelector,
   baselineNotFoundReason,
@@ -126,6 +131,7 @@ import {
   evaluateBaselineComparison,
   mergeGateReports,
   policyFromOptions,
+  parseWaiverExpiry,
   policyNeedsIterations,
   reportForRun,
   type EvalGateOptions,
@@ -1048,10 +1054,17 @@ function gateReportCase(
   report: GateReport,
   baselineProvenance?: Record<string, unknown>
 ): StructuredCaseResult {
-  const passed = report.outcome === "passed";
+  const waived = report.outcome === "waived";
+  // A WAIVED gate did not block the build, so it must not inflate the
+  // artifact's failure count — a JUnit file whose failure count contradicts
+  // the exit code sends a CI job red on the strength of the very thing that
+  // was waived. It is still not reported as a plain pass: `waiver` below makes
+  // the JUnit renderer emit `<skipped>` instead of a bare passing testcase,
+  // the HTML renderer give it its own section, and the title say so outright.
+  const passed = report.outcome === "passed" || waived;
   return {
     id: "gate",
-    title: "Eval gate",
+    title: waived ? "Eval gate (WAIVED)" : "Eval gate",
     category: "gate",
     passed,
     // Only a real FAILED gate is a confirmed regression. `incomplete` and
@@ -1062,17 +1075,41 @@ function gateReportCase(
     classification:
       report.outcome === "failed"
         ? "breaking"
-        : passed
-          ? "non_breaking"
-          : "informational",
-    ...(passed
+        // A waived gate is `informational`, NOT `non_breaking`. It really did
+        // fail; `non_breaking` would claim the run observed no breaking change,
+        // which is the opposite of what happened.
+        : waived
+          ? "informational"
+          : passed
+            ? "non_breaking"
+            : "informational",
+    // The failing verdicts are carried on a WAIVED case too. The waiver
+    // explains why the build was not blocked; it is not a reason to stop
+    // saying what failed.
+    ...(passed && !waived
       ? {}
       : {
           error: report.verdicts
-            .filter((verdict) => verdict.status !== "passed")
+            .filter(
+              (verdict) =>
+                verdict.status !== "passed" && verdict.status !== "waived"
+            )
             .map((verdict) => verdict.message)
             .join("; "),
         }),
+    ...(report.waiver
+      ? {
+          waiver: {
+            id: report.waiver.id,
+            reason: report.waiver.reason,
+            expiresAt: report.waiver.expiresAt,
+            createdAt: report.waiver.createdAt,
+            createdBy: report.waiver.createdBy,
+            createdByEmail: report.waiver.createdByEmail,
+            policySnapshot: report.waiver.policySnapshot,
+          },
+        }
+      : {}),
     // The baseline provenance rides along on the case row too, not only in
     // the report's top-level metadata: `--reporter junit-xml` has no other
     // place to carry it, and a regression visible in the exit code but
@@ -1089,7 +1126,13 @@ async function runEvalGate(
   options: PlatformOptions &
     EvalGateOptions & {
       project?: string;
-      run: string;
+      /**
+       * Optional at the TYPE level only. `gate` cannot mark it required in
+       * commander without breaking `gate waive`/`gate unwaive` dispatch, so
+       * absence is refused below — with the same exit 2 commander would have
+       * produced.
+       */
+      run?: string;
       wait?: boolean;
       waitTimeout?: string;
       reporter?: string;
@@ -1105,6 +1148,13 @@ async function runEvalGate(
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  // Enforced here rather than by commander — see the option's declaration. A
+  // usage error, so the exit code is 2 exactly as it was when commander did
+  // the checking, and it is raised before any flag parsing spends a request.
+  const runId = options.run?.trim();
+  if (!runId) {
+    throw usageError("--run <id> is required. Pass the eval run to gate.");
+  }
   const reporter = parseReporterFormat(options.reporter);
   const needsReport = reporter !== undefined || options.out !== undefined;
   const policy = policyFromOptions({
@@ -1119,7 +1169,7 @@ async function runEvalGate(
   const baseline = resolveBaselineSelector({
     baseline: options.baseline,
     baselineSha: options.baselineSha,
-    runId: options.run,
+    runId,
   });
   const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
@@ -1154,7 +1204,7 @@ async function runEvalGate(
         const project = resolution.project;
         const deadline = Date.now() + waitTimeoutMs;
         let run = await client.getEvalRun(
-          { projectId: project.id, runId: options.run },
+          { projectId: project.id, runId },
           { signal }
         );
 
@@ -1197,7 +1247,7 @@ async function runEvalGate(
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
           run = await client.getEvalRun(
-            { projectId: project.id, runId: options.run },
+            { projectId: project.id, runId },
             { signal }
           );
         }
@@ -1212,7 +1262,7 @@ async function runEvalGate(
               client,
               signal,
               project.id,
-              options.run
+              runId
             );
           } catch (error) {
             iterationError =
@@ -1312,7 +1362,7 @@ async function runEvalGate(
           client,
           signal,
           projectId: project.id,
-          runId: options.run,
+          runId,
           baseline,
           policy: comparePolicy,
           compareIterations: iterations,
@@ -1383,7 +1433,24 @@ async function runEvalGate(
     return;
   }
 
-  const exitCode = evalGateExitCode(outcome.report);
+  // THE WAIVER, folded in after every verdict is settled and before anything
+  // is reported.
+  //
+  // HERE rather than inside the fetch closure, because this must also cover
+  // the early returns above (a still-running run, a wait timeout, a cancelled
+  // run) — and it must cover them by NOT waiving them: `applyGateWaiver`
+  // upgrades only a real `failed` outcome, so an infrastructure condition
+  // keeps its exit 3 no matter what waiver is on the run. A waiver granted
+  // because the evals regressed is not consent to ship on a network error.
+  //
+  // The waiver is attached even when it changed nothing, so the artifact names
+  // it either way. `outcome` is the only thing that says whether it decided
+  // anything.
+  const report = applyGateWaiver(
+    outcome.report,
+    activeWaiverForRun(outcome.run)
+  );
+  const exitCode = evalGateExitCode(report);
   const structured = needsReport
     ? buildEvalRunReport(
         outcome.run
@@ -1399,8 +1466,8 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
-          verdict: gateOutcomeVerdict(outcome.report.outcome),
+          cases: [gateReportCase(report, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(report.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1418,10 +1485,10 @@ async function runEvalGate(
   if (reporter && structured) {
     writeReporterResult(reporter, structured);
   } else {
-    writeResult({ gate: outcome.report, exitCode }, globalOptions.format);
+    writeResult({ gate: report, exitCode }, globalOptions.format);
   }
   if (globalOptions.format === "human" && !reporter) {
-    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+    process.stderr.write(`${formatGateReport(report)}\n`);
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -1430,6 +1497,184 @@ async function runEvalGate(
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
+  }
+}
+
+/**
+ * Read `--run` and `--project` off the parent `gate` command.
+ *
+ * They are declared on `gate`, and commander hands a parent's options to the
+ * parent's own `opts()` even when a subcommand is the one running — so the
+ * subcommand must ask upward rather than redeclare them. Redeclaring is worse
+ * than verbose: the parent consumes `--run` first, and the subcommand's own
+ * mandatory check then fails on a flag the user demonstrably passed.
+ *
+ * `--run` is enforced HERE, with a usage error, because `gate` can no longer
+ * mark it required (see the registration). Exit 2 either way.
+ */
+function gateSubcommandScope(command: Command): {
+  run: string;
+  project?: string;
+} {
+  const parentOptions = (command.parent?.opts() ?? {}) as {
+    run?: string;
+    project?: string;
+  };
+  const run = parentOptions.run?.trim();
+  if (!run) {
+    throw usageError("--run <id> is required. Pass the eval run to act on.");
+  }
+  return {
+    run,
+    ...(parentOptions.project !== undefined
+      ? { project: parentOptions.project }
+      : {}),
+  };
+}
+
+/**
+ * `mcpjam cloud eval gate waive` — override a failing run's gate, on the
+ * record.
+ *
+ * The notice goes to STDERR before the request, not after and not on stdout.
+ * Before, because it is a warning about what the caller is ABOUT to store
+ * permanently and unredacted; stderr, so `--format json` output stays one
+ * parseable document.
+ *
+ * NO LOCAL VALIDATION of the reason or the expiry beyond parsing the duration
+ * format. Each of the platform's five refusals carries copy it wrote for the
+ * caller — including the one for a suite with no organization, which names a
+ * remedy nobody would guess — and a local check firing first would replace
+ * that copy with a message invented here.
+ */
+async function runEvalGateWaive(
+  options: { reason: string; expiresIn: string },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = gateSubcommandScope(command);
+  // Parsed BEFORE any network call, like every other flag in this file: a
+  // malformed duration exits 2 without spending a request.
+  const expiresAt = parseWaiverExpiry(options.expiresIn);
+  const resolved = resolveCloudProjectArgs(scope);
+
+  if (globalOptions.format === "human") {
+    process.stderr.write(`Gate waiver reason: ${GATE_WAIVER_REASON_NOTICE}\n`);
+  }
+
+  const result = await runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const projects = await client.listProjects({}, { signal });
+      const resolution = resolveProject(projects.items, resolved.project);
+      if (!resolution.ok) {
+        throw usageError(
+          appendProjectLinkHint(resolution.message, resolved.projectScope)
+        );
+      }
+      return await client.createGateWaiver(
+        {
+          projectId: resolution.project.id,
+          runId: scope.run,
+          reason: options.reason,
+          expiresAt,
+        },
+        { signal }
+      );
+    }
+  );
+
+  writeResult(result, globalOptions.format);
+  if (globalOptions.format === "human") {
+    // `conflict` is a normal result, not an error, and it must not read as
+    // "granted" — the waiver now in force is somebody else's, with somebody
+    // else's reason on the check.
+    process.stderr.write(
+      `${
+        result.status === "conflict"
+          ? "A waiver was already in force over this run; it was NOT replaced."
+          : "Gate waived."
+      } ${formatGateWaiverLine(result.waiver)}\n`
+    );
+    // A published Check Run is a persisted verdict, not a live read. Zero
+    // republished checks on a repository with checks connected means the
+    // status that actually gates the merge did not move — worth saying, since
+    // that is usually the reason someone waived at all.
+    process.stderr.write(
+      `Republished ${result.republishedChecks} GitHub check run(s).\n`
+    );
+  }
+}
+
+/**
+ * `mcpjam cloud eval gate unwaive` — end a waiver early.
+ *
+ * `--waiver` is optional: omitted, the waiver currently in force over `--run`
+ * is resolved first. That read is what makes the common case safe as well as
+ * convenient — revoking "the waiver on this run" cannot name the wrong row.
+ *
+ * `already_revoked` is a SUCCESS. The platform reports the original
+ * revocation rather than restamping it, so a retry cannot overwrite the record
+ * of who actually ended the waiver; treating it as an error here would push
+ * callers into exactly the retry loop that record has to survive.
+ */
+async function runEvalGateUnwaive(
+  options: { waiver?: string },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = gateSubcommandScope(command);
+  const resolved = resolveCloudProjectArgs(scope);
+
+  const result = await runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const projects = await client.listProjects({}, { signal });
+      const resolution = resolveProject(projects.items, resolved.project);
+      if (!resolution.ok) {
+        throw usageError(
+          appendProjectLinkHint(resolution.message, resolved.projectScope)
+        );
+      }
+      const projectId = resolution.project.id;
+
+      let waiverId = options.waiver?.trim();
+      if (!waiverId) {
+        const { waiver } = await client.getGateWaiver(
+          { projectId, runId: scope.run },
+          { signal }
+        );
+        if (!waiver) {
+          // A usage error, not a silent success. "Nothing to revoke" and "I
+          // revoked it" are different facts, and an operator putting a gate
+          // back needs to know which one happened. Naming `--waiver` says how
+          // to reach an already-expired or already-revoked row, which this
+          // read deliberately does not return.
+          throw usageError(
+            `No waiver is in force over run "${scope.run}". Pass --waiver <id> to revoke a specific one.`
+          );
+        }
+        waiverId = waiver.id;
+      }
+
+      return await client.revokeGateWaiver(
+        { projectId, runId: scope.run, waiverId },
+        { signal }
+      );
+    }
+  );
+
+  writeResult(result, globalOptions.format);
+  if (globalOptions.format === "human") {
+    process.stderr.write(
+      `${
+        result.status === "already_revoked"
+          ? "This waiver was already revoked; the existing revocation stands."
+          : "Gate waiver revoked."
+      } Republished ${result.republishedChecks} GitHub check run(s).\n`
+    );
   }
 }
 
@@ -3152,13 +3397,22 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-      addProjectOption(
+      const gateCommand = addProjectOption(
       evals
       .command("gate")
       .description(
-        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
+        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or waived, 1 eval failure, 2 usage, 3 incomplete)"
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      // `.option`, not `.requiredOption`, ONLY so that `gate waive` and `gate
+      // unwaive` below can exist: commander enforces a parent's mandatory
+      // options before dispatching to a subcommand, so a required `--run`
+      // here would make every `gate waive` invocation fail on the parent's
+      // check. Absence is enforced in `runEvalGate` instead.
+      //
+      // The exit code is UNCHANGED by that move: commander's own
+      // missing-option error is mapped to 2 (USAGE_ERROR) by the CLI
+      // entrypoint, which is exactly what `usageError` produces.
+      .option("--run <id>", "Eval run ID (from `eval run`)")
       )
       .option(
         "--min-pass-rate-percent <0-100>",
@@ -3221,7 +3475,7 @@ export function registerEvalCommands(program: Command): void {
       options: PlatformOptions &
         EvalGateOptions & {
           project?: string;
-          run: string;
+          run?: string;
           wait?: boolean;
           waitTimeout?: string;
           reporter?: string;
@@ -3232,6 +3486,47 @@ export function registerEvalCommands(program: Command): void {
       await runEvalGate(options, command);
     }
   );
+
+  // ── `eval gate waive` / `eval gate unwaive` ───────────────────────────────
+  //
+  // Subcommands of `gate`, sharing its `--run` and `--project`. Commander
+  // gives a parent's declared options to the parent even when a subcommand
+  // runs, so these read them off `gate` rather than redeclaring them — a
+  // second `--run` on the subcommand is consumed by the parent and the
+  // subcommand's own mandatory check then fails on a flag the user did pass.
+  //
+  // NEITHER COMMAND PRE-JUDGES AUTHORIZATION. Waiving is manage-tier and the
+  // platform enforces it; a local guess would either block someone entitled to
+  // waive or let an unauthorized attempt look accepted until the write failed.
+  gateCommand
+    .command("waive")
+    .description(
+      "Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check."
+    )
+    .requiredOption(
+      "--reason <text>",
+      `Why the gate is being overridden (max ${GATE_WAIVER_MAX_REASON_LENGTH} characters). ${GATE_WAIVER_REASON_NOTICE}`
+    )
+    .requiredOption(
+      "--expires-in <duration>",
+      "How long the waiver lasts, e.g. 30m, 12h, 7d. Capped at 30 days by the platform — there is no permanent waiver."
+    )
+    .action(async (options: { reason: string; expiresIn: string }, command) => {
+      await runEvalGateWaive(options, command);
+    });
+
+  gateCommand
+    .command("unwaive")
+    .description(
+      "Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent."
+    )
+    .option(
+      "--waiver <id>",
+      "Waiver ID to revoke. Omit to revoke the waiver currently in force over --run."
+    )
+    .action(async (options: { waiver?: string }, command) => {
+      await runEvalGateUnwaive(options, command);
+    });
 
       addProjectOption(
       evals

@@ -159,6 +159,8 @@ const PLAIN_TOOLS = [
   "get_plugin_version",
   "get_eval_iteration_trace",
   "compare_eval_run",
+  // The gate-waiver read: an agent-oriented payload, no widget view.
+  "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
@@ -388,6 +390,7 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "get_eval_run",
       "compare_eval_run",
+      "get_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
