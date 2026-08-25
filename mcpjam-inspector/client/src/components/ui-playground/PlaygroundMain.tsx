@@ -4367,22 +4367,6 @@ export function PlaygroundMain({
                         draggable={false}
                         className="h-10 w-auto mx-auto mb-4"
                       />
-                      <div className="space-y-3">
-                        <h3
-                          className={cn(
-                            "text-lg font-semibold",
-                            hostStyleFamily === "chatgpt"
-                              ? effectiveThreadTheme === "dark"
-                                ? "text-white"
-                                : "text-neutral-950"
-                              : effectiveThreadTheme === "dark"
-                              ? "text-[#F1F0ED]"
-                              : "text-[rgba(61,57,41,1)]"
-                          )}
-                        >
-                          This is your playground for MCP.
-                        </h3>
-                      </div>
                     </div>
                     <MultiModelStarterPromptsBlock
                       onStarterPrompt={handleStarterPrompt}
@@ -4747,6 +4731,22 @@ export function PlaygroundMain({
                 <MultiModelStartersEmptyLayout
                   isAuthLoading={isAuthLoading}
                   showStarterPrompts={showMultiModelStarterPrompts}
+                  logoSlot={
+                    <div className="mb-4 flex w-full flex-col items-center [-webkit-user-drag:none]">
+                      <div className="max-w-md text-center">
+                        <img
+                          src={
+                            effectiveThreadTheme === "dark"
+                              ? "/mcp_jam_dark.png"
+                              : "/mcp_jam_light.png"
+                          }
+                          alt="MCPJam"
+                          draggable={false}
+                          className="mx-auto mb-4 h-10 w-auto"
+                        />
+                      </div>
+                    </div>
+                  }
                   authPrimarySlot={
                     isAuthLoading ? (
                       <div className="text-center space-y-4">
