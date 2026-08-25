@@ -318,6 +318,76 @@ describe("shadowVerdictFromScores", () => {
     expect(judgeRow?.passed).toBeUndefined();
   });
 
+  // B4 validity distinguishes "this scorer was never measured" from "this
+  // iteration had no such scorer": only a projected row can carry that.
+  test("a judge that errored is projected as error, not dropped", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "error", error: "judge timeout" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+    expect(judgeRow?.error).toContain("judge timeout");
+    expect(judgeRow?.value).toBeUndefined();
+  });
+
+  test("a judge that did not run is projected as skipped", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "skipped" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("skipped");
+    // Absent evidence from an ADVISORY scorer still decides nothing.
+    expect(shadowVerdictFromScores(scores, evaluationConfig).passed).toBe(true);
+  });
+
+  test("an out-of-scope judge is projected as not_applicable", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "not_applicable" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("not_applicable");
+  });
+
+  // A malformed verdict is not an absent scorer: it errored.
+  test("a scored verdict carrying no number errors rather than vanishing", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "scored" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+  });
+
+  test("an unknown judge status errors even when it carries a numeric score", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { score: 1, threshold: 0.8, status: "mystery" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+    expect(judgeRow?.value).toBeUndefined();
+  });
+
+  // Without a threshold there is no definition, so nothing is fabricated.
+  test("a thresholdless judge verdict contributes no scorer at all", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { status: "error" },
+    });
+    expect(
+      scores.some((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID)
+    ).toBe(false);
+    expect(
+      evaluationConfig.definitions.some(
+        (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
+      )
+    ).toBe(false);
+  });
+
   test("a failing gating row names itself", () => {
     const { scores, evaluationConfig } = buildHostedScoreContract({
       predicateResults: [{ predicate, passed: false }],

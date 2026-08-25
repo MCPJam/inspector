@@ -70,6 +70,10 @@ export function computeSuitePassRateDelta(
 export function getSuitePassRatePercent(
   entry: EvalSuiteOverviewEntry,
 ): number | null {
+  // An inconclusive policy-2 run is not a failed run and, more importantly,
+  // its summary is not a measured pass-rate denominator. Keep the overview
+  // neutral instead of showing compatibility counts as a verdict.
+  if (entry.latestRun?.result === "inconclusive") return null;
   if (entry.latestRun?.summary) {
     const { passRate, passed, total } = entry.latestRun.summary;
     if (typeof passRate === "number") {
@@ -94,6 +98,7 @@ export function getSuitePassRateLabel(entry: EvalSuiteOverviewEntry): string {
 export function getSuitePassFailCounts(
   entry: EvalSuiteOverviewEntry,
 ): { passed: number; total: number } | null {
+  if (entry.latestRun?.result === "inconclusive") return null;
   if (entry.latestRun?.summary && entry.latestRun.summary.total > 0) {
     return {
       passed: entry.latestRun.summary.passed,
