@@ -12,8 +12,9 @@ first hosted turn. A hosted id now answers the same as the model it names.
 
 Which models reject the field is a per-family version threshold rather than a
 list of ids: Opus 4.7 and later, Sonnet 5 and later, Fable 5 and later, and
-Mythos 5 and later. Haiku has not dropped the parameters in any released
-version. In the current hosted catalog that covers `anthropic/claude-opus-4.7`,
+Mythos 5 and later, with any family that has no threshold of its own held to 5.
+Every shipped Haiku is below that and keeps its temperature. In the current
+hosted catalog the threshold covers `anthropic/claude-opus-4.7`,
 `anthropic/claude-opus-4.8`, `anthropic/claude-sonnet-5` and
 `anthropic/claude-fable-5` — the field is omitted from their `/stream` body and
 the temperature slider greys out for those rows. A later release in an affected

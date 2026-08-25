@@ -286,8 +286,10 @@ describe("modelSupportsTemperature", () => {
     // handled without anyone editing this file.
     expect(modelSupportsTemperature("anthropic/claude-opus-4.9")).toBe(false);
     expect(modelSupportsTemperature("anthropic/claude-opus-6")).toBe(false);
-    // Haiku never dropped the parameters, so it gets no forward guess.
-    expect(modelSupportsTemperature("anthropic/claude-haiku-5")).toBe(true);
+    // A family with no threshold of its own is held to 5, so a Haiku 5 loses
+    // the field while every shipped Haiku keeps it.
+    expect(modelSupportsTemperature("anthropic/claude-haiku-5")).toBe(false);
+    expect(modelSupportsTemperature("anthropic/claude-haiku-4.5")).toBe(true);
   });
 });
 

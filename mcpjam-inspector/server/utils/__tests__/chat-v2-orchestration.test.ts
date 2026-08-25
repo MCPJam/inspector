@@ -29,10 +29,7 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
-import {
-  CloudSkillsError,
-  listCloudSkills,
-} from "../computers/cloud-skills";
+import { CloudSkillsError, listCloudSkills } from "../computers/cloud-skills";
 import { CLOUD_SKILLS_FETCH_TIMEOUT_MS } from "../computers/cloud-skill-tools";
 import {
   buildExaWebSearchTool,
@@ -1487,9 +1484,7 @@ describe("prepareChatV2 — live cloud skills catalog", () => {
 
   it("prepares the turn without skill tools when the catalog fetch times out", async () => {
     vi.useFakeTimers();
-    vi.mocked(listCloudSkills).mockImplementation(
-      () => new Promise(() => {})
-    );
+    vi.mocked(listCloudSkills).mockImplementation(() => new Promise(() => {}));
     try {
       const resultPromise = prepareChatV2({
         mcpClientManager: mockManager({}),

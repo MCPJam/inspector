@@ -30,6 +30,30 @@ describe("modelRejectsTemperature", () => {
     }
   });
 
+  it("holds a family it has never heard of to the 5 threshold", () => {
+    // Every family that reached a 5 generation dropped the sampling params, so
+    // an id this file predates is assumed to follow rather than 400 on the user.
+    // Haiku is the live case; the invented names stand in for the next tier.
+    const rejects = [
+      "anthropic/claude-haiku-5",
+      "claude-haiku-5",
+      "us.anthropic.claude-haiku-5-20260301-v1:0",
+      "anthropic/claude-haiku-5.2",
+      "anthropic/claude-quartet-5",
+      "claude-quartet-7",
+      "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-quartet-6-20270101-v1:0",
+    ];
+    for (const id of rejects) {
+      expect(modelRejectsTemperature(id), id).toBe(true);
+    }
+
+    // Below the threshold an unlisted family is left alone.
+    const accepts = ["anthropic/claude-quartet-4", "claude-quartet-4-9"];
+    for (const id of accepts) {
+      expect(modelRejectsTemperature(id), id).toBe(false);
+    }
+  });
+
   it("leaves models that still accept temperature alone", () => {
     const ids = [
       "anthropic/claude-opus-4.6",
@@ -44,8 +68,10 @@ describe("modelRejectsTemperature", () => {
       // read as a minor version, which would push Opus 4 over the 4.7 threshold.
       "anthropic.claude-opus-4-20250514-v1:0",
       "anthropic/claude-opus-4",
-      // Haiku has no threshold, so no version of it is guessed at.
-      "anthropic/claude-haiku-5",
+      // Unlisted families are only assumed to reject from 5 onward — every
+      // shipped Haiku is below that and keeps its temperature.
+      "anthropic/claude-haiku-4",
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       // Legacy "claude-<major>-<family>" ordering must not parse as a version.
       "anthropic.claude-3-opus-20240229-v1:0",
       // Ollama bare ids must not false-positive.
