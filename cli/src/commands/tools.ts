@@ -654,7 +654,7 @@ export function registerToolsCommands(program: Command): void {
       )
       .option(
         "--reporter <reporter>",
-        "Structured reporter output: json-summary or junit-xml",
+        "Structured reporter output: json-summary, junit-xml, or html",
       )
       .option(
         "--debug-out <path>",
