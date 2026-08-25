@@ -117,7 +117,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 
 ### What the inspector tells you
 
-- If your server doesn't speak `2026-07-28`, the connection fails with a message naming the server and the pinned version — for example, `MCP server "my-server" doesn't support MCP protocol version 2026-07-28, which this client is pinned to.` The error banner and any connect/reconnect toast include a **Change protocol version** button that opens the client's **MCP Protocol** tab directly. Set the version to **Automatic** there to let the inspector negotiate whatever the server supports, or pick a version the server advertises.
+- If your server doesn't speak the pinned version, the connection fails with a message naming the server, the pinned version, and — when the server named a version it does support — the version it offered. For example: `MCP server "my-server" doesn't support MCP protocol version 2025-11-25, which this client is pinned to. It offers 2025-06-18.` This applies to all pinned versions, not just `2026-07-28`. The error banner and any connect/reconnect toast include a **Change protocol version** button that opens the client's **MCP Protocol** tab directly. Set the version to **Automatic** there to let the inspector negotiate whatever the server supports, or pick the version the server advertises.
 - If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the Activity log to confirm they reach you.
 - The **Activity** log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
 
