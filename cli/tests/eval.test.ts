@@ -1007,22 +1007,6 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
-      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/compare" &&
-      (req.method ?? "GET") === "GET"
-    ) {
-      // No baseline configured for this fixture: `eval compare` lands in its
-      // BASELINE_NOT_FOUND path, which is enough to exercise --reporter/--out.
-      res.statusCode = 404;
-      res.end(
-        JSON.stringify({
-          code: "NOT_FOUND",
-          message: "no baseline run to compare against",
-          details: { reason: "BASELINE_NOT_FOUND" },
-        }),
-      );
-      return;
-    }
-    if (
       (url.pathname ===
         "/api/v1/projects/proj-alpha/eval-runs/run-failed" ||
         url.pathname ===
@@ -3020,7 +3004,7 @@ test("eval gate --reporter html --out honors the reporter on a fetch failure, an
 // other reporting command (`eval run`, `eval gate`) — `eval compare` must not
 // be the one place `--out` always writes raw JSON regardless of `--reporter`.
 test("eval compare --reporter html --out writes the reporter-selected format to the file", async () => {
-  const fixture = await startEvalFixture();
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-compare-"));
   const htmlPath = path.join(directory, "report.html");
   try {
