@@ -6,13 +6,17 @@ icon: "list-checks"
 
 The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, `-32021` on undeclared requests, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
 
+Run it when your server creates tasks — a `tools/call` that returns a task id instead of a result — and you want to know that the wire behaves the way a client will expect: before shipping a tasks-capable server, after changing protocol versions, and in CI.
+
 <Note>
   Tasks conformance provokes and then polls a real task, so it requires a
   persistent connection. It is not available in hosted mode.
 </Note>
 
-## Quick start
+## Run it
 
+<Steps>
+<Step title="Run the command against your server">
 ```bash
 mcpjam tasks conformance --url https://your-server.com/mcp
 ```
@@ -23,7 +27,13 @@ For a local stdio server:
 mcpjam tasks conformance --command node --args server.js --cwd /path/to/project
 ```
 
-On the extension wire you must name the probe tool. Auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so a tasks-extension server cannot advertise which tool creates a task. Without `--tool-name` the six task-dependent checks cannot run and the command reports `"outcome": "incomplete"` (exit code `3`) rather than a green run:
+<Check>
+The command connects, resolves a tasks wire, and reports a verdict. If it exits `3` with `"outcome": "incomplete"`, go to the next step.
+</Check>
+</Step>
+
+<Step title="On the extension wire, name the probe tool">
+Auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so a tasks-extension server cannot advertise which tool creates a task. Without `--tool-name` the six task-dependent checks cannot run and the command reports `"outcome": "incomplete"` (exit code `3`) rather than a green run:
 
 ```bash
 mcpjam tasks conformance \
@@ -33,13 +43,78 @@ mcpjam tasks conformance \
 
 A `--tool-name` the server does not list is treated the same way: the run is incomplete, and the message names both the tool you asked for and the tools the server actually lists.
 
-Emit CI-friendly JUnit XML:
+<Check>
+The run now reaches a `passed` or `failed` outcome rather than `incomplete`.
+</Check>
+</Step>
 
+<Step title="Read the result">
+```bash
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --tool-name long_job \
+  --format json
+```
+
+Typical success summary:
+
+```json
+{
+  "passed": true,
+  "outcome": "passed",
+  "summary": "8/8 checks passed, 0 failed, 0 could not run, 0 not applicable",
+  "discovery": {
+    "protocolVersion": "2026-07-28",
+    "wire": "extension",
+    "toolCount": 3,
+    "taskCapableToolCount": 1,
+    "probedTool": "long_job",
+    "createdTaskId": "task-abc123"
+  }
+}
+```
+
+Read it in three parts:
+
+- **`outcome`** — `passed`, `failed`, or `incomplete`. `passed` is `true` only for the first. See [Outcomes](#outcomes-passed-failed-incomplete).
+- **`summary`** — the counts, including the two kinds of non-run check. A `not-applicable` skip never holds a run back; a `could-not-run` skip makes the run `incomplete`.
+- **`discovery`** — which wire the connection resolved to, which tool was probed, and the task id that was created. This is where you confirm the run tested what you meant it to.
+
+<Check>
+You know the outcome, and for anything that did not run, `skipReason` tells you which kind of skip it was.
+</Check>
+</Step>
+
+<Step title="Investigate one failed check">
+Re-run just the check that failed, so its output is not buried in the rest:
+
+```bash
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --tool-name long_job \
+  --check-id tasks-ttl-shape \
+  --format json
+```
+
+Look up what that id asserts in [What it checks](#what-it-checks). Add `--rpc` to include the raw JSON-RPC request/response logs under `_rpcLogs` when you need to see the exact bytes — declaration hygiene in particular is asserted against captured outbound bytes, not re-derived from intent.
+
+<Check>
+You can point at the specific request or response that violates the check.
+</Check>
+</Step>
+
+<Step title="Wire it into CI">
 ```bash
 mcpjam tasks conformance \
   --url https://your-server.com/mcp \
   --reporter junit-xml > tasks-report.xml
 ```
+
+<Check>
+Your CI job reads the JUnit XML, and the exit code (`0` pass, `1` fail, `2` bad usage, `3` incomplete) gates the build.
+</Check>
+</Step>
+</Steps>
 
 ## What it checks
 
@@ -54,7 +129,24 @@ mcpjam tasks conformance \
 | `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
 | `tasks-undeclared-capability-rejected` | `lifecycle` | `tasks/get`, `tasks/update`, `tasks/cancel` and a task-filtered `subscriptions/listen` sent WITHOUT the extension declaration must each be rejected with `-32021` (Missing Required Client Capability). |
 
-## Categories and check ids
+## Outcomes: passed, failed, incomplete
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | Exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+Every skipped check says which kind of skip it is in `skipReason`:
+
+- `not-applicable` — the check cannot apply here (an extension-only check on a legacy connection, `Mcp-Name` routing over stdio, any task check on a connection with no tasks wire). These never hold a run back.
+- `could-not-run` — the check applies but was never exercised (no probe tool resolved, the named tool is not listed, the tool produced no task, the task never became readable). These make the run `incomplete`.
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. A skipped check can never add up to a passing verdict.
+
+## Selecting a subset
 
 Three categories are available:
 
@@ -93,52 +185,7 @@ mcpjam tasks conformance \
 | `--poll-timeout <ms>` | How long to poll a created task for a terminal status. Default: `30000`. |
 | `--reporter <reporter>` | Structured reporter output: `json-summary` or `junit-xml`. |
 
-## Example output
-
-```bash
-mcpjam tasks conformance \
-  --url https://your-server.com/mcp \
-  --tool-name long_job \
-  --format json
-```
-
-Typical success summary:
-
-```json
-{
-  "passed": true,
-  "outcome": "passed",
-  "summary": "8/8 checks passed, 0 failed, 0 could not run, 0 not applicable",
-  "discovery": {
-    "protocolVersion": "2026-07-28",
-    "wire": "extension",
-    "toolCount": 3,
-    "taskCapableToolCount": 1,
-    "probedTool": "long_job",
-    "createdTaskId": "task-abc123"
-  }
-}
-```
-
-## Outcomes: passed, failed, incomplete
-
-A run reports one of three outcomes, and `passed` is `true` only for the first:
-
-| `outcome` | Exit code | Meaning |
-|---|---|---|
-| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
-| `failed` | `1` | At least one check found a violation. |
-| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
-
-Every skipped check says which kind of skip it is in `skipReason`:
-
-- `not-applicable` — the check cannot apply here (an extension-only check on a legacy connection, `Mcp-Name` routing over stdio, any task check on a connection with no tasks wire). These never hold a run back.
-- `could-not-run` — the check applies but was never exercised (no probe tool resolved, the named tool is not listed, the tool produced no task, the task never became readable). These make the run `incomplete`.
-
-An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. A skipped check can never add up to a passing verdict.
-
-## Shared connection flags
-
+<Accordion title="Shared connection flags">
 `tasks conformance` uses the same shared target flags as the rest of the CLI:
 
 | Flag | Description |
@@ -159,8 +206,9 @@ An incomplete run carries a root `incompleteReason` naming the checks that did n
 | `--cwd <path>` | Working directory for the stdio child process |
 
 `--transport` is optional; without it, `--url` implies HTTP and `--command` implies stdio.
+</Accordion>
 
-## Notes
+## Behavior notes and edge cases
 
 - Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, `2` for invalid command usage, and `3` when the run is incomplete because a selected check could not be run.
 - Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
