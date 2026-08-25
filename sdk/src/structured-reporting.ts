@@ -346,14 +346,24 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
   const redacted = renderStructuredRunJson(report);
   const status = reportHtmlStatus(redacted);
   const failedCases = redacted.cases.filter((entry) => !entry.passed);
+  const observedFailures = failedCases.filter(
+    (entry) => !isDiagnosticCase(entry)
+  );
+  const diagnosticCases = failedCases.filter((entry) =>
+    isDiagnosticCase(entry)
+  );
 
   const sections = [
     renderHtmlHeader(redacted, status),
-    renderHtmlSummary(redacted.summary),
+    renderHtmlSummary(
+      redacted.summary,
+      observedFailures.length === 0 && diagnosticCases.length > 0
+    ),
     redacted.decisionSummary
       ? renderHtmlDecisionSummary(redacted.decisionSummary)
       : "",
-    renderHtmlFailedCases(failedCases, status),
+    renderHtmlCaseSection("Failures", observedFailures, false),
+    renderHtmlCaseSection("Not measured", diagnosticCases, true),
   ]
     .filter((section) => section.length > 0)
     .join("\n");
@@ -394,6 +404,27 @@ function reportHtmlStatus(
   return report.passed ? "pass" : "fail";
 }
 
+/**
+ * Whether a non-passed case is a diagnostic explaining why nothing was
+ * measured (a gate/compare report's synthetic case for a fetch failure,
+ * cancellation, timeout, or non-gateable policy) rather than an observed
+ * regression.
+ *
+ * This is a PER-CASE property, unlike the report's overall verdict: an
+ * `inconclusive` gate/compare report can still carry genuinely failed
+ * iteration rows alongside its own non-gateable diagnostic (e.g. real
+ * failures plus a policy the run couldn't be gated against) — collapsing
+ * the whole report to one status would paint those real failures neutral
+ * too and hide them under "Not measured", which is worse than the
+ * red/neutral conflation this file exists to fix. `classification:
+ * "informational"` is the existing marker for exactly this (`gateCase` in
+ * run-compare.ts, `gateReportCase` in the CLI, `createSyntheticCase`
+ * below) — a real failure is never given it.
+ */
+function isDiagnosticCase(entry: StructuredCaseResult): boolean {
+  return entry.classification === "informational";
+}
+
 function decisionVerdictHtmlStatus(
   verdict: EvalDecisionSummary["verdict"]
 ): StructuredRunHtmlStatus {
@@ -416,7 +447,10 @@ function renderHtmlHeader(
 </header>`;
 }
 
-function renderHtmlSummary(summary: StructuredRunSummary): string {
+function renderHtmlSummary(
+  summary: StructuredRunSummary,
+  failuresAreAllDiagnostic: boolean
+): string {
   const buckets = [
     renderHtmlBucketTable("By category", summary.byCategory),
     summary.byClassification
@@ -425,10 +459,17 @@ function renderHtmlSummary(summary: StructuredRunSummary): string {
   ]
     .filter((section) => section.length > 0)
     .join("\n");
+  // The count itself is accurate either way — these cases really are
+  // `passed: false` — but "N failed" alone reads as a confirmed regression.
+  // When every one of them is a diagnostic explaining why nothing could be
+  // measured (not an observed failure), say so.
+  const note = failuresAreAllDiagnostic
+    ? ' <span class="note">(not measured, not a confirmed regression)</span>'
+    : "";
 
   return `<section class="summary">
   <h2>Summary</h2>
-  <p class="totals">${summary.passed}/${summary.total} passed, ${summary.failed} failed</p>
+  <p class="totals">${summary.passed}/${summary.total} passed, ${summary.failed} failed${note}</p>
   ${buckets}
 </section>`;
 }
@@ -533,41 +574,37 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
 }
 
 /**
- * `passed: false` on a case is not the same claim when the report's own
- * verdict is `inconclusive`: a gate/compare report's synthetic case for a
- * fetch failure, cancellation, timeout, or missing baseline is `passed:
- * false` too, but it is a diagnostic explaining why nothing was measured,
- * not a confirmed regression. Painting it identically to a real failure —
- * red border, red error text, under a "Failures" heading — makes exactly
- * the claim B4's contract forbids. So this section takes the report's
- * overall status and renders every case here neutrally when the report
- * itself is neutral, since there is no per-case verdict to check instead.
+ * Renders one group of non-passed cases — observed failures (red) or
+ * diagnostics explaining why nothing was measured (neutral). Split by
+ * `isDiagnosticCase` rather than the report's overall status: a gate/
+ * compare report can carry genuinely failed rows alongside its own
+ * non-gateable diagnostic, and collapsing the whole report to one status
+ * would paint real failures neutral too — hiding them, which is worse
+ * than the red/neutral conflation this file exists to fix.
  */
-function renderHtmlFailedCases(
+function renderHtmlCaseSection(
+  heading: "Failures" | "Not measured",
   cases: StructuredCaseResult[],
-  status: StructuredRunHtmlStatus
+  neutral: boolean
 ): string {
   if (cases.length === 0) return "";
 
-  const items = cases.map((entry) => renderHtmlCase(entry, status)).join("\n");
-  const heading =
-    status === "neutral" ? "Not measured" : `Failures (${cases.length})`;
+  const items = cases.map((entry) => renderHtmlCase(entry, neutral)).join("\n");
+  const headingText =
+    heading === "Failures" ? `Failures (${cases.length})` : heading;
 
   return `<section class="failed-cases">
-  <h2>${heading}</h2>
+  <h2>${headingText}</h2>
   ${items}
 </section>`;
 }
 
-function renderHtmlCase(
-  entry: StructuredCaseResult,
-  status: StructuredRunHtmlStatus
-): string {
+function renderHtmlCase(entry: StructuredCaseResult, neutral: boolean): string {
   const details = entry.details
     ? `<pre class="details">${escapeHtml(JSON.stringify(entry.details, null, 2))}</pre>`
     : "";
-  const caseClass = status === "neutral" ? "case-neutral" : "case-fail";
-  const errorClass = status === "neutral" ? "note" : "error";
+  const caseClass = neutral ? "case-neutral" : "case-fail";
+  const errorClass = neutral ? "note" : "error";
 
   return `<article class="case ${caseClass}">
   <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(entry.category)})</span></h3>

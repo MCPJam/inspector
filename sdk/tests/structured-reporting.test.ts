@@ -359,28 +359,28 @@ describe("renderStructuredRunHtml", () => {
     expect(html).not.toContain('badge-fail">inconclusive');
   });
 
-  it("renders non-passed cases neutrally, not as failures, when the report verdict is inconclusive", () => {
+  it("renders a diagnostic case neutrally, not as a failure, when it is classified informational", () => {
     // A gate/compare report's synthetic case for a fetch failure, timeout,
     // or missing baseline is `passed: false` too — same as a real
     // regression — but it's a diagnostic explaining why nothing was
-    // measured, not a confirmed failure. It must not get the same red
-    // border/text and "Failures" heading a real failure gets.
+    // measured, not a confirmed failure. `classification: "informational"`
+    // is the marker for this (set by gateReportCase/gateCase); it must not
+    // get the same red border/text and "Failures" heading a real failure
+    // gets.
+    const diagnosticCase = {
+      id: "gate",
+      title: "Eval gate",
+      category: "gate",
+      passed: false,
+      classification: "informational" as const,
+      error: "run is cancelled; no verdict was established",
+    };
     const html = renderStructuredRunHtml(
       baseReport({
         passed: false,
         verdict: "inconclusive",
-        cases: [
-          {
-            id: "gate",
-            title: "Eval gate",
-            category: "gate",
-            passed: false,
-            error: "run is cancelled; no verdict was established",
-          },
-        ],
-        summary: summarizeStructuredCases([
-          { id: "gate", title: "Eval gate", category: "gate", passed: false },
-        ]),
+        cases: [diagnosticCase],
+        summary: summarizeStructuredCases([diagnosticCase]),
       })
     );
 
@@ -390,6 +390,52 @@ describe("renderStructuredRunHtml", () => {
     expect(html).toMatch(/<article class="case case-neutral">/);
     expect(html).not.toMatch(/<p class="error">/);
     expect(html).not.toMatch(/Failures \(\d+\)/);
+    expect(html).toContain("Not measured");
+    // The count is still accurate, just annotated rather than hidden.
+    expect(html).toContain("1 failed");
+    expect(html).toContain("not measured, not a confirmed regression");
+  });
+
+  it("keeps a genuinely observed failure red even when it sits beside a diagnostic case", () => {
+    // The bug this guards: an eval gate report can carry a real failed
+    // iteration row AND its own non-gateable diagnostic case together (a
+    // completed run with real failures, gated by a policy the run couldn't
+    // be evaluated against). Collapsing the whole page to the report's
+    // overall "inconclusive" status would paint the real failure neutral
+    // too and hide it under "Not measured" — worse than the red/neutral
+    // conflation this file exists to fix.
+    const realFailure = {
+      id: "case-1",
+      title: "Case A",
+      category: "eval",
+      passed: false,
+      error: "goal completion failed",
+    };
+    const diagnosticCase = {
+      id: "gate",
+      title: "Eval gate",
+      category: "gate",
+      passed: false,
+      classification: "informational" as const,
+      error: "score integrity unverified; gate is non-gateable",
+    };
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        verdict: "inconclusive",
+        cases: [realFailure, diagnosticCase],
+        summary: summarizeStructuredCases([realFailure, diagnosticCase]),
+      })
+    );
+
+    expect(html).toMatch(/<article class="case case-fail">/);
+    expect(html).toMatch(/<article class="case case-neutral">/);
+    expect(html).toContain("Failures (1)");
+    expect(html).toContain("Not measured");
+    expect(html).toMatch(/<p class="error">goal completion failed<\/p>/);
+    // Real failures are present, so the summary must not claim the total is
+    // all-diagnostic.
+    expect(html).not.toContain("not measured, not a confirmed regression");
   });
 
   it("renders a passed verdict as pass and a failed verdict as fail", () => {

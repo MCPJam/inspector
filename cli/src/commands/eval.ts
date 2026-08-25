@@ -1037,6 +1037,17 @@ function gateReportCase(report: GateReport): StructuredCaseResult {
     title: "Eval gate",
     category: "gate",
     passed,
+    // Only a real FAILED gate is a confirmed regression. `incomplete` and
+    // `usage_error` still fail this row (nothing was established either
+    // way), but reporting them as `breaking` — the same class a genuine
+    // failure gets — would claim a defect the run never observed. Mirrors
+    // `gateCase` in sdk/src/run-compare.ts.
+    classification:
+      report.outcome === "failed"
+        ? "breaking"
+        : passed
+          ? "non_breaking"
+          : "informational",
     ...(passed
       ? {}
       : {
