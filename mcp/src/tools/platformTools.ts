@@ -45,6 +45,7 @@ import {
   compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
   ensureAdhocEnvironmentOperation,
@@ -212,6 +213,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   runEvalSuiteOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  // What a suite run would disclose (models called and where they route,
+  // which analyzers/judges can fire, retention/region) — a planning read for
+  // an unattended agent to check, or show a human, BEFORE it launches.
+  // `run_eval_suite` already fetches and returns this itself; this tool is
+  // for asking ahead of that decision, same rationale as `get_capabilities`.
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
