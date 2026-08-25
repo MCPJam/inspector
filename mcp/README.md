@@ -62,6 +62,7 @@ so results respect the caller's project access.
 | `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
 | `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
+| `get_eval_run_disclosure` | What a suite run would disclose before you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Keyed by the same target a launch selects — pass `environment` or `host` to disclose for that plan. Read-only, never launches or gates a run. | — |
 | `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |

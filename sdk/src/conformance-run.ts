@@ -61,6 +61,15 @@ export type RunConformanceConfig = {
   onProgress?: (event: ConformanceRunProgress) => void | Promise<void>;
 };
 
+function isHeaderRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
 async function runSuite(
   kind: ConformanceSuiteKind,
   config: RunConformanceConfig,
@@ -68,8 +77,24 @@ async function runSuite(
   const server = config.server;
   switch (kind) {
     case "protocol": {
+      // MCPConformanceConfig names its target `serverUrl`, while
+      // MCPServerConfig carries `url`. Spreading the server config verbatim
+      // left `serverUrl` undefined and normalization crashed on `.trim()`
+      // before dialing anything, so map the HTTP fields explicitly. An absent
+      // `protocolVersion` stays absent: the suite then adopts the version the
+      // server actually negotiates instead of pinning one.
+      const http = server as {
+        url?: string | URL;
+        accessToken?: string;
+        requestInit?: { headers?: unknown };
+      };
+      const headers = http.requestInit?.headers;
       const result = await new MCPConformanceTest({
-        ...server,
+        ...(http.url !== undefined ? { serverUrl: String(http.url) } : {}),
+        ...(http.accessToken !== undefined
+          ? { accessToken: http.accessToken }
+          : {}),
+        ...(isHeaderRecord(headers) ? { customHeaders: headers } : {}),
         ...config.protocol,
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }

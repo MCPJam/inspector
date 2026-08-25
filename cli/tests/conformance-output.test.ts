@@ -151,6 +151,22 @@ test("renderConformanceReporterResult emits conformance reporter output", () => 
   );
 });
 
+// `--reporter` is parsed by the same shared parser as every other CLI
+// surface, so "html" is syntactically accepted here too — but conformance
+// reports are a different shape (`ConformanceReport`, not
+// `StructuredRunReport`) with no HTML renderer of their own, so this must
+// fail loudly at render time instead of silently falling through.
+test("renderConformanceReporterResult rejects html with a clear usage error", () => {
+  const result = createProtocolResult();
+
+  assert.throws(
+    () => renderConformanceReporterResult(result, "html"),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes('"html" reporter is not available'),
+  );
+});
+
 test("renderConformanceResult preserves human and json output for apps results", () => {
   const result = createAppsResult();
 

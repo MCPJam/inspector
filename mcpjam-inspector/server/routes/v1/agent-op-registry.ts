@@ -68,6 +68,7 @@ import {
   compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
   getHostOperation,
   getServerPromptOperation,
@@ -1384,6 +1385,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   },
   { operation: listEvalSuitesOperation, tier: "direct" },
   { operation: getEvalSuiteOperation, tier: "direct" },
+  {
+    operation: getEvalRunDisclosureOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
+    ],
+  },
   { operation: listEvalCasesOperation, tier: "direct" },
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
