@@ -318,6 +318,22 @@ test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => 
   assert.doesNotThrow(() => assertRunIdBaseline("g".repeat(40)));
 });
 
+test("assertRunIdBaseline rejects a blank value, not just an absent one", () => {
+  // Commander cannot tell "--baseline ''" (an unset CI variable interpolated
+  // into the flag, e.g. `--baseline "$BASELINE_RUN_ID"`) apart from a real
+  // run id — both are `!== undefined`. Downstream, `!options.baseline` and
+  // `Boolean(options.baseline)` both read "" as falsy, so an unvalidated
+  // blank would silently disable the whole baseline comparison rather than
+  // erroring, and the command would exit 0 on nothing the caller asked for.
+  for (const blank of ["", "   ", "\t"]) {
+    assert.throws(
+      () => assertRunIdBaseline(blank),
+      /must not be blank/,
+      JSON.stringify(blank),
+    );
+  }
+});
+
 test("comparePolicyFromGateOptions: --baseline alone implies regression gating", () => {
   // No `--gate-regressions` flag exists on `eval gate` — `--baseline` itself
   // enables the pass-rate regression gate with the SDK's defaults.

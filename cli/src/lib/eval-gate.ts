@@ -170,14 +170,29 @@ export function reportForRun(
 const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
 
 /**
- * Reject a SHA-shaped `--baseline` argument.
+ * Reject a blank or SHA-shaped `--baseline` argument.
  *
- * Run ids on this platform are never 40 lowercase-hex characters, so this
+ * Blank is rejected explicitly: every downstream check treats
+ * `options.baseline` as "present" with `!== undefined` but "enabled" with
+ * `Boolean(options.baseline)` (see {@link comparePolicyFromGateOptions} and
+ * `runEvalGate`'s `if (!options.baseline)`). A CI invocation that interpolates
+ * an unset variable — `--baseline "$BASELINE_RUN_ID"` — hands Commander an
+ * empty string, which is `!== undefined` but falsy: unchecked, the command
+ * would silently skip the baseline comparison and exit 0 on the threshold
+ * gates alone, having gated on nothing the caller asked for.
+ *
+ * Run ids on this platform are never 40 lowercase-hex characters, so the SHA
  * discriminator cannot false-positive on a real run id; it exists purely to
  * catch the one shape a user is likely to hand it by habit — a git commit
  * SHA — before it reaches the network as a doomed run lookup.
  */
 export function assertRunIdBaseline(baseline: string): void {
+  if (baseline.trim() === "") {
+    throw usageError(
+      `--baseline must not be blank. Pass a run id, or omit the flag entirely ` +
+        `to gate on absolute thresholds only.`
+    );
+  }
   if (SHA_LIKE_BASELINE.test(baseline)) {
     throw usageError(
       `--baseline "${baseline}" looks like a git SHA. SHA baselines are not ` +

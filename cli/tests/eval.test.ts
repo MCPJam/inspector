@@ -2589,6 +2589,34 @@ test("eval gate rejects a SHA-shaped --baseline before any request", async () =>
   }
 });
 
+test("eval gate rejects a blank --baseline, e.g. an unset CI variable interpolated into the flag", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /must not be blank/);
+    // A usage error caught before parsing must never spend a request, and
+    // MUST NOT silently fall through to a threshold-only, exit-0 gate.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval gate rejects a comparative tuning flag without --baseline", async () => {
   const fixture = await startEvalFixture();
   try {
