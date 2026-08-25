@@ -1184,6 +1184,11 @@ run before evaluating it.
 | `--no-gating-score-errors` | No | Fail if any gating scorer errored |
 | `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
 | `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
+| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. SHA baselines are not supported yet — pass a run id |
+| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` |
+| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` |
+| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` |
+| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
 | `--reporter <json-summary\|junit-xml>` | No | Write the structured eval and gate report to stdout |
@@ -1191,6 +1196,18 @@ run before evaluating it.
 
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
+
+**`--baseline`.** Passing a run ID fetches the same run comparison
+`cloud eval compare` uses and folds a regression verdict into the same report
+and exit code as the threshold flags above — `--baseline` alone enables the
+pass-rate regression gate with its default tuning; the four tuning flags need
+`--baseline` to mean anything and are a usage error without it. A case set
+that changed, was added or removed, or ran an unequal iteration count between
+the two runs makes the whole-run pass-rate and p95-latency gates
+non-gateable (exit `3`) rather than a silent pass or a misread regression;
+the deterministic per-case regression gate is exempt and can still fail
+(exit `1`) on a matching case. SHA baselines (`--baseline <sha>`) are not
+supported yet and are rejected as a usage error.
 
 **Exit codes.** `eval gate` is the command that fails a build, so it is the one
 that maps a verdict onto an exit code. It keeps four:
