@@ -132,7 +132,8 @@ describe("compare route: baseCommitSha", () => {
       diff: DIFF,
       baseline: { policy: "commit_sha", baseRunId: "run_base" },
     });
-    const res = await get(`${BASE}?baseCommitSha=${encodeURIComponent(` ${SHA} `)}`);
+    const padded = encodeURIComponent(` ${SHA} `);
+    const res = await get(`${BASE}?baseCommitSha=${padded}`);
     expect(res.status).toBe(200);
     expect(convexActionMock.mock.calls[0][1].baseCommitSha).toBe(SHA);
   });
@@ -148,7 +149,8 @@ describe("compare route: baseCommitSha", () => {
         matchCount: 3,
       },
     });
-    const body = (await (await get(`${BASE}?baseCommitSha=${SHA}`)).json()) as any;
+    const res = await get(`${BASE}?baseCommitSha=${SHA}`);
+    const body = (await res.json()) as any;
     expect(body.baseline.matchCount).toBe(3);
   });
 
@@ -167,7 +169,8 @@ describe("compare route: baseCommitSha", () => {
         matchCountTruncated: true,
       },
     });
-    const body = (await (await get(`${BASE}?baseCommitSha=${SHA}`)).json()) as any;
+    const res = await get(`${BASE}?baseCommitSha=${SHA}`);
+    const body = (await res.json()) as any;
     expect(body.baseline.matchCount).toBe(1);
     expect(body.baseline.matchCountTruncated).toBe(true);
   });
@@ -184,7 +187,8 @@ describe("compare route: baseCommitSha", () => {
         matchCountTruncated: true,
       },
     });
-    const body = (await (await get(`${BASE}?baseCommitSha=${SHA}`)).json()) as any;
+    const res = await get(`${BASE}?baseCommitSha=${SHA}`);
+    const body = (await res.json()) as any;
     expect(body.baseline.matchCount).toBeUndefined();
     expect(body.baseline.matchCountTruncated).toBeUndefined();
   });
