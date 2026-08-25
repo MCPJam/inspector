@@ -931,9 +931,10 @@ describe("honest degradation for rows that never produced a verdict", () => {
       evidence: { traceAbsent: true },
       iteration: { status: "failed", error: "server not connected" },
     });
-    // v3 added judge evidence and nothing else; the rows it emits with no
-    // judge evidence are the v1/v2 rows unchanged, which is what this pins.
-    expect(stageAnalyzerVersion).toBe(3);
+    // v3 added judge evidence and v4 added metadata attribution; neither
+    // changes the rows this fixture emits with no judge/attribution evidence
+    // present, which are the v1/v2 rows unchanged — that is what this pins.
+    expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     const applicable = stageResults.filter((r) => r.state !== "notApplicable");
     expect(
       applicable.map((r) => ({

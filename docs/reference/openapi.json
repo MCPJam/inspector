@@ -3393,6 +3393,100 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/run-disclosure": {
+      "get": {
+        "operationId": "getEvalRunDisclosure",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get the pre-run disclosure for a suite launch plan",
+        "description": "What happens to a run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the SAME destination-affecting subset a launch selects (`caseIds`/`environmentId`/`environmentIds`); pass the selectors you would pass to a run so what this discloses is what that run would do. `run_eval_suite` already fetches this itself and returns it on the receipt's `disclosure` field — call this route directly when you need the disclosure BEFORE deciding to launch. A deployment that predates this contract answers 422 `FEATURE_NOT_SUPPORTED` with `details.reason: \"contract_unavailable\"`, never a partial payload — this is a GUARANTEE only when the deployment's missing-function error reaches this route unredacted. Production Convex can redact that same failure to a generic \"Server Error\" indistinguishable from a genuine handler crash on a suite the caller CAN see; this route has no independent way to tell the two apart in that one case, so it answers 502 instead of guessing 422 — a caller cannot rely on this code alone to detect an old production deployment, and a 502 does not imply the contract is available either. `projectId` is positional only, for REST consistency with sibling routes — this endpoint authorizes per-suite, not per-project, so any `projectId` returns the same disclosure for a `suiteId` you can reach.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "caseIds",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated test case IDs to narrow the disclosure to, instead of the whole suite.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "required": false,
+            "description": "One attached environment to disclose for. Mutually exclusive with `environmentIds` and `host`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentIds",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated attached environment IDs to disclose for, mirroring a multi-target launch. Mutually exclusive with `environmentId` and `host`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "description": "One attached host to disclose for, mirroring a host-targeted launch — the engine and sandbox facts come from that host's own config. Mutually exclusive with `environmentId`/`environmentIds`: a launch plan resolves on exactly one axis.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pre-run disclosure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunDisclosure"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "This deployment predates the pre-run disclosure contract (`details.reason: \"contract_unavailable\"`). Guaranteed only when the missing-function failure reaches this route unredacted; an ambiguous production-redacted failure on a suite the caller can see surfaces as 502 instead — see the operation description.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/cases": {
       "get": {
         "operationId": "listEvalCases",
@@ -12507,6 +12601,141 @@
           },
           "suite": {
             "$ref": "#/components/schemas/EvalSuiteDetail"
+          }
+        }
+      },
+      "EvalRunDisclosure": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "computedAt",
+          "digest",
+          "analysis",
+          "capture",
+          "retention",
+          "region",
+          "subprocessors"
+        ],
+        "description": "What happens to a run's content: computed once by the backend and projected identically by the pre-run dialog, the CLI, MCP tools, and the `eval.run.launched` audit row. `execution` is present ONLY when a launch plan resolved; `executionAbsence` exactly when it is absent, naming WHICH of two reasons (`ingested-run` — MCPJam did not execute this; `plan-unresolved` — a run that WILL execute and WILL call models, just not derivable yet). `analysis` is ALWAYS present, even without `execution`: stored evidence still reaches the judges.",
+        "properties": {
+          "contractVersion": {
+            "type": "integer"
+          },
+          "computedAt": {
+            "type": "integer",
+            "description": "Epoch ms. Excluded from `digest`, so identical facts digest identically regardless of when they were computed."
+          },
+          "digest": {
+            "type": "string",
+            "description": "SHA-256 hex over the canonical JSON of the facts (excluding `digest`/`computedAt` and each managed rail's `observedAt`)."
+          },
+          "execution": {
+            "type": "object",
+            "description": "Present exactly when a launch plan resolved.",
+            "properties": {
+              "engine": {
+                "type": "string",
+                "description": "`emulated`, `mixed`, or `harness:<id>`."
+              },
+              "engines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Present only when `engine` is `mixed` — the per-plan detail it summarizes."
+              },
+              "sandbox": {
+                "type": "object",
+                "properties": {
+                  "engaged": {
+                    "type": "boolean"
+                  },
+                  "vendor": {
+                    "type": "string"
+                  },
+                  "because": {
+                    "type": "string"
+                  }
+                }
+              },
+              "locus": {
+                "type": "object",
+                "description": "Whether this run executes MCPJam-hosted or on the caller's own machine — a fact only the executing process (the inspector) can answer, composed onto the backend's contract.",
+                "properties": {
+                  "known": {
+                    "type": "boolean"
+                  },
+                  "hosted": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "One disclosed model: its id, provider classification, tenant egress (`mcpjam-hosted` | `byok-cloud` | `byok-local` | `unknown`), and the rail it travels."
+                }
+              },
+              "modelsUnresolved": {
+                "type": "object",
+                "description": "Present when the plan resolved but its models did not.",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "executionAbsence": {
+            "type": "object",
+            "description": "Present exactly when `execution` is absent.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ingested-run",
+                  "plan-unresolved"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          },
+          "analysis": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One LLM analyzer/judge touchpoint: its model, rail, evidence sent, and whether it fires for this run."
+            }
+          },
+          "capture": {
+            "type": "object",
+            "description": "Capture level, reporting mode, and redaction facts (fixed for this contract version)."
+          },
+          "retention": {
+            "type": "object",
+            "description": "Plan retention policy, whether it is actually enforced, and what that means today (`kept-indefinitely` vs `swept-after-policy-days`)."
+          },
+          "region": {
+            "type": "object",
+            "description": "`{ stated: false, reason }` unless a BYOK base URL carries a derivable region token."
+          },
+          "subprocessors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One vendor this run may reach, with whether it is actually engaged for this plan and why."
+            }
           }
         }
       },
