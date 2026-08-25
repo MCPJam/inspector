@@ -38,3 +38,14 @@ path regardless of `--reporter` — so `--reporter junit-xml --out report.xml`
 (and now `--reporter html --out report.html`) produced a file in the wrong
 format, unlike `eval run`/`eval gate`. It now writes whatever `--reporter`
 selected, defaulting to `json-summary` same as before.
+
+And fixes two more spots in the eval-gate path that made an unmeasured gate
+render the same red as a measured regression. `buildEvalRunReport` and
+`buildRunCompareReport` now carry an explicit `verdict` for gate/compare
+reports (new `gateOutcomeVerdict` export in `@mcpjam/sdk`, mapping the gate's
+own `incomplete` outcome to `inconclusive` — never `failed`) instead of
+leaving it unset or inferring it from the underlying run, which is a
+different question from whether the gate itself could be evaluated. And
+`eval gate`'s network/auth/timeout catch path now honors `--reporter`/
+`--out` instead of always writing raw JSON to stdout and never touching
+`--out` — matching every other reporting path.
