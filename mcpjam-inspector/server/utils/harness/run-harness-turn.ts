@@ -70,6 +70,7 @@ import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
 } from "../../services/environments/effective-capabilities.js";
+import { projectSelectedMcpServersAsHostTools } from "./host-executed-mcp-tools.js";
 import {
   capabilitySkillFiles,
   deliveredPluginSkillOrigins,
@@ -149,13 +150,16 @@ import {
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
   harnessScopeStepUpServerMatches,
+  matchHarnessScopeStepUpToolCall,
   subscribeHarnessScopeStepUp,
   type HarnessScopeStepUpEvent,
+  type ObservedHarnessToolCall,
 } from "./harness-scope-step-up.js";
 import {
   emitInsufficientScopeChunk,
   emitScopeStepUpRequiredChunk,
 } from "../../routes/web/hosted-elicitation.js";
+import { harnessToolApprovalRefusalReason } from "./harness-availability.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -334,20 +338,6 @@ function coerceToolInput(raw: unknown): unknown {
   }
 }
 
-function stableHarnessValue(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableHarnessValue).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableHarnessValue(record[key])}`)
-    .join(",")}}`;
-}
-
 /** AI-SDK `ToolResultPart.output` discriminators we must NOT re-wrap. */
 const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
   "json",
@@ -506,6 +496,9 @@ export async function runHarnessTurn(
     failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
+    modelVisibleMcpToolResults,
+    respectToolVisibility,
+    tasks,
     chatSessionId,
     scenarioId,
     sourceType,
@@ -742,12 +735,16 @@ export async function runHarnessTurn(
     // in-process tool wrapper emits. Exact turn correlation handles concurrent
     // chats; the registry's server fallback is used only when one live turn can
     // possibly receive a stale resumed-session event.
-    const observedHarnessToolCalls: Array<{
-      toolCallId: string;
-      serverId?: string;
-      toolName: string;
-      input: unknown;
-    }> = [];
+    const observedHarnessToolCalls: ObservedHarnessToolCall[] = [];
+    // HOST-EXECUTED delivery only: the RAW MCP result of a projected call,
+    // captured at `execute()` time and keyed by the AI SDK `toolCallId`. The
+    // relay carries the MODEL-FACING projection instead (see
+    // `projectSelectedMcpServersAsHostTools`), and the runtime echoes back only
+    // what it was given — so without this the UI, the trace and the transcript
+    // would all see the scrubbed copy, diverging from the emulated engine,
+    // which shows the raw result and projects for the model alone. Claimed once
+    // per tool result and then dropped, so the map cannot outgrow the turn.
+    const hostExecutedRawResults = new Map<string, unknown>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -760,16 +757,13 @@ export async function runHarnessTurn(
         return;
       }
       const challenge = pendingScopeChallenge;
-      const matchingCall = observedHarnessToolCalls.find(
-        (call) =>
-          harnessScopeStepUpServerMatches(
-            call.serverId ? [call.serverId] : [],
-            challenge.serverId
-          ) &&
-          call.toolName === challenge.toolName &&
-          stableHarnessValue(call.input) ===
-            stableHarnessValue(challenge.toolInput ?? {})
-      );
+      // `toolCallId` first, tuple only when the publisher had no id to give —
+      // see `matchHarnessScopeStepUpToolCall`. Two identical calls in one turn
+      // otherwise resume the FIRST one, whichever raised the challenge.
+      const matchingCall = matchHarnessScopeStepUpToolCall({
+        observed: observedHarnessToolCalls,
+        challenge,
+      });
       if (!matchingCall) return;
       suspendedHarnessToolCallId = matchingCall.toolCallId;
       scopeStepUpCreation = Promise.resolve(
@@ -794,22 +788,36 @@ export async function runHarnessTurn(
           emitInsufficientScopeChunk(writer, undefined, challenge);
         });
     };
+    /**
+     * The turn's ONE scope step-up intake, with two publishers:
+     *
+     *  - NATIVE delivery — the signed proxy, which saw the sandbox's own
+     *    `tools/call` and publishes under this turn's correlation id
+     *    (subscription below);
+     *  - HOST-EXECUTED delivery — the in-process projected tools, which raise
+     *    the challenge inside `execute()` and hand it straight here
+     *    (`onScopeStepUpChallenge`, wired at the projection below).
+     *
+     * Both arrive as the same event and take the same path, so a Codex turn
+     * pauses for a step-up exactly like a Claude Code turn does. Ordering
+     * against the tool-call observation is handled by `tryCreate…` being called
+     * from both sides — whichever lands second completes the correlation.
+     */
+    const receiveScopeStepUpChallenge = (info: HarnessScopeStepUpEvent) => {
+      if (!harnessScopeStepUpServerMatches(selectedServers, info.serverId)) {
+        return;
+      }
+      pendingScopeChallenge = info;
+      if (!info.toolName || !createHarnessScopeStepUpContinuation) {
+        emitInsufficientScopeChunk(writer, undefined, info);
+        return;
+      }
+      tryCreateHarnessScopeStepUp();
+    };
     const stopScopeStepUpBridge = harnessMcpProxy
       ? subscribeHarnessScopeStepUp(
           turnId,
-          (info) => {
-            if (
-              !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
-            ) {
-              return;
-            }
-            pendingScopeChallenge = info;
-            if (!info.toolName || !createHarnessScopeStepUpContinuation) {
-              emitInsufficientScopeChunk(writer, undefined, info);
-              return;
-            }
-            tryCreateHarnessScopeStepUp();
-          },
+          receiveScopeStepUpChallenge,
           selectedServers
         )
       : () => {};
@@ -917,16 +925,22 @@ export async function runHarnessTurn(
             "support but has no deliverPluginBundles strategy (adapter misconfigured)."
         );
       }
-      //   (b) a harness that can't deliver the host's selected MCP servers must
-      //       NOT silently run without them.
-      if (
-        !harnessAdapter.supportsSelectedMcpServers &&
-        (selectedServers?.length ?? 0) > 0
-      ) {
-        throw new Error(
-          `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
-            `but this host has ${selectedServers?.length} selected — remove them to run it.`
-        );
+      //   (b) approval invariant (advertise = enforce). The route pre-flight
+      //       already refuses every unsound approval combination; the eval,
+      //       synthetic and unified paths never call it, which is exactly what
+      //       this backstops. It asks the SAME helper the pre-flight asks, so
+      //       the two can't drift — and it is deliberately NOT conditioned on
+      //       there being selected servers: a runtime that can't pause on its
+      //       own native tools (Codex) is unsound under approval whether or not
+      //       any MCP server is attached, and its host-executed built-ins
+      //       (web_search) would otherwise run unapproved here.
+      const approvalRefusal = harnessToolApprovalRefusalReason({
+        adapter: harnessAdapter,
+        requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+      });
+      if (approvalRefusal) {
+        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
       }
 
       // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
@@ -962,39 +976,96 @@ export async function runHarnessTurn(
       // own discovery. Re-applying the emulation would double it, defeat the
       // "observe the real runtime" purpose, and isn't expressible anyway —
       // .mcp.json has no knob to inject MCPJam meta-tools into the real loop.
-      // Only adapters that deliver MCP servers (Claude Code) build the config;
-      // the undeliverable-servers case already failed closed in step 0(b) above.
-      // Fail closed: with MCP servers selected but no plane strategy, the
-      // harness would silently get zero MCP tools (the exact failure we hit).
-      if ((selectedServers?.length ?? 0) > 0 && !harnessMcpProxy) {
+      // Which of the two delivery modes this adapter uses. Mutually exclusive
+      // by construction (`HarnessMcpDelivery`), so the model can never see the
+      // same MCP tool twice.
+      const nativeMcpDelivery = harnessAdapter.mcpDelivery === "native";
+      // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
+      // adapter would silently get zero MCP tools (the exact failure we hit).
+      // Host-executed delivery needs no proxy at all — its tools run in THIS
+      // process against the already-authorized manager — so requiring a
+      // strategy there would refuse a turn that has everything it needs.
+      if (
+        nativeMcpDelivery &&
+        (selectedServers?.length ?? 0) > 0 &&
+        !harnessMcpProxy
+      ) {
         throw new Error(
           "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy"
         );
       }
-      const { mcpJson, keyToServerId } =
-        harnessAdapter.supportsSelectedMcpServers
-          ? await buildHarnessProxyMcpJsonFromManager({
+      const pluginServerOrigins = effectiveCapabilities
+        ? pluginOriginByServerId(effectiveCapabilities)
+        : undefined;
+      const { mcpJson, keyToServerId } = nativeMcpDelivery
+        ? await buildHarnessProxyMcpJsonFromManager({
+            manager: mcpClientManager,
+            selectedServerIds: selectedServers ?? [],
+            authHeader,
+            projectId,
+            strategy: harnessMcpProxy ?? { plane: "local-mcp" },
+            scopeStepUpCorrelationId: turnId,
+            // Policied servers get a SEALED token instead of a bare one, so
+            // the sandbox's own MCP calls are enforced at the proxy.
+            ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+            // INS-7: plugin-contributed servers ride this SAME proxy path as
+            // ordinary server ids (they are ordinary server ids) — the origin
+            // map only decides how a delivery failure is reported.
+            ...(pluginServerOrigins
+              ? { pluginOrigins: pluginServerOrigins }
+              : {}),
+          })
+        : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+
+      // HOST-EXECUTED delivery (COMP-39): the runtime can't make an MCP tool
+      // model-callable, so MCPJam enumerates each selected server's tools NOW
+      // and hands them to the agent as host-executed tools named exactly as
+      // Claude Code names them (`mcp__<key>__<tool>`). Enumerated once, at turn
+      // start — there is no `tools/list_changed` subscription, so a mid-turn
+      // schema change is only picked up on the next turn. Done here, before the
+      // box is woken, so an unreachable server fails the turn cheaply.
+      const hostExecutedMcp =
+        !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
+          ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
-              authHeader,
-              projectId,
-              strategy: harnessMcpProxy ?? { plane: "local-mcp" },
-              scopeStepUpCorrelationId: turnId,
-              // Policied servers get a SEALED token instead of a bare one, so
-              // the sandbox's own MCP calls are enforced at the proxy.
-              ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
-              // INS-7: plugin-contributed servers ride this SAME proxy path as
-              // ordinary server ids (they are ordinary server ids) — the origin
-              // map only decides how a delivery failure is reported.
-              ...(effectiveCapabilities
-                ? {
-                    pluginOrigins: pluginOriginByServerId(
-                      effectiveCapabilities
-                    ),
-                  }
+              ...(pluginServerOrigins
+                ? { pluginOrigins: pluginServerOrigins }
                 : {}),
+              // No proxy on this path, so the run's `toolPolicy` is enforced
+              // IN-PROCESS instead of by a sealed proxy token — same decision
+              // function, same block envelope.
+              ...(harnessToolPolicy ? { toolPolicy: harnessToolPolicy } : {}),
+              // …and, for the same reason, no proxy to extract a SEP-2350
+              // challenge either. Publish straight into the turn's step-up
+              // intake so a hosted-OAuth server pauses this turn instead of
+              // reporting an ordinary tool failure to the model.
+              onScopeStepUpChallenge: receiveScopeStepUpChallenge,
+              // The relay carries the MODEL-FACING projection of each result;
+              // keep the raw one for the UI/trace/transcript so a Codex turn
+              // shows what the server returned, like every other engine.
+              onRawResult: ({ toolCallId, raw }) => {
+                hostExecutedRawResults.set(toolCallId, raw);
+              },
+              // The host's own tool-CONSTRUCTION inputs. Everything the
+              // emulated engine derives for `getToolsForAiSdk` lands here too,
+              // via the same shared builder — this projection is the host's
+              // MCP tool set for a Codex turn, so a policy that changes how a
+              // tool is built has to reach it or it does not exist on this
+              // delivery mode at all. (`needsApproval` is intentionally not in
+              // this set — see `projectSelectedMcpServersAsHostTools`.)
+              toolOptions: {
+                modelVisibleMcpToolResults,
+                includeAppOnly: respectToolVisibility === false,
+                tasks,
+              },
             })
-          : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+          : { tools: {}, keyToServerId: {} };
+      // The attribution map is whichever mode produced one; they are the same
+      // shape and the same sanitize+dedup, so `parseToolName` is identical.
+      const harnessKeyToServerId = nativeMcpDelivery
+        ? keyToServerId
+        : hostExecutedMcp.keyToServerId;
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -1415,14 +1486,27 @@ export async function runHarnessTurn(
       // CLI-native alias `sonnet|opus|haiku`; the raw gateway id makes the CLI
       // do zero inference). Returns the HarnessAgent boundary type directly.
       const harnessRuntime = harnessAdapter.createHarness({ modelId, auth });
-      // MCPJam's server-executed built-in tools (e.g. web_search). The harness
-      // forwards each as a tool spec to the runtime; when Claude Code calls one
-      // it pauses, the agent runs the tool's `execute()` HERE on MCPJam's
-      // server, and submits the result back. MCP-server tools are NOT included
-      // (they reach the runtime via `.mcp.json` and its own MCP client), so the
-      // model never sees a tool twice. Cast across the dual-`ai` boundary, same
-      // as the harness adapter above (structurally identical ToolSet types).
-      const hostExecutedTools = (builtInTools ?? {}) as Record<string, unknown>;
+      // MCPJam's server-executed tools. The harness forwards each as a tool spec
+      // to the runtime; when the runtime calls one it pauses, the agent runs the
+      // tool's `execute()` HERE on MCPJam's server, and submits the result back.
+      // Cast across the dual-`ai` boundary, same as the harness adapter above
+      // (structurally identical ToolSet types).
+      //
+      // Two sources, and never both for the same MCP tool:
+      //   - the host's built-ins (e.g. web_search), always;
+      //   - on HOST-EXECUTED delivery only, the selected servers' MCP tools.
+      //     Under NATIVE delivery `hostExecutedMcp.tools` is empty by
+      //     construction (the branch above never ran), because those tools reach
+      //     the runtime via `.mcp.json` and its own MCP client — so the model
+      //     never sees a tool twice.
+      // Built-ins are spread LAST: their names are unprefixed, MCP projections
+      // are `mcp__…`-prefixed, so the two sets cannot collide — but if a future
+      // built-in ever took an `mcp__` name, the host's own built-in wins rather
+      // than being shadowed by a server.
+      const hostExecutedTools = {
+        ...hostExecutedMcp.tools,
+        ...((builtInTools ?? {}) as Record<string, unknown>),
+      } as Record<string, unknown>;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
@@ -1466,20 +1550,17 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
-          // Deliver the host's MCP servers into the session before the runtime
-          // starts, via the adapter's own strategy (Claude Code writes a
-          // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
-          // false`), so this is a no-op there.
-          if (harnessAdapter.supportsSelectedMcpServers) {
-            // Capability invariant: an adapter that advertises MCP support MUST
-            // provide a delivery strategy. Treating a missing hook as a no-op
-            // would silently run without the host's servers — fail loud instead.
-            if (!harnessAdapter.deliverMcpServers) {
-              throw new Error(
-                `The ${harnessAdapter.displayName} harness advertises MCP support ` +
-                  "but has no deliverMcpServers strategy (adapter misconfigured)."
-              );
-            }
+          // NATIVE delivery only: write the host's MCP servers into the session
+          // before the runtime starts, via the adapter's own strategy (Claude
+          // Code writes a `.mcp.json`). A host-executed adapter has nothing to
+          // write — its servers already went out as `tools` above — and the
+          // adapter union forbids it from carrying `deliverMcpServers` at all.
+          if (harnessAdapter.mcpDelivery === "native") {
+            // The "advertises MCP but has no delivery strategy" throw that used
+            // to guard this call is GONE, not relaxed: the native arm of
+            // `HarnessRuntimeAdapter` now REQUIRES `deliverMcpServers`, so the
+            // misconfiguration it caught is a compile error instead of a
+            // turn-time one (tsc reports the old check's body as `never`).
             await harnessAdapter.deliverMcpServers({
               // Bind to the live session here (it lives behind the dual-`ai`
               // boundary) so the adapter stays free of the harness session type.
@@ -2058,7 +2139,7 @@ export async function runHarnessTurn(
             // tools (Bash, Read, …) have no prefix → serverId stays undefined.
             const { serverId, toolName } = harnessAdapter.parseToolName(
               rawToolName,
-              keyToServerId
+              harnessKeyToServerId
             );
             const input = coerceToolInput(
               (part as { input?: unknown }).input ??
@@ -2121,9 +2202,17 @@ export async function runHarnessTurn(
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
-            const output =
-              (part as { output?: unknown }).output ??
-              (part as { result?: unknown }).result;
+            // HOST-EXECUTED delivery: prefer the raw result captured at
+            // `execute()` time over the runtime's echo, which is the model-facing
+            // projection we handed it. `has` rather than a truthiness check —
+            // a tool may legitimately resolve `undefined`.
+            const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
+            const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
+            hostExecutedRawResults.delete(toolCallId);
+            const output = hasRawHostExecuted
+              ? rawHostExecuted
+              : (part as { output?: unknown }).output ??
+                (part as { result?: unknown }).result;
             // Surface tool failures the harness reports so eval/trace consumers
             // that key off isError classify them correctly.
             const isError =
@@ -2135,7 +2224,7 @@ export async function runHarnessTurn(
               toolMeta.get(toolCallId) ??
               harnessAdapter.parseToolName(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
-                keyToServerId
+                harnessKeyToServerId
               );
             // A tool call the MCP proxy blocked on policy, recognised only when
             // THIS run sealed a policy for that server, and only ever with the
