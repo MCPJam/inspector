@@ -120,6 +120,21 @@ import {
  * no opt-in flag — because the compatibility window was days old. Default
  * (no `--wait`) behavior is untouched by this module and stays byte-
  * identical.
+ *
+ * ## Known narrow gap: the wait phase's own outer preamble
+ *
+ * Every PER-TARGET poll failure is captured and classified (see the
+ * `errorCode` capture at the eval.ts call site). Not wrapped: a CliError
+ * thrown by `runPlatformOperation`'s own preamble for the wait-phase call
+ * (its own `preflightCloudCredentials` re-check, or the whole-command
+ * timeout firing before any per-target request goes out) — that error
+ * propagates unclassified and lands on the exitCode `toCliError` already
+ * gave it (1), rather than through this module's mapping. In practice this
+ * needs a credential that dies in the exact window between the launch
+ * preflight and the wait phase starting, or a deadline so tight it elapses
+ * before a single poll request is dispatched — narrow enough that it is left
+ * as a known gap rather than a fix, to avoid restructuring the write-before-
+ * exit guarantee for an edge this unlikely.
  */
 
 /** One waited run's outcome, as read off `PlatformEvalRun`. */
