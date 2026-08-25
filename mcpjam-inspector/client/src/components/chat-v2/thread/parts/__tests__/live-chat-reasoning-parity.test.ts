@@ -53,8 +53,12 @@ describe("live chat reasoning display parity", () => {
       expect(source).toMatch(/reasoningDisplayMode=\{/);
 
       // A hardcoded mode next to the import is how these drifted apart before.
-      expect(source).not.toMatch(/reasoningDisplayMode\s*=\s*"inline"/);
-      expect(source).not.toMatch(/reasoningDisplayMode=\{?"inline"\}?/);
+      // Ban EVERY string literal in a `reasoningDisplayMode` position, not just
+      // the old "inline": the drift this guards against is "a live surface got
+      // a different mode", and a hardcoded "collapsible" would otherwise pass
+      // every assertion above as long as the import line survived. Matches
+      // both the JSX form (`={"..."}`) and a prop default (`= "..."`).
+      expect(source).not.toMatch(/reasoningDisplayMode\s*=\s*\{?\s*"/);
     },
   );
 });

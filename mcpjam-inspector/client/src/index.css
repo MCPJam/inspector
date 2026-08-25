@@ -478,9 +478,12 @@
    Same background-clip: text technique as the Le Chat / Notion ports below,
    but driven by our own theme tokens instead of another host's brand colors.
 
-   The resting tone stays FULLY OPAQUE `--muted-foreground` — the same colour
-   the header already uses — so the label never drops below its normal reading
-   contrast while the band is elsewhere. Only the travelling band changes.
+   The resting tone is `currentcolor` — literally the colour the header label
+   already renders in (the button sets `text-muted-foreground/90`, and this span
+   inherits it). Using the token directly would be a near-match that silently
+   drifts if the header's class changes; inheriting makes the equivalence exact,
+   so the label never reads worse at rest than the finished `Reasoning` label
+   does. Only the travelling band changes.
 
    The band cannot be `--foreground` in both themes. In light that is much
    darker than the resting tone (L .344 vs .606) and reads clearly, but in dark
@@ -492,11 +495,11 @@
 
   background-image: linear-gradient(
     90deg,
-    var(--muted-foreground) 0%,
-    var(--muted-foreground) 40%,
+    currentcolor 0%,
+    currentcolor 40%,
     var(--reasoning-shimmer-band) 50%,
-    var(--muted-foreground) 60%,
-    var(--muted-foreground) 100%
+    currentcolor 60%,
+    currentcolor 100%
   );
   background-size: 200% 100%;
   background-clip: text;

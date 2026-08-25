@@ -4823,6 +4823,11 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
+                          // Passed explicitly even though the card defaults to
+                          // the same constant: a default silently loses to any
+                          // caller that supplies the prop, so every live
+                          // surface drives the mode the same way (BB-111).
+                          reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                           comparisonSummaries={Object.values(compareSummaries)}
                           selectedServers={selectedServers}
                           broadcastRequest={broadcastRequest}
@@ -4906,6 +4911,8 @@ export function PlaygroundMain({
                             compareLabel={model.name}
                             compareKind="model"
                             model={model}
+                            // Same explicit pass as the host-mode card above.
+                            reasoningDisplayMode={LIVE_CHAT_REASONING_DISPLAY_MODE}
                             comparisonSummaries={Object.values(
                               compareSummaries
                             )}
