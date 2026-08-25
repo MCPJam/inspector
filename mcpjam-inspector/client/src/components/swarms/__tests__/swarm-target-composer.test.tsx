@@ -214,6 +214,12 @@ describe("SwarmTargetComposer", () => {
     });
   });
 
+  it("hides the models pill so New Swarm does not change product", () => {
+    render(<Harness />);
+    expect(screen.queryByTestId("new-swarm-models-picker")).toBeNull();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeVisible();
+  });
+
   it("hides the environments picker when project-environments-enabled is off", () => {
     flagState.environments = false;
     render(<Harness />);
