@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
+import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
@@ -660,6 +661,18 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 {...(iterationOverride !== undefined
                   ? { iterationOverride }
                   : {})}
+              />
+              <SuiteRunDisclosureHint
+                suiteId={suite._id}
+                environmentIds={suite.environmentIds}
+                // Environment axis always wins when both are attached (same
+                // rule `computeRunTargets` uses) — host axis only when there
+                // are no attached environments but there are attached hosts.
+                hostAxis={
+                  (suite.environmentIds?.length ?? 0) === 0 &&
+                  (suite.hostAttachments?.length ?? 0) > 0
+                }
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
             </span>
           );

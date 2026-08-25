@@ -1878,6 +1878,7 @@ describe("operation catalog consistency", () => {
       ],
     },
     get_eval_suite: { suite: "s" },
+    get_eval_run_disclosure: { suite: "s" },
     update_eval_suite: { suite: "s", name: "renamed" },
     delete_eval_suite: { suite: "s" },
     set_eval_suite_schedule: { suite: "s", enabled: false },

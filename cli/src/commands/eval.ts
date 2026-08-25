@@ -36,6 +36,7 @@ import {
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
   type CreateEvalSuiteInput,
+  type PlatformEvalRunDisclosure,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
@@ -386,6 +387,126 @@ function writeRunGroupSummary(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
   }
+}
+
+/**
+ * Human-format block for the pre-run disclosure `run_eval_suite` fetched for
+ * this launch — the twin of `writeRunGroupSummary`, and printed BEFORE it: a
+ * `--format json` document already carries `disclosure` inside the single
+ * receipt, so appending prose to it would break the one-document rule the
+ * same way a second summary line would. This is the human-only rendering of
+ * exactly that field.
+ *
+ * `execution` vs `executionAbsence` render DIFFERENT copy on purpose — never
+ * collapse them. `'ingested-run'` means MCPJam did not execute this;
+ * `'plan-unresolved'` means a run that WILL execute and WILL call models this
+ * CLI simply cannot name yet. Printing the ingest wording for the second
+ * would tell someone about to launch that nothing leaves, which is the exact
+ * bug g4a fixed on the backend — reintroducing it here at the presentation
+ * layer would be the same bug in a different process.
+ */
+function writeRunDisclosure(
+  format: string,
+  disclosure: PlatformEvalRunDisclosure | undefined,
+  stream: NodeJS.WritableStream = process.stdout
+): void {
+  if (format !== "human" || !disclosure) return;
+  const lines: string[] = ["Pre-run disclosure:"];
+  if (disclosure.execution) {
+    const execution = disclosure.execution;
+    const locus =
+      execution.locus.known === true
+        ? execution.locus.hosted
+          ? "MCPJam-hosted"
+          : "your own machine"
+        : "unknown";
+    lines.push(`  Execution: ${execution.engine} · ${locus}`);
+    if (execution.models.length > 0) {
+      for (const model of execution.models) {
+        const destination = model.byok?.baseUrlHost
+          ? model.byok.baseUrlHost
+          : model.rail.managed
+            ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${model.rail.outcomeIfRunNow.destination})`
+            : model.tenantEgress;
+        lines.push(`  Model: ${model.modelId} — ${destination}`);
+      }
+    } else if (execution.modelsUnresolved) {
+      lines.push(`  Models: not derivable — ${execution.modelsUnresolved.reason}`);
+    }
+    if (execution.sandbox.engaged) {
+      lines.push(`  Sandbox: engaged (${execution.sandbox.vendor ?? "?"})`);
+    }
+  } else if (disclosure.executionAbsence) {
+    const { kind, reason } = disclosure.executionAbsence;
+    lines.push(
+      kind === "ingested-run"
+        ? `  Execution: none — this run was ingested, MCPJam did not execute it (${reason})`
+        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
+    );
+  }
+  // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
+  // — it is what happens to content once it exists, not a fact about whether
+  // this run executed. This is the human's only pre-launch view (the
+  // standalone disclosure command is deliberately excluded), so a
+  // consequential setting like a non-DLP redaction module or a captureLevel
+  // of "full" must not be silently absent from the printed block.
+  lines.push(
+    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`
+  );
+  lines.push(
+    `  Redaction: ${disclosure.capture.redaction.kind}` +
+      (disclosure.capture.redaction.isDlp
+        ? ""
+        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
+  );
+  lines.push(
+    `  Export defaults: ${
+      disclosure.capture.exportDefaults.includeContent
+        ? "includes content"
+        : "excludes content"
+    } (${disclosure.capture.exportDefaults.note})`
+  );
+  const firingAnalysis = disclosure.analysis.filter(
+    (touchpoint) => typeof touchpoint.fires === "string"
+  );
+  if (firingAnalysis.length > 0) {
+    // One line PER touchpoint — different touchpoints can have different
+    // destinations, and pooling them under the first one's would misattribute
+    // where the others' evidence actually goes.
+    for (const touchpoint of firingAnalysis) {
+      // "fires automatically" vs "fires only if asked" are different consent
+      // stories — one sends evidence the moment the run completes, with no
+      // further action from anyone; the other only on request. A surface
+      // whose whole job is telling people what happens before they agree to
+      // it must not flatten that distinction just because both cases "fire".
+      const firesLabel =
+        touchpoint.fires === "auto-on-completion"
+          ? "fires automatically on completion"
+          : "fires only if explicitly requested";
+      lines.push(
+        `  Analysis: ${touchpoint.label} ${firesLabel}, may send evidence to ${touchpoint.destinations.join(", ")}`
+      );
+    }
+  } else {
+    lines.push("  Analysis: no analyzer/judge touchpoint can fire for this run");
+  }
+  lines.push(
+    disclosure.retention.effectiveToday === "kept-indefinitely"
+      ? "  Retention: kept indefinitely"
+      : `  Retention: swept after ${disclosure.retention.policyDays ?? "?"} day(s)`
+  );
+  lines.push(
+    disclosure.region.stated
+      ? `  Region: ${disclosure.region.value}`
+      : "  Region: not stated"
+  );
+  const engaged = disclosure.subprocessors.filter((entry) => entry.engaged);
+  if (engaged.length > 0) {
+    lines.push(
+      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
+    );
+  }
+  stream.write(`${lines.join("\n")}\n`);
 }
 
 /**
@@ -2260,10 +2381,50 @@ export function registerEvalCommands(program: Command): void {
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          // Fired the moment the operation resolves the disclosure for the
+          // FROZEN launch plan — before it creates the run. Printing here,
+          // synchronously from the callback, is what makes this actually
+          // pre-run for a human watching the terminal: reading it off the
+          // finished receipt afterward would print it only after the run had
+          // already been created and had possibly already sent content.
+          //
+          // REDIRECTED TO STDERR when a reporter is configured: `--reporter`
+          // writes a single structured document (junit-xml/json-summary) to
+          // stdout later, and prepending human prose there would make that
+          // document unparseable. But fully suppressing the block would
+          // leave a CI user — the population most likely to want a record of
+          // what a run discloses — with no route to it at all, despite the
+          // fetch happening either way. Printing to stderr keeps stdout a
+          // single parseable document while still surfacing the disclosure
+          // somewhere a human or a log aggregator can see it. `--format
+          // json` without a reporter is unaffected — `writeRunDisclosure`
+          // already no-ops there regardless of stream.
+          const onDisclosure = (disclosure: PlatformEvalRunDisclosure) => {
+            writeRunDisclosure(
+              globalOptions.format,
+              disclosure,
+              reporter === undefined ? process.stdout : process.stderr
+            );
+          };
+          // The failure counterpart: without this, a fetch that failed and a
+          // build with no disclosure feature at all look IDENTICAL to a
+          // human running this command — no output either way. Same
+          // reporter-stream rule as onDisclosure: stderr under a reporter,
+          // stdout otherwise, never gates or delays the launch.
+          const onDisclosureUnavailable = (reason: string) => {
+            if (globalOptions.format !== "human") return;
+            const stream = reporter === undefined ? process.stdout : process.stderr;
+            stream.write(`Pre-run disclosure unavailable: ${reason}\n`);
+          };
           if (options.file) {
             const source = readSuiteFileInput(options.file);
             return executeEvalRunFromFile(
-              { client: context.client, signal: context.signal },
+              {
+                client: context.client,
+                signal: context.signal,
+                onDisclosure,
+                onDisclosureUnavailable,
+              },
               {
                 source,
                 label: options.file === "-" ? "<stdin>" : options.file,
@@ -2331,14 +2492,21 @@ export function registerEvalCommands(program: Command): void {
                 : {}),
               ...composeField(options),
             },
-            { client: context.client, signal: context.signal }
+            {
+              client: context.client,
+              signal: context.signal,
+              onDisclosure,
+              onDisclosureUnavailable,
+            }
           );
         },
         { projectScope: resolved.projectScope }
       );
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
-      // stream unparseable for the CI callers that read it.
+      // stream unparseable for the CI callers that read it. The human-mode
+      // block already printed from `onDisclosure`, ahead of the launch
+      // itself — nothing to print again here.
       if (!options.wait) {
         writeResult(result, globalOptions.format);
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
