@@ -388,8 +388,14 @@ function buildSelectionToolCatalogMetadata(args: {
     .flatMap((p) => p.missing ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
+  // The full actual set, not just `unexpected`: under the default
+  // `maxExtraToolCalls: null`, a call the model made instead of (not in
+  // addition to) an expected one stays out of `unexpected` — it only ever
+  // lands there as a flagged extra. `missingToolCall` cases are exactly the
+  // ones where the metadata that mattered belongs to whatever the model
+  // picked instead, so the catalog has to look at what was actually called.
   const actualToolNames = prompts
-    .flatMap((p) => p.unexpected ?? [])
+    .flatMap((p) => p.actualToolCalls ?? [])
     .map((t) => t.toolName)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
   if (expectedToolNames.length === 0 && actualToolNames.length === 0) {
@@ -614,11 +620,19 @@ export function buildIterationFinishParams(args: {
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
   });
-  const selectionToolCatalogMetadata = buildSelectionToolCatalogMetadata({
-    stageMetadata,
-    prompts,
-    selectionTools,
-  });
+  // Gated on the same `gradingMode` that decides whether `scoreMetadata`
+  // above writes anything — D7 changes nothing outside `dual_write` (see the
+  // plan's §15 disclosure note), and that includes not capturing server tool
+  // descriptions/schemas into iteration metadata for a suite that never
+  // opted in.
+  const selectionToolCatalogMetadata =
+    gradingMode === "dual_write"
+      ? buildSelectionToolCatalogMetadata({
+          stageMetadata,
+          prompts,
+          selectionTools,
+        })
+      : {};
   return {
     iterationId,
     passed,

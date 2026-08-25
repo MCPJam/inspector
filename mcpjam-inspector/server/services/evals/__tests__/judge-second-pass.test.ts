@@ -609,4 +609,136 @@ describe("D7: metadata-attribution rides the same second pass", () => {
     ]);
     expect(result.metadataAttributionOutcomes).toEqual([]);
   });
+
+  describe("one iteration carries both verdicts — each write stays behind its own gate", () => {
+    // Same iteration, both a judgeVerdict AND a metadataAttributionVerdict
+    // already saved — the scenario where a single shared derivation would
+    // let a rejected write from one judge ride through the other's channel.
+    const bothVerdictsRow = (over: Partial<JudgeSecondPassRunRow> = {}) =>
+      runRow({
+        metadataAttributionJobId: "d7-job1",
+        iterations: [
+          {
+            ...runRow().iterations[0]!,
+            prompts: d7Row().iterations[0]!.prompts,
+            metadata: {
+              ...runRow().iterations[0]!.metadata,
+              ...d7Row().iterations[0]!.metadata,
+            },
+          },
+        ],
+        ...over,
+      });
+
+    test("both writes succeed: D7's write still carries goal-completion's confirmed userValue evidence", async () => {
+      const { value, applied, appliedMetadataAttribution } = ports({
+        fetchRun: vi.fn(async () => bothVerdictsRow()),
+      });
+      await runJudgeSecondPass("run1", value);
+
+      expect(applied).toHaveLength(1);
+      expect(appliedMetadataAttribution).toHaveLength(1);
+      const goalBody = applied[0]!.body as Record<string, unknown>;
+      const d7Body = appliedMetadataAttribution[0]!.body as Record<
+        string,
+        unknown
+      >;
+      // D7 recolored the shared failureCategory — goal-completion's write
+      // never carries that, but D7's own write (landing after
+      // goal-completion's is CONFIRMED) does not lose the userValue row
+      // goal-completion just wrote either.
+      expect(goalBody.failureCategory).not.toBe("metadata");
+      expect(d7Body.failureCategory).toBe("metadata");
+    });
+
+    test("D7's write is rejected as stale: goal-completion's write never smuggles D7's recoloring", async () => {
+      const { value, applied } = ports({
+        fetchRun: vi.fn(async () => bothVerdictsRow()),
+        applyMetadataAttributionDerivation: vi.fn(async () => {
+          throw new JudgeStageBackendError(
+            "stale",
+            409,
+            "EVAL_RUN_CONFIG_CONFLICT"
+          );
+        }),
+      });
+      await runJudgeSecondPass("run1", value);
+
+      expect(applied).toHaveLength(1);
+      const goalBody = applied[0]!.body as Record<string, unknown>;
+      // The rejected D7 write's recoloring must not have reached the run
+      // through goal-completion's still-valid channel.
+      expect(goalBody.failureCategory).not.toBe("metadata");
+    });
+
+    // `userValue` is reached (not chain-broken) only when `selection`
+    // itself hasn't failed — a different fixture than `bothVerdictsRow`
+    // above, whose selection failure is exactly what gives D7 something to
+    // recolor. This one splices D7's verdict onto the base `runRow` fixture
+    // (which DOES reach `userValue`, per "the judge verdict reaches
+    // userValue as a tier-2 row" above) so the userValue row's contents are
+    // actually observable in D7's write body.
+    const bothVerdictsReachableUserValueRow = (
+      over: Partial<JudgeSecondPassRunRow> = {}
+    ) =>
+      runRow({
+        metadataAttributionJobId: "d7-job1",
+        iterations: [
+          {
+            ...runRow().iterations[0]!,
+            metadata: {
+              ...runRow().iterations[0]!.metadata,
+              metadataAttributionVerdict: {
+                status: "scored",
+                attributed: true,
+                reasons: ["unrelated to this iteration's selection"],
+              },
+            },
+          },
+        ],
+        ...over,
+      });
+
+    test("goal-completion's write is rejected as stale: D7's write does not carry the rejected userValue conclusion", async () => {
+      const { value: failValue, appliedMetadataAttribution: failedD7 } =
+        ports({
+          fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
+          applyDerivation: vi.fn(async () => {
+            throw new JudgeStageBackendError(
+              "stale",
+              409,
+              "EVAL_RUN_CONFIG_CONFLICT"
+            );
+          }),
+        });
+      await runJudgeSecondPass("run1", failValue);
+
+      const { value: okValue, appliedMetadataAttribution: confirmedD7 } =
+        ports({
+          fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
+        });
+      await runJudgeSecondPass("run1", okValue);
+
+      expect(failedD7).toHaveLength(1);
+      expect(confirmedD7).toHaveLength(1);
+      const failedRows = (failedD7[0]!.body as Record<string, unknown>)
+        .stageResults as Array<{ stage: string; state: string }>;
+      const confirmedRows = (confirmedD7[0]!.body as Record<string, unknown>)
+        .stageResults as Array<{ stage: string; state: string }>;
+      const failedUserValue = failedRows.find((r) => r.stage === "userValue");
+      const confirmedUserValue = confirmedRows.find(
+        (r) => r.stage === "userValue"
+      );
+      // When goal-completion's own write is rejected in this pass, D7's
+      // write must NOT carry goal-completion's `judgeFailed` conclusion —
+      // it should read the same as an iteration with no judge verdict at
+      // all reaching D7's write, not the confirmed (goal-completion write
+      // succeeded) shape.
+      expect(confirmedUserValue).toMatchObject({
+        state: "failed",
+        reason: "judgeFailed",
+      });
+      expect(failedUserValue?.reason).not.toBe("judgeFailed");
+    });
+  });
 });

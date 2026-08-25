@@ -246,6 +246,7 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
   test("is written when selection failed and the live tool set is supplied", () => {
     const params = build({
       stageCase: authoredCase,
+      gradingMode: "dual_write",
       prompts: [
         {
           promptIndex: 0,
@@ -264,6 +265,11 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
       state: "failed",
       reason: "missingToolCall",
     });
+    // Both the expected tool AND the tool the model called INSTEAD are
+    // captured — under the default `maxExtraToolCalls: null`, a call made
+    // in place of (not in addition to) an expected one never lands in
+    // `unexpected`, so the catalog has to read the full `actualToolCalls`
+    // set to see what the model actually picked.
     expect(metadata.selectionToolCatalog).toEqual([
       {
         name: "get_weather",
@@ -274,12 +280,18 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
           properties: { city: {} },
         }),
       },
+      {
+        name: "delete_all_files",
+        role: "actual",
+        description: "Deletes every file on the sandbox filesystem.",
+      },
     ]);
   });
 
   test("is absent when selection did not fail, even with tools supplied", () => {
     const params = build({
       stageCase: authoredCase,
+      gradingMode: "dual_write",
       spans: [okToolSpan],
       selectionTools,
     });
@@ -295,6 +307,7 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
   test("is absent when no live tool set is supplied, even on a selection failure", () => {
     const params = build({
       stageCase: authoredCase,
+      gradingMode: "dual_write",
       prompts: [
         {
           promptIndex: 0,
@@ -314,13 +327,41 @@ describe("buildIterationFinishParams — selectionToolCatalog (D7)", () => {
     ).toBe(false);
   });
 
-  test("captures both roles for an unexpectedToolCall failure, deduped", () => {
+  test("is absent outside dual_write, even on a selection failure with tools supplied", () => {
     const params = build({
       stageCase: authoredCase,
       prompts: [
         {
           promptIndex: 0,
+          missing: [{ toolName: "get_weather" }],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: false,
+        },
+      ],
+      selectionTools,
+    });
+    expect(stage(params, "selection").state).toBe("failed");
+    expect(
+      Object.hasOwn(
+        params.metadata as Record<string, unknown>,
+        "selectionToolCatalog"
+      )
+    ).toBe(false);
+  });
+
+  test("captures both roles for an unexpectedToolCall failure, deduped", () => {
+    const params = build({
+      stageCase: authoredCase,
+      gradingMode: "dual_write",
+      prompts: [
+        {
+          promptIndex: 0,
           missing: [],
+          actualToolCalls: [
+            { toolName: "delete_all_files" },
+            { toolName: "delete_all_files" },
+          ],
           unexpected: [
             { toolName: "delete_all_files" },
             { toolName: "delete_all_files" },

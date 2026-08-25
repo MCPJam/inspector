@@ -392,51 +392,72 @@ export async function runJudgeSecondPass(
       continue;
     }
 
-    const { stage, scores, config } = deriveIterationPayload({
-      iteration,
-      mode,
-      judgeVerdict,
-      attributionVerdict,
-    });
-    if (Object.keys(stage).length === 0) continue;
-    const fields = stageFields(stage);
+    // Each judge's write is derived and posted SEPARATELY, never from one
+    // shared payload — the backend applies `stageResults` /
+    // `failureCategory` as a full-field overwrite (see
+    // `internalApplyJudgeStageDerivation`), keyed and staleness-checked
+    // against only ITS OWN job id. A single combined derivation sent to both
+    // endpoints would let a stale/rejected write from one judge still land
+    // via the other's successful write — e.g. a metadata-attribution job
+    // superseded mid-pass could still persist `failureCategory: "metadata"`
+    // through goal-completion's still-valid channel, or vice versa.
+    //
+    // Goal-completion's derivation therefore NEVER attaches
+    // `metadataAttribution` — D7's evidence has no business riding through a
+    // channel that only validates `goalCompletionJobId`. D7's derivation
+    // attaches `judgeEvidence` only once THIS pass has actually confirmed
+    // goal-completion's own write (or goal-completion has nothing to
+    // confirm at all, i.e. no job id on this run) — so D7's write, if it
+    // lands, either carries a durably-written userValue conclusion or none,
+    // never one whose own write this pass just saw rejected.
+    let goalCompletionConfirmed = false;
 
     if (
       judgeVerdict &&
       goalCompletionJobId !== undefined &&
       !goalCompletionFailed
     ) {
-      try {
-        const result = await ports.applyDerivation(iteration.iterationId, {
-          goalCompletionJobId,
-          judgeStageDerivedAt: derivedAt,
-          ...fields,
-          ...(scores ? { scores } : {}),
-          ...(config !== undefined ? { evaluationConfig: config } : {}),
-        });
-        goalCompletionOutcomes.push({
-          iterationId: iteration.iterationId,
-          outcome: result.outcome,
-        });
-      } catch (error) {
-        if (error instanceof JudgeStageBackendError && error.isNotFound) {
-          // The row is gone. Nothing to report for it, and nothing to retry.
-        } else if (
-          error instanceof JudgeStageBackendError &&
-          (error.isConflict || error.isRouteMissing)
-        ) {
-          // The run moved under us, or the surface is not deployed. Either
-          // way a retry races the same way, so stop this judge's writes and
-          // let the sweep decide — but D7's writes below are unaffected.
-          goalCompletionFailed = true;
-        } else {
-          goalCompletionFailed = true;
-          logger.warn("[evals] judge second pass: derivation write failed", {
-            runId,
-            iterationId: iteration.iterationId,
-            judge: "goalCompletion",
-            error: error instanceof Error ? error.name : "unknown",
+      const { stage, scores, config } = deriveIterationPayload({
+        iteration,
+        mode,
+        judgeVerdict,
+        attributionVerdict: undefined,
+      });
+      if (Object.keys(stage).length > 0) {
+        const fields = stageFields(stage);
+        try {
+          const result = await ports.applyDerivation(iteration.iterationId, {
+            goalCompletionJobId,
+            judgeStageDerivedAt: derivedAt,
+            ...fields,
+            ...(scores ? { scores } : {}),
+            ...(config !== undefined ? { evaluationConfig: config } : {}),
           });
+          goalCompletionOutcomes.push({
+            iterationId: iteration.iterationId,
+            outcome: result.outcome,
+          });
+          goalCompletionConfirmed = true;
+        } catch (error) {
+          if (error instanceof JudgeStageBackendError && error.isNotFound) {
+            // The row is gone. Nothing to report for it, and nothing to retry.
+          } else if (
+            error instanceof JudgeStageBackendError &&
+            (error.isConflict || error.isRouteMissing)
+          ) {
+            // The run moved under us, or the surface is not deployed. Either
+            // way a retry races the same way, so stop this judge's writes and
+            // let the sweep decide — but D7's writes below are unaffected.
+            goalCompletionFailed = true;
+          } else {
+            goalCompletionFailed = true;
+            logger.warn("[evals] judge second pass: derivation write failed", {
+              runId,
+              iterationId: iteration.iterationId,
+              judge: "goalCompletion",
+              error: error instanceof Error ? error.name : "unknown",
+            });
+          }
         }
       }
     }
@@ -446,6 +467,17 @@ export async function runJudgeSecondPass(
       metadataAttributionJobId !== undefined &&
       !metadataAttributionFailed
     ) {
+      const includeJudgeEvidence =
+        judgeVerdict !== undefined &&
+        (goalCompletionConfirmed || goalCompletionJobId === undefined);
+      const { stage } = deriveIterationPayload({
+        iteration,
+        mode,
+        judgeVerdict: includeJudgeEvidence ? judgeVerdict : undefined,
+        attributionVerdict,
+      });
+      if (Object.keys(stage).length === 0) continue;
+      const fields = stageFields(stage);
       try {
         const result = await ports.applyMetadataAttributionDerivation(
           iteration.iterationId,
