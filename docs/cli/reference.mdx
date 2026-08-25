@@ -1061,9 +1061,10 @@ runs. `--reporter` replaces that output with the canonical structured report.
 `--out` writes the same report atomically, including on failed-run and
 post-completion reporting-error paths, before the command sets its exit code.
 
-A partial or wholly failed fan-out **exits 1**. A per-target failure does not
-abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
-started" as a clean launch.
+Without `--wait`, a partial or wholly failed fan-out **exits 1**; with
+`--wait` it exits **4** (see the exit-code table above). A per-target failure
+does not abort its siblings, so exiting 0 would let a pipeline read "1 of 3
+runs never started" as a clean launch.
 
 #### `--file`: upload and run a suite file
 
