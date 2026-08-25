@@ -178,6 +178,24 @@ export type RequestEventMap = {
     origin?: ErrorOrigin;
     /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
     slug?: string;
+    /**
+     * Which hop failed, as declared at the catch site — orthogonal to
+     * `origin`, which says who must act.
+     *
+     * `origin` alone cannot carry this. `ambiguous` is the catalog refusing to
+     * guess from the wire shape, and it is the right refusal: the same
+     * `transport/fetch_failed` is produced by a user's dead server and by
+     * MCPJam's own OAuth-metadata proxy. Only the catch site knows which
+     * boundary it wrapped, and until now it told nobody but Sentry —
+     * `route-error-report.ts` maps `user_server_hop` to `undefined`, so the
+     * one declaration that means "not ours" was recorded nowhere.
+     *
+     * ABSENT MEANS UNKNOWN, NEVER "the user's". A monitor that treats a
+     * missing `hop` as an exclusion re-creates the blindness this field
+     * exists to remove; consumers must test `origin == "mcpjam"` first and
+     * only then let a hop exclude a row.
+     */
+    hop?: RouteFailureHop;
   };
   "http.stream.opened": { statusCode: number };
   /**
