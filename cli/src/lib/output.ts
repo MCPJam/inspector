@@ -133,7 +133,7 @@ export function parseOutputFormat(value: string): OutputFormat {
 }
 
 export function rejectReporterFormatAsOutputFormat(value: string): void {
-  if (value === "junit-xml" || value === "json-summary" || value === "html") {
+  if (value === "junit-xml" || value === "json-summary") {
     throw usageError(
       `Invalid output format "${value}". Use --reporter ${value} for CI reporter output.`,
     );
