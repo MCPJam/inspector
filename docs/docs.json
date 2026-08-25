@@ -73,7 +73,17 @@
             "group": "MCP Apps",
             "icon": "layout-dashboard",
             "pages": [
-              "inspector/playground",
+              {
+                "group": "Playground",
+                "icon": "joystick",
+                "root": "inspector/playground",
+                "pages": [
+                  "inspector/playground/chat-tools",
+                  "inspector/playground/debug-compare",
+                  "inspector/playground/test-widgets",
+                  "inspector/playground/advanced"
+                ]
+              },
               "inspector/evals",
               "inspector/compatibility",
               "inspector/host-templates"
