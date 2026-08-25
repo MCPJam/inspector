@@ -27,6 +27,7 @@ import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 import { CLIENT_CAPABILITIES_META_KEY } from "../mcp-client-manager/tasks-ext.js";
 import { ensureTasksExtensionEraGateShadow } from "../mcp-client-manager/tasks-ext-era-gate.js";
 import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js";
+import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
 import {
   buildOutcomeSummary,
@@ -211,7 +212,11 @@ function failed(
     durationMs,
     error: {
       message,
-      ...(rawError === undefined ? {} : { details: rawError }),
+      // Raw thrown values are often class instances (e.g. MCPAuthError), and
+      // the persistence layer rejects those wholesale — one live instance in
+      // `errorDetails` used to destroy the entire finished report at the
+      // Convex write. Reports carry plain JSON data only.
+      ...(rawError === undefined ? {} : { details: deepJsonSafe(rawError) }),
     },
     ...(details ? { details } : {}),
   };

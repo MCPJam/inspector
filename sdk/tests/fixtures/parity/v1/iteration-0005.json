@@ -91,6 +91,6 @@
     ],
     "firstFailedStage": "call",
     "failureCategory": "setup",
-    "stageAnalyzerVersion": 3
+    "stageAnalyzerVersion": 4
   }
 }
