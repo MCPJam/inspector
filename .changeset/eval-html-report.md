@@ -32,3 +32,9 @@ report a different shape (`ConformanceReport` — `apps conformance`,
 the parser is shared, but reject it at render time with a clear usage error:
 those surfaces have no HTML renderer yet, and building one is out of scope for
 this change.
+
+Also fixes `eval compare --out`, which wrote the file through the raw JSON
+path regardless of `--reporter` — so `--reporter junit-xml --out report.xml`
+(and now `--reporter html --out report.html`) produced a file in the wrong
+format, unlike `eval run`/`eval gate`. It now writes whatever `--reporter`
+selected, defaulting to `json-summary` same as before.
