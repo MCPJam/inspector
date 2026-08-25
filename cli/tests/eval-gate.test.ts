@@ -334,6 +334,17 @@ test("assertRunIdBaseline rejects a blank value, not just an absent one", () => 
   }
 });
 
+test("assertRunIdBaseline rejects a whitespace-padded SHA, not just a bare one", () => {
+  // The SHA check runs against the TRIMMED value: `--baseline " <40-hex> "`
+  // is still a doomed run lookup, and the blank check just above already
+  // proved trimming doesn't change what the flag means.
+  const padded = `  ${"a".repeat(40)}  `;
+  assert.throws(
+    () => assertRunIdBaseline(padded),
+    /SHA baselines are not supported yet/,
+  );
+});
+
 test("comparePolicyFromGateOptions: --baseline alone implies regression gating", () => {
   // No `--gate-regressions` flag exists on `eval gate` — `--baseline` itself
   // enables the pass-rate regression gate with the SDK's defaults.

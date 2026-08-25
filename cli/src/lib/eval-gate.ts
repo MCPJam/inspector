@@ -187,13 +187,17 @@ const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
  * SHA — before it reaches the network as a doomed run lookup.
  */
 export function assertRunIdBaseline(baseline: string): void {
-  if (baseline.trim() === "") {
+  const normalized = baseline.trim();
+  if (normalized === "") {
     throw usageError(
       `--baseline must not be blank. Pass a run id, or omit the flag entirely ` +
         `to gate on absolute thresholds only.`
     );
   }
-  if (SHA_LIKE_BASELINE.test(baseline)) {
+  // Tested against the TRIMMED value: a whitespace-padded SHA
+  // (`--baseline " <40-hex> "`) is still a doomed run lookup, and the blank
+  // check above already proved trimming doesn't change what the flag means.
+  if (SHA_LIKE_BASELINE.test(normalized)) {
     throw usageError(
       `--baseline "${baseline}" looks like a git SHA. SHA baselines are not ` +
         `supported yet; pass a run id. (Source-SHA baseline resolution is a ` +

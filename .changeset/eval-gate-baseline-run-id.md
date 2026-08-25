@@ -17,10 +17,14 @@ regression gating, so none of them need a separate enabling flag, and passing
 one without `--baseline` is a usage error rather than a silent no-op.
 
 A changed, added, removed, or unequally-weighted case set makes the
-comparison `non_gateable` (exit 3), never a silent pass and never
-misread as a regression (exit 1) — the same population rule `eval compare`
-already enforces. A missing baseline is the existing `BASELINE_NOT_FOUND` →
-incomplete → exit 3 path. `eval gate`'s four-code contract is unchanged.
+WHOLE-RUN pass-rate and p95-latency gates `non_gateable` (exit 3) rather than
+silently passing or misreading the population change as a regression — the
+same population rule `eval compare` already enforces. The deterministic
+per-case regression gate is exempt: it joins by case key, so it can still
+fail (exit 1) on a matching case even when the population around it changed,
+and a real failure there is never buried by an undecidable whole-run gate. A
+missing baseline is the existing `BASELINE_NOT_FOUND` → incomplete → exit 3
+path. `eval gate`'s four-code contract is unchanged.
 
 The report (`--reporter`/`--out`) carries baseline provenance — both run
 ids, the resolved baseline policy, and every compatibility signal that was

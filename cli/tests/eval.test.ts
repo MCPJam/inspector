@@ -949,11 +949,25 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       }
       const cmp = options.compare ?? {};
       const baseRunId = url.searchParams.get("baseRunId") ?? "run-baseline";
+      // These defaults are the SAME oracle-pinned 56/70 -> 48/80 regression
+      // `eval-compare-exit-code.test.ts` checks against statsmodels, reused
+      // here rather than re-derived. They deliberately do NOT track run-1's
+      // own (tiny, 1-2 iteration) `/eval-runs/run-1` summary: the code under
+      // test never cross-checks the two summaries against each other — one
+      // feeds `reportForRun`'s threshold gate, the other feeds
+      // `evaluateBaselineComparison`'s comparative gate — and collapsing them
+      // to the same small sample would make every baseline test below
+      // "insufficient_data" instead of exercising a real regression.
       const baseTotal = cmp.baseTotal ?? 70;
       const compareTotal = cmp.compareTotal ?? 80;
       const basePassed = cmp.basePassed ?? 56;
       const comparePassed = cmp.comparePassed ?? 48;
-      const zero = { base: null, compare: null, delta: null, percentDelta: null };
+      const zero = {
+        base: null,
+        compare: null,
+        delta: null,
+        percentDelta: null,
+      };
       const caseSide = (iterationId: string) => ({
         outcome: "passed" as const,
         iterationIds: [iterationId],
