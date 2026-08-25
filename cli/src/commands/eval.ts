@@ -62,6 +62,7 @@ import {
   evaluateCompareGates,
   formatGateReport,
   formatSuiteFileFindings,
+  gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
   MAX_SUITE_FILE_BYTES,
@@ -1138,23 +1139,41 @@ async function runEvalGate(
     // 1: a CI job that fails a release on a flaked request, and calls it a
     // regression, teaches people to ignore the gate.
     const detail = error instanceof Error ? error.message : String(error);
-    writeResult(
-      {
-        gate: {
-          outcome: "incomplete",
-          scoreIntegrity: "unknown",
-          verdicts: [
-            {
-              gate: "fetch",
-              status: "non_gateable",
-              message: `could not read the run: ${detail}`,
-            },
-          ],
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: "fetch",
+          status: "non_gateable",
+          message: `could not read the run: ${detail}`,
         },
-        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
-      },
-      globalOptions.format
-    );
+      ],
+    };
+    // `--reporter`/`--out` still need to be honored on an infrastructure
+    // failure: a CI step expecting the reporter-selected artifact must not
+    // find raw JSON on stdout, or find `--out` never written at all.
+    const structured = needsReport
+      ? buildEvalRunReport([], {
+          cases: [gateReportCase(report)],
+          verdict: gateOutcomeVerdict(report.outcome),
+        })
+      : undefined;
+    if (options.out && structured) {
+      await writeReporterArtifact(
+        options.out,
+        reporter ?? "json-summary",
+        structured
+      );
+    }
+    if (reporter && structured) {
+      writeReporterResult(reporter, structured);
+    } else {
+      writeResult(
+        { gate: report, exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE },
+        globalOptions.format
+      );
+    }
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
   }
@@ -1176,6 +1195,7 @@ async function runEvalGate(
           : [],
         {
           cases: [gateReportCase(outcome.report)],
+          verdict: gateOutcomeVerdict(outcome.report.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
         }
       )

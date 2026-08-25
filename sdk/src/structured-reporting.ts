@@ -101,6 +101,19 @@ export function buildEvalRunReport(
     cases?: StructuredCaseResult[];
     metadata?: Record<string, unknown>;
     decisionSummary?: EvalDecisionSummary;
+    /**
+     * Overrides the verdict this would otherwise compute from `inputs`.
+     *
+     * For a gate/compare report, `inputs` describes the underlying eval
+     * run — not the gate's own outcome, which is a separate policy decision
+     * layered on top (a run can pass while its gate is non-gateable). Pass
+     * the gate's verdict (e.g. via `gateOutcomeVerdict`) explicitly rather
+     * than letting this fall back to a verdict about the wrong thing, or to
+     * no verdict at all — which a renderer with no verdict falls back to
+     * reading off `passed`, painting an unmeasured gate as a measured
+     * failure.
+     */
+    verdict?: StructuredRunVerdict;
   } = {}
 ): StructuredRunReport {
   const cases = [...(options.cases ?? [])];
@@ -186,9 +199,11 @@ export function buildEvalRunReport(
     schemaVersion: 1,
     kind: "eval-run",
     passed,
-    ...(inputs.length > 0
-      ? { verdict: structuredEvalVerdict(inputs, passed) }
-      : {}),
+    ...(options.verdict !== undefined
+      ? { verdict: options.verdict }
+      : inputs.length > 0
+        ? { verdict: structuredEvalVerdict(inputs, passed) }
+        : {}),
     summary: summarizeStructuredCases(cases),
     cases,
     durationMs: evalRunDurationMs(inputs.map((input) => input.run)),

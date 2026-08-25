@@ -373,6 +373,24 @@ describe("renderStructuredRunHtml", () => {
 });
 
 describe("buildEvalRunReport", () => {
+  it("honors an explicit verdict override instead of computing one from inputs", () => {
+    // A gate/compare report's `inputs` describe the underlying eval run, not
+    // the gate's own outcome — a run can pass while its gate is
+    // non-gateable. With empty inputs (no run info at all, e.g. a gate
+    // fetch failure), the auto-computed verdict would be omitted entirely,
+    // and a renderer with no verdict falls back to `passed` — false for
+    // every non-"passed" outcome, painting an unmeasured gate the same red
+    // as a measured failure. The override must win.
+    const report = buildEvalRunReport([], {
+      cases: [
+        { id: "gate", title: "Eval gate", category: "gate", passed: false },
+      ],
+      verdict: "inconclusive",
+    });
+    expect(report.verdict).toBe("inconclusive");
+    expect(report.passed).toBe(false);
+  });
+
   it("folds iterations into one testcase per case and preserves failure messages", () => {
     const run = {
       id: "run-1",

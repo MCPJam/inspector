@@ -202,6 +202,8 @@ interface EvalFixtureOptions {
   runCaseStatus?: "running" | "completed";
   runCaseIterationFetchError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
+  /** A terminal execution state distinct from the result verdict. */
+  runOneStatus?: "completed" | "cancelled";
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -670,13 +672,18 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
-      const result = options.runOneResult ?? "passed";
+      const status = options.runOneStatus ?? "completed";
+      // A cancelled run is an EXECUTION state, not a verdict: it carries no
+      // result at all, distinct from an inconclusive result on a completed
+      // run — both are "incomplete" gate-wise, for different reasons.
+      const result =
+        status === "cancelled" ? null : (options.runOneResult ?? "passed");
       res.end(
         JSON.stringify({
           id: "run-1",
           suiteId: "suite-1",
           runNumber: 3,
-          status: "completed",
+          status,
           result,
           summary:
             result === "failed"
@@ -2208,6 +2215,50 @@ test("eval gate --reporter html --out writes an HTML report before a gate-failur
     assert.match(html, /1\/2 iterations passed/);
     assert.match(html, /goal completion failed/);
     assert.equal(/<script/i.test(html), false);
+    // A measured gate failure — MUST stay red, not the neutral incomplete
+    // color a fetch/wait failure gets below.
+    assert.match(html, /badge-fail">failed/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// A gate that never got to evaluate (network/auth/timeout, or an unreadable
+// run) is INCOMPLETE, not a measured failure — the whole reason it exits 3
+// and not 1. `--reporter`/`--out` must still be honored on this path, and the
+// HTML verdict must render neutral, never the same red a real failure gets.
+test("eval gate --reporter html --out honors the reporter on a fetch failure, and renders it neutral", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          // No route mocks this run id: the fixture's default 404 makes
+          // `getEvalRun` throw, landing in the fetch-failure catch path.
+          "--run",
+          "run-does-not-exist",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
+    assert.match(html, /badge-neutral">inconclusive/);
+    assert.equal(html.includes('badge-fail">'), false);
   } finally {
     await fixture.close();
   }
@@ -2240,12 +2291,15 @@ test("eval compare --reporter html --out writes the reporter-selected format to 
     );
     const html = await readFile(htmlPath, "utf8");
 
-    // Incomplete (no baseline), not a regression: exit code says so, but the
-    // point of this test is the file format, not the verdict.
+    // Incomplete (no baseline), not a regression: exit code says so, and the
+    // rendered verdict must agree — neutral, never the red a real failure
+    // gets, even though `passed` is false either way.
     assert.match(html, /^<!doctype html>/i);
     assert.equal(/<script/i.test(html), false);
     assert.match(run.stdout, /^<!doctype html>/i);
     assert.equal(run.stdout, html);
+    assert.match(html, /badge-neutral">inconclusive/);
+    assert.equal(html.includes('badge-fail">'), false);
   } finally {
     await fixture.close();
   }
@@ -3332,6 +3386,73 @@ test("eval gate exits 3 on an INCONCLUSIVE run, not 1", async () => {
     assert.equal(payload.gate.outcome, "incomplete");
     assert.equal(payload.gate.verdicts[0].status, "non_gateable");
     assert.match(payload.gate.verdicts[0].message, /inconclusive/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Same INCONCLUSIVE-run gate outcome as above, but through the run-fetched
+// (not fetch-failed) branch of `runEvalGate`, which builds its structured
+// report separately — both branches must render the same neutral color.
+test("eval gate --reporter html renders an INCOMPLETE outcome from an inconclusive run as neutral", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "inconclusive" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.match(run.stdout, /badge-neutral">inconclusive/);
+    assert.equal(run.stdout.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// A cancelled run's `result` is `null` — not "failed", not "inconclusive" —
+// so the verdict this would compute BY DEFAULT from the run's own result
+// (were the override absent) falls through to "failed". The gate outcome is
+// "incomplete" (an execution state, not a verdict), and that must win.
+test("eval gate --reporter html renders a cancelled run's INCOMPLETE outcome as neutral, not failed", async () => {
+  const fixture = await startEvalFixture({ runOneStatus: "cancelled" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.match(run.stdout, /badge-neutral">inconclusive/);
+    assert.equal(run.stdout.includes('badge-fail">'), false);
   } finally {
     await fixture.close();
   }

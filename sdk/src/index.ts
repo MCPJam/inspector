@@ -1304,6 +1304,7 @@ export {
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
+  gateOutcomeVerdict,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
