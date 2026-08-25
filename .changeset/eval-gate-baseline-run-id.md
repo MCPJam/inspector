@@ -37,3 +37,8 @@ config hashes beyond the evaluation config hash) are recorded explicitly as
 
 SHA baselines are not supported yet — a 40-hex `--baseline` argument is
 rejected with a usage error naming the follow-up; only run ids resolve today.
+A blank `--baseline` (e.g. an unset CI variable interpolated into the flag)
+and a `--baseline` equal to `--run` are both usage errors too, rather than
+silently disabling the comparison or comparing a run against itself and
+reporting a clean "no regression" that never consulted an independent
+baseline.

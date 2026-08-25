@@ -295,27 +295,29 @@ test("the gate keeps exactly four exit codes under verdict policy 2", () => {
 
 // ── --baseline (runId half) ─────────────────────────────────────────────────
 
+const RUN_ID = "run-current";
+
 test("assertRunIdBaseline accepts an ordinary run id", () => {
-  assert.doesNotThrow(() => assertRunIdBaseline("run_abc123"));
-  assert.doesNotThrow(() => assertRunIdBaseline("run-1"));
+  assert.doesNotThrow(() => assertRunIdBaseline("run_abc123", RUN_ID));
+  assert.doesNotThrow(() => assertRunIdBaseline("run-1", RUN_ID));
 });
 
 test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => {
   const sha = "a".repeat(40);
   assert.throws(
-    () => assertRunIdBaseline(sha),
+    () => assertRunIdBaseline(sha, RUN_ID),
     /SHA baselines are not supported yet/,
   );
   assert.throws(
-    () => assertRunIdBaseline(sha.toUpperCase()),
+    () => assertRunIdBaseline(sha.toUpperCase(), RUN_ID),
     /SHA baselines are not supported yet/,
   );
   // One character short or long is not the SHA shape — a real run id could
   // plausibly look like this, so it must NOT be rejected.
-  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(39)));
-  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(41)));
+  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(39), RUN_ID));
+  assert.doesNotThrow(() => assertRunIdBaseline("a".repeat(41), RUN_ID));
   // Not all-hex: also not the SHA shape.
-  assert.doesNotThrow(() => assertRunIdBaseline("g".repeat(40)));
+  assert.doesNotThrow(() => assertRunIdBaseline("g".repeat(40), RUN_ID));
 });
 
 test("assertRunIdBaseline rejects a blank value, not just an absent one", () => {
@@ -327,11 +329,27 @@ test("assertRunIdBaseline rejects a blank value, not just an absent one", () => 
   // erroring, and the command would exit 0 on nothing the caller asked for.
   for (const blank of ["", "   ", "\t"]) {
     assert.throws(
-      () => assertRunIdBaseline(blank),
+      () => assertRunIdBaseline(blank, RUN_ID),
       /must not be blank/,
       JSON.stringify(blank),
     );
   }
+});
+
+test("assertRunIdBaseline rejects using the gated run as its own baseline", () => {
+  // A run compared against itself has identical samples on both sides: the
+  // pass-rate delta is zero and no deterministic scorer flips, so the
+  // comparative gate would report a clean "no regression" — not because
+  // nothing regressed, but because no independent baseline was ever
+  // consulted. A CI script that wires the same "latest run" variable into
+  // both --run and --baseline (a plausible copy-paste) must not get a green
+  // regression gate that validated nothing.
+  assert.throws(
+    () => assertRunIdBaseline(RUN_ID, RUN_ID),
+    /cannot be its own baseline/,
+  );
+  // A DIFFERENT run id is fine, even one that merely looks similar.
+  assert.doesNotThrow(() => assertRunIdBaseline(`${RUN_ID}-2`, RUN_ID));
 });
 
 test("assertRunIdBaseline rejects a whitespace-padded SHA, not just a bare one", () => {
@@ -340,7 +358,7 @@ test("assertRunIdBaseline rejects a whitespace-padded SHA, not just a bare one",
   // proved trimming doesn't change what the flag means.
   const padded = `  ${"a".repeat(40)}  `;
   assert.throws(
-    () => assertRunIdBaseline(padded),
+    () => assertRunIdBaseline(padded, RUN_ID),
     /SHA baselines are not supported yet/,
   );
 });

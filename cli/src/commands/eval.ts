@@ -1092,7 +1092,9 @@ async function runEvalGate(
   });
   // Parsed and validated BEFORE any network call, like `eval compare`'s own
   // policy: a malformed baseline flag exits 2 without spending a request.
-  if (options.baseline !== undefined) assertRunIdBaseline(options.baseline);
+  if (options.baseline !== undefined) {
+    assertRunIdBaseline(options.baseline, options.run);
+  }
   const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined

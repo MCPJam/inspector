@@ -170,7 +170,7 @@ export function reportForRun(
 const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
 
 /**
- * Reject a blank or SHA-shaped `--baseline` argument.
+ * Reject a blank, self-referential, or SHA-shaped `--baseline` argument.
  *
  * Blank is rejected explicitly: every downstream check treats
  * `options.baseline` as "present" with `!== undefined` but "enabled" with
@@ -181,17 +181,32 @@ const SHA_LIKE_BASELINE = /^[0-9a-f]{40}$/i;
  * would silently skip the baseline comparison and exit 0 on the threshold
  * gates alone, having gated on nothing the caller asked for.
  *
+ * `--baseline` equal to `--run` is the same failure mode wearing a different
+ * shape: a run compared against itself has identical samples on both sides,
+ * so `assessPassRateRegression` reports `no_regression` and the deterministic
+ * gate finds nothing that flipped — not because nothing regressed, but
+ * because no independent baseline was ever consulted. A CI script that wires
+ * the same "latest run" variable into both `--run` and `--baseline` (a
+ * plausible copy-paste) would otherwise get a green regression gate that
+ * validated nothing.
+ *
  * Run ids on this platform are never 40 lowercase-hex characters, so the SHA
  * discriminator cannot false-positive on a real run id; it exists purely to
  * catch the one shape a user is likely to hand it by habit — a git commit
  * SHA — before it reaches the network as a doomed run lookup.
  */
-export function assertRunIdBaseline(baseline: string): void {
+export function assertRunIdBaseline(baseline: string, runId: string): void {
   const normalized = baseline.trim();
   if (normalized === "") {
     throw usageError(
       `--baseline must not be blank. Pass a run id, or omit the flag entirely ` +
         `to gate on absolute thresholds only.`
+    );
+  }
+  if (normalized === runId) {
+    throw usageError(
+      `--baseline "${baseline}" is the same as --run "${runId}". A run cannot ` +
+        `be its own baseline — pass a different, earlier run id.`
     );
   }
   // Tested against the TRIMMED value: a whitespace-padded SHA
