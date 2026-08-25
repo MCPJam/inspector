@@ -420,6 +420,7 @@ export {
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
+  renderStructuredRunHtml,
 } from "./structured-reporting.js";
 export {
   buildEvalDecisionSummary,
@@ -1303,6 +1304,7 @@ export {
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
+  gateOutcomeVerdict,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";

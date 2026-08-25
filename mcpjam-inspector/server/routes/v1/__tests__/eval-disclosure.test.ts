@@ -46,6 +46,7 @@ vi.mock("../../../config.js", async (importOriginal) => {
 import evalDisclosure from "../eval-disclosure.js";
 import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
+import { RUNNER_CAPABILITIES } from "../../../services/evals/runner-capabilities.js";
 
 const PROJECT = "proj_a";
 const SUITE = "suite_a";
@@ -360,6 +361,79 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     const body = (await res.json()) as any;
     expect(body.code).toBe("VALIDATION_ERROR");
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards ?host as namedHostId — the G4c host axis", async () => {
+    queryMock.mockResolvedValue(baseDisclosure());
+    await get("?host=host_1");
+    expect(queryMock).toHaveBeenCalledWith(
+      "testSuites:getRunDisclosure",
+      expect.objectContaining({ suiteId: SUITE, namedHostId: "host_1" })
+    );
+  });
+
+  it("ASSERTS runnerCapabilities from this process — never accepts them from the query", async () => {
+    // The same reasoning that lets this route compose `execution.locus` from
+    // HOSTED_MODE: the executing process is the only honest source for what
+    // it can run. A query-supplied capability would let a caller claim a
+    // harness this runner cannot execute and have the disclosure believe it.
+    queryMock.mockResolvedValue(baseDisclosure());
+    await get("?host=host_1&runnerCapabilities=totally-made-up");
+    const args = queryMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(args.runnerCapabilities).toEqual(["harness-execution"]);
+  });
+
+  it("sends the SAME capability list the launch declares, so both answers agree", async () => {
+    // One shared constant. A disclosure computed from a different list than
+    // `startSuiteRunWithRecorder` declares would describe an engine the
+    // launch never uses — precisely what this contract exists to rule out.
+    queryMock.mockResolvedValue(baseDisclosure());
+    await get();
+    const args = queryMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(args.runnerCapabilities).toEqual([...RUNNER_CAPABILITIES]);
+  });
+
+  it("answers 404 — not a 502 incident page — for a host that is not attached", async () => {
+    // The backend refuses this with a STRUCTURED code precisely so it can be
+    // told apart here. A plain `Error` would redact to "Server Error" in
+    // production, survive the preflight below (the caller CAN see the suite),
+    // and land on the incident path: a 502 plus a Sentry capture for every
+    // stale or detached host id a client still holds.
+    queryMock.mockRejectedValue(
+      new Error(
+        'Uncaught ConvexError: {"code":"DISCLOSURE_HOST_NOT_ATTACHED","message":"That host is not attached to this suite, so it is not a plan this suite could launch."}'
+      )
+    );
+    const res = await get("?host=host_1");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("NOT_FOUND");
+    expect(body.message).toMatch(/not attached/i);
+  });
+
+  it("reads the structured refusal off err.data too, not only the message", async () => {
+    // `err.data` does not survive every Convex client boundary intact, so the
+    // route matches both shapes — this pins the one the message match misses.
+    const structured = Object.assign(new Error("Server Error"), {
+      data: { code: "DISCLOSURE_HOST_NOT_ATTACHED", message: "nope" },
+    });
+    queryMock.mockRejectedValue(structured);
+    const res = await get("?host=host_1");
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects host together with either environment spelling — one axis per plan", async () => {
+    for (const query of [
+      "?host=host_1&environmentId=env_1",
+      "?host=host_1&environmentIds=env_1,env_2",
+    ]) {
+      vi.clearAllMocks();
+      const res = await get(query);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(queryMock).not.toHaveBeenCalled();
+    }
   });
 
   it("is on the guest allowlist, GET-only", () => {

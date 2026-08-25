@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { useRunDisclosureMock } = vi.hoisted(() => ({
@@ -568,13 +568,57 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     ).toBeInTheDocument();
   });
 
-  it("never fetches on the host axis — renders a static unavailable hint instead", () => {
-    // `testSuites:getRunDisclosure` has no host selector: fetching here would
-    // silently return the suite-base disclosure and present it as the plan
-    // for a host-targeted launch, which can pin a different model/rail.
-    // Mirrors the SDK's `isHostAxisLaunch` refusal for the same reason.
+  it("FETCHES for a single attached host, passing namedHostId (G4c un-refusal)", () => {
+    // `testSuites:getRunDisclosure` takes `namedHostId` since G4c, so the one
+    // host Run all would target is disclosed for real — engine and sandbox
+    // read off that host's own config. Before G4c this skipped the fetch and
+    // rendered a static refusal, because the only available query was the
+    // selector-less suite-base derivation a host config can contradict.
+    useRunDisclosureMock.mockReturnValue(stateOf({ status: "ready" }));
     render(
-      <SuiteRunDisclosureHint suiteId="suite-1" hostAxis environmentIds={[]} />,
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={[]}
+        hostIds={["host-1"]}
+      />,
+    );
+    expect(useRunDisclosureMock).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", namedHostId: "host-1" }),
+    );
+    expect(
+      screen.getByLabelText("What running this suite discloses"),
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT send a host when environments are attached — the environment axis wins", () => {
+    // Same precedence `computeRunTargets` uses. Sending both would be the
+    // one-axis violation the route rejects with a 400.
+    useRunDisclosureMock.mockReturnValue(stateOf({ status: "ready" }));
+    render(
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={["env-1"]}
+        hostIds={["host-1"]}
+      />,
+    );
+    const call = useRunDisclosureMock.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(call.environmentIds).toEqual(["env-1"]);
+    expect(call.namedHostId).toBeUndefined();
+  });
+
+  it("never fetches for SEVERAL hosts — one plan, one disclosure", () => {
+    // The remaining honest refusal: the contract answers for one launch plan,
+    // so a fan-out across hosts has no single engine or model set to
+    // describe. Mirrors the SDK's `isMultiTargetHostLaunch` skip.
+    render(
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={[]}
+        hostIds={["host-1", "host-2"]}
+      />,
     );
     expect(useRunDisclosureMock).not.toHaveBeenCalled();
     expect(
@@ -582,18 +626,44 @@ describe("SuiteRunDisclosureHint — gate-then-mount", () => {
     ).toBeInTheDocument();
   });
 
-  it("host-axis summary reads distinctly from a generic fetch failure", () => {
-    render(<SuiteRunDisclosureHint suiteId="suite-1" hostAxis />);
+  it("multi-target summary reads distinctly from a generic fetch failure, and CARRIES the recovery instruction", () => {
+    // The instruction has to live in the SUMMARY: `describeRunDisclosureDetail`
+    // bails to `[]` for every non-ready state and never receives `error`, so
+    // guidance parked on `error.message` would never reach a user.
+    const summary = formatRunDisclosureSummary({
+      status: "error",
+      disclosure: null,
+      error: {
+        message: "n/a",
+        contractUnavailable: false,
+        multiTargetUnavailable: true,
+      },
+    });
+    expect(summary).toMatch(/covers one target/);
+    expect(summary).toMatch(/Run one host at a time/);
     expect(
       formatRunDisclosureSummary({
         status: "error",
         disclosure: null,
-        error: {
-          message: "n/a",
-          contractUnavailable: false,
-          hostAxisUnavailable: true,
-        },
+        error: { message: "boom", contractUnavailable: false },
       }),
-    ).toBe("Disclosure unavailable for host-targeted runs");
+    ).not.toBe(summary);
+  });
+
+  it("RENDERS the multi-target recovery instruction in the tooltip, not just returns it", () => {
+    // Guards the actual failure mode: a string that exists but never paints.
+    render(
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={[]}
+        hostIds={["host-1", "host-2"]}
+      />,
+    );
+    // Radix opens the tooltip on FOCUS (the trigger's own onClick only stops
+    // propagation) — a click alone leaves the content unmounted in jsdom.
+    fireEvent.focus(screen.getByLabelText("What running this suite discloses"));
+    expect(
+      screen.getAllByText(/Run one host at a time/).length,
+    ).toBeGreaterThan(0);
   });
 });
