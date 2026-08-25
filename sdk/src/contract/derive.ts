@@ -412,7 +412,19 @@ export function allGatingScorersPassed(
     let unresolved = false;
     for (const row of rows) {
       if (row.status === "scored") {
-        if (row.passed === false) failed = true;
+        // RE-DERIVED AGAINST THE DEFINITION, never read off the row. A row's
+        // `passed` is only checked to be internally consistent with the row's
+        // OWN `passThreshold`, which is a field the row supplies; the
+        // threshold with authority is the one on the definition this row
+        // joined to, because that is what the definition hash was taken over.
+        // See the mirror in `convex/lib/scoreContract.ts` for the full note.
+        // Conservative in BOTH directions: the row must assert a pass AND the
+        // definition's own threshold must agree.
+        const passed =
+          row.passed !== false &&
+          typeof row.value === "number" &&
+          row.value >= definition.passThreshold;
+        if (!passed) failed = true;
         continue;
       }
       // `error` / `skipped`: the DEFINITION's own policy decides, so an author

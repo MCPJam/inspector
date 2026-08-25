@@ -1331,6 +1331,68 @@
             "predicate:a"
           ]
         }
+      },
+      {
+        "__label": "V14 — a row whose passThreshold undercuts its definition's",
+        "__why": "The row is INTERNALLY consistent (0.2 >= 0.1, so `passed: true` survives validateScoreRow) and joins correctly, but the threshold it claims to have been scored under is the DEFINITION's 0.8. Trusting the row's own `passed` would let a stale or crafted client author a pass out of a failing value. The threshold is a hash input, so the joined definition is the one this row names, and its threshold is the only one with authority.",
+        "definitions": [
+          {
+            "scorerId": "predicate:strict",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:strict",
+            "deterministic": true,
+            "passThreshold": 0.8,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:strict",
+            "status": "scored",
+            "value": 0.2,
+            "passThreshold": 0.1,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:strict"
+          ],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V15 — a row lying the other way is not re-derived into a pass",
+        "__why": "The mirror image of V14: this row's threshold OVERSTATES the definition's, so re-deriving from the definition alone (0.5 >= 0.1) would turn a reported failure into a pass. The derivation is conservative in both directions — the row must assert a pass AND the definition's threshold must agree — so neither lie buys a green.",
+        "definitions": [
+          {
+            "scorerId": "predicate:lax",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:lax",
+            "deterministic": true,
+            "passThreshold": 0.1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:lax",
+            "status": "scored",
+            "value": 0.5,
+            "passThreshold": 0.9,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:lax"
+          ],
+          "unresolved": []
+        }
       }
     ]
   }
