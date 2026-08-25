@@ -50,7 +50,7 @@ import v1Routes from "../index.js";
 function request(
   method: string,
   path: string,
-  body?: Record<string, unknown>,
+  body?: Record<string, unknown>
 ): Promise<Response> {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
@@ -62,7 +62,7 @@ function request(
         Authorization: "Bearer tok",
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    }),
+    })
   );
 }
 
@@ -189,7 +189,7 @@ describe("v1 gate waivers", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuiteRun"
         ? { ...RUN_DOC, projectId: "other" }
-        : null,
+        : null
     );
     const response = await request("POST", BASE, {
       reason: "why",
@@ -202,17 +202,32 @@ describe("v1 gate waivers", () => {
   // ── The five refusals ─────────────────────────────────────────────────────
 
   const REFUSALS = [
-    ["gate_waiver_unscoped_suite", "This suite does not belong to an organization, so a gate waiver cannot be recorded against it. A waiver is an organization-scoped, audited override; attach the suite to a project or workspace that belongs to an organization and try again."],
-    ["gate_waiver_reason_empty", "A gate waiver requires a reason. Say why this gate is being overridden — the reason is the record."],
-    ["gate_waiver_reason_too_long", "A gate waiver reason may be at most 500 characters."],
-    ["gate_waiver_expiry_not_future", "A gate waiver must expire in the future. An expiry at or before now would be a waiver that never applies."],
-    ["gate_waiver_expiry_too_far", "A gate waiver may not last longer than 30 days. Waive for as long as the fix actually needs, and re-waive if it needs longer."],
+    [
+      "gate_waiver_unscoped_suite",
+      "This suite does not belong to an organization, so a gate waiver cannot be recorded against it. A waiver is an organization-scoped, audited override; attach the suite to a project or workspace that belongs to an organization and try again.",
+    ],
+    [
+      "gate_waiver_reason_empty",
+      "A gate waiver requires a reason. Say why this gate is being overridden — the reason is the record.",
+    ],
+    [
+      "gate_waiver_reason_too_long",
+      "A gate waiver reason may be at most 500 characters.",
+    ],
+    [
+      "gate_waiver_expiry_not_future",
+      "A gate waiver must expire in the future. An expiry at or before now would be a waiver that never applies.",
+    ],
+    [
+      "gate_waiver_expiry_too_far",
+      "A gate waiver may not last longer than 30 days. Waive for as long as the fix actually needs, and re-waive if it needs longer.",
+    ],
   ] as const;
 
   for (const [code, message] of REFUSALS) {
     it(`answers 400 for ${code} and forwards the platform's own message`, async () => {
       convexMutationMock.mockRejectedValue(
-        convexError({ kind: "gate_waiver_refused", code, message }),
+        convexError({ kind: "gate_waiver_refused", code, message })
       );
       const response = await request("POST", BASE, {
         reason: "x",
@@ -240,7 +255,7 @@ describe("v1 gate waivers", () => {
         kind: "forbidden",
         action: "gate.waive",
         message: "Insufficient permissions for gate.waive: requires manage",
-      }),
+      })
     );
     const response = await request("POST", BASE, {
       reason: "x",
@@ -273,7 +288,7 @@ describe("v1 gate waivers", () => {
 
   it("answers null — not 404 — when no waiver is in force", async () => {
     convexQueryMock.mockImplementation((name: string) =>
-      name === "testSuites:getTestSuiteRun" ? RUN_DOC : null,
+      name === "testSuites:getTestSuiteRun" ? RUN_DOC : null
     );
     const response = await request("GET", BASE);
     expect(response.status).toBe(200);
@@ -287,7 +302,12 @@ describe("v1 gate waivers", () => {
     convexMutationMock.mockResolvedValue({
       status: "revoked",
       republishedChecks: 1,
-      waiver: { ...WAIVER_ROW, active: false, revokedAt: NOW, revokedBy: "usr_2" },
+      waiver: {
+        ...WAIVER_ROW,
+        active: false,
+        revokedAt: NOW,
+        revokedBy: "usr_2",
+      },
     });
     const response = await request("DELETE", `${BASE}/wv_1`);
     expect(response.status).toBe(200);
@@ -303,7 +323,12 @@ describe("v1 gate waivers", () => {
     convexMutationMock.mockResolvedValue({
       status: "already_revoked",
       republishedChecks: 0,
-      waiver: { ...WAIVER_ROW, active: false, revokedAt: NOW - 60_000, revokedBy: "usr_2" },
+      waiver: {
+        ...WAIVER_ROW,
+        active: false,
+        revokedAt: NOW - 60_000,
+        revokedBy: "usr_2",
+      },
     });
     const response = await request("DELETE", `${BASE}/wv_1`);
     expect(response.status).toBe(200);
@@ -318,7 +343,7 @@ describe("v1 gate waivers", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuiteRun"
         ? { ...RUN_DOC, gateWaiver: { ...WAIVER_ROW, id: "wv_other" } }
-        : null,
+        : null
     );
     const response = await request("DELETE", `${BASE}/wv_1`);
     expect(response.status).toBe(404);
@@ -340,9 +365,12 @@ describe("the run projection carries the waiver", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuiteRun"
         ? { ...RUN_DOC, gateWaiver: WAIVER_ROW }
-        : null,
+        : null
     );
-    const response = await request("GET", "/api/v1/projects/p1/eval-runs/run_1");
+    const response = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-runs/run_1"
+    );
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
     expect(body.gateWaiver).toMatchObject({
@@ -358,9 +386,12 @@ describe("the run projection carries the waiver", () => {
     // `null` lets a caller tell "no waiver" from "a deployment that does not
     // report one"; omitting it collapses those into one answer.
     convexQueryMock.mockImplementation((name: string) =>
-      name === "testSuites:getTestSuiteRun" ? RUN_DOC : null,
+      name === "testSuites:getTestSuiteRun" ? RUN_DOC : null
     );
-    const response = await request("GET", "/api/v1/projects/p1/eval-runs/run_1");
+    const response = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-runs/run_1"
+    );
     const body = (await response.json()) as any;
     expect(body).toHaveProperty("gateWaiver");
     expect(body.gateWaiver).toBeNull();

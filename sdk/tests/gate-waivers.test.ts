@@ -110,7 +110,11 @@ describe("applyGateWaiver — what may be waived", () => {
       outcome: "usage_error",
       scoreIntegrity: "valid",
       verdicts: [
-        { gate: "minimumScorerPassRate:x", status: "usage_error", message: "unknown scorer" },
+        {
+          gate: "minimumScorerPassRate:x",
+          status: "usage_error",
+          message: "unknown scorer",
+        },
       ],
     };
     expect(applyGateWaiver(usage, waiver(), NOW).outcome).toBe("usage_error");
@@ -156,7 +160,9 @@ describe("applyGateWaiver — no PERMANENT waiver", () => {
 
 describe("formatGateReport — the human artifact names who, why and until", () => {
   it("says WAIVED, names the granter, the reason and the expiry", () => {
-    const text = formatGateReport(applyGateWaiver(failedReport(), waiver(), NOW));
+    const text = formatGateReport(
+      applyGateWaiver(failedReport(), waiver(), NOW)
+    );
     expect(text).toContain("Gate: WAIVED");
     expect(text).toContain("alice@example.com");
     expect(text).toContain("hotfix ships today; regression tracked in ENG-1");
@@ -240,9 +246,7 @@ describe("JUnit reporter", () => {
     // is what the waiver was granted for) and it does not render as a clean
     // green row (which would be the silent waiver the charter forbids).
     expect(xml).toContain("<skipped message=");
-    expect(xml).not.toMatch(
-      /<testcase name="Eval gate \(WAIVED\)"[^>]*\/>/
-    );
+    expect(xml).not.toMatch(/<testcase name="Eval gate \(WAIVED\)"[^>]*\/>/);
   });
 
   it("names who, why and until when in the message a CI UI displays", () => {

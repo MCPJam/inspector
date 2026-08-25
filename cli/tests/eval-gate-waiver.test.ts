@@ -47,7 +47,7 @@ function run(gateWaiver: PlatformEvalRun["gateWaiver"]): PlatformEvalRun {
 }
 
 function waiverRow(
-  overrides: Partial<NonNullable<PlatformEvalRun["gateWaiver"]>> = {},
+  overrides: Partial<NonNullable<PlatformEvalRun["gateWaiver"]>> = {}
 ) {
   return {
     id: "wv_1",
@@ -105,7 +105,7 @@ test("a waiver never converts an INFRASTRUCTURE outcome into a pass", () => {
   const waived = applyGateWaiver(
     incomplete,
     activeWaiverForRun(run(waiverRow()), NOW),
-    NOW,
+    NOW
   );
   assert.equal(waived.outcome, "incomplete");
   assert.equal(evalGateExitCode(waived), EVAL_GATE_INCOMPLETE_EXIT_CODE);
@@ -117,7 +117,7 @@ test("a real failure is waived, and stays distinguishable from a pass", () => {
   const waived = applyGateWaiver(
     failed,
     activeWaiverForRun(run(waiverRow()), NOW),
-    NOW,
+    NOW
   );
   assert.equal(waived.outcome, "waived");
   assert.notEqual(waived.outcome, "passed");
@@ -134,7 +134,10 @@ test("an EXPIRED waiver is ignored even when the platform still calls it active"
   // stops a time-boxed waiver from silently becoming a permanent one.
   const stale = waiverRow({ expiresAt: NOW - 1, active: true });
   assert.equal(activeWaiverForRun(run(stale), NOW), undefined);
-  assert.equal(applyGateWaiver(failed, activeWaiverForRun(run(stale), NOW), NOW).outcome, "failed");
+  assert.equal(
+    applyGateWaiver(failed, activeWaiverForRun(run(stale), NOW), NOW).outcome,
+    "failed"
+  );
 });
 
 test("a REVOKED waiver is ignored", () => {
@@ -143,7 +146,10 @@ test("a REVOKED waiver is ignored", () => {
 });
 
 test("`active: false` is honored on its own", () => {
-  assert.equal(activeWaiverForRun(run(waiverRow({ active: false })), NOW), undefined);
+  assert.equal(
+    activeWaiverForRun(run(waiverRow({ active: false })), NOW),
+    undefined
+  );
 });
 
 test("`null` and an ABSENT field both mean no waiver, and neither throws", () => {
