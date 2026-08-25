@@ -353,7 +353,7 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
     redacted.decisionSummary
       ? renderHtmlDecisionSummary(redacted.decisionSummary)
       : "",
-    renderHtmlFailedCases(failedCases),
+    renderHtmlFailedCases(failedCases, status),
   ]
     .filter((section) => section.length > 0)
     .join("\n");
@@ -532,25 +532,46 @@ function renderHtmlDecisionCase(item: EvalDecisionSummaryCase): string {
 </article>`;
 }
 
-function renderHtmlFailedCases(cases: StructuredCaseResult[]): string {
+/**
+ * `passed: false` on a case is not the same claim when the report's own
+ * verdict is `inconclusive`: a gate/compare report's synthetic case for a
+ * fetch failure, cancellation, timeout, or missing baseline is `passed:
+ * false` too, but it is a diagnostic explaining why nothing was measured,
+ * not a confirmed regression. Painting it identically to a real failure —
+ * red border, red error text, under a "Failures" heading — makes exactly
+ * the claim B4's contract forbids. So this section takes the report's
+ * overall status and renders every case here neutrally when the report
+ * itself is neutral, since there is no per-case verdict to check instead.
+ */
+function renderHtmlFailedCases(
+  cases: StructuredCaseResult[],
+  status: StructuredRunHtmlStatus
+): string {
   if (cases.length === 0) return "";
 
-  const items = cases.map((entry) => renderHtmlCase(entry)).join("\n");
+  const items = cases.map((entry) => renderHtmlCase(entry, status)).join("\n");
+  const heading =
+    status === "neutral" ? "Not measured" : `Failures (${cases.length})`;
 
   return `<section class="failed-cases">
-  <h2>Failures (${cases.length})</h2>
+  <h2>${heading}</h2>
   ${items}
 </section>`;
 }
 
-function renderHtmlCase(entry: StructuredCaseResult): string {
+function renderHtmlCase(
+  entry: StructuredCaseResult,
+  status: StructuredRunHtmlStatus
+): string {
   const details = entry.details
     ? `<pre class="details">${escapeHtml(JSON.stringify(entry.details, null, 2))}</pre>`
     : "";
+  const caseClass = status === "neutral" ? "case-neutral" : "case-fail";
+  const errorClass = status === "neutral" ? "note" : "error";
 
-  return `<article class="case case-fail">
+  return `<article class="case ${caseClass}">
   <h3>${escapeHtml(entry.title)} <span class="note">(${escapeHtml(entry.category)})</span></h3>
-  ${entry.error ? `<p class="error">${escapeHtml(entry.error)}</p>` : ""}
+  ${entry.error ? `<p class="${errorClass}">${escapeHtml(entry.error)}</p>` : ""}
   ${details}
 </article>`;
 }
@@ -584,6 +605,7 @@ const STRUCTURED_RUN_HTML_STYLE = `
   .badge.badge-fail { background: #cf222e; color: #fff; }
   .badge.badge-neutral { background: #9a6700; color: #fff; }
   article.case-fail { border-left: 4px solid #cf222e; }
+  article.case-neutral { border-left: 4px solid #9a6700; }
   .meta, .note { color: GrayText; font-size: 0.9rem; }
   table.bucket-table { border-collapse: collapse; margin: 0.5rem 0 1rem; width: 100%; }
   table.bucket-table th, table.bucket-table td {

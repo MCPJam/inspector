@@ -359,6 +359,39 @@ describe("renderStructuredRunHtml", () => {
     expect(html).not.toContain('badge-fail">inconclusive');
   });
 
+  it("renders non-passed cases neutrally, not as failures, when the report verdict is inconclusive", () => {
+    // A gate/compare report's synthetic case for a fetch failure, timeout,
+    // or missing baseline is `passed: false` too — same as a real
+    // regression — but it's a diagnostic explaining why nothing was
+    // measured, not a confirmed failure. It must not get the same red
+    // border/text and "Failures" heading a real failure gets.
+    const html = renderStructuredRunHtml(
+      baseReport({
+        passed: false,
+        verdict: "inconclusive",
+        cases: [
+          {
+            id: "gate",
+            title: "Eval gate",
+            category: "gate",
+            passed: false,
+            error: "run is cancelled; no verdict was established",
+          },
+        ],
+        summary: summarizeStructuredCases([
+          { id: "gate", title: "Eval gate", category: "gate", passed: false },
+        ]),
+      })
+    );
+
+    // "case-fail" is still present as a static CSS rule in <style>, so check
+    // the actual article element's class, not the whole document.
+    expect(html).not.toMatch(/<article class="case case-fail">/);
+    expect(html).toMatch(/<article class="case case-neutral">/);
+    expect(html).not.toMatch(/<p class="error">/);
+    expect(html).not.toMatch(/Failures \(\d+\)/);
+  });
+
   it("renders a passed verdict as pass and a failed verdict as fail", () => {
     const passedHtml = renderStructuredRunHtml(
       baseReport({ passed: true, verdict: "passed" })
