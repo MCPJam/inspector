@@ -38,7 +38,7 @@ const GUEST_PRICING_URL = "https://www.mcpjam.com/pricing";
 // Design owns the hero art (Figma node 136-92). It's dropped into client/public
 // by design; the modal degrades to no image if the asset isn't present yet, so
 // shipping the flag ahead of the export can't render a broken image.
-const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.svg";
+const GUEST_WALL_ILLUSTRATION = "/guest-credit-wall.png";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
