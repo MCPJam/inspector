@@ -1439,6 +1439,12 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        // Harness engine only: it builds its own MCP tool set (host-executed
+        // delivery) rather than consuming `allTools`, so the host's
+        // tool-construction policies have to reach it separately. Inert on the
+        // emulated path, which is handed tools already built by prepareChatV2.
+        respectToolVisibility,
+        ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(scopeStepUpEngineResume
           ? { scopeStepUpResume: scopeStepUpEngineResume }
           : {}),
