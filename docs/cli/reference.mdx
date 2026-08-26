@@ -1456,6 +1456,15 @@ regressed is not consent to ship on evidence nobody finished reviewing. Fix it
 by re-running with the approvals the cases need, or with the unsupported cases
 excluded.
 
+**The baseline is checked too.** A `--baseline` / `--baseline-sha` gate rests
+on two runs, so `eval gate` reads the resolved baseline run's own
+`importEligibility` and returns `3` when the baseline cannot gate — the compare
+response reports counters, not provenance, so the baseline is fetched by id
+rather than assumed sound. Without that, a baseline whose own approximations
+were never approved could still produce a confident "no regression". A baseline
+run that cannot be read at all is also `3`: "we could not look" is not "it is
+fine".
+
 A run whose eligibility is `legacy` (no imported cases at all — every native
 run) or `eligible` goes through the ordinary verdict logic unchanged. A server
 that reports no eligibility at all behaves exactly as it did before the field

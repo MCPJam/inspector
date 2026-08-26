@@ -69,7 +69,9 @@ function parsePercent(raw: string, flag: string): number {
   // the worst possible way for a typo to fail.
   const value = raw.trim() === "" ? NaN : Number(raw);
   if (!Number.isFinite(value) || value < 0 || value > 100) {
-    throw usageError(`${flag} must be a number between 0 and 100, got "${raw}".`);
+    throw usageError(
+      `${flag} must be a number between 0 and 100, got "${raw}".`
+    );
   }
   return passRateFractionFromPercent(value);
 }
@@ -208,7 +210,7 @@ export function importIneligibleReport(run: PlatformEvalRun): GateReport {
           .map((issue) =>
             [issue.code, issue.caseKey ?? issue.testCaseId, issue.toolName]
               .filter(Boolean)
-              .join(" "),
+              .join(" ")
           )
           .join("; ")}`;
   return {
@@ -741,8 +743,38 @@ export type BaselineComparisonResult = {
  * `non_gateable` verdict rather than throwing, so the caller can always
  * merge this result with the threshold report instead of discarding it.
  */
+/**
+ * The baseline run itself, or `undefined` when it cannot be read.
+ *
+ * Undefined means "we could not look", which the caller turns into
+ * `incomplete` — the same fail-closed reading the surrounding code already
+ * gives a compare call that throws. A deployment gate that silently skipped
+ * this check on a transient error would be trustworthy only when the network
+ * happened to be up.
+ */
+async function readBaselineRun(
+  input: {
+    client: Pick<PlatformApiClient, "getEvalRun">;
+    signal: AbortSignal;
+    projectId: string;
+  },
+  baseRunId: string
+): Promise<PlatformEvalRun | undefined> {
+  try {
+    return await input.client.getEvalRun(
+      { projectId: input.projectId, runId: baseRunId },
+      { signal: input.signal }
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export async function evaluateBaselineComparison(input: {
-  client: Pick<PlatformApiClient, "compareEvalRun" | "listEvalRunIterations">;
+  client: Pick<
+    PlatformApiClient,
+    "compareEvalRun" | "listEvalRunIterations" | "getEvalRun"
+  >;
   signal: AbortSignal;
   projectId: string;
   runId: string;
@@ -779,6 +811,48 @@ export async function evaluateBaselineComparison(input: {
               : `could not compare against the baseline: ${detail}`,
           },
         ],
+      },
+    };
+  }
+
+  // THE BASELINE'S OWN IMPORT EVIDENCE.
+  //
+  // A regression gate rests on TWO runs, so "a run with incomplete import
+  // evidence cannot be used as a deployment gate" has to cover the one being
+  // compared against as well. `PlatformRunCompareSide` carries no eligibility
+  // — the compare wire reports counters, not provenance — so the baseline is
+  // fetched by id rather than assumed sound. Without this, a baseline whose
+  // own approximations were never approved could still produce a confident
+  // "no regression" and let a release through on evidence the platform has
+  // already said is not gateable.
+  const baseRun = await readBaselineRun(input, compare.baseRun.id);
+  if (baseRun === undefined) {
+    return {
+      report: {
+        outcome: "incomplete",
+        scoreIntegrity: "unknown",
+        verdicts: [
+          {
+            gate: "baseline",
+            status: "non_gateable",
+            message:
+              "could not read the baseline run's import evidence, so the " +
+              "comparison cannot be trusted as a gate",
+          },
+        ],
+      },
+    };
+  }
+  if (importEvidenceBlocksGate(baseRun)) {
+    const report = importIneligibleReport(baseRun);
+    return {
+      report: {
+        ...report,
+        verdicts: report.verdicts.map((verdict) => ({
+          ...verdict,
+          gate: "baseline",
+          message: `baseline run ${compare.baseRun.runNumber}: ${verdict.message}`,
+        })),
       },
     };
   }

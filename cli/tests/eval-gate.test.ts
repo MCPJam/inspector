@@ -703,7 +703,15 @@ function stubClient(
   compare:
     | PlatformRunCompare
     | (() => Promise<PlatformRunCompare>)
-    | { reject: unknown }
+    | { reject: unknown },
+  /**
+   * What `getEvalRun` reports for the BASELINE run.
+   *
+   * Defaults to a run carrying no eligibility at all, which is "no opinion" —
+   * every pre-existing baseline, and the behaviour these tests assert when the
+   * baseline is sound.
+   */
+  baseRun: unknown = { id: "run_base", importEligibility: undefined }
 ) {
   return {
     async compareEvalRun() {
@@ -714,8 +722,32 @@ function stubClient(
     async listEvalRunIterations() {
       return { items: [], nextCursor: undefined };
     },
+    async getEvalRun() {
+      if (
+        baseRun &&
+        typeof baseRun === "object" &&
+        "reject" in (baseRun as Record<string, unknown>)
+      ) {
+        throw (baseRun as { reject: unknown }).reject;
+      }
+      return baseRun;
+    },
   };
 }
+
+/** A baseline run whose own import evidence the platform says is not gateable. */
+const INELIGIBLE_BASE_RUN = {
+  id: "run_base",
+  importEligibility: {
+    status: "incomplete" as const,
+    gateable: false,
+    importedCaseCount: 2,
+    claimedExactCaseIds: [],
+    approvedApproximationCaseIds: [],
+    approvedApproximationReceipts: [],
+    issues: [{ code: "APPROXIMATION_NOT_APPROVED", testCaseId: "tc_1" }],
+  },
+};
 
 test("evaluateBaselineComparison: a real regression evaluates and carries provenance", async () => {
   const result = await evaluateBaselineComparison({
@@ -736,6 +768,51 @@ test("evaluateBaselineComparison: a real regression evaluates and carries proven
   assert.equal(
     notRecorded.configHashesBeyondEvaluationConfigHash,
     "notRecorded"
+  );
+});
+
+test("evaluateBaselineComparison: a baseline that cannot gate blocks the comparison", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(compareWire(), INELIGIBLE_BASE_RUN) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: RUN_BASELINE,
+    policy: { passRateRegression: {} },
+  });
+  // The compare wire says this is a regression, and on the current run's own
+  // evidence it would be `failed`. But a gate rests on BOTH runs, and the
+  // baseline's evidence is explicitly not gateable — so the comparison is
+  // `incomplete`, which no waiver can override, rather than a confident
+  // verdict resting on provenance nobody finished reviewing.
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.gate, "baseline");
+  assert.match(result.report.verdicts[0]?.message ?? "", /baseline run 1/);
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /APPROXIMATION_NOT_APPROVED/
+  );
+});
+
+test("evaluateBaselineComparison: an unreadable baseline run is incomplete, not a pass", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(compareWire(), {
+      reject: new Error("network down"),
+    }) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: RUN_BASELINE,
+    policy: { passRateRegression: {} },
+  });
+  // "We could not look" is not "it is fine". Skipping the check on a transient
+  // error would make the gate trustworthy only when the network happened to be
+  // up.
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.gate, "baseline");
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /could not read the baseline run's import evidence/
   );
 });
 
@@ -1294,6 +1371,11 @@ test("evaluateBaselineComparison: a SHA baseline sends baseCommitSha, not baseRu
     },
     async listEvalRunIterations() {
       return { items: [], nextCursor: undefined };
+    },
+    // The baseline's own import evidence is read by id whichever selector put
+    // it on the wire; this one carries none, so it does not block.
+    async getEvalRun() {
+      return { id: "run_base", importEligibility: undefined };
     },
   };
   const result = await evaluateBaselineComparison({
