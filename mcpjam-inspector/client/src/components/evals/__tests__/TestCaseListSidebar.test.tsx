@@ -55,6 +55,48 @@ describe("TestCaseListSidebar", () => {
     expect(onRunTestCase).toHaveBeenCalledWith(baseCase);
   });
 
+  it("shows each case's import claim, in the same words the overview uses", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[
+          {
+            ...baseCase,
+            import: { status: "exact", note: "1:1 with the upstream form." },
+          },
+          {
+            ...baseCase,
+            _id: "case-2",
+            title: "Approximated case",
+            import: { status: "approximated", note: "Mapped to negative." },
+          },
+          { ...baseCase, _id: "case-3", title: "Native case" },
+        ]}
+        suiteId="suite-1"
+        selectedTestId="case-1"
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        suite={baseSuite}
+        onRunTestCase={vi.fn()}
+        runningTestCaseId={null}
+        connectedServerNames={new Set(["asana"])}
+      />,
+    );
+
+    // The same copy as the overview, because a converted case's
+    // trustworthiness is not something a reader should have to reconcile
+    // across two surfaces.
+    expect(screen.getByText("claimed exact")).toBeInTheDocument();
+    expect(screen.getByText("approximated")).toBeInTheDocument();
+    expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
+    // Three cases, two claims: the native one gets no badge.
+    expect(screen.getAllByTestId(/^import-claim-/)).toHaveLength(2);
+  });
+
   it("disables selected-case run when no case is selected", () => {
     renderWithProviders(
       <TestCaseListSidebar

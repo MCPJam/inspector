@@ -24,6 +24,8 @@ import { buildSubmissionCasesFromRun } from "./run-submission";
 import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { ImportEvidenceCard } from "./import-evidence-card";
+import { useRunImportEligibility } from "./use-run-import-eligibility";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
@@ -416,6 +418,14 @@ export function RunDetailView({
         }),
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
+
+  // The run's own eligibility, from the canonical single-run query. The list
+  // projection this screen's `selectedRunDetails` usually comes from does not
+  // carry one, so reading it off that object would render every converted run
+  // as though it had no imported cases.
+  const { eligibility: runImportEligibility } = useRunImportEligibility(
+    selectedRunDetails._id,
+  );
 
   const {
     result: serverQualityResult,
@@ -831,6 +841,15 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      {/* FROZEN import evidence, from the run's own snapshot.
+          Fetched canonically rather than derived from the suite's current
+          cases: those get edited after runs finish, and recomputing would let
+          an edit rewrite what a finished run is shown to have decided. */}
+      <ImportEvidenceCard
+        eligibility={runImportEligibility}
+        className="mb-4"
+      />
+
       {!hideCiMetadata &&
         (selectedRunDetails.ciMetadata?.branch ||
           selectedRunDetails.ciMetadata?.commitSha ||
