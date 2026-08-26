@@ -15,10 +15,15 @@ const buttonVariants = cva(
           "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
           "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+        // The chrome's filled button. --secondary IS the linen ground, so a
+        // secondary button in the nav used to be invisible against it; the
+        // control fill plus its hairline is what separates the two.
         secondary:
-          "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
+          "bg-chrome-control text-secondary-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-hover",
+        // No fill at rest, chrome fill on hover. One token for both themes,
+        // so this no longer needs a dark-mode override.
         ghost:
-          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+          "hover:bg-chrome-hover hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

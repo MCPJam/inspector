@@ -58,9 +58,21 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
       item.disabled
         ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
         : isItemActive(item)
-        ? // Must be the *sidebar* accent: the linen ground (--sidebar) is the
-          // same value as --accent, so bg-accent would render invisible here.
-          "[&[data-active=true]]:bg-sidebar-accent cursor-pointer"
+        ? // The selected pill is the PANEL fill (--background, #FAF9F5) on the
+          // linen ground, with a 1px --divider stroke — a lit square, not a
+          // tinted one. It cannot be bg-accent: the ground (--sidebar) is the
+          // same value as --accent, so that renders invisible here.
+          //
+          // The bang is load-bearing. `sidebarMenuButtonVariants` already emits
+          // `data-[active=true]:bg-sidebar-accent`, which ties this on
+          // specificity, so without it the winner is whichever utility Tailwind
+          // happens to order last.
+          //
+          // The stroke is an inset shadow rather than a border so the pill keeps
+          // its box: a real border would shift the label 1px against every
+          // unselected sibling.
+          "[&[data-active=true]]:bg-background! cursor-pointer " +
+            "[&[data-active=true]]:shadow-[inset_0_0_0_1px_var(--divider)]"
         : "cursor-pointer"
     );
 
