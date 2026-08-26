@@ -85,15 +85,23 @@ test("an unknown field names the settable ones", () => {
  * and is what keeps a user-supplied key off the prototype chain.
  */
 test("inherited Object.prototype keys are unknown fields, not known ones", () => {
+  // Matched by substring, not by a RegExp built from the key: these keys are
+  // exactly the ones carrying regex-significant characters, and escaping them
+  // to build a pattern is work in service of nothing — the assertion only needs
+  // to know the message names the key.
+  const namesTheKey = (key: string) => (error: unknown) =>
+    error instanceof Error &&
+    error.message.includes(`Unknown client field "${key}"`);
+
   for (const key of ["constructor", "toString", "__proto__", "valueOf"]) {
     assert.throws(
       () => parseSetPair(`${key}=x`),
-      new RegExp(`Unknown client field "${key.replace("__", "__")}"`),
+      namesTheKey(key),
       `--set ${key} should be an unknown field`
     );
     assert.throws(
       () => buildSetBlock(undefined, [key]),
-      /Unknown client field/,
+      namesTheKey(key),
       `--unset ${key} should be an unknown field`
     );
   }
