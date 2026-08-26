@@ -25,12 +25,13 @@ reason — so no operation can ship without the question being answered.
 where a project selector is resolved, because callers usually pass a project
 name or nothing at all and the id exists only afterwards.
 
-Operation results are unchanged for direct SDK callers; the permalinks travel
-in an adapter envelope. `PlatformSessionLink` is now a `Pick` of the shared
-permalink shape — the same `{path, url}` wire contract, derived rather than
-restated. The eval-case operations additionally stamp `suiteId` on what they
-return (`PlatformEvalCaseWithSuite`), which a case's route needs and the REST
-projection has never carried.
+Permalinks never enter an operation's return type — they travel in an adapter
+envelope — so no direct SDK caller has to change for them. ONE result shape
+does change, additively: the eval-case operations now stamp `suiteId` on what
+they return (`PlatformEvalCaseWithSuite`), because a case's route needs its
+suite and the REST projection has never carried one. `PlatformSessionLink` is
+now a `Pick` of the shared permalink shape — the same `{path, url}` wire
+contract, derived rather than restated.
 
 `mcpjam cloud` prints `View: <url>` after human output and carries a typed
 `permalinks` array in `--format json`; `--quiet` is unchanged.
