@@ -1,26 +1,113 @@
 /**
- * The funnel panels' self-protection.
+ * The funnel panels: what they do when the query answers, and what they do
+ * when it cannot.
  *
- * These ship AHEAD of the backend query that answers them, so `useQuery`
- * throwing is the expected state during the dark window — and in any tree
- * without a `ConvexProvider`, which is every test that renders a host panel.
+ * `useQuery` throws when the query is not deployed yet — the expected state
+ * during the dark window — and an `ErrorBoundary` only catches what its
+ * DESCENDANTS throw. So each exported panel is a thin wrapper whose only job
+ * is to put the boundary ABOVE the component that owns the query. That split,
+ * rather than a boundary at each mount site, is what makes the guarantee the
+ * panel's own: a future caller cannot forget to wrap it.
  *
- * The invariant is that the panel absorbs that itself rather than relying on
- * its caller: an `ErrorBoundary` only catches what its DESCENDANTS throw, so
- * a boundary placed inside the component that calls the hook would sit below
- * the throw and catch nothing. These tests render the panels with NO provider
- * and no boundary of their own — if the split ever regresses, they throw.
+ * `convex/react` is mocked here so both halves can be driven from one file —
+ * a throwing query and a successful one. What the mock cannot prove is that a
+ * MISSING PROVIDER is one of the things that throws; that is Convex's own
+ * behaviour, and it is covered where it actually matters, by
+ * `ScenarioUsagePanel.test.tsx` rendering the real tree with no provider and
+ * still passing.
  */
 
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import {
-  ScenarioStageFunnelPanel,
-  SwarmRunStageFunnelPanels,
-} from "../StageFunnelPanels";
+import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-describe("ScenarioStageFunnelPanel", () => {
-  it("renders nothing instead of throwing when the query is unreachable", () => {
+const convex = vi.hoisted(() => ({ useQuery: vi.fn() }));
+vi.mock("convex/react", () => convex);
+
+const { ScenarioStageFunnelPanel, SwarmRunStageFunnelPanels } = await import(
+  "../StageFunnelPanels"
+);
+import type { ChatSessionStageFunnel } from "../user-value-chain-types";
+
+const STAGES = [
+  "connection",
+  "discovery",
+  "selection",
+  "call",
+  "response",
+  "userValue",
+] as const;
+
+const SUMMARY: ChatSessionStageFunnel = {
+  source: "user_testing",
+  total: 7,
+  counted: 7,
+  exclusions: { absent: 0, deriving: 0, stale: 0, failed: 0 },
+  stages: STAGES.map((stage) => ({
+    stage,
+    passed: 4,
+    failed: 3,
+    eligible: 7,
+    notMeasured: 0,
+    notApplicable: 0,
+    notReached: 0,
+    observations: 7,
+    passRate: 4 / 7,
+  })),
+  firstFailedStage: {},
+  notMeasured: false,
+  truncated: false,
+};
+
+/** The dark-ship state: the query is not deployed, so calling it throws. */
+function queryThrows() {
+  convex.useQuery.mockImplementation(() => {
+    throw new Error("Could not find Convex client!");
+  });
+}
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("ScenarioStageFunnelPanel — the query answers", () => {
+  it("renders the funnel and names the population", () => {
+    convex.useQuery.mockReturnValue(SUMMARY);
+    render(<ScenarioStageFunnelPanel scenarioId="scenario-1" />);
+
+    expect(screen.getByLabelText("User value chain")).toBeTruthy();
+    expect(document.body.textContent).toContain("Real User Testing sessions");
+    expect(document.body.textContent).toContain("7 of 7 sessions measured");
+  });
+
+  it("passes the scenario to the query and skips without one", () => {
+    convex.useQuery.mockReturnValue(SUMMARY);
+    render(<ScenarioStageFunnelPanel scenarioId="scenario-1" />);
+    expect(convex.useQuery.mock.calls[0][1]).toEqual({
+      scenarioId: "scenario-1",
+    });
+
+    vi.clearAllMocks();
+    convex.useQuery.mockReturnValue(undefined);
+    render(<ScenarioStageFunnelPanel scenarioId={undefined} />);
+    expect(convex.useQuery.mock.calls[0][1]).toBe("skip");
+  });
+
+  it("renders nothing while the query is still loading", () => {
+    // `undefined` is in flight and `null` is a scenario we cannot read.
+    // Neither is "no sessions", which the funnel itself reports as notMeasured.
+    for (const value of [undefined, null]) {
+      convex.useQuery.mockReturnValue(value);
+      const { container } = render(
+        <ScenarioStageFunnelPanel scenarioId="scenario-1" />
+      );
+      expect(container.textContent).toBe("");
+    }
+  });
+});
+
+describe("ScenarioStageFunnelPanel — the query cannot answer", () => {
+  it("renders nothing instead of throwing", () => {
+    queryThrows();
     const { container } = render(
       <ScenarioStageFunnelPanel scenarioId="scenario-1" />
     );
@@ -28,8 +115,9 @@ describe("ScenarioStageFunnelPanel", () => {
   });
 
   it("does not take its host down with it", () => {
-    // The shape that matters: a sibling rendered beside the panel must still
-    // be there. This is the User Testing sessions surface in miniature.
+    // The User Testing sessions surface in miniature: a sibling rendered
+    // beside the panel must still be there.
+    queryThrows();
     const { getByTestId } = render(
       <div>
         <span data-testid="sibling">the rest of the page</span>
@@ -38,31 +126,26 @@ describe("ScenarioStageFunnelPanel", () => {
     );
     expect(getByTestId("sibling").textContent).toBe("the rest of the page");
   });
-
-  it("skips the query entirely with no scenario", () => {
-    const { container } = render(
-      <ScenarioStageFunnelPanel scenarioId={undefined} />
-    );
-    expect(container.textContent).toBe("");
-  });
 });
 
-describe("SwarmRunStageFunnelPanels", () => {
-  it("renders nothing instead of throwing when the query is unreachable", () => {
-    const { container } = render(
-      <SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />
-    );
-    expect(container.textContent).toBe("");
+describe("SwarmRunStageFunnelPanels — the query answers", () => {
+  it("renders one funnel per run, never one folded across runs", () => {
+    // Two runs against different hosts have different denominators; a
+    // combined bar would describe neither.
+    convex.useQuery.mockReturnValue({ ...SUMMARY, source: "swarm" });
+    render(<SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />);
+
+    expect(screen.getAllByLabelText("User value chain")).toHaveLength(2);
+    expect(screen.getAllByText(/Sessions in this swarm run/)).toHaveLength(2);
   });
 
-  it("does not take its host down with it", () => {
-    const { getByTestId } = render(
-      <div>
-        <span data-testid="sibling">the rest of the page</span>
-        <SwarmRunStageFunnelPanels journeyRunIds={["run-1"]} />
-      </div>
-    );
-    expect(getByTestId("sibling").textContent).toBe("the rest of the page");
+  it("queries each run by its own id", () => {
+    convex.useQuery.mockReturnValue({ ...SUMMARY, source: "swarm" });
+    render(<SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />);
+    expect(convex.useQuery.mock.calls.map((call) => call[1])).toEqual([
+      { journeyRunId: "run-1" },
+      { journeyRunId: "run-2" },
+    ]);
   });
 
   it("renders nothing at all for an empty run list — not even its spacing", () => {
@@ -70,6 +153,7 @@ describe("SwarmRunStageFunnelPanels", () => {
     // empty Set is truthy), so the spacing rides on this component rather than
     // on a wrapper at the mount site. A wrapper would reserve padding for a
     // funnel that never appears, leaving a blank band above the session list.
+    convex.useQuery.mockReturnValue({ ...SUMMARY, source: "swarm" });
     const { container } = render(
       <SwarmRunStageFunnelPanels
         journeyRunIds={[]}
@@ -77,5 +161,26 @@ describe("SwarmRunStageFunnelPanels", () => {
       />
     );
     expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("SwarmRunStageFunnelPanels — the query cannot answer", () => {
+  it("renders nothing instead of throwing", () => {
+    queryThrows();
+    const { container } = render(
+      <SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />
+    );
+    expect(container.textContent).toBe("");
+  });
+
+  it("does not take its host down with it", () => {
+    queryThrows();
+    const { getByTestId } = render(
+      <div>
+        <span data-testid="sibling">the rest of the page</span>
+        <SwarmRunStageFunnelPanels journeyRunIds={["run-1"]} />
+      </div>
+    );
+    expect(getByTestId("sibling").textContent).toBe("the rest of the page");
   });
 });
