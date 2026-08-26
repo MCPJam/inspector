@@ -84,7 +84,11 @@ function safeReturnPath(path: string, origin: string): string | null {
     UNROUTABLE,
   );
   if (normalized === UNROUTABLE) return null;
-  return normalized;
+  // The hash rides along, normalized separately: it is part of the
+  // destination on eval and scenario deep links (`#case`, `#scenario-slug`),
+  // and this return path wins over the generic one on `/callback`, so
+  // dropping it here would drop it for the whole round trip.
+  return `${normalized}${resolved.hash}`;
 }
 
 function mintNonce(): string {

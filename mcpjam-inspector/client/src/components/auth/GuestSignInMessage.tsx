@@ -2,6 +2,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { Button } from "@mcpjam/design-system/button";
 import { track } from "@/lib/analytics";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 /**
  * The one honest empty state for a guest who reaches a surface that only a
@@ -41,6 +42,7 @@ export function GuestSignInMessage({
     track("login_button_clicked", {
       location: location ?? "guest_signin_message",
     });
+    captureAppSignInReturnPath();
     signIn(permalinkSignInOptions());
   };
 

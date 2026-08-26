@@ -36,6 +36,7 @@ import {
   PERMALINK_SIGN_IN_STATE_KEY,
   takePermalinkSignInReturn,
 } from "./lib/permalink-signin-return";
+import { clearAppSignInReturnPath } from "./lib/app-signin-return-path";
 import {
   callbackMatchesPending,
   HANDOFF_SIGN_IN_STATE_KEY,
@@ -404,7 +405,15 @@ if (isInIframe) {
           );
         // `replace`, not `assign`: `/callback` is not somewhere the back
         // button should return to.
-        if (returnTo) window.location.replace(returnTo);
+        if (returnTo) {
+          // The generic "put me back" path is armed by the same click as this
+          // one and is consumed on `/callback` by `App.tsx` — which this
+          // redirect navigates away from before it ever runs. Clearing it here
+          // keeps a path from outliving the sign-in that stored it and
+          // capturing the NEXT one, which is the rule that module states.
+          clearAppSignInReturnPath();
+          window.location.replace(returnTo);
+        }
       }}
       {...workosClientOptions}
     >

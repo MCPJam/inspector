@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router";
+import { Link } from "react-router";
+import { ScopedNavigate } from "@/components/routing/scoped-navigate";
 import {
   Archive,
   ArchiveRestore,
@@ -250,7 +251,7 @@ export function ProjectEnvironmentsRoute({
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /environments directly. Render nothing until it settles.
   if (flagEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (flagEnabled === undefined) {
     return null;
