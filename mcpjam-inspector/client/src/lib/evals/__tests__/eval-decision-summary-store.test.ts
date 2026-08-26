@@ -443,6 +443,73 @@ describe("EvalDecisionSummaryStore", () => {
     ).toBeDefined();
   });
 
+  it("stays bounded when the cap leaves hundreds of reads queued", async () => {
+    const { calls, fetcher } = deferredFetcher();
+    const store = new EvalDecisionSummaryStore({
+      fetcher,
+      now: clock,
+      cacheLimit: 4,
+      maxActiveRequests: 4,
+    });
+
+    // The case the ceiling actually has to survive. Every request writes its
+    // loading entry immediately, but only four of them RUN — so with a real
+    // cap the queue, not the in-flight set, is where a "Show all" ends up, and
+    // sparing everything mid-read would spare nearly the whole population.
+    for (let index = 0; index < 300; index += 1) {
+      const request = detailRequest(`run-${index}`);
+      store.subscribe(decisionSummaryKey(request), vi.fn());
+      store.request(request);
+    }
+
+    expect(store.cacheSize).toBeLessThanOrEqual(8);
+    expect(store.queuedRequestCount).toBeLessThanOrEqual(8);
+    // Nothing actually in flight was cancelled to get there: the four reads
+    // that started are still the four reads that started.
+    expect(calls).toHaveLength(4);
+    expect(store.activeRequestCount).toBe(4);
+    // The page asked for most recently is the one a reader is looking at.
+    expect(
+      store.getEntry(decisionSummaryKey(detailRequest("run-299"))),
+    ).toBeDefined();
+  });
+
+  it("re-reads a queued page that the ceiling dropped, once it is asked for again", async () => {
+    const { calls, fetcher } = deferredFetcher();
+    const store = new EvalDecisionSummaryStore({
+      fetcher,
+      now: clock,
+      cacheLimit: 1,
+      maxActiveRequests: 1,
+    });
+
+    // The single active slot goes to a read that is NOT the one under test,
+    // so the page under test is queued — which is the only state the ceiling
+    // may drop.
+    const running = detailRequest("run-running");
+    store.subscribe(decisionSummaryKey(running), vi.fn());
+    store.request(running);
+
+    const dropped = detailRequest("run-dropped");
+    store.subscribe(decisionSummaryKey(dropped), vi.fn());
+    store.request(dropped);
+    // Push it out: everything after it queues behind the cap until the ceiling
+    // starts dropping the oldest queued entries.
+    for (let index = 0; index < 10; index += 1) {
+      const request = detailRequest(`run-${index}`);
+      store.subscribe(decisionSummaryKey(request), vi.fn());
+      store.request(request);
+    }
+    expect(store.getEntry(decisionSummaryKey(dropped))).toBeUndefined();
+
+    // A dropped queued page is not a page that can never be read again: the
+    // row is still mounted, and its next ask starts a fresh read.
+    const before = calls.length;
+    store.request(dropped);
+    expect(store.getEntry(decisionSummaryKey(dropped))).toBeDefined();
+    expect(calls.length).toBeGreaterThanOrEqual(before);
+  });
+
   it("notifies only the subscribers of the key that settled", async () => {
     const { calls, fetcher } = deferredFetcher();
     const store = new EvalDecisionSummaryStore({ fetcher, now: clock });

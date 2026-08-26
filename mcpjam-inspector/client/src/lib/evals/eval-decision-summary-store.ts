@@ -451,11 +451,30 @@ export class EvalDecisionSummaryStore {
     // construction those are the rows scrolled furthest out of view, and a row
     // coming back re-asks on becoming visible, so an evicted page repopulates
     // rather than staying blank.
+    // `start()` writes its loading entry before it enqueues, so the newest key
+    // is a page a surface asked for microseconds ago. Evicting THAT to satisfy
+    // the ceiling would invert the LRU: the one page guaranteed to be wanted
+    // is the one guaranteed to go.
+    const newest = [...this.cache.keys()].at(-1);
     for (const key of [...this.cache.keys()]) {
       if (this.cache.size <= this.hardCacheCeiling) return;
+      if (key === newest) continue;
+      const record = this.pending.get(key);
       // A page still being FETCHED is not evictable: dropping the loading
-      // entry would strand the subscriber until the read settled.
-      if (this.pending.has(key)) continue;
+      // entry would strand the subscriber until the read settled. At most
+      // `maxActiveRequests` pages are ever in this state.
+      if (record && !record.queued) continue;
+      if (record) {
+        // QUEUED, not running — and the cap means most of a long scroll's
+        // requests are sitting here, every one holding a loading entry. Left
+        // in place they defeat the ceiling entirely, since the queue is
+        // bounded by the population and not by the cap. Nothing has been sent
+        // for this one yet, so cancelling it costs no request in flight and
+        // strands nobody: the entry simply goes back to being unread, and a
+        // still-mounted row re-asks on its stale tick or on becoming visible.
+        this.cancel(key);
+        continue;
+      }
       this.cache.delete(key);
     }
   }
