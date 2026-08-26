@@ -252,6 +252,11 @@ describe("modelSupportsTemperature", () => {
     // A blank id matches no family either. It has to fall back to allowing the
     // field rather than being read as a model that rejects it.
     expect(modelSupportsTemperature("")).toBe(true);
+    // The id arrives from a catalog row or a persisted config, so a nullish one
+    // reaches String() at runtime whatever the signature says. It has to land on
+    // the same permissive fallback rather than throwing on the request path.
+    expect(modelSupportsTemperature(null as unknown as string)).toBe(true);
+    expect(modelSupportsTemperature(undefined as unknown as string)).toBe(true);
   });
 
   it("strips temperature for Bedrock ids of an affected family", () => {
