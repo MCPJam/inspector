@@ -24,7 +24,7 @@ import prompts from "./prompts.js";
 import resources from "./resources.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
-import hosts from "./hosts.js";
+import clients from "./clients.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
@@ -115,7 +115,7 @@ v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
 v1.route("/", conformanceRuns);
-v1.route("/", hosts);
+v1.route("/", clients);
 v1.route("/", harness);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs

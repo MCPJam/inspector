@@ -28,8 +28,23 @@
 /** Stable surface id. Also the atlas key and the snapshot-provider key. */
 export type AppSurfaceId = (typeof APP_SURFACES)[number]["id"];
 
+/**
+ * Who owns a surface — the same dimension the route table declares
+ * (`client/src/lib/app-routes.ts`), kept here so the two can be asserted
+ * equal rather than assumed equal.
+ *
+ * A `"project"` surface renders below `/p/:projectId`. Its `canonicalPath`
+ * and `routePatterns` stay LOGICAL (project-relative): agent navigation and
+ * the atlas would be unusable if every target carried a literal `:projectId`,
+ * and the concrete path is built from the viewer's resolved project at
+ * navigation time.
+ */
+export type AppSurfaceScope = "project" | "global" | "public";
+
 export interface AppSurfaceManifest {
   id: string;
+  /** Project-owned, global app chrome, or public. See {@link AppSurfaceScope}. */
+  scope: AppSurfaceScope;
   /**
    * The path `ui_navigate` sends the user to. Must be one of this surface's
    * own `routePatterns`.
@@ -98,6 +113,7 @@ export interface AppSurfaceManifest {
 export const APP_SURFACES = [
   {
     id: "home",
+    scope: "project",
     canonicalPath: "/home",
     routePatterns: ["/", "home"],
     navSegments: ["home"],
@@ -119,6 +135,7 @@ export const APP_SURFACES = [
   },
   {
     id: "servers",
+    scope: "project",
     canonicalPath: "/servers",
     routePatterns: ["servers"],
     // `client-config` renders nothing of its own (it redirects here), but it
@@ -140,6 +157,7 @@ export const APP_SURFACES = [
   },
   {
     id: "hosts",
+    scope: "project",
     canonicalPath: "/hosts",
     routePatterns: ["hosts", "hosts/:hostId"],
     navSegments: ["clients"],
@@ -159,6 +177,7 @@ export const APP_SURFACES = [
   },
   {
     id: "host-compare",
+    scope: "global",
     canonicalPath: "/host-compare",
     routePatterns: ["host-compare", "capabilities/:capabilitySlug"],
     navSegments: ["host-compare"],
@@ -179,6 +198,7 @@ export const APP_SURFACES = [
   },
   {
     id: "computer",
+    scope: "project",
     canonicalPath: "/computer",
     routePatterns: ["computer"],
     navSegments: ["computer"],
@@ -196,6 +216,7 @@ export const APP_SURFACES = [
   },
   {
     id: "registry",
+    scope: "project",
     canonicalPath: "/registry",
     routePatterns: ["registry"],
     navSegments: ["registry"],
@@ -215,6 +236,7 @@ export const APP_SURFACES = [
   },
   {
     id: "playground",
+    scope: "project",
     canonicalPath: "/playground",
     routePatterns: ["playground"],
     // `chat` renders nothing of its own (it redirects here), but it IS still
@@ -239,6 +261,7 @@ export const APP_SURFACES = [
     // agent tool group, and the Convex tables. Only the product name and the
     // URL changed.
     id: "scenarios",
+    scope: "project",
     canonicalPath: "/user-testing",
     routePatterns: [
       "user-testing",
@@ -264,6 +287,7 @@ export const APP_SURFACES = [
   },
   {
     id: "swarms",
+    scope: "project",
     canonicalPath: "/swarms",
     routePatterns: ["swarms", "swarms/new", "swarms/:swarmId"],
     navSegments: ["swarms"],
@@ -284,6 +308,7 @@ export const APP_SURFACES = [
   },
   {
     id: "project-environments",
+    scope: "project",
     canonicalPath: "/environments",
     routePatterns: ["environments"],
     navSegments: ["environments"],
@@ -308,6 +333,7 @@ export const APP_SURFACES = [
   },
   {
     id: "sessions",
+    scope: "project",
     canonicalPath: "/sessions",
     routePatterns: ["sessions"],
     navSegments: ["sessions"],
@@ -334,6 +360,7 @@ export const APP_SURFACES = [
   },
   {
     id: "evals",
+    scope: "project",
     canonicalPath: "/evals",
     routePatterns: [
       "evals",
@@ -379,6 +406,9 @@ export const APP_SURFACES = [
     // behaviour untouched while this one is dogfooded. It is deleted (and its
     // routes folded into `evals`) once the redesign replaces the original.
     id: "evaluate",
+    // Same suites and same project-owned data as Evaluate — the redesign
+    // changes the screens, not who owns them.
+    scope: "project",
     canonicalPath: "/evaluate",
     routePatterns: [
       "evaluate",
@@ -417,6 +447,7 @@ export const APP_SURFACES = [
   },
   {
     id: "tools",
+    scope: "project",
     canonicalPath: "/tools",
     routePatterns: ["tools"],
     navSegments: ["tools"],
@@ -434,6 +465,7 @@ export const APP_SURFACES = [
   },
   {
     id: "resources",
+    scope: "project",
     canonicalPath: "/resources",
     routePatterns: ["resources"],
     navSegments: ["resources"],
@@ -449,6 +481,7 @@ export const APP_SURFACES = [
   },
   {
     id: "prompts",
+    scope: "project",
     canonicalPath: "/prompts",
     routePatterns: ["prompts"],
     navSegments: ["prompts"],
@@ -464,6 +497,7 @@ export const APP_SURFACES = [
   },
   {
     id: "tasks",
+    scope: "project",
     canonicalPath: "/tasks",
     routePatterns: ["tasks"],
     navSegments: ["tasks"],
@@ -481,6 +515,7 @@ export const APP_SURFACES = [
   },
   {
     id: "skills",
+    scope: "project",
     canonicalPath: "/skills",
     routePatterns: ["skills"],
     navSegments: ["skills"],
@@ -496,6 +531,10 @@ export const APP_SURFACES = [
   },
   {
     id: "learning",
+    // Project-scoped: a lesson launches an agent session into the active
+    // project, so the project belongs in the URL like any other screen whose
+    // work lands in one.
+    scope: "project",
     canonicalPath: "/learning",
     routePatterns: ["learning"],
     navSegments: ["learning"],
@@ -511,6 +550,7 @@ export const APP_SURFACES = [
   },
   {
     id: "conformance",
+    scope: "project",
     canonicalPath: "/conformance",
     routePatterns: ["conformance", "conformance/runs/:runId"],
     navSegments: ["conformance"],
@@ -530,6 +570,7 @@ export const APP_SURFACES = [
   },
   {
     id: "compatibility",
+    scope: "project",
     canonicalPath: "/compatibility",
     routePatterns: ["compatibility"],
     navSegments: ["compatibility"],
@@ -547,6 +588,7 @@ export const APP_SURFACES = [
   },
   {
     id: "oauth-flow",
+    scope: "project",
     canonicalPath: "/oauth-flow",
     routePatterns: ["oauth-flow"],
     navSegments: ["oauth-flow"],
@@ -567,6 +609,7 @@ export const APP_SURFACES = [
   },
   {
     id: "xaa-flow",
+    scope: "project",
     canonicalPath: "/xaa-flow",
     routePatterns: ["xaa-flow"],
     navSegments: ["xaa-flow"],
@@ -586,6 +629,7 @@ export const APP_SURFACES = [
   },
   {
     id: "tracing",
+    scope: "project",
     canonicalPath: "/tracing",
     routePatterns: ["tracing"],
     navSegments: ["tracing"],
@@ -603,6 +647,7 @@ export const APP_SURFACES = [
   },
   {
     id: "settings",
+    scope: "global",
     canonicalPath: "/settings",
     // `settings/github-checks` is deliberately absent: the page moved under
     // Integrations and that path is now a loader redirect, not a screen. The
@@ -632,6 +677,7 @@ export const APP_SURFACES = [
   },
   {
     id: "project-settings",
+    scope: "project",
     canonicalPath: "/project-settings",
     routePatterns: ["project-settings"],
     navSegments: ["project-settings"],
@@ -648,6 +694,7 @@ export const APP_SURFACES = [
   },
   {
     id: "organizations",
+    scope: "global",
     canonicalPath: "/organizations",
     routePatterns: [
       "organizations",
@@ -682,6 +729,7 @@ export const APP_SURFACES = [
   },
   {
     id: "profile",
+    scope: "global",
     canonicalPath: "/profile",
     routePatterns: ["profile"],
     navSegments: ["profile"],
@@ -697,6 +745,7 @@ export const APP_SURFACES = [
   },
   {
     id: "support",
+    scope: "global",
     canonicalPath: "/support",
     routePatterns: ["support"],
     navSegments: ["support"],

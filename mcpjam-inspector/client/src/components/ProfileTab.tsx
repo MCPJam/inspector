@@ -5,6 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
 import { EditableText } from "@/components/ui/editable-text";
 import { getInitials } from "@/lib/utils";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { Camera, Loader2 } from "lucide-react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 
@@ -84,7 +85,15 @@ export function ProfileTab() {
       <div className="flex flex-col items-center justify-center h-full p-8">
         <div className="text-center space-y-4 max-w-md">
           <h2 className="text-2xl font-bold">Sign in to view your profile</h2>
-          <Button onClick={() => signIn()} size="lg">
+          <Button
+            onClick={() => {
+              // Remember where they were, so WorkOS returns them here rather
+              // than to the app's front door.
+              captureAppSignInReturnPath();
+              signIn();
+            }}
+            size="lg"
+          >
             Sign In
           </Button>
         </div>

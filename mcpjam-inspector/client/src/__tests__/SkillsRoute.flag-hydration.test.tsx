@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
@@ -109,10 +110,21 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * The route's redirect goes through `ScopedNavigate`, which carries the active
+ * project into a project-owned target — so it needs a router context to read
+ * the current location from. Mounting inside a `MemoryRouter` gives it one;
+ * the `Navigate` marker mocked above still renders, and with no project in the
+ * URL the target is the plain logical path these assertions expect.
+ */
+function renderRoute(element: React.ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
 describe("SkillsRoute — flag hydration + Connect chrome", () => {
   it("does not redirect while the flag is still loading (undefined)", () => {
     flagState = undefined;
-    render(<SkillsRoute />);
+    renderRoute(<SkillsRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     // Nothing renders yet either — it waits for the flag to settle.
     expect(screen.queryByTestId("skills-view")).not.toBeInTheDocument();
@@ -120,12 +132,19 @@ describe("SkillsRoute — flag hydration + Connect chrome", () => {
 
   it("does not redirect across an undefined -> true transition", () => {
     flagState = undefined;
-    const { rerender } = render(<SkillsRoute />);
+    const { rerender } = renderRoute(<SkillsRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
 
     // PostHog resolves the flag to enabled.
     flagState = true;
-    rerender(<SkillsRoute />);
+    // Re-rendered inside the same router: dropping the wrapper here would
+    // remount the route without a location, which is not what a flag
+    // resolving mid-session does.
+    rerender(
+      <MemoryRouter>
+        <SkillsRoute />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(screen.getByTestId("skills-view")).toBeInTheDocument();
@@ -134,7 +153,7 @@ describe("SkillsRoute — flag hydration + Connect chrome", () => {
 
   it("redirects to servers only on an explicit false", () => {
     flagState = false;
-    render(<SkillsRoute />);
+    renderRoute(<SkillsRoute />);
     const nav = screen.getByTestId("navigate");
     expect(nav).toBeInTheDocument();
     expect(nav).toHaveAttribute("data-to", routePaths.servers);
@@ -144,7 +163,7 @@ describe("SkillsRoute — flag hydration + Connect chrome", () => {
   it("renders the bare view without Connect chrome for a guest actor", () => {
     flagState = true;
     mockRouteContext.isGuestProjectActor = true;
-    render(<SkillsRoute />);
+    renderRoute(<SkillsRoute />);
     expect(screen.getByTestId("skills-view")).toBeInTheDocument();
     expect(screen.queryByTestId("connect-header")).not.toBeInTheDocument();
   });
