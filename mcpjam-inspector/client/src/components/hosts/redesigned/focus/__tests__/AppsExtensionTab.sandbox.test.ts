@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
   resolveEffectiveHostCapabilities,
+  type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { applyJsonToDraft } from "../AppsExtensionTab";
 import {
@@ -676,5 +677,82 @@ describe("AppsExtensionTab — CSP subtype override round-trip", () => {
       emptyHostConfigInputV2(),
     );
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+  });
+});
+
+describe("AppsExtensionTab — widget tool results round-trip", () => {
+  it("keeps the toolResult policy through a JSON save", () => {
+    // Moved here from the Protocol tab along with the card that edits it.
+    const prev: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: {
+            toolResult: {
+              structuredContent: false,
+              content: { text: true, image: false, resourceLink: true },
+            },
+          },
+        },
+      },
+    };
+
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          toolResult: {
+            structuredContent: false,
+            content: { text: true, image: false, resourceLink: true },
+          },
+        },
+      },
+      prev
+    );
+
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toEqual({
+      structuredContent: false,
+      content: { text: true, image: false, resourceLink: true },
+    });
+  });
+
+  it("clears the policy when the key is deleted from the JSON", () => {
+    // The card lives in this tab, so an absent key must mean "cleared" —
+    // preserving the previous value would make the JSON uneditable.
+    const prev: HostConfigInputV2 = {
+      ...emptyHostConfigInputV2(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { toolResult: { structuredContent: false } },
+        },
+      },
+    };
+
+    const next = applyJsonToDraft({ hostContext: {} }, prev);
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toBeUndefined();
+  });
+
+  it("ignores non-boolean leaves rather than persisting them", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          toolResult: {
+            structuredContent: "no",
+            content: { text: 1, image: false },
+          },
+        },
+      },
+      emptyHostConfigInputV2()
+    );
+    expect(
+      next?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult
+    ).toEqual({ content: { image: false } });
   });
 });

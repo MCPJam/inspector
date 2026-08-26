@@ -196,36 +196,6 @@ describe("ProtocolTab JSON round-trip for the conformance knobs", () => {
   });
 });
 
-describe("ProtocolTab tool results received by widgets", () => {
-  it("round-trips structured content and the observed content kinds", () => {
-    const draft: HostConfigInputV2 = {
-      ...emptyHostConfigInputV2(),
-      mcpProfile: {
-        profileVersion: 1,
-        apps: {
-          mcpAppsOverrides: {
-            toolResult: {
-              structuredContent: false,
-              content: { text: true, image: false, resourceLink: true },
-            },
-          },
-        },
-      },
-    };
-
-    const doc = protocolToJson(draft);
-    expect(doc.toolResultsToWidgets).toEqual({
-      structuredContent: false,
-      content: { text: true, image: false, resourceLink: true },
-    });
-
-    const applied = applyJsonToDraft(doc, emptyHostConfigInputV2());
-    expect(applied?.mcpProfile?.apps?.mcpAppsOverrides?.toolResult).toEqual(
-      draft.mcpProfile.apps?.mcpAppsOverrides?.toolResult,
-    );
-  });
-});
-
 describe("ProtocolTab tool list changed controls", () => {
   const listensSwitch = () =>
     screen.getByRole("switch", { name: "Opens notification channel" });

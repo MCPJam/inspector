@@ -481,13 +481,12 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   // sparsity convention).
   const mcpAppsOverrides = draft.mcpProfile?.apps?.mcpAppsOverrides;
   if (mcpAppsOverrides !== undefined) {
-    // Tool Result delivery is a base MCP concern. It is stored on the
-    // widget relay override, but belongs in the Protocol tab; do not make it
-    // look like an `app.*` capability here. The parser preserves it below.
-    const { toolResult: _toolResult, ...appsOverridesForEditor } =
-      mcpAppsOverrides;
-    if (Object.keys(appsOverridesForEditor).length > 0) {
-      doc.mcpAppsOverrides = appsOverridesForEditor;
+    // `toolResult` is emitted alongside the `app.*` rows even though it is
+    // not one: this tab owns the card that edits it, and a JSON editor that
+    // hid a value the tab above it can change would read as data loss the
+    // first time someone toggled a part and saw nothing appear.
+    if (Object.keys(mcpAppsOverrides).length > 0) {
+      doc.mcpAppsOverrides = mcpAppsOverrides;
     }
   }
 
@@ -594,16 +593,44 @@ export function applyJsonToDraft(
     if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
   }
 
-  // This editor owns `app.*` capability rows, not base-MCP tool results.
-  // Keep the Protocol-tab value intact when a user saves Apps JSON or edits
-  // the matrix. Its physical nesting under mcpAppsOverrides must not turn it
-  // into an accidental casualty of an Apps-tab save.
-  const previousToolResult = prev.mcpProfile?.apps?.mcpAppsOverrides?.toolResult;
-  if (previousToolResult !== undefined) {
-    nextMcpAppsOverrides = {
-      ...(nextMcpAppsOverrides ?? {}),
-      toolResult: previousToolResult,
-    };
+  // `toolResult` round-trips through this editor rather than being preserved
+  // from `prev`: the card that edits it lives in this tab, so deleting the
+  // key here has to mean "clear it" like every other key. Validated per leaf
+  // because the matrix path strips unknown shapes and this one would
+  // otherwise persist whatever was typed.
+  const parsedOverridesRecord = isPlainObject(parsed.mcpAppsOverrides)
+    ? (parsed.mcpAppsOverrides as Record<string, unknown>)
+    : undefined;
+  const incomingToolResult = parsedOverridesRecord?.toolResult;
+  if (isPlainObject(incomingToolResult)) {
+    const nextToolResult: NonNullable<McpAppsCapabilities["toolResult"]> = {};
+    if (typeof incomingToolResult.structuredContent === "boolean") {
+      nextToolResult.structuredContent = incomingToolResult.structuredContent;
+    }
+    if (isPlainObject(incomingToolResult.content)) {
+      const content: NonNullable<
+        NonNullable<McpAppsCapabilities["toolResult"]>["content"]
+      > = {};
+      for (const key of [
+        "text",
+        "image",
+        "audio",
+        "resource",
+        "resourceLink",
+      ] as const) {
+        const value = (incomingToolResult.content as Record<string, unknown>)[
+          key
+        ];
+        if (typeof value === "boolean") content[key] = value;
+      }
+      if (Object.keys(content).length > 0) nextToolResult.content = content;
+    }
+    if (Object.keys(nextToolResult).length > 0) {
+      nextMcpAppsOverrides = {
+        ...(nextMcpAppsOverrides ?? {}),
+        toolResult: nextToolResult,
+      };
+    }
   }
 
   // hostCapabilities — the user sees the EFFECTIVE merged value, so on
@@ -1876,6 +1903,125 @@ function BrowserStorageCard({
   );
 }
 
+/**
+ * `mcpProfile.apps.mcpAppsOverrides.toolResult` — which halves of a tool
+ * result the emulated host relays to a widget that called the tool.
+ *
+ * Deliberately its own card rather than a row in the capability matrix: the
+ * matrix gates whether an app.* handler EXISTS, while this shapes the value a
+ * live handler returns. `apps-capability-dimensions` excludes it for the same
+ * reason. It shares the matrix's storage only because its physical nesting
+ * sits under `mcpAppsOverrides`.
+ */
+function WidgetToolResultsCard({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
+  ) => void;
+}) {
+  const toolResult = draft.mcpProfile?.apps?.mcpAppsOverrides?.toolResult;
+  const setToolResultPart = (
+    key:
+      | "structuredContent"
+      | "text"
+      | "image"
+      | "audio"
+      | "resource"
+      | "resourceLink",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const apps = base.apps ?? {};
+      const overrides = { ...(apps.mcpAppsOverrides ?? {}) };
+      const next = { ...(overrides.toolResult ?? {}) };
+      // Absence means the part is forwarded, so only the non-default finding
+      // is persisted — same discipline as every probe knob.
+      if (key === "structuredContent") {
+        if (enabled) delete next.structuredContent;
+        else next.structuredContent = false;
+      } else {
+        const content = { ...(next.content ?? {}) };
+        if (enabled) delete content[key];
+        else content[key] = false;
+        if (Object.keys(content).length > 0) next.content = content;
+        else delete next.content;
+      }
+      if (Object.keys(next).length > 0) overrides.toolResult = next;
+      else delete overrides.toolResult;
+
+      const nextApps = { ...apps };
+      if (Object.keys(overrides).length > 0) {
+        nextApps.mcpAppsOverrides = overrides;
+      } else {
+        delete nextApps.mcpAppsOverrides;
+      }
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
+      };
+      // Collapse to absence, or toggling a part off and back on leaves
+      // `{ profileVersion: 1 }` behind and mints a new config hash for a
+      // user who changed nothing.
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  return (
+    <section className="rounded-[10px] border border-border bg-background">
+      <div className="border-b border-border px-3.5 py-2.5">
+        <div className="text-[12px] font-medium">Widget tool results</div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          Which parts of a tool result survive the trip back to a widget that
+          called it. Turn one off to emulate a host that drops it.
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-3.5 py-2">
+        <span className="text-[12px]">Structured content</span>
+        <Switch
+          checked={toolResult?.structuredContent !== false}
+          onCheckedChange={(checked) =>
+            setToolResultPart("structuredContent", checked)
+          }
+          aria-label="Structured content reaches widgets"
+        />
+      </div>
+      <div className="border-t border-border/50 bg-muted/30 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground">
+        Content
+      </div>
+      {(
+        [
+          ["text", "Text"],
+          ["image", "Image"],
+          ["audio", "Audio"],
+          ["resource", "Embedded resource"],
+          ["resourceLink", "Resource link"],
+        ] as const
+      ).map(([key, label]) => (
+        <div
+          key={key}
+          className="flex items-center justify-between gap-3 border-t border-border/50 px-3.5 py-2"
+        >
+          <span className="text-[12px]">{label}</span>
+          <Switch
+            checked={toolResult?.content?.[key] !== false}
+            onCheckedChange={(checked) => setToolResultPart(key, checked)}
+            aria-label={`${label} tool result reaches widgets`}
+          />
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function AppsExtensionTab({
   draft,
   onDraftChange,
@@ -1917,6 +2063,7 @@ export function AppsExtensionTab({
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
+        <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
         {/* Read-only companion to the two matrices: the capability rows say
             what the host CAN do, this says what it LOOKS like to a view. */}
         <HostStyleTokens draft={draft} />

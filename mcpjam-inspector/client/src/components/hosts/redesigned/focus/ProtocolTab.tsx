@@ -241,23 +241,7 @@ type ProtocolDoc = {
     listens?: boolean;
     refetches?: boolean;
   };
-  /**
-   * Which parts of a tool result make it back to an MCP App widget after
-   * that widget calls a tool. These are MCP Tool Result fields, not MCP Apps
-   * capabilities; the nested storage location is only an implementation
-   * detail of the host profile.
-   */
-  toolResultsToWidgets?: {
-    structuredContent?: boolean;
-    content?: {
-      text?: boolean;
-      image?: boolean;
-      audio?: boolean;
-      resource?: boolean;
-      resourceLink?: boolean;
-    };
-  };
-  capabilities?: Record<string, unknown>;
+    capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
    * JSON deep-sorted into the canonical hash. Carries the enterprise-managed
@@ -332,18 +316,6 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const toolListChanged = draft.mcpProfile?.toolListChanged;
   if (toolListChanged && Object.keys(toolListChanged).length > 0) {
     doc.toolListChanged = { ...toolListChanged };
-  }
-
-  const toolResult = draft.mcpProfile?.apps?.mcpAppsOverrides?.toolResult;
-  if (toolResult && Object.keys(toolResult).length > 0) {
-    doc.toolResultsToWidgets = {
-      ...(toolResult.structuredContent !== undefined
-        ? { structuredContent: toolResult.structuredContent }
-        : {}),
-      ...(toolResult.content && Object.keys(toolResult.content).length > 0
-        ? { content: { ...toolResult.content } }
-        : {}),
-    };
   }
 
   if (
@@ -600,36 +572,6 @@ export function applyJsonToDraft(
     if (Object.keys(next).length > 0) toolListChangedParsed = next;
   }
 
-  // Tool Result fields belong in this MCP Protocol view. The host profile
-  // stores them below apps.mcpAppsOverrides because they were measured on the
-  // widget relay, but that does not make them an MCP Apps capability.
-  let toolResult: NonNullable<
-    NonNullable<HostConfigMcpProfileV1["apps"]>["mcpAppsOverrides"]
-  >["toolResult"];
-  if (isPlainObject(parsed.toolResultsToWidgets)) {
-    const incoming = parsed.toolResultsToWidgets;
-    const next: NonNullable<typeof toolResult> = {};
-    if (typeof incoming.structuredContent === "boolean") {
-      next.structuredContent = incoming.structuredContent;
-    }
-    if (isPlainObject(incoming.content)) {
-      const content: NonNullable<typeof next.content> = {};
-      for (const key of [
-        "text",
-        "image",
-        "audio",
-        "resource",
-        "resourceLink",
-      ] as const) {
-        if (typeof incoming.content[key] === "boolean") {
-          content[key] = incoming.content[key];
-        }
-      }
-      if (Object.keys(content).length > 0) next.content = content;
-    }
-    if (Object.keys(next).length > 0) toolResult = next;
-  }
-
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -703,20 +645,10 @@ export function applyJsonToDraft(
       mrtrSupport,
       toolListChanged: toolListChangedParsed,
       extensions: profileExtensions,
-      apps: (() => {
-        const previousApps = base.apps;
-        const previousOverrides = previousApps?.mcpAppsOverrides;
-        const nextOverrides = { ...previousOverrides };
-        if (toolResult) nextOverrides.toolResult = toolResult;
-        else delete nextOverrides.toolResult;
-        const hasOverrides = Object.keys(nextOverrides).length > 0;
-        const nextApps = {
-          ...previousApps,
-          ...(hasOverrides ? { mcpAppsOverrides: nextOverrides } : {}),
-        };
-        if (!hasOverrides) delete nextApps.mcpAppsOverrides;
-        return Object.keys(nextApps).length > 0 ? nextApps : undefined;
-      })(),
+      // `apps` is owned by the Apps tab (including the widget tool-result
+      // policy that used to be edited here); this view must pass it through
+      // untouched rather than rebuild it.
+      apps: base.apps,
     };
 
     return isMcpProfileEmpty(next) ? undefined : next;
@@ -881,7 +813,6 @@ export function ProtocolTab({
   // and only the degraded value is stored.
   const storedPagination = draft.mcpProfile?.paginationTraversal;
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
-  const storedToolResult = draft.mcpProfile?.apps?.mcpAppsOverrides?.toolResult;
   const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined
@@ -899,7 +830,7 @@ export function ProtocolTab({
   };
 
   const storedToolListChanged = draft.mcpProfile?.toolListChanged;
-  // Delete-on-default, exactly like `setToolResultPart`: absence IS the
+  // Delete-on-default: absence IS the
   // conforming answer, so a re-enabled switch must leave no trace behind.
   const setToolListChangedPart = (
     key: "listens" | "refetches",
@@ -918,43 +849,6 @@ export function ProtocolTab({
       } else {
         delete updated.toolListChanged;
       }
-      return {
-        ...prev,
-        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
-      };
-    });
-  };
-
-  const setToolResultPart = (
-    key: "structuredContent" | "text" | "image" | "audio" | "resource" | "resourceLink",
-    enabled: boolean
-  ) => {
-    onDraftChange((prev) => {
-      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
-        profileVersion: 1,
-      };
-      const apps = base.apps ?? {};
-      const overrides = { ...(apps.mcpAppsOverrides ?? {}) };
-      const toolResult = { ...(overrides.toolResult ?? {}) };
-      if (key === "structuredContent") {
-        if (enabled) delete toolResult.structuredContent;
-        else toolResult.structuredContent = false;
-      } else {
-        const content = { ...(toolResult.content ?? {}) };
-        if (enabled) delete content[key];
-        else content[key] = false;
-        if (Object.keys(content).length > 0) toolResult.content = content;
-        else delete toolResult.content;
-      }
-      if (Object.keys(toolResult).length > 0) overrides.toolResult = toolResult;
-      else delete overrides.toolResult;
-      const nextApps = { ...apps };
-      if (Object.keys(overrides).length > 0) nextApps.mcpAppsOverrides = overrides;
-      else delete nextApps.mcpAppsOverrides;
-      const updated: HostConfigMcpProfileV1 = {
-        ...base,
-        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
-      };
       return {
         ...prev,
         mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
@@ -1249,55 +1143,6 @@ export function ProtocolTab({
                 aria-label="Re-fetches tools after the notification"
               />
             </div>
-          </div>
-        </div>
-        <div className="mt-2.5 border-t border-border/50 pt-2.5">
-          <div className="min-w-0">
-            <span className="text-[12px] font-medium">
-              Widget tool results
-            </span>
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Which parts of a tool result survive the trip back to a widget
-              that called it. Turn one off to emulate a host that drops it.
-            </p>
-          </div>
-          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
-            <div className="flex items-center justify-between gap-3 px-3 py-2">
-              <span className="text-[12px]">Structured content</span>
-              <Switch
-                checked={storedToolResult?.structuredContent !== false}
-                onCheckedChange={(checked) =>
-                  setToolResultPart("structuredContent", checked)
-                }
-                disabled={readOnly}
-                aria-label="Structured content reaches widgets"
-              />
-            </div>
-            <div className="bg-muted/30 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
-              Content
-            </div>
-            {(
-              [
-                ["text", "Text"],
-                ["image", "Image"],
-                ["audio", "Audio"],
-                ["resource", "Embedded resource"],
-                ["resourceLink", "Resource link"],
-              ] as const
-            ).map(([key, label]) => (
-              <div
-                key={key}
-                className="flex items-center justify-between gap-3 px-3 py-2"
-              >
-                <span className="text-[12px]">{label}</span>
-                <Switch
-                  checked={storedToolResult?.content?.[key] !== false}
-                  onCheckedChange={(checked) => setToolResultPart(key, checked)}
-                  disabled={readOnly}
-                  aria-label={`${label} tool result reaches widgets`}
-                />
-              </div>
-            ))}
           </div>
         </div>
         {showPolicyToggle && (
