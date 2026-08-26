@@ -220,6 +220,28 @@ export class EvalDecisionSummaryStore {
     return this.cache.size;
   }
 
+  /**
+   * How long a settled entry is trusted.
+   *
+   * Exposed because the store only re-reads when someone ASKS: `request()` is
+   * where staleness is evaluated. A view that stays mounted asks once and would
+   * otherwise sit on its first answer forever, so the subscriber paces its own
+   * revalidation off this number and the store still decides whether the ask
+   * turns into a fetch.
+   */
+  get staleWindowMs(): number {
+    return this.staleMs;
+  }
+
+  /**
+   * The absolute cache ceiling, above which even a subscribed page is evicted.
+   *
+   * `cacheLimit` is the target; this is the guarantee. See {@link evict}.
+   */
+  private get hardCacheCeiling(): number {
+    return this.cacheLimit * 2;
+  }
+
   getEntry(key: string): DecisionSummaryEntry | undefined {
     return this.cache.get(key);
   }
@@ -372,9 +394,11 @@ export class EvalDecisionSummaryStore {
     }
 
     if (record.cancelled) {
-      // Abandoned mid-flight: leave no entry behind so a returning subscriber
-      // re-reads rather than painting a half-cancelled state.
-      this.cache.delete(record.key);
+      // Abandoned mid-flight: write nothing. `cancel()` already removed this
+      // key's entry synchronously, so anything sitting there NOW belongs to a
+      // replacement record — a subscriber that left and came back before this
+      // fetch settled. Deleting again would erase that newer entry and leave
+      // the returning subscriber staring at a page nothing is loading.
       this.pump();
       return;
     }
@@ -412,11 +436,26 @@ export class EvalDecisionSummaryStore {
 
   private evict(): void {
     if (this.cache.size <= this.cacheLimit) return;
+    // Pass one: unsubscribed pages, least recently used first. Evicting a page
+    // something is currently showing would blank it and immediately refetch it,
+    // so those are spared while anything else can go.
     for (const key of [...this.cache.keys()]) {
       if (this.cache.size <= this.cacheLimit) return;
-      // Never evict a page something is currently showing — that would evict
-      // the entry and immediately refetch it.
       if (this.subscribers.has(key)) continue;
+      this.cache.delete(key);
+    }
+    // Pass two: the backstop. Row subscriptions are sticky for as long as the
+    // row is mounted, so a long scroll through a runs table can leave every
+    // cached page subscribed — and then pass one frees nothing and "bounded"
+    // stops being true. Past a hard ceiling the oldest pages go anyway; by
+    // construction those are the rows scrolled furthest out of view, and a row
+    // coming back re-asks on becoming visible, so an evicted page repopulates
+    // rather than staying blank.
+    for (const key of [...this.cache.keys()]) {
+      if (this.cache.size <= this.hardCacheCeiling) return;
+      // A page still being FETCHED is not evictable: dropping the loading
+      // entry would strand the subscriber until the read settled.
+      if (this.pending.has(key)) continue;
       this.cache.delete(key);
     }
   }

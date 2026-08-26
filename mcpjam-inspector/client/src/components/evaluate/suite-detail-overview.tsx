@@ -43,7 +43,10 @@ import {
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
-import { RunDecisionVerdictBadge } from "../evals/run-decision-summary-card";
+import {
+  RunDecisionVerdictBadge,
+  RunDecisionVerdictUnavailable,
+} from "../evals/run-decision-summary-card";
 import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 
@@ -796,12 +799,16 @@ function SuiteRunVerdictCell({
   enabled: boolean;
   lazy: boolean;
 }) {
-  const [visibilityRef, hasBeenVisible] = useHasBeenVisible<HTMLSpanElement>();
+  const [visibilityRef, hasBeenVisible, onScreen] =
+    useHasBeenVisible<HTMLSpanElement>();
   const terminal = isTerminalEvalRunStatus(row.status);
-  const { summary } = useEvalRunDecisionBadge({
+  const { status, summary, error } = useEvalRunDecisionBadge({
     projectId,
     runId: row.runId,
     enabled: enabled && terminal && (!lazy || hasBeenVisible),
+    // Eagerly-read first-page rows are on screen by definition; lazy ones
+    // revalidate only while they actually are. See the runs table for why.
+    revalidate: !lazy || onScreen,
     revision: row.revision,
   });
 
@@ -809,6 +816,12 @@ function SuiteRunVerdictCell({
     <span ref={lazy ? visibilityRef : undefined}>
       {summary ? (
         <RunDecisionVerdictBadge summary={summary} />
+      ) : status === "error" ? (
+        // The read SETTLED and there is no verdict to show. `Ship`/`Hold` is
+        // this table's own pass-rate derivation, and leaving it up here — with
+        // nothing saying the run's own answer could not be read — is exactly
+        // the silent disagreement this surface exists to remove.
+        <RunDecisionVerdictUnavailable error={error} />
       ) : (
         <span
           className={cn(

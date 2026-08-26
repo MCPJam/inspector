@@ -47,6 +47,17 @@ export interface EvalRunDecisionSummaryTarget {
    * asynchronous judge fanout lands.
    */
   revision?: string;
+  /**
+   * Whether this view is currently worth revalidating.
+   *
+   * Separate from `enabled` because the two answer different questions.
+   * `enabled` is sticky for a table row — once fetched, keep the answer — but
+   * revalidation must follow what is ON SCREEN, or a session that scrolled
+   * past three hundred rows would poll all three hundred of them forever.
+   * Defaults to `true` for single views (run detail) that are always the thing
+   * being looked at.
+   */
+  revalidate?: boolean;
   /** Test seam. Production always shares the singleton, and must. */
   store?: EvalDecisionSummaryStore;
 }
@@ -55,6 +66,37 @@ export interface EvalRunDecisionSummaryState {
   status: "disabled" | "loading" | "ready" | "error";
   summary: EvalRunDecisionSummary | null;
   error: EvalRunDecisionSummaryError | null;
+}
+
+/**
+ * Re-ask the store on the stale window, for as long as the view is mounted.
+ *
+ * The store evaluates staleness inside `request()`, which means it only ever
+ * re-reads when somebody asks. A run-detail page or a visible table row asks
+ * once on mount and then sits there — so without this, a summary fetched at
+ * T+0 stays on screen indefinitely and asynchronous judge fanout landing at
+ * T+2min is never seen. The ticker only ASKS; the store still decides whether
+ * the ask becomes a fetch, so a fresh entry costs nothing.
+ */
+function useStaleRevalidation(
+  store: EvalDecisionSummaryStore,
+  active: boolean,
+  ask: () => void,
+): void {
+  const askRef = useRef(ask);
+  askRef.current = ask;
+
+  useEffect(() => {
+    if (!active) return;
+    // Ask once on becoming active, not only on the tick. A row scrolled back
+    // into view may find its entry evicted, and waiting a whole window to
+    // discover that would leave it blank for no reason.
+    askRef.current();
+    const period = store.staleWindowMs;
+    if (!Number.isFinite(period) || period <= 0) return;
+    const timer = setInterval(() => askRef.current(), period);
+    return () => clearInterval(timer);
+  }, [store, active]);
 }
 
 function useStoreEntry(
@@ -100,6 +142,7 @@ export function useEvalRunDecisionSummaryPage({
   revision,
   limit,
   cursor,
+  revalidate = true,
   store = evalDecisionSummaryStore,
 }: EvalRunDecisionSummaryTarget & {
   limit: number;
@@ -117,7 +160,7 @@ export function useEvalRunDecisionSummaryPage({
 
   const entry = useStoreEntry(store, key);
 
-  useEffect(() => {
+  const ask = useCallback(() => {
     if (!active) return;
     store.request({
       projectId: projectId as string,
@@ -127,6 +170,12 @@ export function useEvalRunDecisionSummaryPage({
       ...(revision !== undefined ? { revision } : {}),
     });
   }, [active, store, projectId, runId, limit, cursor, revision]);
+
+  useEffect(() => {
+    ask();
+  }, [ask]);
+
+  useStaleRevalidation(store, active && revalidate, ask);
 
   return toState(active, entry);
 }
@@ -206,6 +255,7 @@ export function useEvalRunDecisionDetail({
   runId,
   enabled,
   revision,
+  revalidate = true,
   store = evalDecisionSummaryStore,
   limit = DECISION_SUMMARY_DETAIL_LIMIT,
 }: EvalRunDecisionSummaryTarget & {
@@ -248,11 +298,9 @@ export function useEvalRunDecisionDetail({
     [active, projectId, runId, limit, cursorKey],
   );
 
-  useEffect(() => {
+  const askAllPages = useCallback(() => {
     if (!active) return;
-    const releases = cursorList.map((cursor, index) => {
-      const key = keys[index];
-      const release = store.subscribe(key, bump);
+    for (const cursor of cursorList) {
       store.request({
         projectId: projectId as string,
         runId: runId as string,
@@ -260,13 +308,23 @@ export function useEvalRunDecisionDetail({
         ...(cursor ? { cursor } : {}),
         ...(revision !== undefined ? { revision } : {}),
       });
-      return release;
-    });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, store, projectId, runId, limit, revision, cursorKey]);
+
+  useEffect(() => {
+    if (!active) return;
+    const releases = keys.map((key) => store.subscribe(key, bump));
+    askAllPages();
     return () => {
       for (const release of releases) release();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, store, projectId, runId, limit, revision, cursorKey, bump, keys]);
+  }, [active, store, keys, bump, askAllPages]);
+
+  // A run-detail page is exactly the surface someone leaves open while a judge
+  // is still landing, so it revalidates every loaded page on the stale window.
+  useStaleRevalidation(store, active && revalidate, askAllPages);
 
   const entries = keys.map((key) => store.getEntry(key));
   const head = entries[0];
@@ -349,8 +407,9 @@ export function useEvalRunDecisionDetail({
  */
 export function useHasBeenVisible<T extends Element>(options?: {
   rootMargin?: string;
-}): [(node: T | null) => void, boolean] {
+}): [(node: T | null) => void, boolean, boolean] {
   const [visible, setVisible] = useState(false);
+  const [onScreen, setOnScreen] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const rootMargin = options?.rootMargin ?? "200px";
 
@@ -358,27 +417,30 @@ export function useHasBeenVisible<T extends Element>(options?: {
     (node: T | null) => {
       observerRef.current?.disconnect();
       observerRef.current = null;
-      if (!node || visible) return;
+      if (!node) return;
       if (typeof IntersectionObserver === "undefined") {
         // No observer (older jsdom, exotic embedders): treat the row as
         // visible rather than never loading it.
         setVisible(true);
+        setOnScreen(true);
         return;
       }
+      // Kept CONNECTED rather than disconnected on first intersection. The
+      // sticky flag above is the fetch gate; this second, live flag is what
+      // lets a caller revalidate only the rows a person is actually looking
+      // at. Without it, every row ever scrolled past would keep polling.
       const observer = new IntersectionObserver(
         (entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) {
-            setVisible(true);
-            observer.disconnect();
-            observerRef.current = null;
-          }
+          const intersecting = entries.some((entry) => entry.isIntersecting);
+          setOnScreen(intersecting);
+          if (intersecting) setVisible(true);
         },
         { rootMargin },
       );
       observer.observe(node);
       observerRef.current = observer;
     },
-    [visible, rootMargin],
+    [rootMargin],
   );
 
   useEffect(
@@ -389,5 +451,5 @@ export function useHasBeenVisible<T extends Element>(options?: {
     [],
   );
 
-  return [ref, visible];
+  return [ref, visible, onScreen];
 }

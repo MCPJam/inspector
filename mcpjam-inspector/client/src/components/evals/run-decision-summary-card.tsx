@@ -437,6 +437,55 @@ function DiagnosticRow({
 }
 
 /**
+ * Compact per-kind copy for a table cell, where the card's full sentences
+ * do not fit. The `title` carries the fuller explanation.
+ */
+const VERDICT_UNAVAILABLE_LABELS: Record<
+  EvalRunDecisionSummaryError["kind"],
+  string
+> = {
+  notFound: "No summary",
+  routeUnavailable: "Not available",
+  invalidContract: "Invalid summary",
+  requestFailed: "Load failed",
+};
+
+/**
+ * What a row shows when the canonical read SETTLED without a summary.
+ *
+ * The alternative — falling back to the row's locally derived label — is the
+ * precise bug this whole surface exists to remove. A stale `Passed` presented
+ * with no hint that the run's own answer could not be read is worse than
+ * saying nothing: it looks authoritative and it is not. So the row says what
+ * happened instead, and the four kinds stay four, because only one of them
+ * ("Invalid summary") is a bug report.
+ *
+ * This is NOT the loading state. While the read is in flight a row keeps its
+ * lifecycle label, which is the only answer it has yet.
+ */
+export function RunDecisionVerdictUnavailable({
+  error,
+  className,
+}: {
+  error: EvalRunDecisionSummaryError | null;
+  className?: string;
+}) {
+  const kind = error?.kind ?? "requestFailed";
+  return (
+    <span
+      className={cn(
+        "text-xs font-medium uppercase tracking-wide text-muted-foreground",
+        className,
+      )}
+      data-testid="run-decision-verdict-unavailable"
+      title={FAILURE_COPY[kind].title}
+    >
+      {VERDICT_UNAVAILABLE_LABELS[kind]}
+    </span>
+  );
+}
+
+/**
  * The verdict badge for a table row.
  *
  * Renders NOTHING until a canonical summary is in hand — a row whose summary

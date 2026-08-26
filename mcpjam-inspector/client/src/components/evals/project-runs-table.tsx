@@ -22,7 +22,10 @@ import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { RunSourceBadge } from "./run-source-badge";
 import type { EvalSuiteRun } from "./types";
-import { RunDecisionVerdictBadge } from "./run-decision-summary-card";
+import {
+  RunDecisionVerdictBadge,
+  RunDecisionVerdictUnavailable,
+} from "./run-decision-summary-card";
 import {
   useEvalRunDecisionBadge,
   useHasBeenVisible,
@@ -382,14 +385,22 @@ function ProjectRunTableRow({
   decisionSummaryEnabled: boolean;
   onSelectRun: (args: { suiteId: string; runId: string }) => void;
 }) {
-  const [visibilityRef, hasBeenVisible] = useHasBeenVisible<HTMLTableRowElement>();
+  const [visibilityRef, hasBeenVisible, onScreen] =
+    useHasBeenVisible<HTMLTableRowElement>();
   const terminal = isTerminalEvalRunStatus(row.status);
-  const { summary } = useEvalRunDecisionBadge({
+  const { status: summaryStatus, summary, error } = useEvalRunDecisionBadge({
     projectId,
     runId: row._id,
     enabled: decisionSummaryEnabled && terminal && hasBeenVisible,
+    // Sticky to FETCH, live to REVALIDATE: a row keeps its answer once read,
+    // but only the rows on screen keep asking whether it changed.
+    revalidate: onScreen,
     revision: evalRunDecisionRevision(row),
   });
+  // SETTLED without a summary. The lifecycle label is this row's answer only
+  // until the run's own answer is known to be unreadable — after that,
+  // presenting it is presenting a derivation as if it were the verdict.
+  const summaryUnavailable = summaryStatus === "error";
 
   const meta = statusMeta(row);
   // Run detail is rendered inside its suite, so a row whose suite no longer
@@ -443,6 +454,8 @@ function ProjectRunTableRow({
           // `inconclusive` and "no verdict" included — those are answers this
           // column could not previously express at all.
           <RunDecisionVerdictBadge summary={summary} />
+        ) : summaryUnavailable ? (
+          <RunDecisionVerdictUnavailable error={error} />
         ) : (
           <span
             className={cn(
@@ -467,12 +480,14 @@ function ProjectRunTableRow({
               {canonicalUnit ? `counted in ${canonicalUnit}` : null}
             </span>
           </span>
-        ) : summary ? (
-          // The summary ARRIVED and reported no counts — a legacy run that
-          // recorded none, or a run with no verdict, for which the contract
-          // forbids them outright. Absence stays absence: the stored aggregate
-          // is a different reading of this run, and printing it beside the
-          // canonical verdict would put two answers in one row.
+        ) : summary || summaryUnavailable ? (
+          // Either the summary ARRIVED and reported no counts — a legacy run
+          // that recorded none, or a run with no verdict, for which the
+          // contract forbids them outright — or the read settled unreadable.
+          // Absence stays absence either way: the stored aggregate is a
+          // different reading of this run, and printing it beside a canonical
+          // verdict (or beside "we could not read one") puts two answers in
+          // one row.
           <span className="flex flex-col leading-tight">
             <span>—</span>
             <span className="text-[10px] opacity-70">no counts reported</span>

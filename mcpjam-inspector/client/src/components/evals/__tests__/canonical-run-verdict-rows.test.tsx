@@ -56,6 +56,7 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 import { ProjectRunsTable, type ProjectRunRow } from "../project-runs-table";
 import { SuiteDetailOverview } from "../../evaluate/suite-detail-overview";
 import { evalDecisionSummaryStore } from "@/lib/evals/eval-decision-summary-store";
+import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 
@@ -293,6 +294,43 @@ describe("ProjectRunsTable with canonical verdicts", () => {
     expect(table.getByText(/75%/)).toBeInTheDocument();
     expect(table.queryByText("no counts reported")).toBeNull();
   });
+
+  it.each([
+    ["notFound", "No summary"],
+    ["routeUnavailable", "Not available"],
+    ["invalidContract", "Invalid summary"],
+    ["requestFailed", "Load failed"],
+  ] as const)(
+    "says the verdict is unreadable (%s) instead of falling back to the local one",
+    async (kind, label) => {
+      fetchMock.mockRejectedValue(
+        new EvalRunDecisionSummaryError(kind, "nope"),
+      );
+      mocks.paginated.current = {
+        results: [makeProjectRow({ status: "completed", result: "passed" })],
+        status: "Exhausted",
+        isLoading: false,
+        loadMore: vi.fn(),
+      };
+
+      render(
+        <ProjectRunsTable
+          projectId="p1"
+          onSelectRun={vi.fn()}
+          decisionSummaryEnabled
+        />,
+      );
+
+      const table = () => within(screen.getByRole("table"));
+      await waitFor(() => {
+        expect(table().getByText(label)).toBeInTheDocument();
+      });
+      // The stale local answer must NOT stand in for the run's own. Presenting
+      // it with nothing marking it as a derivation is the bug this replaces.
+      expect(table().queryByText("Passed")).toBeNull();
+      expect(table().queryByText(/75%/)).toBeNull();
+    },
+  );
 
   it("leaves a running row lifecycle-only and asks for nothing", async () => {
     fetchMock.mockResolvedValue(INCONCLUSIVE);
@@ -557,6 +595,56 @@ describe("Evaluate suite run history with canonical verdicts", () => {
     const after = screen.getByTestId("suite-run-row-run-1");
     expect(within(after).getByText("Passed")).toBeInTheDocument();
     expect(within(after).queryByText("Hold")).toBeNull();
+  });
+
+  it("says the history verdict is unreadable instead of leaving Ship/Hold up", async () => {
+    fetchMock.mockRejectedValue(
+      new EvalRunDecisionSummaryError("routeUnavailable", "not served"),
+    );
+    renderHistory(
+      { projectId: "p1", decisionSummaryEnabled: true },
+      [makeRun({ _id: "run-1", result: "failed" })],
+      [
+        makeIteration({
+          _id: "i1",
+          suiteRunId: "run-1",
+          result: "failed",
+          resultSource: "reported",
+        }),
+      ],
+    );
+
+    const row = await screen.findByTestId("suite-run-row-run-1");
+    await waitFor(() => {
+      expect(within(row).getByText("Not available")).toBeInTheDocument();
+    });
+    expect(within(row).queryByText("Hold")).toBeNull();
+    expect(within(row).queryByText("Ship")).toBeNull();
+  });
+
+  it("keeps the local label while the read is still in flight", async () => {
+    // The other side of the same rule: a row that has not heard back yet still
+    // has only its own derivation, and blanking it would be worse than showing
+    // it. Never resolving the fetch holds the row in `loading`.
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    renderHistory(
+      { projectId: "p1", decisionSummaryEnabled: true },
+      [makeRun({ _id: "run-1", result: "failed" })],
+      [
+        makeIteration({
+          _id: "i1",
+          suiteRunId: "run-1",
+          result: "failed",
+          resultSource: "reported",
+        }),
+      ],
+    );
+
+    const row = await screen.findByTestId("suite-run-row-run-1");
+    expect(within(row).getByText("Hold")).toBeInTheDocument();
+    expect(
+      within(row).queryByTestId("run-decision-verdict-unavailable"),
+    ).toBeNull();
   });
 
   it("reads only the rows the first page shows", async () => {

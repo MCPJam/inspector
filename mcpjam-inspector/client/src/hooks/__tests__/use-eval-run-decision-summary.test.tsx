@@ -148,6 +148,157 @@ describe("useEvalRunDecisionBadge", () => {
   });
 });
 
+describe("stale revalidation while mounted", () => {
+  it("re-reads a view that never unmounts once the window elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 1_000;
+      const calls: Recorded[] = [];
+      const fetcher = vi.fn(
+        (params: { projectId: string; runId: string; limit?: number }) =>
+          new Promise<EvalRunDecisionSummary>((resolve, reject) => {
+            calls.push({
+              params: { ...params, limit: params.limit ?? 0 },
+              resolve,
+              reject,
+            });
+          }),
+      );
+      const store = new EvalDecisionSummaryStore({
+        fetcher: fetcher as never,
+        now: () => now,
+        staleMs: 30_000,
+      });
+
+      renderHook(() =>
+        useEvalRunDecisionBadge({
+          projectId: "p1",
+          runId: "run-1",
+          enabled: true,
+          store,
+        }),
+      );
+      calls[0].resolve(PARTIAL);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(calls).toHaveLength(1);
+
+      // Nothing about this component changes — no remount, no new revision.
+      // Without a ticker the store is never asked again and the row stays
+      // pinned to its first answer while judge fanout lands behind it.
+      now += 31_000;
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(calls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks but does not refetch while the entry is still fresh", async () => {
+    vi.useFakeTimers();
+    try {
+      // The store's clock is HELD while the timer clock advances, so the
+      // ticker fires repeatedly against an entry that never ages. That is the
+      // only way to separate "asked" from "refetched" here: the tick period is
+      // the stale window, so a tick against a moving clock is legitimately due
+      // a refetch.
+      const calls: Recorded[] = [];
+      const fetcher = vi.fn(
+        (params: { projectId: string; runId: string; limit?: number }) =>
+          new Promise<EvalRunDecisionSummary>((resolve, reject) => {
+            calls.push({
+              params: { ...params, limit: params.limit ?? 0 },
+              resolve,
+              reject,
+            });
+          }),
+      );
+      const store = new EvalDecisionSummaryStore({
+        fetcher: fetcher as never,
+        now: () => 1_000,
+        staleMs: 30_000,
+      });
+
+      renderHook(() =>
+        useEvalRunDecisionBadge({
+          projectId: "p1",
+          runId: "run-1",
+          enabled: true,
+          store,
+        }),
+      );
+      calls[0].resolve(PARTIAL);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000 * 5);
+      });
+
+      // Five ticks, one request. The ticker only ASKS; a fresh entry costs
+      // nothing, which is what keeps a table full of revalidating rows from
+      // becoming a request storm.
+      expect(calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops asking once the view unmounts", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 1_000;
+      const calls: Recorded[] = [];
+      const fetcher = vi.fn(
+        (params: { projectId: string; runId: string; limit?: number }) =>
+          new Promise<EvalRunDecisionSummary>((resolve, reject) => {
+            calls.push({
+              params: { ...params, limit: params.limit ?? 0 },
+              resolve,
+              reject,
+            });
+          }),
+      );
+      const store = new EvalDecisionSummaryStore({
+        fetcher: fetcher as never,
+        now: () => now,
+        staleMs: 1_000,
+      });
+
+      const { unmount } = renderHook(() =>
+        useEvalRunDecisionBadge({
+          projectId: "p1",
+          runId: "run-1",
+          enabled: true,
+          store,
+        }),
+      );
+      calls[0].resolve(PARTIAL);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      unmount();
+
+      now += 100_000;
+      await act(async () => {
+        vi.advanceTimersByTime(100_000);
+      });
+
+      expect(calls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("useEvalRunDecisionDetail", () => {
   it("reads page one at the fixed detail page size", () => {
     const { calls, store } = recordingStore();

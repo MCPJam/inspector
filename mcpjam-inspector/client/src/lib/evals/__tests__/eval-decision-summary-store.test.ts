@@ -344,6 +344,35 @@ describe("EvalDecisionSummaryStore", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("does not let a cancelled read erase the entry that replaced it", async () => {
+    const { calls, fetcher } = deferredFetcher();
+    const store = new EvalDecisionSummaryStore({ fetcher, now: clock });
+    const request = detailRequest("run-1");
+    const key = decisionSummaryKey(request);
+
+    // Subscribe, leave, and come back before the aborted read settles.
+    const release = store.subscribe(key, vi.fn());
+    store.request(request);
+    release();
+    store.subscribe(key, vi.fn());
+    store.request(request);
+    expect(calls).toHaveLength(2);
+
+    // The REPLACEMENT lands first...
+    calls[1].resolve(PASSING);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.getEntry(key)).toMatchObject({ status: "ready" });
+
+    // ...and then the abandoned read finally settles. It must write nothing
+    // and, crucially, erase nothing: the entry now belongs to the newer read.
+    calls[0].reject(new DOMException("Aborted", "AbortError"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.getEntry(key)).toMatchObject({ status: "ready" });
+  });
+
   it("evicts the least recently used page once the cache is full", async () => {
     const { calls, fetcher } = deferredFetcher();
     const store = new EvalDecisionSummaryStore({
@@ -385,6 +414,33 @@ describe("EvalDecisionSummaryStore", () => {
     await Promise.resolve();
 
     expect(store.getEntry(decisionSummaryKey(pinned))).toBeDefined();
+  });
+
+  it("stays bounded even when every cached page is subscribed", async () => {
+    const { calls, fetcher } = deferredFetcher();
+    const store = new EvalDecisionSummaryStore({
+      fetcher,
+      now: clock,
+      cacheLimit: 4,
+      maxActiveRequests: 100,
+    });
+
+    // Row subscriptions are sticky for as long as the row is mounted, so a
+    // long scroll leaves every cached page subscribed. Sparing all of them
+    // would make "bounded LRU" untrue.
+    for (let index = 0; index < 20; index += 1) {
+      const request = detailRequest(`run-${index}`);
+      store.subscribe(decisionSummaryKey(request), vi.fn());
+      store.request(request);
+    }
+    for (const call of calls) call.resolve(PASSING);
+    for (let tick = 0; tick < 25; tick += 1) await Promise.resolve();
+
+    expect(store.cacheSize).toBeLessThanOrEqual(8);
+    // The page most recently touched is the one still on screen; it survives.
+    expect(
+      store.getEntry(decisionSummaryKey(detailRequest("run-19"))),
+    ).toBeDefined();
   });
 
   it("notifies only the subscribers of the key that settled", async () => {
