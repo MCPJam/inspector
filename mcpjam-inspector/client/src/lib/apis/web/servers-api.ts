@@ -55,6 +55,8 @@ export type HostedServerValidateContext = {
    */
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
 };
 
 export interface HostedServerValidateResponse {
@@ -140,6 +142,12 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(hostedContext.suppressListenChannel === true
+          ? { suppressListenChannel: true }
+          : {}),
+        ...(hostedContext.dropToolListChanged === true
+          ? { dropToolListChanged: true }
           : {}),
       }
     : buildServerRequest(serverNameOrId);
