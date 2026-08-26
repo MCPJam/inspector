@@ -31,7 +31,7 @@ const CLAIM = {
 };
 
 function stubFetch(
-  responder: (url: string, init: any) => { status: number; body?: unknown }
+  responder: (url: string, init: any) => { status: number; body?: unknown },
 ) {
   const calls: Array<{ path: string; body: any; headers: any; signal: any }> =
     [];
@@ -52,7 +52,7 @@ function stubFetch(
           return body;
         },
       } as unknown as Response;
-    })
+    }),
   );
   return calls;
 }
@@ -84,7 +84,7 @@ describe("being a worker peer at all", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     await expect(claimNextStageDerivation("w1")).rejects.toThrow(
-      /CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN/
+      /CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN/,
     );
   });
 });
@@ -135,7 +135,7 @@ describe("claim", () => {
     configured();
     stubFetch(() => ({ status: 500, body: { ok: false } }));
     await expect(claimNextStageDerivation("w1")).rejects.toBeInstanceOf(
-      ChatStageBackendError
+      ChatStageBackendError,
     );
   });
 
@@ -143,7 +143,7 @@ describe("claim", () => {
     configured();
     stubFetch(() => ({ status: 200, body: { ok: false } }));
     await expect(claimNextStageDerivation("w1")).rejects.toBeInstanceOf(
-      ChatStageBackendError
+      ChatStageBackendError,
     );
   });
 
@@ -151,7 +151,7 @@ describe("claim", () => {
     configured();
     stubFetch(() => ({ status: 200, body: undefined }));
     await expect(claimNextStageDerivation("w1")).rejects.toBeInstanceOf(
-      ChatStageBackendError
+      ChatStageBackendError,
     );
   });
 
@@ -164,11 +164,37 @@ describe("claim", () => {
     configured();
     stubFetch(() => ({ status: 200, body }));
     await expect(claimNextStageDerivation("w1")).rejects.toThrow(
-      /malformed payload/
+      /malformed payload/,
     );
   });
 
-  it("tolerates the optional fields being absent", async () => {
+  it("tolerates the genuinely optional fields being absent", async () => {
+    configured();
+    stubFetch(() => ({
+      status: 200,
+      body: {
+        ok: true,
+        claimed: true,
+        sessionDocId: "sess-1",
+        generation: 1,
+        attempts: 2,
+        source: "swarm",
+        sourceStamp: {},
+      },
+    }));
+    const outcome = await claimNextStageDerivation("w1");
+    expect(outcome.kind).toBe("claimed");
+    if (outcome.kind !== "claimed") return;
+    expect(outcome.claim.chatSessionId).toBe("");
+    expect(outcome.claim.attempts).toBe(2);
+    expect(outcome.claim.evidence).toEqual({});
+    expect(outcome.claim.envelope).toBeNull();
+  });
+
+  it("REFUSES a claim with no attempts — that is the claim's identity", async () => {
+    // Defaulting it would manufacture credentials for a claim we cannot prove
+    // we hold, and the backend's apply guard reads exactly this to decide
+    // whether we still own the row.
     configured();
     stubFetch(() => ({
       status: 200,
@@ -181,13 +207,9 @@ describe("claim", () => {
         sourceStamp: {},
       },
     }));
-    const outcome = await claimNextStageDerivation("w1");
-    expect(outcome.kind).toBe("claimed");
-    if (outcome.kind !== "claimed") return;
-    expect(outcome.claim.chatSessionId).toBe("");
-    expect(outcome.claim.attempts).toBe(0);
-    expect(outcome.claim.evidence).toEqual({});
-    expect(outcome.claim.envelope).toBeNull();
+    await expect(claimNextStageDerivation("w1")).rejects.toThrow(
+      /malformed payload/,
+    );
   });
 });
 
@@ -242,7 +264,7 @@ describe("apply", () => {
     configured();
     stubFetch(() => ({ status: 502, body: { ok: false } }));
     await expect(applyStageDerivation(args)).rejects.toBeInstanceOf(
-      ChatStageBackendError
+      ChatStageBackendError,
     );
   });
 });
@@ -272,14 +294,14 @@ describe("fail", () => {
       "fetch",
       vi.fn(async () => {
         throw new Error("connection reset");
-      })
+      }),
     );
     await expect(
       failStageDerivation({
         sessionDocId: "sess-1",
         generation: 7,
         errorCode: "worker_error",
-      })
+      }),
     ).resolves.toBeUndefined();
   });
 });
@@ -301,7 +323,7 @@ describe("the request deadline covers the body, not just the headers", () => {
           expect(init.signal.aborted).toBe(false);
           return { ok: true, claimed: false, retry: false };
         },
-      })) as never
+      })) as never,
     );
     await claimNextStageDerivation("w1");
     expect(signalDuringBodyRead).toBeDefined();

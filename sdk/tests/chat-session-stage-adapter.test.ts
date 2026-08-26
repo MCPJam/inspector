@@ -376,10 +376,54 @@ describe("grader failure is unmeasured, never a product failure", () => {
     const rows = derive(
       base({
         ...READY_TOOL_SESSION,
-        criteria: { status: "completed", results: [] },
+        criteria: { status: "completed", results: [], criterionIds: [] },
       })
     );
     expect(rowFor(rows.stageResults, "userValue").state).toBe("notMeasured");
+  });
+
+  /**
+   * Zero rows is not automatically "there was no rubric".
+   *
+   * A completed grade whose scope NAMED criteria but produced no readable rows
+   * is a grade we failed to read. Treating that silence as an empty rubric
+   * would let the goal judge answer `userValue` on a session the deterministic
+   * rubric was supposed to decide — which is the judge outranking the criteria,
+   * exactly backwards.
+   */
+  test("zero rows against a NAMED scope never lets the judge answer", () => {
+    const rows = derive(
+      base({
+        ...READY_TOOL_SESSION,
+        criteria: { status: "completed", results: [], criterionIds: ["c1"] },
+        goalJudge: { status: "completed", passed: true },
+      })
+    );
+    expect(rowFor(rows.stageResults, "userValue").state).toBe("notMeasured");
+  });
+
+  test("zero rows with NO scope never lets the judge answer either", () => {
+    // An unknown scope cannot prove there was nothing to grade.
+    const rows = derive(
+      base({
+        ...READY_TOOL_SESSION,
+        criteria: { status: "completed", results: [] },
+        goalJudge: { status: "completed", passed: true },
+      })
+    );
+    expect(rowFor(rows.stageResults, "userValue").state).toBe("notMeasured");
+  });
+
+  test("an EXPLICITLY empty rubric does let the judge answer", () => {
+    // The one shape where the silence is real.
+    const rows = derive(
+      base({
+        ...READY_TOOL_SESSION,
+        criteria: { status: "completed", results: [], criterionIds: [] },
+        goalJudge: { status: "completed", passed: true },
+      })
+    );
+    expect(rowFor(rows.stageResults, "userValue").state).toBe("passed");
   });
 });
 

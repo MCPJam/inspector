@@ -41,18 +41,18 @@ export function chatStageWorkerConfigured(): boolean {
 
 async function postServiceRoute(
   path: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
 ): Promise<{ status: number; body: any }> {
   const env = requiredEnv();
   if (!env) {
     throw new Error(
-      "Chat stage derivation requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN"
+      "Chat stage derivation requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
     );
   }
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    SERVICE_ROUTE_TIMEOUT_MS
+    SERVICE_ROUTE_TIMEOUT_MS,
   );
   let response: Response;
   let parsed: any = null;
@@ -111,7 +111,7 @@ export type StageClaimOutcome =
   | { kind: "disabled" };
 
 export async function claimNextStageDerivation(
-  claimedBy: string
+  claimedBy: string,
 ): Promise<StageClaimOutcome> {
   const { status, body } = await postServiceRoute(`${BASE_PATH}/claim`, {
     claimedBy,
@@ -126,6 +126,10 @@ export async function claimNextStageDerivation(
   if (
     typeof body.sessionDocId !== "string" ||
     typeof body.generation !== "number" ||
+    // `attempts` is the claim's IDENTITY, not a statistic. Defaulting it would
+    // manufacture credentials for a claim we cannot prove we hold, and the
+    // apply guard on the other side reads it to decide exactly that.
+    typeof body.attempts !== "number" ||
     typeof body.source !== "string" ||
     typeof body.sourceStamp !== "object" ||
     body.sourceStamp === null
@@ -141,7 +145,7 @@ export async function claimNextStageDerivation(
       generation: body.generation,
       source: body.source,
       sourceStamp: body.sourceStamp,
-      attempts: typeof body.attempts === "number" ? body.attempts : 0,
+      attempts: body.attempts,
       evidence: (body.evidence ?? {}) as ClaimedStageEvidence,
       envelope: body.envelope ?? null,
     },
@@ -157,6 +161,8 @@ export type StageApplyOutcome =
 export async function applyStageDerivation(args: {
   sessionDocId: string;
   generation: number;
+  /** The claim we are applying under — see the claim parser. */
+  attempts: number;
   sourceStamp: Record<string, unknown>;
   stageResults: unknown[];
   firstFailedStage?: string;
@@ -186,6 +192,8 @@ export async function applyStageDerivation(args: {
 export async function failStageDerivation(args: {
   sessionDocId: string;
   generation: number;
+  /** The claim we are reporting against — see the claim parser. */
+  attempts: number;
   errorCode: string;
   retryable?: boolean;
 }): Promise<void> {

@@ -36,7 +36,7 @@ const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
 
 export function normalizeStageSource(
-  value: unknown
+  value: unknown,
 ): ChatSessionStageSource | null {
   return (CHAT_SESSION_STAGE_SOURCES as readonly unknown[]).includes(value)
     ? (value as ChatSessionStageSource)
@@ -113,7 +113,7 @@ export function normalizeSpans(spans: unknown): StageSpanLike[] {
 const READINESS_STATUSES = ["pending", "completed", "partial", "failed"];
 
 export function normalizeReadiness(
-  value: unknown
+  value: unknown,
 ): ChatSessionReadinessEvidence | undefined {
   if (!isRecord(value)) return undefined;
   if (!READINESS_STATUSES.includes(value.status as string)) return undefined;
@@ -140,7 +140,7 @@ export function normalizeReadiness(
 const CRITERIA_STATUSES = ["pending", "completed", "failed"];
 
 export function normalizeCriteria(
-  value: unknown
+  value: unknown,
 ): ChatSessionCriteriaEvidence | undefined {
   if (!isRecord(value)) return undefined;
   if (!CRITERIA_STATUSES.includes(value.status as string)) return undefined;
@@ -152,19 +152,59 @@ export function normalizeCriteria(
     // silence as "nothing to grade" instead of "we cannot read the grade".
     return { status: "pending" };
   }
+
+  // The SCOPE the grade was claimed against. It is the only thing that makes
+  // an empty `results` legible, so it is carried rather than dropped.
+  const criterionIds = Array.isArray(value.criterionIds)
+    ? value.criterionIds.flatMap((id) => {
+        const trimmed = nonEmptyString(id);
+        return trimmed ? [trimmed] : [];
+      })
+    : undefined;
+  const scopeReadable =
+    !Array.isArray(value.criterionIds) ||
+    criterionIds!.length === value.criterionIds.length;
+
   const results = value.results.flatMap((entry) => {
     if (!isRecord(entry)) return [];
     const criterionId = nonEmptyString(entry.criterionId);
     if (!criterionId || typeof entry.passed !== "boolean") return [];
     return [{ criterionId, passed: entry.passed }];
   });
-  return { status: "completed", results };
+
+  // A row we could not read is a row we do not have. Reporting the survivors
+  // as a complete grade would understate the rubric, and — when every row
+  // drops — would hand `userValue` to the goal judge on a session the rubric
+  // was supposed to answer.
+  const droppedRows = results.length !== value.results.length;
+
+  // `completed` means the grade covers its scope. Anything less is still owed,
+  // so it reads as `pending`: honest, retryable, and re-derived the moment the
+  // real grade lands, because the source stamp moves with it.
+  const covered = new Set(results.map((row) => row.criterionId));
+  const scopeCovered =
+    criterionIds === undefined
+      ? // No scope to check against. Rows present are self-evidencing; zero
+        // rows with no scope is indistinguishable from a lost grade, and the
+        // adapter refuses to let the judge fill that silence either way.
+        results.length > 0
+      : criterionIds.every((id) => covered.has(id));
+
+  if (droppedRows || !scopeReadable || !scopeCovered) {
+    return { status: "pending" };
+  }
+
+  return {
+    status: "completed",
+    results,
+    ...(criterionIds !== undefined ? { criterionIds } : {}),
+  };
 }
 
 const GOAL_STATUSES = ["running", "completed", "failed"];
 
 export function normalizeGoalJudge(
-  value: unknown
+  value: unknown,
 ): ChatSessionGoalJudgeEvidence | undefined {
   if (!isRecord(value)) return undefined;
   if (!GOAL_STATUSES.includes(value.status as string)) return undefined;

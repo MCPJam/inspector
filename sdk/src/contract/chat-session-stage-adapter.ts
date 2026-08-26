@@ -132,6 +132,19 @@ export type ChatSessionCriteriaEvidence = {
   status: "pending" | "completed" | "failed";
   /** Present on `completed`. An empty array is a rubric with no entries. */
   results?: readonly ChatSessionCriterionOutcome[];
+  /**
+   * The criteria this session was CLAIMED against — the grade's scope.
+   *
+   * It is what makes an empty `results` legible. Zero rows against an empty
+   * scope is a real "there was no rubric"; zero rows against a scope that
+   * named criteria is a grade we could not read, and the two must not reduce
+   * to the same silence — the second would hand `userValue` to the goal judge
+   * on a session whose deterministic rubric was supposed to answer it.
+   *
+   * Absent means the scope is unknown (a row written before the field
+   * existed), which is treated as "not explicitly empty".
+   */
+  criterionIds?: readonly string[];
 };
 
 /**
@@ -277,9 +290,19 @@ function judgeEvidenceFrom(
 
   if (criteria?.status === "failed") return undefined;
   if (criteria?.status === "completed") {
-    // An empty rubric graded nothing, so the silence is real and the judge
-    // may fill it. A rubric that produced rows is authoritative.
+    // A rubric that produced rows is authoritative — the judge never displaces
+    // it.
     if ((criteria.results ?? []).length > 0) return undefined;
+    // Zero rows. Only an EXPLICITLY empty scope means "there was no rubric",
+    // and only that silence may be filled by the judge. Zero rows against a
+    // scope that named criteria — or against a scope we cannot see — is a
+    // grade we failed to read, and letting the judge answer there is how a
+    // deterministic rubric silently loses to a model's opinion.
+    if (criteria.criterionIds?.length === 0) {
+      // fall through to the judge
+    } else {
+      return { status: "pending", pendingKind: "scheduled" };
+    }
   } else if (criteria?.status === "pending") {
     return { status: "pending", pendingKind: "scheduled" };
   }

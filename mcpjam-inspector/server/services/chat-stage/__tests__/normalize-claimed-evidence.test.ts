@@ -36,7 +36,7 @@ describe("the envelope is required, not guessed around", () => {
 
   it("reports evidence_unavailable when messages are unreadable", () => {
     expect(
-      normalizeClaimedEvidence(claim({ envelope: { messages: "nope" } }))
+      normalizeClaimedEvidence(claim({ envelope: { messages: "nope" } })),
     ).toEqual({ ok: false, errorCode: "evidence_unavailable" });
   });
 
@@ -49,7 +49,7 @@ describe("the envelope is required, not guessed around", () => {
 
   it("an empty transcript still derives — it just has no ask", () => {
     const result = normalizeClaimedEvidence(
-      claim({ envelope: { messages: [] } })
+      claim({ envelope: { messages: [] } }),
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.input.hasUserAsk).toBe(false);
@@ -59,7 +59,7 @@ describe("the envelope is required, not guessed around", () => {
 describe("hasUserAsk is read from the transcript, not from a preview", () => {
   it("true for a user turn with text", () => {
     expect(
-      transcriptHasUserAsk([{ role: "user", content: "book a room" }])
+      transcriptHasUserAsk([{ role: "user", content: "book a room" }]),
     ).toBe(true);
   });
 
@@ -67,19 +67,19 @@ describe("hasUserAsk is read from the transcript, not from a preview", () => {
     expect(
       transcriptHasUserAsk([
         { role: "user", content: [{ type: "text", text: "book a room" }] },
-      ])
+      ]),
     ).toBe(true);
   });
 
   it("false when only the assistant spoke", () => {
     expect(
-      transcriptHasUserAsk([{ role: "assistant", content: "hello there" }])
+      transcriptHasUserAsk([{ role: "assistant", content: "hello there" }]),
     ).toBe(false);
   });
 
   it("false for a whitespace-only user turn", () => {
     expect(transcriptHasUserAsk([{ role: "user", content: "   " }])).toBe(
-      false
+      false,
     );
   });
 
@@ -105,7 +105,7 @@ describe("spans are narrowed to what the analyzer reads", () => {
           startMs: 1,
           inputTokens: 99,
         },
-      ])
+      ]),
     ).toEqual([
       {
         id: "s1",
@@ -120,7 +120,7 @@ describe("spans are narrowed to what the analyzer reads", () => {
 
   it("drops non-objects and non-finite numbers rather than coercing", () => {
     expect(
-      normalizeSpans([null, "x", { id: "s", mcpErrorCode: Number.NaN }])
+      normalizeSpans([null, "x", { id: "s", mcpErrorCode: Number.NaN }]),
     ).toEqual([{ id: "s" }]);
   });
 
@@ -137,7 +137,7 @@ describe("readiness: an unknown inventory establishes nothing", () => {
         status: "partial",
         advertisedToolCount: 12,
         advertisedToolsKnown: false,
-      })
+      }),
     ).toEqual({ status: "partial" });
   });
 
@@ -148,7 +148,7 @@ describe("readiness: an unknown inventory establishes nothing", () => {
         toolCallCount: 3,
         advertisedToolCount: 12,
         advertisedToolsKnown: true,
-      })
+      }),
     ).toEqual({
       status: "completed",
       toolCallCount: 3,
@@ -168,25 +168,98 @@ describe("criteria: unreadable results are not a pass", () => {
     expect(normalizeCriteria({ status: "completed", results: "nope" })).toEqual(
       {
         status: "pending",
-      }
+      },
     );
   });
 
-  it("keeps only well-formed rows", () => {
+  it("a row we cannot read makes the whole grade incomplete, not smaller", () => {
+    // Keeping the survivors would report a partial rubric as a finished one.
+    // When every row drops, it would go further and hand `userValue` to the
+    // goal judge on a session the rubric was supposed to answer.
     expect(
       normalizeCriteria({
         status: "completed",
+        criterionIds: ["a", "b"],
         results: [
           { criterionId: "a", passed: true },
           { criterionId: "b" },
           { passed: false },
           null,
         ],
-      })
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
+  it("a grade covering its whole scope is completed, and carries the scope", () => {
+    expect(
+      normalizeCriteria({
+        status: "completed",
+        criterionIds: ["a", "b"],
+        results: [
+          { criterionId: "a", passed: true },
+          { criterionId: "b", passed: false },
+        ],
+      }),
+    ).toEqual({
+      status: "completed",
+      results: [
+        { criterionId: "a", passed: true },
+        { criterionId: "b", passed: false },
+      ],
+      criterionIds: ["a", "b"],
+    });
+  });
+
+  it("zero rows against a NAMED scope is incomplete, never an empty rubric", () => {
+    // The exact shape that would otherwise promote a goal-judge pass to
+    // `userValue: passed`.
+    expect(
+      normalizeCriteria({
+        status: "completed",
+        criterionIds: ["c1"],
+        results: [],
+      }),
+    ).toEqual({ status: "pending" });
+  });
+
+  it("zero rows against an EXPLICITLY empty scope is a real empty rubric", () => {
+    expect(
+      normalizeCriteria({
+        status: "completed",
+        criterionIds: [],
+        results: [],
+      }),
+    ).toEqual({ status: "completed", results: [], criterionIds: [] });
+  });
+
+  it("zero rows with NO scope at all is incomplete — we cannot tell", () => {
+    // Absent scope is not an empty scope. A row written before the field
+    // existed cannot prove it had no rubric.
+    expect(normalizeCriteria({ status: "completed", results: [] })).toEqual({
+      status: "pending",
+    });
+  });
+
+  it("rows with no scope are self-evidencing", () => {
+    expect(
+      normalizeCriteria({
+        status: "completed",
+        results: [{ criterionId: "a", passed: true }],
+      }),
     ).toEqual({
       status: "completed",
       results: [{ criterionId: "a", passed: true }],
     });
+  });
+
+  it("an unreadable scope entry makes the grade incomplete", () => {
+    expect(
+      normalizeCriteria({
+        status: "completed",
+        criterionIds: ["a", 7],
+        results: [{ criterionId: "a", passed: true }],
+      }),
+    ).toEqual({ status: "pending" });
   });
 
   it("carries pending and failed through untouched", () => {
@@ -212,7 +285,7 @@ describe("goal judge: a completed verdict with no boolean is silence", () => {
         status: "completed",
         passed: false,
         reason: "never booked",
-      })
+      }),
     ).toEqual({ status: "completed", passed: false, reason: "never booked" });
   });
 
@@ -258,7 +331,7 @@ describe("the assembled input", () => {
           messages: [{ role: "user", content: "book" }],
           spans: [{ id: "s1", category: "tool", status: "ok" }],
         },
-      })
+      }),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;

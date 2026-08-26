@@ -30,7 +30,7 @@ const STAMP = {
 };
 
 function claimFor(
-  over: Partial<ClaimedStageDerivation> = {}
+  over: Partial<ClaimedStageDerivation> = {},
 ): ClaimedStageDerivation {
   return {
     sessionDocId: "sess-1",
@@ -64,7 +64,7 @@ function claimFor(
 }
 
 function ports(
-  over: Partial<ChatSessionStagePassPorts> = {}
+  over: Partial<ChatSessionStagePassPorts> = {},
 ): ChatSessionStagePassPorts & {
   applied: any[];
   failures: any[];
@@ -153,13 +153,14 @@ describe("one claimed session", () => {
   it("unreadable evidence FAILS rather than deriving a blank chain", async () => {
     const p = ports();
     expect(await deriveClaimedSession(claimFor({ envelope: null }), p)).toBe(
-      "evidence_unavailable"
+      "evidence_unavailable",
     );
     expect(p.applied).toEqual([]);
     expect(p.failures).toEqual([
       {
         sessionDocId: "sess-1",
         generation: 7,
+        attempts: 1,
         errorCode: "evidence_unavailable",
         retryable: true,
       },
@@ -171,6 +172,7 @@ describe("one claimed session", () => {
     await deriveClaimedSession(claimFor({ envelope: null }), p);
     for (const failure of p.failures) {
       expect(Object.keys(failure).sort()).toEqual([
+        "attempts",
         "errorCode",
         "generation",
         "retryable",
@@ -200,7 +202,7 @@ describe("the evidence rules survive the round trip", () => {
           },
         },
       }),
-      p
+      p,
     );
     const rows = p.applied[0].stageResults;
     expect(rows[5]).toMatchObject({ stage: "userValue", state: "failed" });
@@ -214,7 +216,7 @@ describe("the evidence rules survive the round trip", () => {
       claimFor({
         evidence: { ...claimFor().evidence, criteria: { status: "failed" } },
       }),
-      p
+      p,
     );
     expect(p.applied[0].stageResults[5]).toMatchObject({
       stage: "userValue",
@@ -240,7 +242,7 @@ describe("the evidence rules survive the round trip", () => {
         evidence: { lifecycle: "settled", readiness: { status: "failed" } },
         envelope: { messages: [{ role: "user", content: "hi" }] },
       }),
-      p
+      p,
     );
     expect(p.applied[0].stageResults[0]).toMatchObject({
       stage: "connection",
@@ -351,7 +353,7 @@ describe("draining the queue", () => {
     });
     await runChatSessionStagePass({ ports: p, maxClaims: 1 });
     expect(
-      Object.keys(p).filter((key) => typeof (p as any)[key] === "function")
+      Object.keys(p).filter((key) => typeof (p as any)[key] === "function"),
     ).toEqual(["claim", "apply", "reportFailure"]);
   });
 });

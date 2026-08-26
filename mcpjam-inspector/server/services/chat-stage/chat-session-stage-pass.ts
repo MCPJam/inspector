@@ -88,13 +88,14 @@ const defaultPorts: ChatSessionStagePassPorts = {
  */
 export async function deriveClaimedSession(
   claim: ClaimedStageDerivation,
-  ports: ChatSessionStagePassPorts = defaultPorts
+  ports: ChatSessionStagePassPorts = defaultPorts,
 ): Promise<StageDerivationOutcome> {
   const normalized = normalizeClaimedEvidence(claim);
   if (!normalized.ok) {
     await ports.reportFailure({
       sessionDocId: claim.sessionDocId,
       generation: claim.generation,
+      attempts: claim.attempts,
       errorCode: normalized.errorCode,
       // Retryable: an envelope can become readable once ingest settles, and a
       // permanently broken one exhausts the attempt budget and parks visibly.
@@ -106,7 +107,7 @@ export async function deriveClaimedSession(
   let derivation: ReturnType<typeof deriveStageResults>;
   try {
     derivation = deriveStageResults(
-      buildChatSessionStageInput(normalized.input)
+      buildChatSessionStageInput(normalized.input),
     );
   } catch (error) {
     // The analyzer is pure and total, so this is a bug rather than a data
@@ -119,6 +120,7 @@ export async function deriveClaimedSession(
     await ports.reportFailure({
       sessionDocId: claim.sessionDocId,
       generation: claim.generation,
+      attempts: claim.attempts,
       errorCode: "worker_error",
       retryable: true,
     });
@@ -130,8 +132,12 @@ export async function deriveClaimedSession(
     applied = await ports.apply({
       sessionDocId: claim.sessionDocId,
       generation: claim.generation,
-      // Handed back VERBATIM. The pass never rebuilds the stamp: a worker able
-      // to choose it could declare its own stale work fresh.
+      // Handed back VERBATIM, both of them. The pass never rebuilds the stamp
+      // (a worker able to choose it could declare its own stale work fresh),
+      // and never invents the claim identity either — `attempts` is what
+      // proves this worker, and not the one that reclaimed the row after our
+      // lease lapsed, still owns it.
+      attempts: claim.attempts,
       sourceStamp: claim.sourceStamp,
       stageResults: derivation.stageResults,
       ...(derivation.firstFailedStage
