@@ -4507,15 +4507,16 @@ const caseFieldsShape = {
   // provenance that was silently discarded on the way in. Losing the claim is
   // strictly worse than rejecting the write.
   //
-  // Nullable for the same reason as `matchOptions` above: an update clears the
-  // claim with `null` and leaves it untouched by omitting it. The schema is the
-  // suite file's own, so a claim means exactly the same thing however it
-  // arrives.
+  // NOT nullable here, unlike `matchOptions` above. Clearing a claim is
+  // meaningful only on an update, and the route agrees: the REST create schema
+  // takes the claim or nothing while only PATCH accepts `null`. Sharing a
+  // nullable schema across both would have the SDK advertise `import: null` on
+  // a create as valid and the server answer 400 — a contract that lies to the
+  // caller about its own inputs. `updateEvalCaseInput` widens it.
   import: evalSuiteFileCaseImportSchema
-    .nullable()
     .optional()
     .describe(
-      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null on an update to clear it."
+      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule."
     ),
 } as const;
 
@@ -5386,6 +5387,16 @@ const updateEvalCaseInput = z.object({
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
   ...caseFieldsShape,
+  // UPDATE-only nullability, matching the route: PATCH accepts `null` to clear
+  // the claim, create does not. `buildCaseBody` keeps `null` and drops
+  // `undefined`, so clearing and leaving-alone stay distinguishable.
+  import: caseFieldsShape.import
+    .unwrap()
+    .nullable()
+    .optional()
+    .describe(
+      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
 

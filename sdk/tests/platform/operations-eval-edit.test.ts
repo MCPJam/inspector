@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PlatformApiClient } from "../../src/platform/client.js";
 import {
   createEvalCaseOperation,
+  createEvalCasesOperation,
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -220,6 +221,33 @@ describe("eval-edit operation execution", () => {
     // `null` CLEARS; omitting leaves the stored claim alone. `buildCaseBody`
     // drops undefined and keeps null, which is exactly that distinction.
     expect(patch?.body).toEqual({ import: null });
+  });
+
+  it("create rejects import: null, which the route would 400", async () => {
+    // The REST create schema takes the claim or nothing; only PATCH accepts
+    // null. An input schema that advertised null here would tell the caller a
+    // body is valid and then have the server reject it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: null,
+      }).success
+    ).toBe(false);
+    expect(
+      createEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        cases: [{ title: "t", import: null }],
+      }).success
+    ).toBe(false);
+    // Update still clears with null — that is the whole point of the asymmetry.
+    expect(
+      updateEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        case: "c1",
+        import: null,
+      }).success
+    ).toBe(true);
   });
 
   it("create_eval_case rejects an exact claim with no note", async () => {
