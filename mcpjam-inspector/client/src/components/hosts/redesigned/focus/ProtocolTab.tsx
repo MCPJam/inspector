@@ -1254,12 +1254,11 @@ export function ProtocolTab({
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
             <span className="text-[12px] font-medium">
-              Tool results received by widgets
+              Widget tool results
             </span>
             <p className="text-[11px] leading-snug text-muted-foreground">
-              When an MCP App widget calls a tool, choose which normal MCP
-              tool-result parts reach it. This does not describe MCP Apps
-              capabilities.
+              Which parts of a tool result survive the trip back to a widget
+              that called it. Turn one off to emulate a host that drops it.
             </p>
           </div>
           <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">

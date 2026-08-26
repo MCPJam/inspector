@@ -641,11 +641,11 @@ const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "toolResult.structuredContent",
     section: "protocol",
-    subsection: "Tool results received by widgets",
+    subsection: "Widget tool results",
     label: "Structured content",
     path: "mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent",
     description:
-      "Forwards structuredContent to an MCP App widget after it calls a tool.",
+      "Whether the structuredContent half of a tool result reaches a widget that called the tool.",
     kind: { kind: "boolean" },
     read: (cfg) =>
       mcpProfile(cfg)?.apps?.mcpAppsOverrides?.toolResult?.structuredContent,
@@ -654,10 +654,10 @@ const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     ([key, label]): HostConfigFieldDef => ({
       id: `toolResult.content.${key}`,
       section: "protocol",
-      subsection: "Tool results received by widgets",
+      subsection: "Widget tool results",
       label,
       path: `mcpProfile.apps.mcpAppsOverrides.toolResult.content.${key}`,
-      description: `Forwards ${label.toLowerCase()} content to an MCP App widget after it calls a tool.`,
+      description: `Whether ${label.toLowerCase()} blocks in a tool result reach a widget that called the tool.`,
       kind: { kind: "boolean" },
       read: (cfg) =>
         cfg.mcpProfile?.apps?.mcpAppsOverrides?.toolResult?.content?.[key],
@@ -942,7 +942,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Tool results received by widgets
+  // Protocol · Widget tool results
   // ============================================================
   ...TOOL_RESULT_WIDGET_FIELDS,
 
