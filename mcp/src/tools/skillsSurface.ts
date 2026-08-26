@@ -77,13 +77,11 @@ export const SKILLS_EXTENSION_CAPABILITY = {
  *
  * The catalog is baked into the bundle at build time, so it cannot change
  * without a deploy — an hour is an honest statement about this server rather
- * than a guessed default. The scope is `server` because the listing does not
- * vary by caller: every client, authenticated or anonymous, sees the same three
- * skills. Were that ever to become per-user, this MUST change with it, or
- * clients will serve one user's catalog to another.
+ * than a guessed default. The listing is public and does not vary by caller,
+ * so its SEP-2549 cache scope is `public`.
  */
 export const SKILLS_LIST_TTL_MS = 60 * 60 * 1000;
-export const SKILLS_LIST_CACHE_SCOPE = "server";
+export const SKILLS_LIST_CACHE_SCOPE = "public";
 
 /** JSON-RPC Invalid params — what the draft mandates for an unknown skill URI. */
 const INVALID_PARAMS = -32602;

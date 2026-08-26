@@ -158,7 +158,8 @@ describe("skills/list", () => {
     const result = await listSkills();
     expect(result.skills.length).toBeGreaterThan(0);
     expect(result.ttlMs).toBe(SKILLS_LIST_TTL_MS);
-    expect(result.cacheScope).toBe(SKILLS_LIST_CACHE_SCOPE);
+    expect(SKILLS_LIST_CACHE_SCOPE).toBe("public");
+    expect(result.cacheScope).toBe("public");
   });
 
   it("gives every entry a complete manifest with digest AND size", async () => {
