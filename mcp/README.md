@@ -255,7 +255,7 @@ This worker serves MCPJam's own Agent Skills alongside its tools, so an agent th
 
 and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
 
-The catalog is the eval-authoring skills, which are the ones that sit next to this server's tools: `mcpjam-eval-import`, `create-mcp-eval`, `explore-to-sdk-evals`. `mcp-inspector` is deliberately absent — it teaches the CLI's probe/doctor surface, which this server does not expose.
+The catalog is the eval-authoring skills: `mcpjam-eval-import`, `create-mcp-eval`, `explore-to-sdk-evals`. None of them teaches this server's *tools* — they teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
 
 **The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
 

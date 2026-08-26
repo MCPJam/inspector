@@ -259,6 +259,27 @@ describe("integrity — our own host as the oracle", () => {
     }
   });
 
+  it("returns the mimeType on the CONTENT, not only the registration", async () => {
+    // A reader takes the type from `contents[0]`, not from `resources/list` —
+    // MCPJam's own loader names it in the refusal for a non-text read. So
+    // declaring one at registration and omitting it here told two different
+    // stories about the same file.
+    const listed = await listSkills();
+    for (const skill of listed.skills) {
+      for (const entry of enumeratedResources(skill)!) {
+        const { result } = await readResource(entry.uri);
+        expect(result.contents[0].mimeType, entry.uri).toBeDefined();
+        if (entry.uri.endsWith(".md")) {
+          expect(result.contents[0].mimeType).toBe("text/markdown");
+        }
+        if (entry.uri.endsWith(".yaml")) {
+          // Not `text/plain`: these are eval suites a reader may want to parse.
+          expect(result.contents[0].mimeType).toBe("application/yaml");
+        }
+      }
+    }
+  });
+
   it("refuses to read a skill URI outside the manifest", async () => {
     const { error, result } = await readResource(
       "skill://mcpjam/create-mcp-eval/references/does-not-exist.md"

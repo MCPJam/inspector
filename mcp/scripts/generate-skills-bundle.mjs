@@ -60,11 +60,20 @@ const REPO_ROOT = join(__dirname, "../..");
 const URI_AUTHORITY = "mcpjam";
 
 /**
- * The worker's catalog: the eval-authoring skills, which are the ones that sit
- * next to its tools (eval suites, runs, scenarios). `mcp-inspector` is
- * deliberately absent — it teaches the CLI's probe/doctor surface, which this
- * server does not expose, and a skill is only useful beside the tools it
- * describes.
+ * The worker's catalog: the eval-authoring skills.
+ *
+ * The honest rationale, since an earlier version of this comment overstated it.
+ * None of these three teaches THIS server's tools (`create_eval_suite`,
+ * `run_eval_suite`, …) — they teach authoring the eval files and suites those
+ * tools then operate on. That is the adjacency: a caller here is working on
+ * evals, and these are the skills about evals.
+ *
+ * `mcp-inspector` is excluded on a narrower ground than "it mentions the CLI":
+ * its whole subject is interpreting probe / doctor / OAuth / conformance
+ * output, and this server exposes none of those tools, so there is nothing here
+ * for it to interpret. `mcpjam-eval-import` does end in a CLI command and is
+ * served by BOTH venues, deliberately — it spans the two surfaces, producing a
+ * suite the platform tools run.
  */
 export const WORKER_SKILL_ROOTS = [
   "skills/mcpjam-eval-import",
@@ -96,6 +105,30 @@ function sha256(buffer) {
 class SkillBundleError extends Error {}
 
 /**
+ * Paths whose values JSON cannot carry faithfully.
+ *
+ * `NaN`/`Infinity` become `null`, a `Date` becomes a string, and `undefined`
+ * disappears from an object — each one a value the host would parse out of the
+ * SKILL.md and fail to match against what we advertised. The YAML `core` schema
+ * can produce the first (`.nan`, `.inf`); the others are defensive.
+ */
+function jsonUnsafePaths(value, path = "frontmatter") {
+  if (typeof value === "number" && !Number.isFinite(value)) return [path];
+  if (value instanceof Date) return [path];
+  if (value === undefined) return [path];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, i) => jsonUnsafePaths(item, `${path}[${i}]`));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) =>
+      jsonUnsafePaths(item, `${path}.${key}`)
+    );
+  }
+  return [];
+}
+
+
+/**
  * Reads one skill directory into a `skills/list` entry plus its file contents.
  *
  * Throws rather than warning. A skill that cannot be published correctly must
@@ -122,14 +155,15 @@ function readSkill(root) {
     );
   }
 
-  // The frontmatter travels as JSON and is compared with canonical JSON on the
-  // far side. Everything we ship today is string-valued, so the round trip is
-  // lossless — but a future skill adding a YAML date, `!!binary`, or a `~`
-  // would drift silently, and the host would report OUR bug as the server's.
-  const roundTripped = JSON.parse(JSON.stringify(frontmatter));
-  if (canonicalSkillJson(roundTripped) !== canonicalSkillJson(frontmatter)) {
+  // The frontmatter travels as JSON. A round-trip comparison would be
+  // TAUTOLOGICAL — `canonicalSkillJson` is itself JSON.stringify-based, so a
+  // value JSON cannot represent normalizes identically on both sides and the
+  // check could never fire. Inspect the values instead.
+  const offending = jsonUnsafePaths(frontmatter);
+  if (offending.length > 0) {
     throw new SkillBundleError(
-      `${root}/SKILL.md has frontmatter that does not survive a JSON round trip, so the value we advertise would differ from the value a host parses. Use scalar YAML.`
+      `${root}/SKILL.md has frontmatter JSON cannot carry faithfully at ${offending.join(", ")}. ` +
+        `The advertised value would differ from what a host parses out of the file, which it reports as frontmatter drift — our bug, surfaced as the server's. Use scalar YAML.`
     );
   }
 

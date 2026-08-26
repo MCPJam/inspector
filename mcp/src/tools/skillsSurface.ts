@@ -1,11 +1,16 @@
 /**
  * `io.modelcontextprotocol/skills` (SEP-2640) — the SERVER half.
  *
- * MCPJam ships Agent Skills that teach an agent how to drive the very tools
- * this worker exposes, and until now the only way to get them was to run an
- * installer. The extension exists precisely so that connecting to a server
- * delivers its tools AND the how-to knowledge for those tools in one step, so
- * this registers the skills beside the tools they describe.
+ * MCPJam ships Agent Skills for authoring evals, and until now the only way to
+ * get them was to run an installer. This server's tools are the eval surface —
+ * suites, runs, scenarios — so a caller here is working on evals, and these are
+ * the skills about evals. The extension exists so that connecting to a server
+ * delivers its tools AND the relevant how-to knowledge in one step.
+ *
+ * Precision, because an earlier version of this comment claimed more: these
+ * skills teach authoring the eval files and suites the tools OPERATE on, not
+ * the tools themselves. `WORKER_SKILL_ROOTS` in the generator carries the full
+ * inclusion/exclusion reasoning.
  *
  * ## Everything here is precomputed
  *
@@ -107,6 +112,18 @@ const getParamsSchema = z.object({ uri: z.string().min(1) }).loose();
  */
 const looseResult = z.looseObject({});
 
+/**
+ * The media type for a skill file.
+ *
+ * `.yaml` matters here: two of the bundled files are eval suites, and calling
+ * them `text/plain` misdescribes content a reader may well want to parse.
+ */
+function mimeTypeFor(uri: string): string {
+  if (uri.endsWith(".md")) return "text/markdown";
+  if (uri.endsWith(".yaml") || uri.endsWith(".yml")) return "application/yaml";
+  return "text/plain";
+}
+
 function entryFor(uri: string): SkillsBundleEntry {
   const entry = SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri);
   if (!entry) {
@@ -152,14 +169,20 @@ export function registerSkillsSurface(server: McpServer): void {
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
+    const mimeType = mimeTypeFor(uri);
     server.registerResource(
       uri,
       uri,
       {
-        mimeType: uri.endsWith(".md") ? "text/markdown" : "text/plain",
+        mimeType,
         description: "Agent Skill file served over MCP (SEP-2640).",
       },
-      async () => ({ contents: [{ uri, text }] })
+      // The SAME `mimeType` on the content, not just the registration. A
+      // reader gets the type from `contents[0]`, not from `resources/list` —
+      // MCPJam's own loader names it in the refusal for a non-text read — so
+      // declaring it in one place and omitting it in the other tells two
+      // different stories about the same file.
+      async () => ({ contents: [{ uri, mimeType, text }] })
     );
   }
 }
