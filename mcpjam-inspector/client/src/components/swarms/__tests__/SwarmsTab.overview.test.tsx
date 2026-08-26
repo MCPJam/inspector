@@ -802,9 +802,35 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
 
     const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/Finishing up/);
     expect(live.textContent).not.toMatch(/still running/i);
     // The count itself stays honest — every session IS accounted for.
     expect(live.textContent).toMatch(/20 of 20 sessions/);
+  });
+
+  /**
+   * The `total > 0` guard carries this: a run that has not published its
+   * fan-out yet reads 0 done of 0, which satisfies `done >= total` on its own.
+   * Calling that "finishing" would announce the end of work never started.
+   */
+  it("still reads as running when the fan-out is not known yet", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    const noFanOut = { total: 0, succeeded: 0, failed: 0, rateLimited: 0 };
+    overviewData = {
+      ...overview,
+      runs: [
+        { ...newest!, status: "running", summary: noFanOut },
+        { ...second!, status: "running", summary: noFanOut },
+        ...rest,
+      ],
+    };
+    renderTab("run-2b");
+
+    const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/still running/i);
+    expect(live.textContent).not.toMatch(/Finishing up/);
+    // No fan-out to report, so the count is omitted rather than reading 0 of 0.
+    expect(live.textContent).not.toMatch(/sessions/);
   });
 
   it("shows no live strip once every run in the wave is terminal", async () => {
