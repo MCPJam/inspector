@@ -1,16 +1,16 @@
 ---
 title: "MCP protocol versions"
-description: "Pin the inspector to a specific MCP protocol version — including the 2026-07-28 stateless RC — to test how your server behaves across versions."
+description: "Pin the inspector to a specific MCP protocol version — including the stateless 2026-07-28 revision — to test how your server behaves across versions."
 icon: "git-branch"
 tag: "Preview"
 ---
 
-The inspector can speak more than one version of the MCP protocol. That matters because a server that works today can break for a client on a different revision: the 2026-07-28 RC drops the `initialize` handshake entirely, discovers capabilities through `server/discover`, and carries protocol metadata on every request. Pinning the inspector to an exact version is how you find out what your server does under each revision before a real client does.
+The inspector can speak more than one version of the MCP protocol. That matters because a server that works today can break for a client on a different revision: 2026-07-28, the final MCP revision, drops the `initialize` handshake entirely, discovers capabilities through `server/discover`, and carries protocol metadata on every request. Pinning the inspector to an exact version is how you find out what your server does under each revision before a real client does.
 
-By default (**Automatic**), unpinned connections probe `server/discover` for 2026 support and fall back to the legacy `initialize` negotiation — on both HTTP and stdio. You can also pin a specific version when you want to test an exact revision — including the **2026-07-28 stateless RC** or any earlier stable release.
+By default (**Automatic**), unpinned connections probe `server/discover` for 2026 support and fall back to the legacy `initialize` negotiation — on both HTTP and stdio. You can also pin a specific version when you want to test an exact revision — including **stateless 2026-07-28** or any earlier stable release.
 
 <Warning>
-  **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
+  **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
 </Warning>
 
 ## What you select vs what goes on the wire
@@ -66,7 +66,7 @@ Try an unsupported version on a second test server to confirm your `-32004` erro
 </Step>
 </Steps>
 
-If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to the host default.
+If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the 2026 server stays pinned to `2026-07-28`, the rest fall back to the host default.
 
 ## What changes when you pick Latest (2026-07-28)
 
@@ -74,7 +74,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 
 - **No `initialize` handshake.** The inspector connects, immediately fires `server/discover`, and uses the result to populate the server card's name, version, capabilities, and instructions.
 - **Per-request metadata.** Every request the inspector sends carries `MCP-Protocol-Version: 2026-07-28` as an HTTP header and the same value inside `params._meta["io.modelcontextprotocol/protocolVersion"]`. `clientInfo` and `clientCapabilities` ride along on every request too.
-- **No session IDs.** The inspector never sends an `mcp-session-id`. If your server returns one, the inspector discards it and surfaces a warning — your server isn't conforming to the stateless RC.
+- **No session IDs.** The inspector never sends an `mcp-session-id`. If your server returns one, the inspector discards it and surfaces a warning — your server isn't conforming to the stateless revision.
 - **Cancellation is closing the stream.** For SSE responses, the inspector closes the response stream to cancel; your server should treat that as a cancel signal.
 
 ### What the inspector tells you
@@ -83,15 +83,15 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 - If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the Activity log to confirm they reach you.
 - The **Activity** log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
 
-<Accordion title="Not yet supported in the RC client">
-The 2026 RC client is a **preview**. A handful of pieces from the SEP family aren't wired up yet — if you try them, the inspector throws a labeled error instead of silently no-op'ing:
+<Accordion title="Not yet supported in the 2026 client">
+MCPJam's 2026-07-28 client is a **preview** of a finalized protocol revision. A handful of pieces from the SEP family aren't wired up yet — if you try them, the inspector throws a labeled error instead of silently no-op'ing:
 
 - `subscriptions/listen` (long-lived notification stream)
-- Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
+- Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](/inspector/tools-prompts-resources#multi-round-input-mcp-2026-07-28-input_required))
 - Resumption tokens
 - Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
-For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
+For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the 2026 client behaves like the legacy one.
 </Accordion>
 
 ## Configuration reference
@@ -111,7 +111,7 @@ Use the host default when you want every server in a Client to speak the same ve
 | Option                    | Stored value       | Transport                                       | Use it when                                                                                                                                 |
 | ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Automatic**             | `"auto"`           | HTTP + stdio: `server/discover`, then legacy fallback | Detect 2026 support from the server; otherwise use the version negotiated by `initialize`. This is the default.                        |
-| **Latest (2026-07-28)**   | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the newest stateless revision — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
+| **Latest (2026-07-28)**   | `2026-07-28`       | Explicit pin: HTTP only (Streamable HTTP POST)  | You want to test your server against the newest stateless revision — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
 | **2025-11-25**            | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the 2025-11-25 stateful release. The initialize handshake offers only this version.                                                  |
 | **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
 | **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
@@ -119,7 +119,7 @@ Use the host default when you want every server in a Client to speak the same ve
 
 **Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. Every other known revision is shown as a bare date.
 
-The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
+That transport column describes **explicit pins**, not Automatic. Automatic negotiation runs on every transport: on stdio the `server/discover` probe is issued to a sibling process (the server binary is spawned a second time), the connection continues on 2026-07-28 when discovery advertises it, and falls back to the legacy `initialize` handshake when discovery is unavailable or silent. What is HTTP-only is pinning: `mcpProtocolVersion` never reaches a stdio transport, so the per-server dropdown hides the 2026 option for STDIO and legacy SSE servers, and a host-level 2026 default that reaches a non-HTTP server fails the connection with a clear transport error rather than silently attempting the wrong protocol.
 
 ### Setting the host default
 
@@ -150,7 +150,7 @@ You can set the per-server protocol version either when adding a server or when 
 
 <AccordionGroup>
 <Accordion title="At add time (shared projects)">
-When adding a server to a shared project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 RC option is only shown for HTTP servers.
+When adding a server to a shared project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 option is only shown for HTTP servers, since a version pin applies to HTTP transports only.
 
 1. Click **Add server** in the **Servers** tab.
 2. Fill in the server details.
@@ -183,14 +183,14 @@ When you add or edit an HTTP server with **OAuth 2.0** authentication, the **Aut
 3. The version freshly detected or negotiated with the MCP server.
 4. `2025-11-25` when a `401` requires OAuth before the server can provide protocol evidence.
 
-The last case is an authentication-gated compatibility fallback, not version detection. If you know an auth-gated server requires the 2026 draft behavior, select `2026-07-28` explicitly.
+The last case is an authentication-gated compatibility fallback, not version detection. If you know an auth-gated server requires the 2026 stateless behavior, select `2026-07-28` explicitly.
 
 OAuth callback security follows the concrete version recorded for that flow. Every version validates `state`. The 2026-07-28 flow also validates a returned RFC 9207 `iss` against the discovered authorization-server issuer; 2025 flows retain compatibility and ignore callback `iss`.
 
 ## Recommended reading
 
-Background on the 2026-07-28 RC and the stateless direction the protocol is moving in:
+Background on 2026-07-28 and the stateless direction the protocol is moving in:
 
-- [MCP Is Growing Up](https://aaif.io/blog/mcp-is-growing-up/) — AAIF's overview of what the 2026-07-28 RC means for teams building agentic systems.
-- [2026-07-28 release candidate announcement](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) — the official blog post walking through what the RC changes and why.
-- [MCP specification (draft)](https://modelcontextprotocol.io/specification/draft) — the in-progress spec text the inspector's RC client targets.
+- [MCP Is Growing Up](https://aaif.io/blog/mcp-is-growing-up/) — AAIF's overview of what 2026-07-28 means for teams building agentic systems.
+- [2026-07-28 release candidate announcement](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) — the official blog post walking through what the revision changes and why.
+- [MCP specification (draft)](https://modelcontextprotocol.io/specification/draft) — the upstream spec text the inspector's 2026 client targets.

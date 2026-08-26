@@ -58,7 +58,7 @@ console.log(`${output.summary.passed}/${output.summary.total} passed`);
 
 ## reportEvalResultsSafely()
 
-Same as `reportEvalResults()`, but returns `null` instead of throwing on failure. Warnings are logged to the console.
+Same as `reportEvalResults()`, but returns `null` instead of throwing on failure, logging a warning to the console. This applies to non-strict reporting only: when `input.strict` is `true` the method rethrows, exactly as described under [Handling failures](#handling-failures).
 
 ```typescript
 import { MCPClientManager, reportEvalResultsSafely } from "@mcpjam/sdk";

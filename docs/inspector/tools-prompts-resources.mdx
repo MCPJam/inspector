@@ -31,7 +31,7 @@ The MCP Inspector provides a complete testing environment for your MCP server. M
 | Start from a reusable interaction the server defines | [Prompts](#prompts) — fetch a prompt with arguments, or insert it in the Playground with `/` |
 | See exactly what went over the wire | [JSON-RPC Logging](#json-rpc-logging) — every request and response, in real time |
 
-The four work together on a single failure: invoke the tool from **Tools**, and when the result is wrong, expand that frame in the traffic log — the **HTTP headers** row names the first disagreement (for example, `mcp-name disagrees with the body`) before you open anything else.
+The four work together on a single failure: invoke the tool from **Tools**, and when the result is wrong, expand that frame in the traffic log. When the frame carries cross-checked `Mcp-*` headers, the **HTTP headers** row reports either a plain count or the first disagreement (for example, `mcp-name disagrees with the body`) — read it before you open anything else.
 
 ## Tools
 

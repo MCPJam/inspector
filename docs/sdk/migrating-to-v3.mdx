@@ -89,7 +89,7 @@ const test = new EvalTest({
   predicates: [
     { type: "noToolErrors" },
     { type: "responseContains", needle: "confirmed" },
-    { type: "turnCountUnder", max: 4 },
+    { type: "turnCountUnder", turns: 4 },
   ],
   test: async (executor) => {
     const r = await executor.run("Book Friday and confirm.");

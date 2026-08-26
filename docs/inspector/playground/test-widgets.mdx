@@ -31,7 +31,7 @@ Toggle light and dark mode to test both appearances.
 
 ### Host Style
 
-Switch between Claude and ChatGPT host styles. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
+Switch between the Claude, Copilot, and ChatGPT host styles. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
 
 Each host style ships with a distinct `hostCapabilities` preset. Switching from one preset to another changes the capabilities advertised in the `ui/initialize` handshake, so widgets that gate on optional fields (such as `serverResources` or `logging`) will behave differently under each style.
 
@@ -72,7 +72,7 @@ Choose from 19 IANA timezones plus `UTC` to test time-aware widgets.
 ### CSP Mode
 
 - **Permissive** (default): allows all HTTP and HTTPS resources. Recommended for development.
-- **Strict**: Only allows domains declared in your widget's CSP metadata (`openai/widgetCSP` or `_meta.ui.csp` for ChatGPT Apps, `ui.csp` for MCP Apps).
+- **Strict**: Only allows domains declared in your widget's CSP metadata — `_meta["openai/widgetCSP"]` for ChatGPT Apps, `_meta.ui.csp` for MCP Apps.
 
 ### Device Capabilities
 

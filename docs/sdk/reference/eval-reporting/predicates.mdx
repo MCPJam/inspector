@@ -35,6 +35,7 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 | `noToolErrors` | — | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | The final assistant message is a non-empty, non-whitespace string. |
 | `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
+| `turnCountUnder` | `turns` | The iteration used strictly fewer than `turns` user-role messages. Fails when the transcript carries no turn count, or an unusable one. |
 | `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
 | `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
@@ -50,7 +51,7 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 
 #### A predicate never passes by default
 
-A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
+A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, `turnCountUnder` when the transcript carries no turn count, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
 
 #### Example
 

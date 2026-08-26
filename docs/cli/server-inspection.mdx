@@ -113,9 +113,14 @@ mcpjam tools list --url https://unknown-server.com/mcp --credentials-file creds.
 ### CI health check
 
 ```bash
-mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq '.status'
+set -o pipefail
+mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq -r '.status'
 # exits 0 if ready, 1 if not
 ```
+
+Without `pipefail` the pipeline reports `jq`'s exit status, which is `0` even
+when `doctor` failed. Set it before the pipe, or capture the JSON first and
+read `.status` from the file.
 
 ## Inspect what the server negotiated
 

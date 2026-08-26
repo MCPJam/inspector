@@ -109,7 +109,7 @@ type OAuthConformanceAuthConfig =
 
 When `verification` is enabled, `result.verification` reports separately on `tools/list` and any tool call, so you can tell an OAuth failure from a server that authenticated fine but could not serve tools.
 
-For a suite, `result.passed` is `true` only when every flow passed; `result.results` carries the per-flow results with their labels.
+For a suite, `result.passed` is `true` when every flow either passed or came back `"not-applicable"` — a requirement that cannot apply to this server is not a failure. `result.results` carries the per-flow results with their labels.
 
 ---
 
