@@ -9,6 +9,7 @@ import {
 import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
 import { GlobalHostBar } from "@/components/hosts/GlobalHostBar";
 import { track } from "@/lib/analytics";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import type { GlobalHostBarProps } from "@/components/Header";
 
 interface AuthUpperAreaProps {
@@ -49,6 +50,10 @@ export function AuthUpperArea({
               size="sm"
               onClick={() => {
                 track("login_button_clicked", { location: "header" });
+                // Remember where they were, so WorkOS returns them to this
+                // exact URL — project segment included — rather than the
+                // app's front door.
+                captureAppSignInReturnPath();
                 signIn();
               }}
             >

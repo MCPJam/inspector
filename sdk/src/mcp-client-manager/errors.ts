@@ -141,9 +141,10 @@ export function isEraNegotiationError(error: unknown): boolean {
  * resolves `@modelcontextprotocol/client` to a different copy than the app
  * does, and the whole point of these helpers is to survive that.
  *
- * Returns the server's advertised versions when they are known (they are only
- * present on the `UnsupportedProtocolVersionError` shape), or an empty array
- * when the failure was a pin refusal that carried no list.
+ * Returns the server's advertised versions when they are known — the
+ * `UnsupportedProtocolVersionError` shape carries the full list, and the
+ * legacy `initialize` refusal names the single version it counter-offered —
+ * or an empty array when the failure was a pin refusal that carried neither.
  */
 export function readUnsupportedVersionFailure(
   error: unknown
@@ -176,6 +177,32 @@ export function readUnsupportedVersionFailure(
       /did not offer pinned protocol version/i.test(named.message)
     ) {
       return { supported: [] };
+    }
+    // The LEGACY-pin refusal, thrown by the upstream `Client` when the
+    // server's `initialize` reply names a version outside the accept-list a
+    // stateful pin narrowed to. It is a plain `Error` — no `supported` array,
+    // no era-negotiation code — so neither branch above sees it, and without
+    // this the failure falls through to the generic connection patterns and
+    // gets reported as "the server appears to be down" (a 502) rather than as
+    // the version setting it actually is.
+    //
+    // The captured version is the one the server OFFERED, which is exactly
+    // what the caller cannot get from the config: the pin is already in hand,
+    // the counter-offer is not. Returned as the `supported` list so the
+    // existing message builder names both sides.
+    //
+    // Matched as a date-shaped token rather than `\S+` because the manager
+    // folds this into a composite message ("… Streamable HTTP error: Server's
+    // protocol version is not supported: 2025-06-18. SSE error: …"), where a
+    // greedy non-whitespace capture takes the sentence's period with it and
+    // reports the server as offering "2025-06-18.".
+    if (typeof named.message === "string") {
+      const offered = /protocol version is not supported:\s*(\d{4}-\d{2}-\d{2})/i.exec(
+        named.message
+      );
+      if (offered) {
+        return { supported: [offered[1]] };
+      }
     }
   }
   return undefined;

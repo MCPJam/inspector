@@ -159,6 +159,8 @@ const PLAIN_TOOLS = [
   "get_plugin_version",
   "get_eval_iteration_trace",
   "compare_eval_run",
+  // The gate-waiver read: an agent-oriented payload, no widget view.
+  "get_eval_gate_waiver",
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
@@ -225,6 +227,12 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "list_clients",
+  "get_client",
+  "create_client",
+  "update_client",
+  "set_client_servers",
+  "duplicate_client",
   "search_registry_directory",
   "get_registry_directory_server",
   "list_registry_directory_sources",
@@ -388,6 +396,7 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "get_eval_run",
       "compare_eval_run",
+      "get_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",
@@ -461,6 +470,12 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "list_clients",
+      "get_client",
+      "create_client",
+      "update_client",
+      "set_client_servers",
+      "duplicate_client",
       "search_registry_directory",
       "get_registry_directory_server",
       "list_registry_directory_sources",
@@ -586,6 +601,11 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      // Client authoring, the ADDITIVE half. Both mint a new client and change
+      // nothing that exists — which is exactly what separates them from
+      // `update_client` / `set_client_servers` below.
+      "create_client",
+      "duplicate_client",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
@@ -623,6 +643,17 @@ describe("platform tool registration", () => {
       "rotate_user_testing_link",
       "remove_user_testing_member",
       "uninstall_registry_server",
+      // Client edits: DETERMINISTIC OVERWRITES. `destructiveHint: true` here is
+      // not "this is a deletion" — the taxonomy is "removes or invalidates
+      // something that existed", and replacing a live setting (or a server set,
+      // where every omitted server is detached) does exactly that. They stay in
+      // the catalog anyway, behind compare-and-set; `delete_client` does not,
+      // because it removes the client identity itself. They ARE idempotent:
+      // applying the same `set` twice against the same `expectedConfigId`
+      // conflicts on the second call rather than compounding, and applying it
+      // to the already-edited config is a no-op.
+      "update_client",
+      "set_client_servers",
     ]);
 
     for (const registration of registrations) {

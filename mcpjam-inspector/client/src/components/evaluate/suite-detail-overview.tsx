@@ -27,8 +27,8 @@ import {
   evalSurfaceCardClass,
   evalSurfaceHeaderClass,
   evalSurfaceRowHoverClass,
-} from "./eval-surface-chrome";
-import { getEffectiveSuiteServers } from "./helpers";
+} from "../evals/eval-surface-chrome";
+import { getEffectiveSuiteServers } from "../evals/helpers";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryAggregates,
@@ -41,7 +41,7 @@ import {
   type RunHistoryVerdict,
   type SuiteRunHistoryFilters,
 } from "./suite-detail-model";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -87,7 +87,7 @@ export function SuiteDetailOverview({
   suite,
   cases,
   runs,
-  runsLoading: _runsLoading,
+  runsLoading,
   allIterations,
   hostNamesById,
   onRerun,
@@ -151,9 +151,33 @@ export function SuiteDetailOverview({
     () => runHistoryFilterOptions(historyRows),
     [historyRows],
   );
+  // A selected value can vanish from the option set — runs stream in live, and
+  // a rerun on a different model retires the old one. A Select whose value is
+  // absent from its items renders blank while still filtering every row away,
+  // so fall back to "all" rather than stranding the table on a choice the user
+  // can no longer see or clear.
+  const effectiveFilters = useMemo<SuiteRunHistoryFilters>(
+    () => ({
+      verdict:
+        filters.verdict === "all" ||
+        filterOptions.verdicts.includes(filters.verdict)
+          ? filters.verdict
+          : "all",
+      client:
+        filters.client === "all" ||
+        filterOptions.clients.includes(filters.client)
+          ? filters.client
+          : "all",
+      model:
+        filters.model === "all" || filterOptions.models.includes(filters.model)
+          ? filters.model
+          : "all",
+    }),
+    [filters, filterOptions],
+  );
   const filteredRows = useMemo(
-    () => filterSuiteRunHistoryRows(historyRows, filters),
-    [historyRows, filters],
+    () => filterSuiteRunHistoryRows(historyRows, effectiveFilters),
+    [historyRows, effectiveFilters],
   );
   const visibleRows = showAllRuns
     ? filteredRows
@@ -180,7 +204,10 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
-  const showRunHistory = runs.length > 0;
+  // Runs load after the detail spinner has already cleared (`isSuiteRunsLoading`
+  // is its own query), so keying purely on `runs.length` hides the whole section
+  // from a suite that HAS runs and then pops it in. Hold the frame instead.
+  const showRunHistory = runs.length > 0 || runsLoading;
   const showEmptyCasesHero = !hasCases;
 
   const runButton = (
@@ -272,7 +299,7 @@ export function SuiteDetailOverview({
               {filterOptions.verdicts.length > 0 ? (
                 <FilterSelect
                   label="Verdict"
-                  value={filters.verdict}
+                  value={effectiveFilters.verdict}
                   onChange={(verdict) =>
                     setFilters((current) => ({
                       ...current,
@@ -291,7 +318,7 @@ export function SuiteDetailOverview({
               {filterOptions.clients.length > 0 ? (
                 <FilterSelect
                   label="Client"
-                  value={filters.client}
+                  value={effectiveFilters.client}
                   onChange={(client) =>
                     setFilters((current) => ({ ...current, client }))
                   }
@@ -307,7 +334,7 @@ export function SuiteDetailOverview({
               {filterOptions.models.length > 0 ? (
                 <FilterSelect
                   label="Model"
-                  value={filters.model}
+                  value={effectiveFilters.model}
                   onChange={(model) =>
                     setFilters((current) => ({ ...current, model }))
                   }
@@ -355,7 +382,7 @@ export function SuiteDetailOverview({
 
         {filteredRows.length === 0 ? (
           <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            No runs match these filters.
+            {runsLoading ? "Loading runs…" : "No runs match these filters."}
           </div>
         ) : (
           <div className="overflow-x-auto bg-card">
@@ -746,6 +773,9 @@ function FilterSelect({
   options: Array<{ value: string; label: string }>;
 }) {
   const isActive = value !== "all";
+  // Name the selection, not just the dimension. A border tint alone leaves the
+  // reader guessing which of three pills is narrowing the table, and by what.
+  const selectedLabel = options.find((option) => option.value === value)?.label;
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger
@@ -757,7 +787,9 @@ function FilterSelect({
           isActive && "border-foreground/25 text-foreground",
         )}
       >
-        <span className="truncate">{label}</span>
+        <span className="truncate">
+          {isActive && selectedLabel ? `${label} · ${selectedLabel}` : label}
+        </span>
       </SelectTrigger>
       <SelectContent align="end">
         {options.map((option) => (

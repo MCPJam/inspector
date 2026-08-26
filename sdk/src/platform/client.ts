@@ -11,6 +11,9 @@ import type {
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiverRead,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -72,6 +75,10 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
+  PlatformClientImpact,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -833,8 +840,170 @@ export class PlatformApiClient {
     );
   }
 
-  // ── Hosts ────────────────────────────────────────────────────────────
+  // ── Clients ──────────────────────────────────────────────────────────
+  //
+  // A **Client** is the product noun. The `listHosts`…`deleteHost` methods
+  // below these are DEPRECATED compatibility delegates: they keep calling the
+  // `/hosts` alias and keep returning its `PlatformHost*` shapes, so existing
+  // callers are unaffected. They are not thin wrappers over the client methods
+  // — the two surfaces return different fields.
 
+  listClients(
+    params: { projectId: string; includePrivateBacking?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformClient>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/clients/{client}` — `client` is a NAME or an ID.
+   *
+   * Name resolution happens server-side, where one implementation owns the
+   * eligibility and ambiguity rules. A client-side list-and-scan would be a
+   * second answer to "is this name ambiguous?", and would also have to
+   * re-implement the private-backing filter to avoid resolving a name the
+   * server would not.
+   */
+  getClient(
+    params: {
+      projectId: string;
+      client: string;
+      includePrivateBacking?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/clients` — create a client either from a built-in
+   * template (`{ name, template, theme? }`) or from a full config
+   * (`{ name, config }`). Returns the created client detail.
+   */
+  createClient(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `PATCH /projects/{p}/clients/{client}` — rename and/or edit the config.
+   *
+   * The body carries the compare-and-set tokens the canonical route requires
+   * (`expectedConfigId` for a config edit, `expectedName` for a rename); a
+   * stale one comes back as a 409 whose `details` names the current value.
+   */
+  updateClient(
+    params: {
+      projectId: string;
+      client: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  setClientServers(
+    params: {
+      projectId: string;
+      client: string;
+      serverIds: string[];
+      optionalServerIds?: string[];
+      expectedConfigId: string;
+      expectedImpact?: PlatformClientImpact;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/servers`,
+      {
+        body: {
+          serverIds: params.serverIds,
+          ...(params.optionalServerIds
+            ? { optionalServerIds: params.optionalServerIds }
+            : {}),
+          expectedConfigId: params.expectedConfigId,
+          ...(params.expectedImpact
+            ? { expectedImpact: params.expectedImpact }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  duplicateClient(
+    params: { projectId: string; client: string; name?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/duplicate`,
+      { body: params.name === undefined ? {} : { name: params.name } },
+      options,
+    );
+  }
+
+  deleteClient(
+    params: {
+      projectId: string;
+      client: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body ?? {} },
+      options,
+    );
+  }
+
+  // ── Hosts (deprecated compatibility surface) ─────────────────────────
+
+  /** @deprecated Use {@link listClients}. Calls the deprecated `/hosts` alias. */
   listHosts(
     params: { projectId: string },
     options?: RequestOptions,
@@ -847,6 +1016,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link getClient}. Calls the deprecated `/hosts` alias. */
   getHost(
     params: { projectId: string; hostId: string },
     options?: RequestOptions,
@@ -865,6 +1035,8 @@ export class PlatformApiClient {
    * `POST /projects/{p}/hosts` — create a host either from a built-in template
    * (`{ name, template, theme? }`) or from a full host config
    * (`{ name, config }`). Returns the created host detail.
+   *
+   * @deprecated Use {@link createClient}. Calls the deprecated `/hosts` alias.
    */
   createHost(
     params: { projectId: string; body: Record<string, unknown> },
@@ -878,6 +1050,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link updateClient}. Calls the deprecated `/hosts` alias. */
   updateHost(
     params: {
       projectId: string;
@@ -896,6 +1069,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link setClientServers}. Calls the deprecated `/hosts` alias. */
   setHostServers(
     params: {
       projectId: string;
@@ -922,6 +1096,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link duplicateClient}. Calls the deprecated `/hosts` alias. */
   duplicateHost(
     params: { projectId: string; hostId: string; name?: string },
     options?: RequestOptions,
@@ -936,6 +1111,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link deleteClient}. Calls the deprecated `/hosts` alias. */
   deleteHost(
     params: {
       projectId: string;
@@ -1553,6 +1729,41 @@ export class PlatformApiClient {
   }
 
   /**
+   * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical run
+   * decision contract: the verdict, the unit its counts are in, the run's own
+   * `EvalVerdictDecision` when it has one, and one page of per-trial
+   * diagnostics.
+   *
+   * ADDITIVE, and newer than most deployments: an API that predates it answers
+   * `404`. A caller that must work against both should use the exported
+   * `readEvalRunDecisionSummary` helper, which falls back over
+   * `listEvalRunIterations` and the same contract assembler rather than
+   * creating a summary of its own.
+   *
+   * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
+   * `listEvalRunIterations` issues. The response says whether the page it
+   * returned is the whole non-passing set.
+   */
+  getEvalRunDecisionSummary(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDecisionSummary> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
+      { query: { cursor: params.cursor, limit: params.limit } },
+      options,
+    );
+  }
+
+  /**
    * Request (or with `force`, regenerate) the eval run's insights —
    * serverQuality behind the common envelope. SPENDS the org's model budget;
    * poll `getEvalRun().insights` rather than re-requesting.
@@ -1709,6 +1920,94 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  // ── Gate waivers ──────────────────────────────────────────────────────
+  //
+  // An audited, time-boxed override of a run's gate. Three calls, and the
+  // asymmetry between them is deliberate: WAIVING is manage-tier, while
+  // READING is available to anyone who can see the run — a waiver only its
+  // grantors can see is not a visible waiver, and visibility is half the
+  // requirement.
+  //
+  // None of these decide authorization; the platform mutation owns that. The
+  // client does not pre-judge whether the caller may waive, because a client
+  // that guesses wrong either blocks a legitimate override or lets an
+  // illegitimate one look accepted until the write fails.
+
+  /**
+   * Grant a waiver over a failing run's gate.
+   *
+   * `reason` is stored UNREDACTED for the life of the suite: any surface
+   * collecting one must warn the human first (`GATE_WAIVER_REASON_NOTICE`).
+   * `expiresAt` is epoch ms, must be in the future, and is capped at 30 days
+   * out by the platform — there is no way to ask for a permanent waiver.
+   *
+   * Re-waiving an already-waived run answers `status: "conflict"` with the
+   * EXISTING waiver. That is a normal result, not an error: two active waivers
+   * over one run would make "which reason is on the check" a race.
+   */
+  createGateWaiver(
+    params: {
+      projectId: string;
+      runId: string;
+      reason: string;
+      expiresAt: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      { body: { reason: params.reason, expiresAt: params.expiresAt } },
+      options,
+    );
+  }
+
+  /**
+   * The waiver in force over a run, or `null`.
+   *
+   * `eval gate` does NOT need this — the run projection already carries
+   * `gateWaiver`, so the gating path folds a waiver in without a second round
+   * trip. This is the explicit read, for asking the question on its own.
+   */
+  getGateWaiver(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverRead> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Revoke a waiver, putting the gate back.
+   *
+   * IDEMPOTENT: revoking an already-revoked waiver answers
+   * `status: "already_revoked"` and is a SUCCESS, not an error — restamping it
+   * would rewrite who actually ended the waiver.
+   */
+  revokeGateWaiver(
+    params: { projectId: string; runId: string; waiverId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(
+        params.runId,
+      )}/gate-waivers/${encodeURIComponent(params.waiverId)}`,
       {},
       options,
     );
@@ -1975,6 +2274,14 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       baseRunId?: string;
+      /**
+       * Pin the baseline by SOURCE SHA instead of run id. Mutually exclusive
+       * with `baseRunId` — sending both is a 400. A SHA that resolves to no
+       * completed run in the suite is the ordinary BASELINE_NOT_FOUND 404, not
+       * this error: "we looked and established nothing" stays distinct from
+       * "you asked for something impossible".
+       */
+      baseCommitSha?: string;
       previewChars?: number;
     },
     options?: RequestOptions,
@@ -1987,6 +2294,7 @@ export class PlatformApiClient {
       {
         query: {
           baseRunId: params.baseRunId,
+          baseCommitSha: params.baseCommitSha,
           previewChars: params.previewChars,
         },
       },

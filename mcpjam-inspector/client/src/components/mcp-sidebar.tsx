@@ -121,6 +121,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
+  "evaluate-enabled",
 ] as const;
 
 /**
@@ -264,6 +265,17 @@ export const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
+        billingFeature: "evals",
+      },
+      {
+        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
+        // is dogfooded — the point of a second tab is being able to compare
+        // them. When the redesign wins, this item takes the "Evaluate" name
+        // and the one above is deleted.
+        title: "Evaluate (New)",
+        url: "/evaluate",
+        icon: FlaskConical,
+        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
@@ -430,6 +442,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   projects: Record<string, Project>;
   activeProjectId: string;
   onSwitchProject: (projectId: string) => void;
+  /**
+   * The switcher's per-row settings gear. Takes the project id because the
+   * gear opens THAT project's settings directly — `/p/<id>/project-settings`
+   * — rather than switching the active project and then navigating to
+   * whatever the settings route resolves to afterwards.
+   */
+  onOpenProjectSettings?: (projectId: string) => void;
   onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
@@ -455,6 +474,7 @@ export function MCPSidebar({
   projects,
   activeProjectId,
   onSwitchProject,
+  onOpenProjectSettings,
   onCreateProject,
   onDeleteProject,
   isLoadingProjects,
@@ -484,6 +504,7 @@ export function MCPSidebar({
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled"
   );
+  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -564,6 +585,9 @@ export function MCPSidebar({
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
+      // Project-scoped like the rows above: every screen behind it needs a
+      // project to resolve suites against.
+      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
     }),
     [
       learningEnabled,
@@ -574,6 +598,7 @@ export function MCPSidebar({
       xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
+      evaluateEnabled,
       isAuthenticated,
     ]
   );
@@ -686,7 +711,20 @@ export function MCPSidebar({
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
             isLoading={isLoadingProjects || authResolving}
-            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            onNavigateToSettings={(projectId) => {
+              // Tracked with the SECTION, never the project id: this event is
+              // an aggregate over navigation, and an id would make it a
+              // per-customer series.
+              track("sidebar_nav_clicked", {
+                location: "mcp_sidebar",
+                section: "project-settings",
+              });
+              if (onOpenProjectSettings) {
+                onOpenProjectSettings(projectId);
+                return;
+              }
+              onNavigate?.("project-settings");
+            }}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={

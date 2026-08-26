@@ -7,7 +7,12 @@
  */
 import { z } from "zod";
 import { opaqueIdSchema } from "../contract/identity.js";
+import {
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
+} from "../gates.js";
 import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
+import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -57,6 +62,9 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiver,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
@@ -108,6 +116,9 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -5149,21 +5160,76 @@ const evalRunScopedInput = z.object({
 
 export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
+/**
+ * Statuses at which a run has stopped changing.
+ *
+ * Mirrors the CLI's `TERMINAL_RUN_STATUSES`. A decision summary is fetched only
+ * for a terminal run: while a run is still going its verdict does not exist
+ * yet, so the extra request would buy a `notEstablished` a poller already knows
+ * from `status`.
+ */
+const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+/**
+ * The diagnostics page size this operation asks for.
+ *
+ * Small on purpose. Each diagnostic carries a six-row chain plus evidence, and
+ * a model that spent its window on page one of a 200-trial run has no room left
+ * to act on it. A caller that wants more pages the cursor.
+ */
+const DEFAULT_MCP_DIAGNOSTICS_LIMIT = 20;
+
+const getEvalRunInput = evalRunScopedInput.extend({
+  diagnosticsCursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque cursor from a previous response's decisionSummary.diagnostics.nextCursor, to read the next page of failure diagnostics.",
+    ),
+  diagnosticsLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      `Failure diagnostics per page (default ${DEFAULT_MCP_DIAGNOSTICS_LIMIT}).`,
+    ),
+});
+
+export type GetEvalRunInput = z.infer<typeof getEvalRunInput>;
+
 export type GetEvalRunResult = {
   project: SelectedProjectInfo;
   run: PlatformEvalRun;
+  /**
+   * The canonical decision summary, for a terminal run.
+   *
+   * ABSENT while the run is still going. Older API deployments are supported
+   * through the shared iteration fallback; it is absent only when both the
+   * canonical endpoint and the older iteration resource are unavailable.
+   * Fallback assembly uses the same contract assembler as the API, so it does
+   * not create a second verdict implementation.
+   */
+  decisionSummary?: PlatformEvalRunDecisionSummary;
 };
 
 export const getEvalRunOperation: PlatformOperation<
-  EvalRunScopedInput,
+  GetEvalRunInput,
   GetEvalRunResult
 > = {
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
-  inputSchema: evalRunScopedInput,
+  inputSchema: getEvalRunInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
@@ -5174,7 +5240,27 @@ export const getEvalRunOperation: PlatformOperation<
       { projectId: project.id, runId: input.runId },
       { signal },
     );
-    return { project: toSelectedProjectInfo(project), run };
+    if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
+      return { project: toSelectedProjectInfo(project), run };
+    }
+    // Endpoint first, then the same shared assembler over the older iteration
+    // resource. MCP and CLI must not disagree merely because a deployment has
+    // not rolled out the additive endpoint yet.
+    const decisionSummary = await readEvalRunDecisionSummary(
+      client,
+      signal,
+      project.id,
+      run,
+      {
+        cursor: input.diagnosticsCursor,
+        limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
+      },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      run,
+      ...(decisionSummary ? { decisionSummary } : {}),
+    };
   },
 };
 
@@ -5185,7 +5271,15 @@ const compareEvalRunInput = evalRunScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite. Mutually exclusive with baseCommitSha.",
+    ),
+  baseCommitSha: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary BASELINE_NOT_FOUND 404 — an incomplete comparison, not a regression. When the SHA matched more than one eligible run, or the bounded lookup saturated, the response reports matchCount and matchCountTruncated; an absent matchCount means the match was unambiguous.",
     ),
 });
 
@@ -5203,7 +5297,7 @@ export const compareEvalRunOperation: PlatformOperation<
   name: "compare_eval_run",
   title: "Compare MCPJam eval runs",
   description:
-    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite, or pass baseCommitSha to pin the baseline by source SHA instead (the two are mutually exclusive). A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
   readOnly: true,
   inputSchema: compareEvalRunInput,
   async execute(input, { client, signal }) {
@@ -5217,6 +5311,7 @@ export const compareEvalRunOperation: PlatformOperation<
         projectId: project.id,
         runId: input.runId,
         baseRunId: input.baseRunId,
+        baseCommitSha: input.baseCommitSha,
       },
       { signal },
     );
@@ -5360,6 +5455,164 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+// ── Gate waivers ─────────────────────────────────────────────────────────
+//
+// The agent-facing half of the gate-waiver workflow. Every description below
+// states the two things an agent must not have to infer: that the reason is
+// stored unredacted and durable, and that a waiver never makes a failing run
+// pass — it records an override of the gate, and the run keeps its verdict.
+
+const waiveEvalGateInput = evalRunScopedInput.extend({
+  // NOT length- or emptiness-checked here, on purpose. Both refusals carry
+  // copy the platform wrote for the caller (`gate_waiver_reason_empty`,
+  // `gate_waiver_reason_too_long`), and a zod check firing first would replace
+  // that copy with a generic validation error on exactly the boundary cases
+  // where the specific message is the useful part.
+  reason: z
+    .string()
+    .describe(
+      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`,
+    ),
+  // A number, but the range is the platform's to refuse — see `reason`.
+  expiresAt: z
+    .number()
+    .describe(
+      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing.",
+    ),
+});
+
+export type WaiveEvalGateInput = z.infer<typeof waiveEvalGateInput>;
+
+export type WaiveEvalGateResult = {
+  project: SelectedProjectInfo;
+  status: PlatformGateWaiverWriteResult["status"];
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+};
+
+export const waiveEvalGateOperation: PlatformOperation<
+  WaiveEvalGateInput,
+  WaiveEvalGateResult
+> = {
+  name: "waive_eval_gate",
+  title: "Waive an MCPJam eval run's gate",
+  description:
+    "Override a FAILING eval run's release gate, on the record, until an expiry you name. This does NOT make the run pass: the run keeps its failed result, and every surface that honors the waiver — the GitHub Check Run and the CLI's `eval gate` — says the gate was waived, by whom, why, and until when. Requires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it. `status: \"conflict\"` means a waiver was already in force and returns that EXISTING one rather than granting a second; it is a normal result, not a failure.",
+  readOnly: false,
+  // EXPOSURE, not `none`, even though a waiver can be revoked.
+  //
+  // Two things a revoke does not undo. The gate stops blocking a release the
+  // moment this lands, so anything that ships in the meantime has shipped. And
+  // `reason` is published UNREDACTED to everyone who can see the suite, for as
+  // long as the suite exists — revoking ends the override, it does not
+  // unpublish the text. Both halves are about what becomes reachable, which is
+  // what this class names, and `none`'s promise of "reversible and costs
+  // nothing" is false for each of them.
+  risk: "exposure",
+  inputSchema: waiveEvalGateInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.createGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        reason: input.reason,
+        expiresAt: input.expiresAt,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
+  },
+};
+
+export type GetEvalGateWaiverResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  waiver: PlatformGateWaiver | null;
+};
+
+export const getEvalGateWaiverOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalGateWaiverResult
+> = {
+  name: "get_eval_gate_waiver",
+  title: "Get an MCPJam eval run's gate waiver",
+  description:
+    "Read the waiver currently in force over an eval run's gate, or null when there is none. Available to anyone who can view the run, not only to those who can grant a waiver — a waiver its readers cannot see is not a visible one. `active: false` on a returned waiver means it has lapsed or been revoked and is no longer overriding anything.",
+  readOnly: true,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const { waiver } = await client.getGateWaiver(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      waiver,
+    };
+  },
+};
+
+const revokeEvalGateWaiverInput = evalRunScopedInput.extend({
+  waiverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver.",
+    ),
+});
+
+export type RevokeEvalGateWaiverInput = z.infer<
+  typeof revokeEvalGateWaiverInput
+>;
+
+export const revokeEvalGateWaiverOperation: PlatformOperation<
+  RevokeEvalGateWaiverInput,
+  WaiveEvalGateResult
+> = {
+  name: "revoke_eval_gate_waiver",
+  title: "Revoke an MCPJam eval gate waiver",
+  description:
+    "End a gate waiver early, putting the gate and the GitHub Check Run back where they were. Requires the manage tier. IDEMPOTENT: `status: \"already_revoked\"` means it had already been revoked and reports the ORIGINAL revocation rather than restamping it — that is a success, not an error, and preserves the record of who actually ended the waiver. An already-expired waiver may still be revoked; the audit trail distinguishes 'this was wrong' from 'this ran out'.",
+  readOnly: false,
+  // `none`: it destroys no record — the row and its audit event survive, and
+  // the revocation is additive — it spends nothing, and a mistaken revoke is
+  // recovered by waiving again. The gate closing is the SAFE direction.
+  //
+  // The registry still places it at `gated` rather than the `direct` this
+  // derives, and TIER_EXCEPTIONS carries the reason: re-blocking somebody
+  // else's release is a decision a person should make.
+  risk: "none",
+  inputSchema: revokeEvalGateWaiverInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.revokeGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        waiverId: input.waiverId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
   },
 };
 
@@ -6420,39 +6673,76 @@ export const searchSessionsOperation: PlatformOperation<
   },
 };
 
-// ── Hosts ──────────────────────────────────────────────────────────────────
+// ── Clients ─────────────────────────────────────────────────────────────────
+//
+// A **Client** is the product noun: a named, reusable configuration that
+// defines how MCPJam connects to and talks to your MCP servers.
+//
+// Every config-affecting write here is COMPARE-AND-SET. `expectedConfigId` is
+// the `configId` the caller last read; because the config is content-addressed,
+// the same id means byte-identical settings, so this is a precise "I composed
+// my edit against exactly this" claim rather than a revision counter's "nothing
+// happened since". A rename takes a SEPARATE `expectedName` token, because a
+// rename does not rotate the config and config identity is therefore blind to
+// a concurrent one.
+//
+// The deprecated `*_host` operations at the end of this section keep their old
+// names, inputs and DTOs for existing embedders. They are NOT in
+// `ALL_OPERATIONS`, so no registered surface can mint a proposal or a tool
+// under an old name.
 
-const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+const CLIENT_SELECTOR_DESCRIPTION = "Client name or ID.";
 
-async function resolveHost(
+const EXPECTED_CONFIG_ID_DESCRIPTION =
+  "The `configId` you last read for this client (from get_client). Required for any config edit: if the client changed since, the write is rejected with a conflict instead of overwriting the other edit — re-read and retry.";
+
+const EXPECTED_NAME_DESCRIPTION =
+  "The `name` you last read for this client (from get_client). Required whenever you send `name`: a rename does not change the config, so `expectedConfigId` cannot detect a concurrent rename.";
+
+const EXPECTED_IMPACT_DESCRIPTION =
+  "The `impact` you last read for this client. Optional, and checked transactionally when sent: if a consumer was added or removed since, the write conflicts rather than affecting more than you were told it would.";
+
+const clientImpactSchema = z.object({
+  liveEnvironmentCount: z.number().int().min(0),
+  scenarioAttachmentCount: z.number().int().min(0),
+  activeLegacyJourneyCount: z.number().int().min(0),
+});
+
+/**
+ * Resolve a client selector to its detail.
+ *
+ * Delegates the name/ID question to `getClient`, which the canonical route
+ * answers server-side. The old `resolveHost` listed the project's clients and
+ * scanned them here, which meant this file owned a second opinion about
+ * ambiguity and about which rows are eligible — and no opinion at all about the
+ * private User Testing backing rows the server hides.
+ */
+async function resolveClient(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
   signal: AbortSignal | undefined,
-): Promise<PlatformHost> {
-  const page = await client.listHosts({ projectId: project.id }, { signal });
-  return resolveByIdOrName(
-    page.items,
-    selector,
-    "Host",
-    `project "${project.name}"`,
+): Promise<PlatformClientDetail> {
+  return client.getClient(
+    { projectId: project.id, client: selector },
+    { signal },
   );
 }
 
-export type ListHostsResult = {
+export type ListClientsResult = {
   project: SelectedProjectInfo;
-  items: PlatformHost[];
+  items: PlatformClient[];
   otherProjects: ProjectInfo[];
 };
 
-export const listHostsOperation: PlatformOperation<
+export const listClientsOperation: PlatformOperation<
   ProjectScopedInput,
-  ListHostsResult
+  ListClientsResult
 > = {
-  name: "list_hosts",
-  title: "List MCPJam hosts",
+  name: "list_clients",
+  title: "List MCPJam clients",
   description:
-    "List the hosts saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+    "List the clients saved in an MCPJam project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns each client's `configId`, which every write takes as a concurrency token. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
@@ -6461,7 +6751,10 @@ export const listHostsOperation: PlatformOperation<
       input.project,
       signal,
     );
-    const page = await client.listHosts({ projectId: project.id }, { signal });
+    const page = await client.listClients(
+      { projectId: project.id },
+      { signal },
+    );
     return {
       project: toSelectedProjectInfo(project),
       items: page.items,
@@ -6470,42 +6763,38 @@ export const listHostsOperation: PlatformOperation<
   },
 };
 
-const getHostInput = z.object({
+const getClientInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
 });
-export type GetHostInput = z.infer<typeof getHostInput>;
+export type GetClientInput = z.infer<typeof getClientInput>;
 
-export const getHostOperation: PlatformOperation<
-  GetHostInput,
-  PlatformHostDetail
+export const getClientOperation: PlatformOperation<
+  GetClientInput,
+  PlatformClientDetail
 > = {
-  name: "get_host",
-  title: "Show an MCPJam host",
+  name: "get_client",
+  title: "Show an MCPJam client",
   description:
-    "Show one host's full settings, including its resolved host config (model, capabilities, host context).",
+    "Show one client's full settings: its resolved config (model, capabilities, host context), its `configId` — the token every edit must echo back as `expectedConfigId` — and `impact`, the live environments, scenario attachments and active legacy journeys a config edit would follow. Call this before any edit.",
   readOnly: true,
-  inputSchema: getHostInput,
+  inputSchema: getClientInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal,
     );
-    const host = await resolveHost(client, project, input.host, signal);
-    return client.getHost(
-      { projectId: project.id, hostId: host.id },
-      { signal },
-    );
+    return resolveClient(client, project, input.client, signal);
   },
 };
 
-const createHostInput = z
+const createClientInput = z
   .object({
     project: z
       .string()
@@ -6513,24 +6802,24 @@ const createHostInput = z
       .min(1)
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
-    name: z.string().trim().min(1).describe("Display name for the new host."),
+    name: z.string().trim().min(1).describe("Display name for the new client."),
     template: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor).",
+        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor).",
       ),
     theme: z
       .enum(["light", "dark"])
       .optional()
-      .describe("Theme stamped into the seeded host config (template only)."),
+      .describe("Theme stamped into the seeded config (template only)."),
     config: z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
+        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
       ),
   })
   // ONE `superRefine`, shaped exactly like the route's, because the route's 400
@@ -6564,18 +6853,22 @@ const createHostInput = z
       });
     }
   });
-export type CreateHostInput = z.infer<typeof createHostInput>;
+export type CreateClientInput = z.infer<typeof createClientInput>;
 
-export const createHostOperation: PlatformOperation<
-  CreateHostInput,
-  PlatformHostDetail
+export const createClientOperation: PlatformOperation<
+  CreateClientInput,
+  PlatformClientDetail
 > = {
-  name: "create_host",
-  title: "Create an MCPJam host",
+  name: "create_client",
+  title: "Create an MCPJam client",
   description:
-    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
+    "Create a client in a project, either from a built-in template (`template`, optional `theme`) or from a full config (`config`, which must pin a non-empty `modelId`). Returns the created client. Purely additive — nothing that exists is changed.",
   readOnly: false,
-  inputSchema: createHostInput,
+  // ADDITIVE. Nothing that exists is overwritten or removed, so the honest
+  // annotation is the non-destructive one — and it is what separates this from
+  // update_client, which replaces settings that are currently in force.
+  risk: "none",
+  inputSchema: createClientInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
@@ -6588,7 +6881,498 @@ export const createHostOperation: PlatformOperation<
       if (input.theme) body.theme = input.theme;
     }
     if (input.config) body.config = input.config;
-    return client.createHost({ projectId: project.id, body }, { signal });
+    return client.createClient({ projectId: project.id, body }, { signal });
+  },
+};
+
+/**
+ * The PARTIAL edit block, mirroring the route's `set` schema field for field.
+ *
+ * Absent means keep. `null` means "make it go away" — a required field resets
+ * to its canonical default, an optional one clears to absent — and `modelId`
+ * accepts neither `null` nor a blank string, because a client that pins a model
+ * must not be editable into one that doesn't.
+ *
+ * Object-valued fields are WHOLE-OBJECT replacements. To change a deep knob
+ * (say `mcpProfile.apps.sandbox.csp.mode`), read the client, overlay that
+ * sub-object on what `get_client` returned, and send the whole object back.
+ */
+const clientFieldSet = z
+  .object({
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Model the client pins. Value only — there is no null, and a blank string is refused.",
+      ),
+    systemPrompt: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('null resets to the default: "".'),
+    temperature: z
+      .number()
+      .finite()
+      .nullable()
+      .optional()
+      .describe("null resets to the default: 0.7."),
+    requireToolApproval: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null resets to the default: false."),
+    connectionDefaults: z
+      .object({
+        headers: z.record(z.string(), z.string()),
+        requestTimeout: z.number().finite(),
+      })
+      .nullable()
+      .optional()
+      .describe(
+        "Whole-object replacement. null resets to the platform defaults.",
+      ),
+    respectToolVisibility: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null clears the host-level opt-in."),
+    progressiveToolDiscovery: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null clears the host-level opt-in."),
+    harness: z
+      .enum(["claude-code", "codex"])
+      .nullable()
+      .optional()
+      .describe(
+        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does.",
+      ),
+    computer: z
+      .object({
+        kind: z.literal("personal"),
+        toolset: z.literal("bash").optional(),
+        workdir: z.string().optional(),
+      })
+      .nullable()
+      .optional()
+      .describe("null detaches the computer."),
+    builtInToolIds: z
+      .array(z.string().trim().min(1))
+      .nullable()
+      .optional()
+      .describe("Whole-list replacement. null clears it."),
+    skillSelection: z
+      .union([
+        z.object({ mode: z.literal("all-visible") }),
+        z.object({
+          mode: z.literal("explicit"),
+          skillIds: z.array(z.string().trim().min(1)),
+        }),
+      ])
+      .nullable()
+      .optional()
+      .describe("null clears the selection policy."),
+    modelVisibleMcpToolResults: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    mcpToolResultImageRendering: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    mcpProfile: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    hostCapabilitiesOverride: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    chatUiOverride: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "`set` must name at least one field to change.",
+  });
+
+const updateClientInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the client."),
+    expectedName: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(EXPECTED_NAME_DESCRIPTION),
+    expectedConfigId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(EXPECTED_CONFIG_ID_DESCRIPTION),
+    expectedImpact: clientImpactSchema
+      .optional()
+      .describe(EXPECTED_IMPACT_DESCRIPTION),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between.",
+      ),
+    set: clientFieldSet
+      .optional()
+      .describe(
+        "Named fields to change, applied over the client's current config inside the write transaction.",
+      ),
+  })
+  // Mirrors the route's 400s exactly, so an agent is refused by the schema with
+  // the same sentence the route would have used rather than discovering the
+  // rule from a failed call.
+  .superRefine((value, ctx) => {
+    if (value.config !== undefined && value.set !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Provide either `config` (whole-config replacement) or `set` (named fields), not both.",
+      });
+      return;
+    }
+    if (
+      value.config === undefined &&
+      value.set === undefined &&
+      value.name === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide at least one of `name`, `config`, or `set` to edit.",
+      });
+      return;
+    }
+    if (
+      (value.config !== undefined || value.set !== undefined) &&
+      value.expectedConfigId === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expectedConfigId"],
+        message:
+          "`expectedConfigId` is required for a config edit: call get_client and send back the `configId` it returned.",
+      });
+    }
+    if (value.name !== undefined && value.expectedName === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expectedName"],
+        message:
+          "`expectedName` is required for a rename: call get_client and send back the `name` it returned.",
+      });
+    }
+  });
+export type UpdateClientInput = z.infer<typeof updateClientInput>;
+
+export const updateClientOperation: PlatformOperation<
+  UpdateClientInput,
+  PlatformClientDetail
+> = {
+  name: "update_client",
+  title: "Update an MCPJam client",
+  description:
+    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. Requires `expectedConfigId` for a config edit and `expectedName` for a rename — call get_client first, echo those values back, and on a conflict re-read and retry. An edit that resolves to byte-identical settings writes nothing.",
+  readOnly: false,
+  // OVERWRITE, so `destructive` — the taxonomy is "removes or invalidates
+  // something that existed", and replacing a live setting does exactly that.
+  // Not because it is unrecoverable in the way a delete is: the previous config
+  // row survives in the version trail. But there is no public restore
+  // operation today, so calling this reversible on an agent surface would be a
+  // promise nothing here can keep.
+  risk: "destructive",
+  inputSchema: updateClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const body: Record<string, unknown> = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.expectedName !== undefined)
+      body.expectedName = input.expectedName;
+    if (input.expectedConfigId !== undefined) {
+      body.expectedConfigId = input.expectedConfigId;
+    }
+    if (input.expectedImpact !== undefined) {
+      body.expectedImpact = input.expectedImpact;
+    }
+    if (input.config !== undefined) body.config = input.config;
+    if (input.set !== undefined) body.set = input.set;
+    return client.updateClient(
+      { projectId: project.id, client: input.client, body },
+      { signal },
+    );
+  },
+};
+
+const deleteClientInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+});
+export type DeleteClientInput = z.infer<typeof deleteClientInput>;
+
+export const deleteClientOperation: PlatformOperation<
+  DeleteClientInput,
+  PlatformClientDeleted
+> = {
+  name: "delete_client",
+  title: "Delete an MCPJam client",
+  description:
+    "Permanently delete a client from a project. This cannot be undone.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: deleteClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.deleteClient(
+      {
+        projectId: project.id,
+        client: input.client,
+        // The v1 delete contract is bodyless — the route rejects any field.
+        body: {},
+      },
+      { signal },
+    );
+  },
+};
+
+const setClientServersInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+  serverIds: z.array(z.string().trim().min(1)).describe("Required server IDs."),
+  optionalServerIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe("Optional server IDs enabled for this client."),
+  expectedConfigId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(EXPECTED_CONFIG_ID_DESCRIPTION),
+  expectedImpact: clientImpactSchema
+    .optional()
+    .describe(EXPECTED_IMPACT_DESCRIPTION),
+});
+export type SetClientServersInput = z.infer<typeof setClientServersInput>;
+
+export const setClientServersOperation: PlatformOperation<
+  SetClientServersInput,
+  PlatformClientDetail
+> = {
+  name: "set_client_servers",
+  title: "Set an MCPJam client's servers",
+  description:
+    "Replace the required and optional saved-server attachments for a client. This is a REPLACEMENT, not an addition — servers you omit are detached. Requires `expectedConfigId` from get_client, so two concurrent server changes cannot silently lose one.",
+  readOnly: false,
+  // Same reasoning as update_client, and more plainly: a replacement list
+  // DETACHES every server it omits.
+  risk: "destructive",
+  inputSchema: setClientServersInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.setClientServers(
+      {
+        projectId: project.id,
+        client: input.client,
+        serverIds: input.serverIds,
+        optionalServerIds: input.optionalServerIds,
+        expectedConfigId: input.expectedConfigId,
+        ...(input.expectedImpact
+          ? { expectedImpact: input.expectedImpact }
+          : {}),
+      },
+      { signal },
+    );
+  },
+};
+
+const duplicateClientInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).optional().describe("Name for the copy."),
+});
+export type DuplicateClientInput = z.infer<typeof duplicateClientInput>;
+
+export const duplicateClientOperation: PlatformOperation<
+  DuplicateClientInput,
+  PlatformClientDetail
+> = {
+  name: "duplicate_client",
+  title: "Duplicate an MCPJam client",
+  description:
+    "Create a new client carrying the selected client's current config. The source is untouched.",
+  readOnly: false,
+  // ADDITIVE, like create_client: it mints a row and changes nothing existing.
+  risk: "none",
+  inputSchema: duplicateClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.duplicateClient(
+      { projectId: project.id, client: input.client, name: input.name },
+      { signal },
+    );
+  },
+};
+
+// ── Hosts (deprecated compatibility operations) ──────────────────────────────
+//
+// Kept executable, with their old names, inputs and `PlatformHost*` DTOs, for
+// embedders holding a reference to one. They are deliberately ABSENT from
+// `ALL_OPERATIONS`, which is what every registered surface partitions: the MCP
+// catalog, the agent registry, the in-app toolset and the CLI bindings can
+// therefore never advertise an old name, and no proposal row can ever persist
+// under one.
+//
+// Each still calls the deprecated `/hosts` route rather than delegating to its
+// client sibling, because the two routes return different shapes and a delegate
+// would change what an existing caller receives.
+
+/** @deprecated Use {@link listClientsOperation}. */
+export type ListHostsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformHost[];
+  otherProjects: ProjectInfo[];
+};
+
+/** @deprecated Use {@link listClientsOperation}. */
+export const listHostsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListHostsResult
+> = {
+  name: "list_hosts",
+  title: "List MCPJam hosts",
+  description:
+    "Deprecated: use list_clients. Lists the clients saved in an MCPJam project under their old name and DTO.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listHosts({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+/**
+ * Resolve a host selector the OLD way — list and scan.
+ *
+ * Retained only for the deprecated operations below, which must keep behaving
+ * exactly as they did. The canonical operations resolve server-side; see
+ * `resolveClient`.
+ */
+async function resolveHost(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined,
+): Promise<PlatformHost> {
+  const page = await client.listHosts({ projectId: project.id }, { signal });
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Host",
+    `project "${project.name}"`,
+  );
+}
+
+const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+
+const getHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+});
+/** @deprecated Use {@link GetClientInput}. */
+export type GetHostInput = z.infer<typeof getHostInput>;
+
+/** @deprecated Use {@link getClientOperation}. */
+export const getHostOperation: PlatformOperation<
+  GetHostInput,
+  PlatformHostDetail
+> = {
+  name: "get_host",
+  title: "Show an MCPJam host",
+  description:
+    "Deprecated: use get_client, which also returns the `configId` every edit takes and the impact a config edit would follow.",
+  readOnly: true,
+  inputSchema: getHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal },
+    );
   },
 };
 
@@ -6615,8 +7399,10 @@ const updateHostInput = z
   .refine((value) => value.name !== undefined || value.config !== undefined, {
     message: "Provide at least one of `name` or `config` to update.",
   });
+/** @deprecated Use {@link UpdateClientInput}. */
 export type UpdateHostInput = z.infer<typeof updateHostInput>;
 
+/** @deprecated Use {@link updateClientOperation}, which is compare-and-set. */
 export const updateHostOperation: PlatformOperation<
   UpdateHostInput,
   PlatformHostDetail
@@ -6624,8 +7410,9 @@ export const updateHostOperation: PlatformOperation<
   name: "update_host",
   title: "Update an MCPJam host",
   description:
-    "Edit a host's display name and/or its host config. Only the fields you pass change.",
+    "Deprecated: use update_client, which supports partial `set` edits and requires a concurrency token. This one replaces the whole config with no token, so it can silently revert a concurrent edit.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: updateHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
@@ -6644,6 +7431,69 @@ export const updateHostOperation: PlatformOperation<
   },
 };
 
+const createHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).describe("Display name for the new host."),
+    template: z.string().trim().min(1).optional(),
+    theme: z.enum(["light", "dark"]).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    const modelId = hasConfig ? value.config!.modelId : undefined;
+    if (hasConfig && !(typeof modelId === "string" && modelId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
+  });
+/** @deprecated Use {@link CreateClientInput}. */
+export type CreateHostInput = z.infer<typeof createHostInput>;
+
+/** @deprecated Use {@link createClientOperation}. */
+export const createHostOperation: PlatformOperation<
+  CreateHostInput,
+  PlatformHostDetail
+> = {
+  name: "create_host",
+  title: "Create an MCPJam host",
+  description: "Deprecated: use create_client.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: createHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.template) {
+      body.template = input.template;
+      if (input.theme) body.theme = input.theme;
+    }
+    if (input.config) body.config = input.config;
+    return client.createHost({ projectId: project.id, body }, { signal });
+  },
+};
+
 const deleteHostInput = z.object({
   project: z
     .string()
@@ -6653,17 +7503,19 @@ const deleteHostInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
 });
+/** @deprecated Use {@link DeleteClientInput}. */
 export type DeleteHostInput = z.infer<typeof deleteHostInput>;
 
+/** @deprecated Use {@link deleteClientOperation}. */
 export const deleteHostOperation: PlatformOperation<
   DeleteHostInput,
   PlatformHostDeleted
 > = {
   name: "delete_host",
   title: "Delete an MCPJam host",
-  description:
-    "Permanently delete a host from a project. This cannot be undone.",
+  description: "Deprecated: use delete_client. This cannot be undone.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: deleteHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
@@ -6673,12 +7525,7 @@ export const deleteHostOperation: PlatformOperation<
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.deleteHost(
-      {
-        projectId: project.id,
-        hostId: host.id,
-        // The v1 delete contract is bodyless — the route rejects any field.
-        body: {},
-      },
+      { projectId: project.id, hostId: host.id, body: {} },
       { signal },
     );
   },
@@ -6698,8 +7545,10 @@ const setHostServersInput = z.object({
     .optional()
     .describe("Optional server IDs enabled for this host."),
 });
+/** @deprecated Use {@link SetClientServersInput}. */
 export type SetHostServersInput = z.infer<typeof setHostServersInput>;
 
+/** @deprecated Use {@link setClientServersOperation}. */
 export const setHostServersOperation: PlatformOperation<
   SetHostServersInput,
   PlatformHostDetail
@@ -6707,8 +7556,9 @@ export const setHostServersOperation: PlatformOperation<
   name: "set_host_servers",
   title: "Set an MCPJam host's servers",
   description:
-    "Replace the required and optional saved-server attachments for a host.",
+    "Deprecated: use set_client_servers, which requires a concurrency token.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: setHostServersInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
@@ -6743,16 +7593,19 @@ const duplicateHostInput = z.object({
   host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
   name: z.string().trim().min(1).optional().describe("Name for the copy."),
 });
+/** @deprecated Use {@link DuplicateClientInput}. */
 export type DuplicateHostInput = z.infer<typeof duplicateHostInput>;
 
+/** @deprecated Use {@link duplicateClientOperation}. */
 export const duplicateHostOperation: PlatformOperation<
   DuplicateHostInput,
   PlatformHostDetail
 > = {
   name: "duplicate_host",
   title: "Duplicate an MCPJam host",
-  description: "Create a new host with the selected host's current config.",
+  description: "Deprecated: use duplicate_client.",
   readOnly: false,
+  risk: "none",
   inputSchema: duplicateHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
@@ -6767,6 +7620,7 @@ export const duplicateHostOperation: PlatformOperation<
     );
   },
 };
+
 
 // ── Project Environments ─────────────────────────────────────────────────────
 //
@@ -11287,6 +12141,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -11308,13 +12165,17 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   cancelJourneyRunOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
-  listHostsOperation,
-  getHostOperation,
-  createHostOperation,
-  updateHostOperation,
-  deleteHostOperation,
-  setHostServersOperation,
-  duplicateHostOperation,
+  // Clients. The deprecated `*_host` operations are deliberately NOT here —
+  // see the note above them: every registered surface partitions this list, so
+  // leaving them out is what guarantees no old name can be advertised or
+  // persisted.
+  listClientsOperation,
+  getClientOperation,
+  createClientOperation,
+  updateClientOperation,
+  deleteClientOperation,
+  setClientServersOperation,
+  duplicateClientOperation,
   listEnvironmentsOperation,
   getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,

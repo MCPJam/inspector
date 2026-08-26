@@ -2,17 +2,17 @@ import { isAssertStep, isToolCallStep } from "@/shared/steps";
 import {
   formatDurationMs,
   formatCompactNumber,
-} from "./metric-strip-data";
-import { computeIterationResult } from "./pass-criteria";
+} from "../evals/metric-strip-data";
+import { computeIterationResult } from "../evals/pass-criteria";
 import {
   getEffectiveSuiteServers,
   iterationLatencyP50,
   iterationLatencyP95,
   runContextLabel,
   runHostLabel,
-} from "./helpers";
-import { computeRunEffectiveStats } from "./suite-runs-list";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
+} from "../evals/helpers";
+import { computeRunEffectiveStats } from "../evals/suite-runs-list";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
 

@@ -13,11 +13,25 @@ import type {
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  EvalRunDecisionSummary,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
   UserValueStage,
 } from "../contract/index.js";
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical,
+ * versioned run decision contract.
+ *
+ * An ALIAS, not a second declaration. The shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunDecisionSummarySchema`), which is what makes
+ * the API's response and a client-side assembly the same object rather than two
+ * hand-mirrored descriptions of one; re-declaring it here as an interface would
+ * recreate exactly the drift this lane removed.
+ */
+export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -498,6 +512,84 @@ export type PlatformSessionsPage = PlatformPage<PlatformSessionSummary> & {
 };
 
 /**
+ * An audited, time-boxed override of a run's gate.
+ *
+ * A waiver never changes the run's own `result` — the run keeps its honest
+ * verdict, and every reader that honors the waiver says so out loud instead.
+ * That is what makes "no silent waiver" checkable rather than promised: the
+ * evidence and the override are two separate records, and nothing collapses
+ * them.
+ */
+export interface PlatformGateWaiver {
+  id: string;
+  suiteId: string;
+  /** The run this waiver covers. Suite-wide waivers are not honored. */
+  runId: string | null;
+  /**
+   * Why the gate was overridden, as the granter wrote it.
+   *
+   * UNREDACTED free text, retained for the life of the suite and readable by
+   * anyone who can see it. Any surface that ACCEPTS one must say so before
+   * taking it — see `GATE_WAIVER_REASON_NOTICE` in the gate engine.
+   */
+  reason: string;
+  /** Epoch ms. Always in the future at creation, and capped at 30 days out. */
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  /** `null`, never absent, when it cannot be resolved (e.g. a deleted user). */
+  createdByEmail: string | null;
+  revokedAt: number | null;
+  revokedBy: string | null;
+  /**
+   * Whether it is in force right now — neither revoked nor expired.
+   *
+   * A client that must not honor a lapsed waiver should re-derive this from
+   * `expiresAt` rather than trust it: the platform computes it at read time,
+   * and a cached read can outlive the instant it changes.
+   */
+  active: boolean;
+  /**
+   * WHAT was overridden, captured at waive time so a later edit to the suite's
+   * criteria cannot rewrite the record.
+   *
+   * `null` for a run decided by the v2 verdict policy: that policy's identity
+   * is recorded on the audit event instead, because this shape cannot hold it
+   * and filling it in would be a false record rather than an incomplete one.
+   */
+  policySnapshot: { minimumPassRate: number } | null;
+}
+
+/**
+ * The result of granting or revoking a waiver.
+ *
+ * `status` distinguishes the write from the two IDEMPOTENT no-ops, and both
+ * no-ops are successes rather than errors:
+ *
+ *   - `conflict` — a waiver was already in force, and `waiver` is that
+ *     EXISTING one rather than a second row.
+ *   - `already_revoked` — this waiver had already been revoked, and `waiver`
+ *     reports the original revocation rather than restamping it, so the record
+ *     of who actually ended it survives a second call.
+ *
+ * `republishedChecks` counts the GitHub Check Runs brought back in line by
+ * this write. A published check is a persisted verdict, not a live read, so
+ * `0` here on a repository with checks connected means the visible CI status
+ * did not change — worth surfacing, since the check is the thing that gates
+ * the merge.
+ */
+export interface PlatformGateWaiverWriteResult {
+  status: "created" | "conflict" | "revoked" | "already_revoked";
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+}
+
+/** The active waiver over a run, or `null` when there is none. */
+export interface PlatformGateWaiverRead {
+  waiver: PlatformGateWaiver | null;
+}
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -586,6 +678,23 @@ export interface PlatformEvalRun {
    * `"inconclusive"` result; it is never a task failure.
    */
   verdictPolicyIntegrityError?: string;
+  /**
+   * The waiver currently in force over this run's gate, or `null`.
+   *
+   * Gated on being able to VIEW the run, deliberately not on being able to
+   * grant a waiver: a waiver only its grantors could see would not be a
+   * visible one, and visibility is the half of the charter this field exists
+   * to serve.
+   *
+   * `null` means no waiver. ABSENT means an API deployment that predates the
+   * field, which is a different fact and must not be read as "not waived" by
+   * anything that needs to be sure.
+   *
+   * Carried on the run projection rather than fetched separately so `eval
+   * gate` — which already GETs this run — can fold a waiver into its report
+   * without a second round trip on the gating path.
+   */
+  gateWaiver?: PlatformGateWaiver | null;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -1481,8 +1590,29 @@ export interface PlatformRunCompare {
     policy:
       | "previous_completed"
       | "previous_completed_same_environment"
-      | "run";
+      | "run"
+      | "commit_sha";
     baseRunId: string;
+    /**
+     * The source SHA that was pinned, echoed back for the `commit_sha` policy
+     * only. Recorded alongside `baseRunId` rather than instead of it: a gate's
+     * audit trail needs both the SHA the caller asked for and the run it
+     * actually resolved to.
+     */
+    baseCommitSha?: string;
+    /**
+     * Present ONLY when uniqueness could NOT be established — the SHA matched
+     * several eligible runs, or the bounded lookup saturated so older eligible
+     * ones may exist beyond it. **Absent means unambiguous**; do not default
+     * it to 1.
+     */
+    matchCount?: number;
+    /**
+     * `matchCount` is a FLOOR, not a total — including when it reads 1. Render
+     * it WITH its count or not at all: a truncated count shown alone asserts a
+     * uniqueness nobody checked.
+     */
+    matchCountTruncated?: boolean;
   };
   baseRun: PlatformRunCompareSide;
   compareRun: PlatformRunCompareSide;
@@ -1516,7 +1646,80 @@ export interface PlatformEvalCaseDeleted {
   deleted: true;
 }
 
-/** A host in a project (list projection). */
+// ── Clients ──────────────────────────────────────────────────────────────────
+//
+// A **Client** is the product noun: a named, reusable configuration that
+// defines how MCPJam connects to and talks to your MCP servers. The
+// `PlatformHost*` types below it are the DEPRECATED shapes the `/hosts` alias
+// still returns. They are separate interfaces, not aliases of these, because
+// the two surfaces genuinely differ in their fields — see the note on
+// `PlatformHost`.
+
+/**
+ * What a config edit to a client would follow.
+ *
+ * These are the DURABLE consumers that re-resolve the client's current config.
+ * Past runs, per-turn traces and pinned eval-suite snapshots hold a config id
+ * and do not follow an edit. Direct playground / client-chat use follows it and
+ * has no row to count, which is why it is described in prose by the surfaces
+ * that quote these numbers rather than folded into one of them.
+ */
+export interface PlatformClientImpact {
+  liveEnvironmentCount: number;
+  scenarioAttachmentCount: number;
+  activeLegacyJourneyCount: number;
+}
+
+/** A client in a project (list projection). */
+export interface PlatformClient {
+  id: string;
+  name: string;
+  /**
+   * ID of the content-addressed config this client points at, and the
+   * concurrency token every write takes. Content addressed, so the same id
+   * means byte-identical settings.
+   */
+  configId: string;
+  modelId: string;
+  serverCount: number;
+  /** Product ownership of the row (null for untagged). Never an auth signal. */
+  ownerScope: Record<string, unknown> | null;
+  hasComputer: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Full client detail, including the resolved config DTO and its read-backs. */
+export interface PlatformClientDetail {
+  id: string;
+  name: string;
+  /** The concurrency token — see {@link PlatformClient.configId}. */
+  configId?: string;
+  /** Resolved client-config v2 DTO (model, capabilities, hostContext, …). */
+  config: Record<string, unknown>;
+  ownerScope: Record<string, unknown> | null;
+  hasComputer?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+  /** What a config edit would follow. */
+  impact?: PlatformClientImpact;
+}
+
+export interface PlatformClientDeleted {
+  id: string;
+  deleted: true;
+}
+
+/**
+ * @deprecated A host in a project, as the `/hosts` alias returns it. Use
+ * {@link PlatformClient}.
+ *
+ * NOT a type alias of `PlatformClient`, deliberately. `/hosts` returns
+ * `hostConfigId` where `/clients` returns `configId`, and carries none of the
+ * read-backs — so an alias would be a compile-time lie about a runtime shape,
+ * and every existing caller reading `hostConfigId` would start failing
+ * typecheck for a field the deprecated route still sends.
+ */
 export interface PlatformHost {
   id: string;
   name: string;
@@ -1527,7 +1730,10 @@ export interface PlatformHost {
   updatedAt: number;
 }
 
-/** Full host detail, including the resolved host config DTO. */
+/**
+ * @deprecated Full host detail as the `/hosts` alias returns it. Use
+ * {@link PlatformClientDetail}, which also carries `configId` and `impact`.
+ */
 export interface PlatformHostDetail {
   id: string;
   name: string;
@@ -1535,6 +1741,7 @@ export interface PlatformHostDetail {
   config: Record<string, unknown>;
 }
 
+/** @deprecated Use {@link PlatformClientDeleted}. */
 export interface PlatformHostDeleted {
   id: string;
   deleted: true;
@@ -1944,7 +2151,27 @@ export interface PlatformEvalCasesGenerated {
 
 export interface PlatformEvalIteration {
   id: string;
+  /**
+   * The STORED case row's database id. Distinct from `caseId` below and never
+   * interchangeable with it: this one exists for every case the platform
+   * persisted, changes if the case is recreated, and means nothing outside this
+   * deployment.
+   */
   testCaseId: string | null;
+  /**
+   * The case's SDK-DECLARED id, when the run recorded one.
+   *
+   * Read from the iteration's frozen `testCaseSnapshot`, so it is the id the
+   * suite declared AT RUN TIME — the durable, author-chosen identity that
+   * survives a case being recreated. ABSENT on a UI-authored case (which never
+   * declared one) and on runs predating declared ids; absence is not an error.
+   *
+   * NOT a join key into `verdictSummary.cases[].caseId`, which is a separately
+   * ENCODED identity the platform mints from whichever spelling a given run
+   * knew. Matching one against the other attaches a trial to the wrong case
+   * aggregate.
+   */
+  caseId?: string;
   title: string | null;
   iterationNumber: number;
   /**
