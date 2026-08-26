@@ -694,6 +694,75 @@ describe("the row itself", () => {
     expect(rebuilt.updatedAt).toBe(2000);
   });
 
+  test("stamps the version the trials were ACTUALLY derived at", () => {
+    // Not the reader's. An older trial is included — excluding it would
+    // discard nearly all history the first time the analyzer bumps — so the
+    // row must report what produced it, or old semantics claim new ones.
+    const older = STAGE_ANALYZER_VERSION - 1;
+    const stageResults = chainOf({});
+    const row = aggregate([
+      trial({
+        stageResults,
+        stageAnalyzerVersion: older,
+        measurements: {
+          ...deriveStageMeasurements({ stageResults }),
+          stageAnalyzerVersion: older,
+        },
+      }),
+    ]);
+    expect(row.includedTrials).toBe(1);
+    expect(row.stageAnalyzerVersion).toBe(older);
+    expect(row.stageAnalyzerVersion).not.toBe(STAGE_ANALYZER_VERSION);
+    // Uniform, so no mixed list — and the row stays comparable.
+    expect(row.sourceStageAnalyzerVersions).toBeUndefined();
+    expect(evalStageAnalyticsSchema.safeParse(row).success).toBe(true);
+  });
+
+  test("a run mixing analyzer versions says so, and is not comparable", () => {
+    const older = STAGE_ANALYZER_VERSION - 1;
+    const oldChain = chainOf({});
+    const row = aggregate([
+      trial({ trialKey: "new" }),
+      trial({
+        trialKey: "old",
+        stageResults: oldChain,
+        stageAnalyzerVersion: older,
+        measurements: {
+          ...deriveStageMeasurements({ stageResults: oldChain }),
+          stageAnalyzerVersion: older,
+        },
+      }),
+    ]);
+    expect(row.includedTrials).toBe(2);
+    expect(row.sourceStageAnalyzerVersions).toEqual([
+      older,
+      STAGE_ANALYZER_VERSION,
+    ]);
+    // The stamp is the newest present, but nothing may rest on it alone.
+    expect(row.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    expect(evalStageAnalyticsSchema.safeParse(row).success).toBe(true);
+
+    // Incomparable to anything — including a row with the same stamp, and
+    // including another mixed row.
+    expect(stageAnalyticsParityBlockers(row, row)).toContain(
+      "mixedSourceVersions"
+    );
+    const uniform = aggregate([trial()]);
+    expect(stageAnalyticsParityBlockers(row, uniform)).toContain(
+      "mixedSourceVersions"
+    );
+    // The uniform pair is still fine, so the blocker is not firing on everything.
+    expect(stageAnalyticsParityBlockers(uniform, uniform)).toEqual([]);
+  });
+
+  test("a run with no included trials falls back to the reader's version", () => {
+    // Zero observations make no semantic claim, so there is no source version.
+    const row = aggregate([trial({ status: "cancelled" })]);
+    expect(row.includedTrials).toBe(0);
+    expect(row.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    expect(row.sourceStageAnalyzerVersions).toBeUndefined();
+  });
+
   test("provisional and final are carried, never inferred from the trials", () => {
     expect(
       aggregate([trial()], { materializationState: "provisional" })

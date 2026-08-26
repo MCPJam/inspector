@@ -356,6 +356,29 @@ function compareKeys(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * What version to stamp a row with, and whether it is mixed.
+ *
+ * `stamp` is the single observed version when the included trials agree, the
+ * NEWEST when they do not, and the reader's own when nothing was included (a
+ * row with zero observations makes no semantic claim, so there is no source
+ * version to report).
+ *
+ * `mixed` is the full ascending list, present ONLY when more than one version
+ * contributed. Parity refuses any row carrying it, so no comparison ever rests
+ * on `stamp` alone in the ambiguous case.
+ */
+function resolveSourceVersions(
+  observed: ReadonlySet<number>,
+  readerVersion: number
+): { stamp: number; mixed?: number[] } {
+  const versions = [...observed].sort((a, b) => a - b);
+  const newest = versions[versions.length - 1];
+  if (newest === undefined) return { stamp: readerVersion };
+  if (versions.length === 1) return { stamp: newest };
+  return { stamp: newest, mixed: versions };
+}
+
 // ── the aggregation ──────────────────────────────────────────────────────────
 
 /**
@@ -377,6 +400,12 @@ export function aggregateStageAnalytics(
   const slices = new Map<string, SliceAcc>();
   const detail = new Map<keyof EvalStageCoverageDetail, number>();
   const runExcluded = new Map<EvalStageExclusionClass, number>();
+  // The versions that ACTUALLY produced the included observations. A trial
+  // derived at an older analyzer is included — excluding it would discard
+  // nearly all history the first time the version bumps — so the row has to
+  // report what produced it rather than what this reader understands.
+  const sourceAnalyzerVersions = new Set<number>();
+  const sourceMeasurementsVersions = new Set<number>();
 
   let includedTrials = 0;
 
@@ -497,6 +526,12 @@ export function aggregateStageAnalytics(
     }
 
     includedTrials += 1;
+    if (trial.stageAnalyzerVersion !== undefined) {
+      sourceAnalyzerVersions.add(trial.stageAnalyzerVersion);
+    }
+    if (trial.measurements !== undefined) {
+      sourceMeasurementsVersions.add(trial.measurements.schemaVersion);
+    }
     for (const acc of targets) {
       acc.includedTrials += 1;
       if (trial.failureCategory !== undefined) {
@@ -723,6 +758,15 @@ export function aggregateStageAnalytics(
     kept.push(...retained);
   }
 
+  const analyzerVersions = resolveSourceVersions(
+    sourceAnalyzerVersions,
+    run.readerStageAnalyzerVersion
+  );
+  const measurementsVersions = resolveSourceVersions(
+    sourceMeasurementsVersions,
+    readerMeasurementsVersion
+  );
+
   return {
     schemaVersion: EVAL_STAGE_ANALYTICS_SCHEMA_VERSION,
     measurementUnit: "trial",
@@ -741,8 +785,14 @@ export function aggregateStageAnalytics(
     ...(run.sourceMaxUpdatedAt !== undefined
       ? { sourceMaxUpdatedAt: run.sourceMaxUpdatedAt }
       : {}),
-    stageAnalyzerVersion: run.readerStageAnalyzerVersion,
-    measurementsSchemaVersion: readerMeasurementsVersion,
+    stageAnalyzerVersion: analyzerVersions.stamp,
+    ...(analyzerVersions.mixed !== undefined
+      ? { sourceStageAnalyzerVersions: analyzerVersions.mixed }
+      : {}),
+    measurementsSchemaVersion: measurementsVersions.stamp,
+    ...(measurementsVersions.mixed !== undefined
+      ? { sourceMeasurementsSchemaVersions: measurementsVersions.mixed }
+      : {}),
     materializationState: run.materializationState,
     createdAt: run.createdAt ?? run.now,
     updatedAt: run.now,

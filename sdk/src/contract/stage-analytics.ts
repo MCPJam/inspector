@@ -718,10 +718,44 @@ export const evalStageAnalyticsStructuralSchema = z
      */
     sourceMaxUpdatedAt: z.number().int().min(0).optional(),
 
-    /** The analyzer the source chains were derived at. */
+    /**
+     * The analyzer the source chains were ACTUALLY derived at — not the version
+     * the reader happened to understand.
+     *
+     * A trial derived at an OLDER analyzer is included (excluding it would
+     * discard nearly all history the first time the version bumps), so the row
+     * must report what produced it. Stamping the reader's version instead
+     * would make old semantics claim new ones, and since parity compares this
+     * field, two rows stamped alike — one of them over older data — would read
+     * as comparable when they are not.
+     *
+     * When included trials disagree, this is the NEWEST version present and
+     * {@link sourceStageAnalyzerVersions} lists them all; parity refuses such a
+     * row outright, so no comparison ever rests on the single number alone.
+     * With no included trials there is no source version and the reader's
+     * stands in — a row with zero observations makes no semantic claim.
+     */
     stageAnalyzerVersion: z.number().int().min(1),
-    /** The measurement schema the source measurements were produced at. */
+    /**
+     * Every DISTINCT analyzer version among the included trials, ascending.
+     *
+     * Present ONLY when more than one contributed — a uniform row says so by
+     * omitting this. A mixed row is not comparable to anything, including
+     * another mixed row: the stages mean subtly different things across an
+     * analyzer bump, and averaging them produces a funnel describing no
+     * analyzer's semantics.
+     */
+    sourceStageAnalyzerVersions: z
+      .array(z.number().int().min(1))
+      .min(2)
+      .optional(),
+    /** The measurement schema the source measurements were produced at. Same rule. */
     measurementsSchemaVersion: z.number().int().min(1),
+    /** Every distinct measurement schema version among included trials. Same rule. */
+    sourceMeasurementsSchemaVersions: z
+      .array(z.number().int().min(1))
+      .min(2)
+      .optional(),
 
     materializationState: evalStageAnalyticsMaterializationStateSchema,
     createdAt: z.number().int().min(0),
@@ -848,6 +882,16 @@ export const EVAL_STAGE_PARITY_BLOCKERS = [
   "differentAnalyzerVersion",
   "differentMeasurementsVersion",
   "differentMeasurementUnit",
+  /**
+   * One of the rows aggregates trials from more than one analyzer or
+   * measurement-schema version.
+   *
+   * Not merely "different from the other row" — a mixed row is incomparable to
+   * ANYTHING, itself included, because no single version describes what its
+   * counts mean. Blocking on equality alone would let two mixed rows carrying
+   * the same newest-version stamp pass as a comparison.
+   */
+  "mixedSourceVersions",
   "provisional",
 ] as const;
 export type EvalStageParityBlocker =
@@ -868,10 +912,23 @@ export function stageAnalyticsParityBlockers(
     | "measurementsSchemaVersion"
     | "measurementUnit"
     | "materializationState"
+    | "sourceStageAnalyzerVersions"
+    | "sourceMeasurementsSchemaVersions"
   >,
   b: typeof a
 ): EvalStageParityBlocker[] {
   const blockers: EvalStageParityBlocker[] = [];
+  // Checked FIRST, and on each row independently: a mixed row is incomparable
+  // to anything at all, so this does not depend on how the two rows relate.
+  if (
+    [a, b].some(
+      (row) =>
+        row.sourceStageAnalyzerVersions !== undefined ||
+        row.sourceMeasurementsSchemaVersions !== undefined
+    )
+  ) {
+    blockers.push("mixedSourceVersions");
+  }
   if (a.runGroupId !== b.runGroupId) blockers.push("differentRunGroup");
   if (a.stageAnalyzerVersion !== b.stageAnalyzerVersion) {
     blockers.push("differentAnalyzerVersion");
