@@ -20,9 +20,18 @@ import {
   splitAdvertisedFrontmatter,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
   isSkillIntegrityError,
+  checkManifestLimits,
+  enumeratedResources,
+  isDynamicResources,
 } from "../src/mcp-client-manager/skills-integrity.js";
+import {
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
+} from "../src/mcp-client-manager/skills-ext-types.js";
 import type { SkillEntry } from "../src/mcp-client-manager/skills-ext-types.js";
 
 describe("parseDigest", () => {
@@ -491,5 +500,194 @@ describe("canonicalJson", () => {
   it("sorts object keys but preserves array order", () => {
     expect(canonicalJson({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
     expect(canonicalJson([2, 1])).toBe("[2,1]");
+  });
+});
+
+describe("verifySize", () => {
+  it("passes and records that it checked when the length matches", () => {
+    expect(verifySize(12, { size: 12 })).toEqual({ ok: true, checked: true });
+  });
+
+  it("fails with both numbers when the length differs", () => {
+    // Off by ONE, which is what a truncated read actually looks like. A wildly
+    // wrong number would pass a sloppier implementation that only sniffs for
+    // implausible values.
+    expect(verifySize(11, { size: 12 })).toEqual({
+      ok: false,
+      expected: 12,
+      actual: 11,
+    });
+  });
+
+  it("passes but reports NOT checked when the server sent no size", () => {
+    // The draft requires `size`, but it is unratified and pre-`size` servers
+    // exist. Tolerating absence is deliberate; silently claiming to have
+    // checked would not be.
+    expect(verifySize(12, {})).toEqual({ ok: true, checked: false });
+  });
+
+  it("treats a zero-byte file as a real length, not a missing one", () => {
+    expect(verifySize(0, { size: 0 })).toEqual({ ok: true, checked: true });
+    expect(verifySize(1, { size: 0 })).toEqual({
+      ok: false,
+      expected: 0,
+      actual: 1,
+    });
+  });
+});
+
+describe("checkManifestLimits", () => {
+  const ref = (i: number, size?: number) => ({
+    uri: `skill://a/b/${i}`,
+    digest: "sha256:x",
+    ...(size === undefined ? {} : { size }),
+  });
+
+  it("accepts a manifest inside both limits and reports the budget", () => {
+    expect(checkManifestLimits([ref(0, 10), ref(1, 20)])).toEqual({
+      ok: true,
+      entryCount: 2,
+      totalBytes: 30,
+    });
+  });
+
+  it("rejects more entries than the draft requires hosts to support", () => {
+    const oversized = Array.from(
+      { length: MAX_SKILL_RESOURCE_ENTRIES + 1 },
+      (_, i) => ref(i, 1)
+    );
+    expect(checkManifestLimits(oversized)).toEqual({
+      ok: false,
+      reason: "too_many_resources",
+      expected: MAX_SKILL_RESOURCE_ENTRIES,
+      actual: MAX_SKILL_RESOURCE_ENTRIES + 1,
+    });
+  });
+
+  it("accepts exactly the limit — the draft says up to AND INCLUDING", () => {
+    const atLimit = Array.from({ length: MAX_SKILL_RESOURCE_ENTRIES }, (_, i) =>
+      ref(i, 1)
+    );
+    expect(checkManifestLimits(atLimit).ok).toBe(true);
+    expect(checkManifestLimits([ref(0, MAX_SKILL_TOTAL_BYTES)]).ok).toBe(true);
+  });
+
+  it("rejects a total over the per-skill byte budget", () => {
+    expect(checkManifestLimits([ref(0, MAX_SKILL_TOTAL_BYTES + 1)])).toEqual({
+      ok: false,
+      reason: "too_large",
+      expected: MAX_SKILL_TOTAL_BYTES,
+      actual: MAX_SKILL_TOTAL_BYTES + 1,
+    });
+  });
+
+  it("reports an UNDEFINED budget when any entry omitted its size", () => {
+    // A partial sum is not a budget. Reporting one would invite a caller to
+    // enforce a limit against a number that undercounts by an unknown amount.
+    expect(checkManifestLimits([ref(0, 10), ref(1)])).toEqual({
+      ok: true,
+      entryCount: 2,
+      totalBytes: undefined,
+    });
+  });
+
+  it("does not refuse an over-budget manifest it cannot fully measure", () => {
+    expect(
+      checkManifestLimits([ref(0, MAX_SKILL_TOTAL_BYTES), ref(1)]).ok
+    ).toBe(true);
+  });
+});
+
+describe("dynamic resources", () => {
+  it("separates a dynamic manifest from an absent one", () => {
+    expect(isDynamicResources({ resources: DYNAMIC_SKILL_RESOURCES })).toBe(
+      true
+    );
+    expect(isDynamicResources({ resources: [] })).toBe(false);
+    expect(isDynamicResources({})).toBe(false);
+  });
+
+  it("never lets a dynamic manifest be indexed as an array", () => {
+    expect(
+      enumeratedResources({ resources: DYNAMIC_SKILL_RESOURCES })
+    ).toBeUndefined();
+    expect(enumeratedResources({})).toBeUndefined();
+    expect(enumeratedResources({ resources: [] })).toEqual([]);
+  });
+
+  it("resolves no listed resource for a dynamic skill", () => {
+    // The read allowlist must be EMPTY, not "everything": a dynamic skill has
+    // no manifest, so no URI is authorized by it.
+    expect(
+      findListedResource(
+        { resources: DYNAMIC_SKILL_RESOURCES },
+        "skill://a/b/SKILL.md"
+      )
+    ).toBeUndefined();
+    expect(
+      isListedResource(
+        { resources: DYNAMIC_SKILL_RESOURCES },
+        "skill://a/b/SKILL.md"
+      )
+    ).toBe(false);
+  });
+});
+
+describe("verifySkillMarkdown size enforcement", () => {
+  const markdown = "---\nname: greeting\ndescription: Say hi\n---\n\nBody\n";
+  const uri = "skill://acme/greeting/SKILL.md";
+
+  async function entryWith(size: number | undefined) {
+    return {
+      uri,
+      frontmatter: { name: "greeting", description: "Say hi" },
+      resources: [
+        {
+          uri,
+          digest: `sha256:${await sha256HexOfText(markdown)}`,
+          ...(size === undefined ? {} : { size }),
+        },
+      ],
+    };
+  }
+
+  it("rejects a length mismatch even when the digest would pass", async () => {
+    // The digest here is CORRECT. Only the advertised size is wrong, which is
+    // exactly the case the draft calls out: a verification failure "whether or
+    // not the host goes on to compute the digest".
+    const entry = await entryWith(Buffer.byteLength(markdown, "utf8") + 1);
+    await expect(verifySkillMarkdown({ entry, markdown })).rejects.toSatisfy(
+      (error: unknown) =>
+        isSkillIntegrityError(error) && error.kind === "size_mismatch"
+    );
+  });
+
+  it("reports the advertised and actual lengths", async () => {
+    const actual = Buffer.byteLength(markdown, "utf8");
+    const entry = await entryWith(actual + 1);
+    await verifySkillMarkdown({ entry, markdown }).then(
+      () => {
+        throw new Error("expected a refusal");
+      },
+      (error: unknown) => {
+        if (!isSkillIntegrityError(error)) throw error;
+        expect(error.expected).toBe(String(actual + 1));
+        expect(error.actual).toBe(String(actual));
+      }
+    );
+  });
+
+  it("accepts a matching length", async () => {
+    const entry = await entryWith(Buffer.byteLength(markdown, "utf8"));
+    await expect(
+      verifySkillMarkdown({ entry, markdown })
+    ).resolves.toMatchObject({ body: "\nBody\n" });
+  });
+
+  it("still loads when the server omitted size entirely", async () => {
+    const entry = await entryWith(undefined);
+    await expect(
+      verifySkillMarkdown({ entry, markdown })
+    ).resolves.toMatchObject({ body: "\nBody\n" });
   });
 });

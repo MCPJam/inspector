@@ -31,6 +31,11 @@ import type {
   SkillIdentityFrontmatter,
   SkillResourceRef,
 } from "./skills-ext-types.js";
+import {
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
+} from "./skills-ext-types.js";
 import { parseDocument } from "yaml";
 
 /**
@@ -201,7 +206,125 @@ export function findListedResource(
   entry: Pick<SkillEntry, "resources">,
   uri: string
 ): SkillResourceRef | undefined {
-  return entry.resources?.find((resource) => resource.uri === uri);
+  const manifest = enumeratedResources(entry);
+  return manifest?.find((resource) => resource.uri === uri);
+}
+
+/**
+ * Whether the entry declares `"dynamic"` — content generated per request,
+ * with nothing to digest, count, or budget.
+ *
+ * Distinguished from a MISSING `resources` on purpose: "the server told us
+ * this skill is dynamic" and "the server omitted a required field" are
+ * different server behaviours and deserve different messages, even though
+ * MCPJam refuses to load in both cases.
+ */
+export function isDynamicResources(
+  entry: Pick<SkillEntry, "resources">
+): boolean {
+  return entry.resources === DYNAMIC_SKILL_RESOURCES;
+}
+
+/**
+ * The entry's manifest as an array, or `undefined` when there is none to
+ * enumerate — whether because the server omitted `resources` or declared it
+ * `"dynamic"`.
+ *
+ * Every read path goes through here rather than touching `entry.resources`
+ * directly, so `"dynamic"` can never be indexed into as if it were an array.
+ */
+export function enumeratedResources(
+  entry: Pick<SkillEntry, "resources">
+): SkillResourceRef[] | undefined {
+  const resources = entry.resources;
+  return Array.isArray(resources) ? resources : undefined;
+}
+
+export type SizeVerification =
+  | { ok: true; checked: boolean }
+  | { ok: false; expected: number; actual: number };
+
+/**
+ * Verifies a fetched file's byte length against its manifest `size`.
+ *
+ * The draft calls a length mismatch "a verification failure equivalent to a
+ * digest mismatch, whether or not the host goes on to compute the digest" —
+ * so this runs BEFORE hashing, which is the point of the field: it lets a host
+ * detect a truncated or padded read without paying for a digest, and lets it
+ * budget a skill from the entry alone.
+ *
+ * `checked: false` means the server sent no `size`. That is reported, never
+ * treated as a pass and never treated as a refusal — see the field's doc
+ * comment in `skills-ext-types.ts` for why a pre-`size` server is tolerated.
+ */
+export function verifySize(
+  byteLength: number,
+  ref: Pick<SkillResourceRef, "size">
+): SizeVerification {
+  if (ref.size === undefined) return { ok: true, checked: false };
+  if (ref.size !== byteLength) {
+    return { ok: false, expected: ref.size, actual: byteLength };
+  }
+  return { ok: true, checked: true };
+}
+
+export type ManifestLimitCheck =
+  | { ok: true; entryCount: number; totalBytes: number | undefined }
+  | {
+      ok: false;
+      reason: "too_many_resources";
+      expected: number;
+      actual: number;
+    }
+  | { ok: false; reason: "too_large"; expected: number; actual: number };
+
+/**
+ * Checks a manifest against the per-skill limits the draft requires hosts to
+ * support: 512 entries and 16 MiB summed over `size`.
+ *
+ * Both are checkable from the entry alone, before a single file is retrieved —
+ * which is why this takes the manifest rather than fetched bytes. A skill over
+ * either limit is one "not guaranteed to be loadable by any conforming host",
+ * and the draft asks that a host declining on this basis say why rather than
+ * fail silently on a later read.
+ *
+ * `totalBytes` is `undefined` when any entry omitted `size`: a partial sum is
+ * not a budget, and reporting one would invite a caller to enforce a limit
+ * against a number that undercounts.
+ */
+export function checkManifestLimits(
+  resources: readonly SkillResourceRef[]
+): ManifestLimitCheck {
+  if (resources.length > MAX_SKILL_RESOURCE_ENTRIES) {
+    return {
+      ok: false,
+      reason: "too_many_resources",
+      expected: MAX_SKILL_RESOURCE_ENTRIES,
+      actual: resources.length,
+    };
+  }
+  let total = 0;
+  let complete = true;
+  for (const resource of resources) {
+    if (resource.size === undefined) {
+      complete = false;
+      continue;
+    }
+    total += resource.size;
+  }
+  if (complete && total > MAX_SKILL_TOTAL_BYTES) {
+    return {
+      ok: false,
+      reason: "too_large",
+      expected: MAX_SKILL_TOTAL_BYTES,
+      actual: total,
+    };
+  }
+  return {
+    ok: true,
+    entryCount: resources.length,
+    totalBytes: complete ? total : undefined,
+  };
 }
 
 /** Whether `uri` appears in the entry's manifest. */
@@ -441,6 +564,10 @@ export class SkillIntegrityError extends Error {
     | "frontmatter_drift"
     | "identity_mismatch"
     | "no_resources"
+    | "dynamic_resources"
+    | "size_mismatch"
+    | "too_many_resources"
+    | "too_large"
     | "fetch_failed"
     | "not_text";
   readonly resourceUri?: string;
@@ -588,6 +715,22 @@ export async function verifySkillMarkdown(args: {
   }
   {
     const bytes = args.bytes ?? new TextEncoder().encode(markdown);
+    // Size BEFORE digest. The draft makes a length mismatch a verification
+    // failure in its own right, "whether or not the host goes on to compute
+    // the digest", and reporting it as its own kind is what lets a user tell a
+    // truncated read apart from tampered content — a digest mismatch would be
+    // technically true here and diagnostically useless.
+    const sizing = verifySize(bytes.byteLength, listed);
+    if (!sizing.ok) {
+      throw new SkillIntegrityError({
+        message: `Skill "${entry.uri}" advertises ${sizing.expected} bytes but the server returned ${sizing.actual}.`,
+        skillUri: entry.uri,
+        kind: "size_mismatch",
+        resourceUri: entry.uri,
+        expected: String(sizing.expected),
+        actual: String(sizing.actual),
+      });
+    }
     const verification = await verifyDigest(bytes, listed.digest);
     if (!verification.ok) {
       throw new SkillIntegrityError({

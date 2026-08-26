@@ -132,6 +132,9 @@ export {
   SkillsExtGetMethod,
   SkillsExtListMethod,
   INODE_DIRECTORY_MIME_TYPE,
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
   clientDeclaresSkillsExtension,
   resolveSkillsSupport,
   serverDeclaresSkillsExtension,
@@ -156,7 +159,10 @@ export {
   comparableAdvertisedFrontmatter,
   splitAdvertisedFrontmatter,
   computeSkillVersionHash,
+  checkManifestLimits,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isListedResource,
   parseDigest,
   sha256HexOfBytes,
@@ -164,6 +170,7 @@ export {
   skillNameFromUri,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
 } from "./mcp-client-manager/index.js";
 export type {

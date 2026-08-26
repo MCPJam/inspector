@@ -52,7 +52,7 @@
  * and it is not a disclosure. A security property the code does not have is
  * worse than one it never promised.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
 import { tool } from "ai";

@@ -34,9 +34,19 @@ export interface ServerSkillSummary {
   name: string;
   description: string;
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
-  /** Present ⇒ discoverable but refused for loading. */
-  unloadable?: { reason: "no_resources"; message: string };
+  resources: Array<{ uri: string; digest: string; size?: number }>;
+  /**
+   * Present ⇒ discoverable but refused for loading.
+   *
+   * `dynamic_resources` is a server declaring `"resources": "dynamic"` — a
+   * form the draft defines; `no_resources` is a server omitting the field the
+   * draft requires. The UI renders `message` and never branches on `reason`,
+   * so the distinction exists for the reader of a refusal, not for layout.
+   */
+  unloadable?: {
+    reason: "no_resources" | "dynamic_resources";
+    message: string;
+  };
 }
 
 export interface ServerSkillListing {
@@ -69,7 +79,7 @@ export interface VerifiedServerSkill {
   content: string;
   contentSha256: string;
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
+  resources: Array<{ uri: string; digest: string; size?: number }>;
 }
 
 const EMPTY_SUPPORT: ServerSkillsSupport = {
