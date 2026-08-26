@@ -166,6 +166,12 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
   compare_eval_run: { command: "cloud eval compare" },
+  waive_eval_gate: { command: "cloud eval gate waive" },
+  revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },
+  get_eval_gate_waiver: {
+    excluded:
+      "Not a standalone command: `cloud eval gate` already reads the waiver off the run projection and names it in every artifact it writes, and `gate unwaive` resolves the waiver in force when `--waiver` is omitted. A separate read command would only invite checking by hand what the gate already reports.",
+  },
   list_eval_run_iterations: { command: "cloud eval iterations" },
   get_eval_iteration_trace: { command: "cloud eval trace" },
   get_eval_run_steps: { command: "cloud eval steps" },
@@ -179,13 +185,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────
-  list_hosts: { command: "cloud hosts list" },
-  get_host: { command: "cloud hosts get" },
-  create_host: { command: "cloud hosts create" },
-  update_host: { command: "cloud hosts update" },
-  delete_host: { command: "cloud hosts delete" },
-  set_host_servers: { command: "cloud hosts servers" },
-  duplicate_host: { command: "cloud hosts duplicate" },
+  // `cloud clients …`, with `cloud hosts …` kept as a command alias so existing
+  // scripts keep working. The binding names the CANONICAL path — the alias is
+  // resolvable by the same Commander tree, and pointing the binding at it would
+  // document the spelling we are moving away from.
+  list_clients: { command: "cloud clients list" },
+  get_client: { command: "cloud clients get" },
+  create_client: { command: "cloud clients create" },
+  update_client: { command: "cloud clients update" },
+  delete_client: { command: "cloud clients delete" },
+  set_client_servers: { command: "cloud clients servers" },
+  duplicate_client: { command: "cloud clients duplicate" },
   list_project_environments: { command: "cloud environments list" },
   get_project_environment_capabilities: {
     excluded:

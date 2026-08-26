@@ -1906,6 +1906,14 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    waive_eval_gate: {
+      project: "p",
+      runId: "r",
+      reason: "shipping the hotfix; tracked in ENG-1",
+      expiresAt: 1_700_000_000_000,
+    },
+    get_eval_gate_waiver: { project: "p", runId: "r" },
+    revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
     request_eval_run_judge: { project: "p", runId: "r" },
     list_eval_check_repos: {},
     connect_eval_check_repo: {
@@ -2002,13 +2010,17 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
-    list_hosts: {},
-    get_host: { host: "h" },
-    set_host_servers: { host: "h", serverIds: [] },
-    duplicate_host: { host: "h" },
-    create_host: { name: "h", template: "claude" },
-    update_host: { host: "h", name: "renamed" },
-    delete_host: { host: "h" },
+    list_clients: {},
+    get_client: { client: "c" },
+    set_client_servers: {
+      client: "c",
+      serverIds: [],
+      expectedConfigId: "hc_1",
+    },
+    duplicate_client: { client: "c" },
+    create_client: { name: "c", template: "claude" },
+    update_client: { client: "c", name: "renamed", expectedName: "c" },
+    delete_client: { client: "c" },
     list_project_environments: {},
     get_project_environment_capabilities: {},
     list_project_plugins: {},
@@ -2146,11 +2158,11 @@ describe("operation catalog consistency", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
-      "create_host",
-      "update_host",
-      "delete_host",
-      "set_host_servers",
-      "duplicate_host",
+      "create_client",
+      "update_client",
+      "delete_client",
+      "set_client_servers",
+      "duplicate_client",
       "create_project_environment",
       "ensure_adhoc_environment",
       "name_environment",
@@ -2223,6 +2235,13 @@ describe("operation catalog consistency", () => {
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
+      // Gate waivers. Both are writes because both persist an audited record
+      // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
+      // deliberately NOT here — reading whether a gate is waived is available
+      // to anyone who can view the run, and a waiver its readers cannot see
+      // is not a visible waiver.
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
