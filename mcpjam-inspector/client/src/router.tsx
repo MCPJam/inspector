@@ -57,6 +57,7 @@ import {
 import { APP_ROUTES, type AppRouteEntry } from "./lib/app-routes";
 import {
   buildProjectPath,
+  isProjectIdShape,
   parseProjectPath,
   PROJECT_HOME_RELATIVE_PATH,
 } from "./lib/project-route";
@@ -366,15 +367,24 @@ function buildRouteChildren() {
     if (route.path === "/") {
       // `/p/<id>` alone is not a destination — project HOME is. Redirecting
       // rather than rendering Home here keeps one canonical URL per screen.
+      //
+      // A MALFORMED id is not redirected at all. `buildProjectPath` refuses to
+      // put one in the canonical position, so it would hand back the bare
+      // `/home` — and loaders run before anything renders, so `/p/none` would
+      // leave the boundary entirely, land on the unscoped legacy route, and
+      // adopt the viewer's own project. The user asked for one project and
+      // silently got another's home, while `/p/none/servers` correctly
+      // reported itself unavailable. Falling through to the boundary is what
+      // makes those two agree.
       return {
         index: true as const,
-        loader: ({ params }: any) =>
-          redirect(
-            buildProjectPath(
-              String(params.projectId ?? ""),
-              PROJECT_HOME_RELATIVE_PATH
-            )
-          ),
+        loader: ({ params }: any) => {
+          const projectId = String(params.projectId ?? "");
+          if (!isProjectIdShape(projectId)) return null;
+          return redirect(
+            buildProjectPath(projectId, PROJECT_HOME_RELATIVE_PATH)
+          );
+        },
       };
     }
     return routeChildFor(route, {

@@ -108,6 +108,31 @@ describe("the router mounts every route it registers", () => {
     expect(index?.element).toBeUndefined();
   });
 
+  it("does not redirect a malformed bare project prefix out of the boundary", async () => {
+    // Loaders run BEFORE anything renders, so a redirect here escapes the
+    // boundary entirely: `/p/none` would land on the unscoped legacy route and
+    // adopt the viewer's own project — the user asks for one project and
+    // silently gets another's home, while `/p/none/servers` reports itself
+    // unavailable. The two have to agree.
+    const index = (projectSubtree().children ?? []).find(
+      (child) => child.index
+    );
+    const loader = index?.loader as ((args: any) => unknown) | undefined;
+    expect(loader).toBeTypeOf("function");
+
+    const malformed = await loader!({ params: { projectId: "none" } });
+    expect(malformed).toBeNull();
+
+    // A usable id still redirects to project home.
+    const valid = (await loader!({
+      params: { projectId: "k5700000000000000000000000a" },
+    })) as Response;
+    expect(valid).toBeInstanceOf(Response);
+    expect(valid.headers.get("Location")).toBe(
+      "/p/k5700000000000000000000000a/home"
+    );
+  });
+
   it("mounts the GitHub install callback", () => {
     // Named explicitly rather than left to the sweep above: this is the route
     // the regression was, and the whole binding flow is unreachable without it.
