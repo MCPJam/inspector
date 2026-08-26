@@ -17,12 +17,22 @@
  * Delete this module once the normalizers are retired — one full release
  * after every first-party writer has stopped emitting the parameter.
  */
-import {
-  LEGACY_PROJECT_QUERY_PARAM,
-  readLegacyProjectQuery,
-} from "./project-route";
+import { readLegacyProjectQuery } from "./project-route";
 
-export const PROJECT_DEEP_LINK_PARAM = LEGACY_PROJECT_QUERY_PARAM;
+/**
+ * Re-exported, not declared here.
+ *
+ * The parameter has TWO ends: the SDK's permalink builder writes it and this
+ * module consumes it, so a literal in each place is one rename away from
+ * silently minting links the app ignores. The dependency only runs one way —
+ * app code imports the SDK, never the reverse — which is why the constant
+ * lives in `@mcpjam/sdk/platform` and is re-exported here for the app's own
+ * call sites. It names the same parameter `project-route.ts` reads off the
+ * URL as `LEGACY_PROJECT_QUERY_PARAM`, which both modules' tests assert.
+ */
+import { PROJECT_DEEP_LINK_PARAM } from "@mcpjam/sdk/platform";
+
+export { PROJECT_DEEP_LINK_PARAM };
 
 /** The linked project id, or null when absent or malformed. */
 export function readProjectDeepLinkParam(search: string): string | null {

@@ -1,4 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   Dialog,
   DialogContent,
@@ -286,7 +287,7 @@ export function MCPJamLimitDialog() {
     // Remember where they were, so WorkOS returns them here rather than to
     // the app's front door.
     captureAppSignInReturnPath();
-    signIn();
+    signIn(permalinkSignInOptions());
     track("plan_limit_sign_in_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",
