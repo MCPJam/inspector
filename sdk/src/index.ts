@@ -1209,6 +1209,7 @@ export type {
 // custom scorer without a second import path.
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   canonicalDigest,
   canonicalJson,

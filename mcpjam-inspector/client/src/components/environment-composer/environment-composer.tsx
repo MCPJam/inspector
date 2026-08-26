@@ -82,8 +82,6 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
-  serverInfoText = "Optional shared server group for every client in this setup.",
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -101,14 +99,6 @@ export function EnvironmentComposer({
   slots?: readonly ComposerSlot[];
   /** Secondary text on the Client-defaults row (previewed host's model). */
   clientDefaultLabel?: string | null;
-  /**
-   * Empty-state label and info tooltip for the servers pill. The defaults are
-   * the strip's own wording, where the group is genuinely optional; a surface
-   * that makes it REQUIRED (evals create) must say so itself rather than
-   * offering "client default" for a choice it will then block on.
-   */
-  emptyServerLabel?: string;
-  serverInfoText?: string;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -134,15 +124,6 @@ export function EnvironmentComposer({
     modelsOptedIn ? projectId : null
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
-  // `slots` NARROWS, never widens: a slot must be both asked for by the caller
-  // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
-  // every existing surface renders exactly the strip it rendered before.
-  const showEnvironmentsSlot =
-    slots.includes("environments") && environmentsEnabled;
-  const showClientsSlot = slots.includes("clients");
-  const showServersSlot = slots.includes("servers");
-  const showSkillsSlot = slots.includes("skills") && skillsEnabled;
-  const showComputersSlot = slots.includes("computers") && computersEnabled;
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -307,7 +288,7 @@ export function EnvironmentComposer({
         className="flex min-w-0 flex-wrap items-center gap-2"
         data-testid={testId("lego-strip")}
       >
-        {showEnvironmentsSlot ? (
+        {environmentsEnabled ? (
           <EnvironmentPicker
             projectId={projectId}
             value={
@@ -334,18 +315,16 @@ export function EnvironmentComposer({
             footerSlot={environmentPickerFooter}
           />
         ) : null}
-        {showClientsSlot ? (
-          <ClientsPill
-            projectId={projectId}
-            value={value.stack.hostIds}
-            onChange={(hostIds) => patchStack({ hostIds })}
-            max={maxTargets}
-            disabled={slotsDisabled}
-            testId={testId("clients-picker")}
-            inModal={inModal}
-            budget={budget}
-          />
-        ) : null}
+        <ClientsPill
+          projectId={projectId}
+          value={value.stack.hostIds}
+          onChange={(hostIds) => patchStack({ hostIds })}
+          max={maxTargets}
+          disabled={slotsDisabled}
+          testId={testId("clients-picker")}
+          inModal={inModal}
+          budget={budget}
+        />
         {modelsEnabled ? (
           <ModelsPill
             projectId={projectId}
@@ -365,20 +344,17 @@ export function EnvironmentComposer({
             clientDefaultLabel={clientDefaultLabel}
           />
         ) : null}
-        {showServersSlot ? (
-          <ServerGroupPicker
-            projectId={projectId}
-            value={value.stack.serverAttachmentId}
-            onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-            disabled={slotsDisabled}
-            emptyTriggerLabel={emptyServerLabel}
-            infoText={serverInfoText}
-            triggerTestId={testId("servers-picker")}
-            onClearSelection={() => patchStack({ serverAttachmentId: null })}
-            inModal={inModal}
-          />
-        ) : null}
-        {showSkillsSlot ? (
+        <ServerGroupPicker
+          projectId={projectId}
+          value={value.stack.serverAttachmentId}
+          onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
+          disabled={slotsDisabled}
+          emptyTriggerLabel="Server group · client default"
+          infoText="Optional shared server group for every client in this setup."
+          onClearSelection={() => patchStack({ serverAttachmentId: null })}
+          inModal={inModal}
+        />
+        {skillsEnabled ? (
           <SkillsPill
             projectId={projectId}
             value={value.stack.skillSelection}
@@ -388,7 +364,7 @@ export function EnvironmentComposer({
             inModal={inModal}
           />
         ) : null}
-        {showComputersSlot ? (
+        {computersEnabled ? (
           <SandboxImagePill
             projectId={projectId}
             value={value.stack.computerEnvironmentId}
@@ -405,7 +381,7 @@ export function EnvironmentComposer({
           surface may already be disabling everything and saying its own version
           of this, and naming that control would then point at something the
           user cannot reach. */}
-      {stackEditBlock && !disabled && showEnvironmentsSlot ? (
+      {stackEditBlock && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
