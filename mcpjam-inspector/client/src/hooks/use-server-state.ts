@@ -1087,6 +1087,16 @@ export function useServerState({
         ...server,
         config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
+        // Why the last attempt failed. Convex server rows do not store it, so
+        // omitting it here left a hosted card reading "Failed" with an empty
+        // error area and an empty Overview: the toast was the only copy of the
+        // reason, and it vanished with the toast (BB-48). Sourced from runtime
+        // state ONLY — exactly like `connectionStatus` above — so a reload that
+        // drops the runtime drops the reason with it instead of showing a stale
+        // one next to a "disconnected" status.
+        lastError: runtimeState?.lastError,
+        lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
         lastConnectionTime:

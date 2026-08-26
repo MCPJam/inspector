@@ -1243,6 +1243,100 @@ describe("useServerState effective server projection", () => {
     expect(result.current.selectedMCPConfig).toBeUndefined();
   });
 
+  it("carries the runtime failure reason onto a Convex-backed project row", () => {
+    // BB-48: hosted cards read their entry from the Convex project catalog, so
+    // a merge that copies `connectionStatus` but not `lastError` renders
+    // "Failed" with nothing to explain it — and the toast that carried the
+    // reason is already gone.
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "test-bad-url",
+      config: {
+        type: "http",
+        url: "https://no-such-mcp-server.example/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const normalized = {
+      slug: "transport/enotfound",
+      title: "Couldn't reach the MCP server",
+    } as unknown as ServerWithName["lastNormalizedError"];
+
+    appState.projects.default.servers = {
+      "test-bad-url": persistedServer,
+    };
+    appState.servers = {
+      "test-bad-url": {
+        ...persistedServer,
+        connectionStatus: "failed",
+        lastError: "Couldn't reach the MCP server (getaddrinfo ENOTFOUND).",
+        lastNormalizedError: normalized,
+      },
+    };
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "default",
+      activeProjectServersFlat: [{ _id: "srv_1", name: "test-bad-url" }],
+    });
+
+    expect(result.current.projectServers["test-bad-url"]).toEqual(
+      expect.objectContaining({
+        connectionStatus: "failed",
+        lastError: "Couldn't reach the MCP server (getaddrinfo ENOTFOUND).",
+        lastNormalizedError: normalized,
+      })
+    );
+  });
+
+  it("does not keep a failure reason once the runtime state is gone", () => {
+    // The reason follows the runtime status: a reload leaves the row
+    // "disconnected", and pairing that with a stale error would misreport a
+    // server nobody has tried to reach yet in this session.
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "test-bad-url",
+      config: {
+        type: "http",
+        url: "https://no-such-mcp-server.example/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "failed",
+      retryCount: 0,
+      enabled: true,
+      lastError: "stale reason from a previous session",
+    };
+
+    appState.projects.default.servers = {
+      "test-bad-url": persistedServer,
+    };
+    appState.servers = {};
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "default",
+      activeProjectServersFlat: [{ _id: "srv_1", name: "test-bad-url" }],
+    });
+
+    expect(result.current.projectServers["test-bad-url"]).toEqual(
+      expect.objectContaining({
+        connectionStatus: "disconnected",
+        lastError: undefined,
+      })
+    );
+  });
+
   it("preserves runtime bearer-token state over a redacted Convex project row", () => {
     const appState = createAppState();
     const persistedServer: ServerWithName = {
