@@ -171,6 +171,27 @@ export {
   stageResultRowSchema,
 } from "./stage-derivation.js";
 
+// ── the chat-session evidence adapter (D8) ───────────────────────────────────
+//
+// NOT a second derivation: it normalizes one chat session's evidence into the
+// SAME `deriveStageResults` input every eval iteration goes through. User
+// Testing, swarm, and (post-D8p) direct/playground sessions all pass through
+// here, so "the connection worked" means one thing on every surface.
+export type {
+  ChatSessionCriteriaEvidence,
+  ChatSessionCriterionOutcome,
+  ChatSessionGoalJudgeEvidence,
+  ChatSessionLifecycle,
+  ChatSessionReadinessEvidence,
+  ChatSessionStageInput,
+  ChatSessionStageSource,
+} from "./chat-session-stage-adapter.js";
+export {
+  CHAT_SESSION_STAGE_SOURCES,
+  buildChatSessionAuthoredCase,
+  buildChatSessionStageInput,
+} from "./chat-session-stage-adapter.js";
+
 // ── the authored step union ──────────────────────────────────────────────────
 export type {
   AssertStep,

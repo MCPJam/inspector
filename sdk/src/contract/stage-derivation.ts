@@ -65,7 +65,7 @@ import {
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
  */
-export const STAGE_ANALYZER_VERSION = 4;
+export const STAGE_ANALYZER_VERSION = 5;
 
 /**
  * Why a stage landed where it did.
@@ -261,6 +261,38 @@ export type StageAuthoredCase = {
   expectsWidgetRender?: boolean;
   /** Count of authored user-value assertions (predicates, expectedOutput). */
   assertionCount?: number;
+  /**
+   * A real user ask exists in this session/case — someone wanted something.
+   *
+   * D8. Eval cases derive `userValue` applicability from `assertionCount`
+   * alone, which is right for an authored case: the assertions ARE the ask.
+   * A chat session has an ask with no assertions attached to it, and the two
+   * possible answers are not the same claim:
+   *
+   *   - ask present, no user-value grader ⇒ `userValue: notMeasured`. Someone
+   *     wanted something and nothing here can say whether they got it.
+   *   - no ask at all ⇒ `userValue: notApplicable`. There is nothing to
+   *     satisfy, so there is no gap to close.
+   *
+   * Absent (the eval default) leaves the pre-D8 behaviour byte-identical.
+   */
+  hasUserAsk?: boolean;
+  /**
+   * What the ask says about whether a tool SHOULD have been called.
+   *
+   *   - `required`     — a call is part of the assertion (equivalent to
+   *                      `expectsToolCall: true`, and it composes with it).
+   *   - `not_required` — nothing here expects a call; `call` applicability
+   *                      falls back to the authored signals alone.
+   *   - `open`         — a real chat ask, where whether a tool was needed is
+   *                      genuinely unknown. `call`/`response` become
+   *                      applicable so observed spans can decide them, and
+   *                      `selection` can NEVER be `passed` off a bare call:
+   *                      that a tool ran is not evidence the RIGHT tool ran.
+   *
+   * Absent (the eval default) leaves the pre-D8 behaviour byte-identical.
+   */
+  toolExpectation?: "required" | "not_required" | "open";
 };
 
 /**
@@ -430,8 +462,18 @@ function applicability(
 ): Record<UserValueStage, boolean> {
   // A case that expects no tool call but IS a negative case still exercises
   // `call`: proving no call happened is the assertion.
+  //
+  // D8: an `open` tool expectation ALSO turns `call` on. A real chat ask has
+  // no authored expectation to read, but the spans it produced can still say
+  // whether a call was made and whether it worked — and a stage whose evidence
+  // we are about to inspect must not be pre-declared inapplicable. `open` with
+  // no call observed stays `notMeasured` (deriveCall's floor), which is the
+  // honest answer: we do not know whether one was needed.
   const callApplies =
-    authored.expectsToolCall === true || authored.isNegativeTest === true;
+    authored.expectsToolCall === true ||
+    authored.isNegativeTest === true ||
+    authored.toolExpectation === "required" ||
+    authored.toolExpectation === "open";
   return {
     // Every run must reach a server and read its tools, whatever it asserts.
     connection: true,
@@ -443,9 +485,13 @@ function applicability(
     // render observations directly. Gating this on `callApplies` alone would
     // make `renderFailed` unreachable for a pure render probe.
     response: callApplies || authored.expectsWidgetRender === true,
+    // D8: a real ask makes `userValue` applicable even with nothing authored
+    // to grade it. `notApplicable` would say "there was nothing to satisfy",
+    // which is false the moment someone asked for something.
     userValue:
       (authored.assertionCount ?? 0) > 0 ||
-      authored.expectsWidgetRender === true,
+      authored.expectsWidgetRender === true ||
+      authored.hasUserAsk === true,
   };
 }
 
@@ -555,8 +601,44 @@ const promptIndexes = (prompts: readonly StagePromptSummaryLike[]): number[] =>
     .map((p) => p.promptIndex)
     .filter((i): i is number => typeof i === "number");
 
-function deriveSelection(e: StageEvidence): StageResultRow {
+/**
+ * D8 guard: a bare tool call is not evidence the RIGHT tool was chosen.
+ *
+ * `deriveSelection`'s pre-D8 floor for a turn summary with no `missing` and no
+ * `unexpected` is `passed/observed` — correct for an AUTHORED case, where the
+ * summary is the verdict of a comparison against declared expectations. A chat
+ * session declares none: its turn summaries (if a caller ever supplies any)
+ * compare against nothing, so "no missing calls" is vacuous rather than a pass.
+ *
+ * Under `toolExpectation: "open"` a `passed` selection therefore requires at
+ * least one turn that actually declared expected calls. Everything else
+ * degrades to `notMeasured` — never to `failed`, which would invent a defect
+ * out of the same silence.
+ */
+function selectionNeedsExplicitEvidence(
+  authored: StageAuthoredCase,
+  prompts: readonly StagePromptSummaryLike[]
+): boolean {
+  if (authored.toolExpectation !== "open") return false;
+  return !prompts.some((p) => nonEmpty(p.expectedToolCalls));
+}
+
+function deriveSelection(
+  e: StageEvidence,
+  authored: StageAuthoredCase
+): StageResultRow {
   const prompts = e.prompts ?? [];
+  if (selectionNeedsExplicitEvidence(authored, prompts)) {
+    // Calls happened but nothing adjudicates them ⇒ the verdict is
+    // unavailable. Nothing happened at all ⇒ nothing was captured. Two
+    // different sentences for an operator, so they keep two reason codes.
+    const tools = (e.spans ?? []).filter(isToolSpan);
+    return tools.length > 0
+      ? row("selection", "notMeasured", "matchVerdictUnavailable", {
+          spanIds: spanIds(tools).slice(0, 5),
+        })
+      : row("selection", "notMeasured", "noEvidenceCaptured");
+  }
   if (prompts.length > 0) {
     // A missing expected call is fatal in EVERY match mode, so it needs no
     // adjudication: `evaluateToolCalls` cannot return `passed` with a
@@ -947,7 +1029,7 @@ export function deriveStageResults(
         case "discovery":
           return deriveDiscovery(evidence);
         case "selection":
-          return deriveSelection(evidence);
+          return deriveSelection(evidence, authored);
         case "call":
           return deriveCall(evidence, authored);
         default:
