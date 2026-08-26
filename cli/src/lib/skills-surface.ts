@@ -49,11 +49,21 @@ export const SKILLS_EXTENSION_CAPABILITY = {
 } as const;
 
 /**
- * The catalog is compiled into the binary, so it changes only on release. It
- * is public and does not vary by caller, so SEP-2549 calls for a `public`
- * cache scope.
+ * NO `ttlMs` for this venue — deliberately, and unlike the worker.
+ *
+ * The worker's hour-long TTL rests on "the catalog changes only on deploy".
+ * That same sentence is the HAZARD here: the docs tell users to launch with
+ * `npx -y @mcpjam/cli@latest mcp`, so the bytes behind an identical stdio
+ * command change the moment a release lands. A host honouring a freshness
+ * directive across reconnects — keyed, naturally, on that unchanged command —
+ * would pair a v5.1.0 manifest with v5.2.0 bytes and refuse our own skill as
+ * `digest_mismatch`.
+ *
+ * Omitting `ttlMs` withholds a licence to cache rather than issuing one we
+ * cannot honour. `cacheScope` stays: it costs nothing and remains true of any
+ * cache a host keeps under its own policy — the listing does not vary by
+ * caller.
  */
-export const SKILLS_LIST_TTL_MS = 60 * 60 * 1000;
 export const SKILLS_LIST_CACHE_SCOPE = "public";
 
 const INVALID_PARAMS = -32602;
@@ -106,7 +116,6 @@ export function registerSkillsSurface(server: McpServer): void {
       }
       return {
         skills: SKILLS_BUNDLE_ENTRIES,
-        ttlMs: SKILLS_LIST_TTL_MS,
         cacheScope: SKILLS_LIST_CACHE_SCOPE,
       };
     }

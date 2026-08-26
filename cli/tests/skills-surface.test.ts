@@ -33,8 +33,8 @@ import {
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_CACHE_SCOPE,
   mimeTypeFor,
+  registerSkillsSurface,
 } from "../src/lib/skills-surface.js";
-// eslint-disable-next-line
 // @ts-expect-error Local build helper is implemented as plain ESM.
 import { buildCliSkillsBundle, CLI_SKILL_ROOTS } from "../scripts/generate-skills-bundle.mjs";
 
@@ -67,6 +67,53 @@ test("does not advertise directoryRead, which it cannot answer", () => {
 
 test("uses a valid public cache scope for the static catalog", () => {
   assert.equal(SKILLS_LIST_CACHE_SCOPE, "public");
+});
+
+/**
+ * Registers the surface against a stub and returns the captured handlers.
+ *
+ * Exercising the real handler rather than asserting on the constants: a
+ * constant can be correct while the response still carries the wrong field.
+ */
+function capture() {
+  const handlers = new Map<string, (params: any) => Promise<any>>();
+  const resources: { uri: string; mimeType?: string }[] = [];
+  const stub = {
+    server: {
+      setRequestHandler: (
+        method: string,
+        _schemas: unknown,
+        handler: (params: any) => Promise<any>
+      ) => {
+        handlers.set(method, handler);
+      },
+    },
+    registerResource: (
+      _name: string,
+      uri: string,
+      config: { mimeType?: string }
+    ) => {
+      resources.push({ uri, mimeType: config.mimeType });
+    },
+  };
+  registerSkillsSurface(stub as never);
+  return { handlers, resources };
+}
+
+test("issues NO freshness licence, because `npx @latest` can change the bytes", async () => {
+  // The worker's hour-long ttlMs is safe because its catalog changes only on
+  // deploy. Here the stdio command is the natural cache key and it does NOT
+  // change across a release, so a cached manifest could be paired with newer
+  // bytes and refuse our own skill as `digest_mismatch`.
+  const { handlers } = capture();
+  const listed = await handlers.get("skills/list")!({});
+  assert.equal(
+    listed.ttlMs,
+    undefined,
+    "ttlMs must be absent for the CLI venue"
+  );
+  assert.equal(listed.cacheScope, "public");
+  assert.equal(listed.skills.length, 2);
 });
 
 test("every manifest entry carries a digest and a byte size", () => {
