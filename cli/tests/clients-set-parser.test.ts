@@ -133,6 +133,13 @@ test("--unset modelId fails locally rather than travelling to be refused", () =>
   assert.throws(() => buildSetBlock(undefined, ["modelId"]), /pins no model/);
 });
 
+test("a repeated --set field is refused, not last-one-wins", () => {
+  assert.throws(
+    () => buildSetBlock(["temperature=0.2", "temperature=0.7"], undefined),
+    /--set names "temperature" more than once/
+  );
+});
+
 test("a field named by both --set and --unset is refused, not resolved", () => {
   assert.throws(
     () => buildSetBlock(["temperature=0.2"], ["temperature"]),

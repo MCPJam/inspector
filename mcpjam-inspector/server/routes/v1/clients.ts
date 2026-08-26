@@ -635,10 +635,21 @@ const updateHostSchema = z
 const setClientServersSchema = z.strictObject({
   serverIds: z.array(z.string().trim().min(1)),
   optionalServerIds: z.array(z.string().trim().min(1)).optional(),
-  expectedConfigId: z.string().trim().min(1, {
-    message:
-      "`expectedConfigId` is required: replacing a client's servers rewrites its config, and without the token a concurrent server change is silently lost.",
-  }),
+  // The message rides on BOTH the string schema and the length check: an
+  // omitted property fails `z.string()` with `invalid_type` and would otherwise
+  // report a generic "expected string, received undefined", while a blank one
+  // fails `.min(1)`. Forgetting the token and sending an empty one are the same
+  // mistake and deserve the same sentence.
+  expectedConfigId: z
+    .string({
+      error:
+        "`expectedConfigId` is required: replacing a client's servers rewrites its config, and without the token a concurrent server change is silently lost.",
+    })
+    .trim()
+    .min(1, {
+      message:
+        "`expectedConfigId` is required: replacing a client's servers rewrites its config, and without the token a concurrent server change is silently lost.",
+    }),
   expectedImpact: impactSchema.optional(),
 });
 

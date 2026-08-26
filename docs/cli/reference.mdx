@@ -460,8 +460,10 @@ The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `un
 
 Manage the clients saved in your hosted MCPJam projects — the named, reusable
 configurations that define how MCPJam connects to and talks to your MCP servers.
-All `clients` commands require an `sk_` API key (via `--api-key` or the
-`MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+Every `clients` command that contacts Cloud requires an `sk_` API key (via
+`--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior
+`mcpjam cloud login`. `clients templates` is the exception: it prints the
+built-in template list from the bundled SDK and needs no credential.
 
 `mcpjam cloud hosts …` still works as a command alias, and every command accepts
 `--host` as a deprecated spelling of `--client`. Passing both `--client` and

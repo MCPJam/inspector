@@ -897,11 +897,18 @@ export async function freezeClientWriteArgs(
   // currently has would turn compare-and-set into "overwrite whatever is
   // there", which is the exact failure the token exists to prevent.
   const expectedConfigId = readOptionalString(input, "expectedConfigId");
-  if (
-    expectedConfigId &&
-    detail.configId &&
-    expectedConfigId !== detail.configId
-  ) {
+  if (expectedConfigId && !detail.configId) {
+    // `configId` is optional on the DTO (an older backend omits it), and
+    // skipping the comparison when it is absent would mint a proposal whose
+    // token nothing verified — the opposite of what the block above promises.
+    // The backend enforces the token either way, so all that skipping buys is a
+    // human clicking approve on an edit that cannot succeed.
+    throw new Error(
+      `client "${detail.name}" reported no configId to verify expectedConfigId ` +
+        "against — re-read it and propose again"
+    );
+  }
+  if (expectedConfigId && expectedConfigId !== detail.configId) {
     throw new Error(
       `client "${detail.name}" changed since it was read (expectedConfigId ` +
         `${expectedConfigId}, current ${detail.configId}) — re-read it and propose again`
@@ -1588,7 +1595,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [
       "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
-      "- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately \"3\" or \"15\" and a count without its unit is not a fact. And `verdict: \"notEstablished\"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.",
+      '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
       "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
     ],
   },

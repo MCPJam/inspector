@@ -245,6 +245,13 @@ export function buildSetBlock(
   const set: Record<string, unknown> = Object.create(null);
   for (const pair of setPairs ?? []) {
     const [field, value] = parseSetPair(pair);
+    // Repeating a field is refused, not last-one-wins. `--set temperature=0.2
+    // --set temperature=0.7` is someone editing a command line and losing track
+    // of what it already says; silently applying 0.7 hides that from them, and
+    // this parser's whole job is to fail where the mistake is visible.
+    if (Object.hasOwn(set, field)) {
+      throw usageError(`--set names "${field}" more than once; pass it once.`);
+    }
     set[field] = value;
   }
   for (const field of unsetFields ?? []) {

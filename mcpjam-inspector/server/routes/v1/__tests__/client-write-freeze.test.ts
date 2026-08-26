@@ -98,6 +98,23 @@ describe("freezeClientWriteArgs", () => {
     ).rejects.toThrow(/not found/i);
   });
 
+  it("refuses a token it cannot verify, rather than skipping the check", async () => {
+    // `configId` is optional on the DTO. Skipping the comparison when it is
+    // absent would mint a proposal whose token nothing verified — the opposite
+    // of what this freeze promises.
+    const { configId: _dropped, ...withoutConfigId } = DETAIL;
+    await expect(
+      freezeClientWriteArgs(
+        {
+          client: "Claude",
+          expectedConfigId: "hc1",
+          set: { temperature: 0.2 },
+        },
+        context(fakeClient(withoutConfigId))
+      )
+    ).rejects.toThrow(/no configId to verify/i);
+  });
+
   it("refuses when the backend reported no impact", async () => {
     // Minting an approval whose blast-radius sentence nothing can check is
     // worse than minting none.

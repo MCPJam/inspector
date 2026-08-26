@@ -28,14 +28,15 @@ change a runtime shape. Alias responses carry `Deprecation: true`.
 **Robust editing.** `PATCH /clients/:client` gains `set`: named fields applied
 over the client's current config inside the write transaction, where absent
 means keep and `null` means reset (for a required field) or clear (for an
-optional one). Every config-affecting write requires `expectedConfigId` — the
-content-addressed config id, so the same id means byte-identical settings — and
-every rename requires `expectedName`, because a rename does not rotate the
-config and config identity is blind to a concurrent one. A stale token is a
-`409` carrying the current value so the caller can re-read and retry. The
-canonical detail path also takes a client NAME, resolved server-side, with the
-private User Testing backing clients excluded by default exactly as the Clients
-tab excludes them.
+optional one). Every config-affecting UPDATE — `update_client` and `set_client_servers`, not
+the additive `create_client` / `duplicate_client`, which have no prior config to
+be stale about — requires `expectedConfigId`, the content-addressed config id,
+so the same id means byte-identical settings. Every rename requires
+`expectedName`, because a rename does not rotate the config and config identity
+is blind to a concurrent one. A stale token is a `409` carrying the current
+value so the caller can re-read and retry. The canonical detail path takes a
+client **name or ID**, resolved server-side, with the private User Testing
+backing clients excluded by default exactly as the Clients tab excludes them.
 
 **Exposure.** The two reads and four bounded writes are on the MCP catalog;
 `create_client` / `update_client` / `set_client_servers` are gated proposals on

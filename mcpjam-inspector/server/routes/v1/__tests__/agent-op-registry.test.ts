@@ -1803,7 +1803,7 @@ describe("tier derives from operation.risk", () => {
   ]);
 
   /**
-   * The 35 writes above predate `risk`. This number may only go DOWN — if
+   * The 30 writes above predate `risk`. This number may only go DOWN — if
    * you are raising it to admit a new unclassified write, classify the write
    * instead; that is one field in the SDK catalog.
    */

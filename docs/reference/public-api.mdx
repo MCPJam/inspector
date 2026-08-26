@@ -45,8 +45,10 @@ What you can do with it today:
   template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
   duplicate, and delete the named, reusable configurations that define how
   MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
-  read the client's `configId` and send it back as `expectedConfigId`, so a
-  concurrent edit is rejected rather than silently reverted
+  read the client, then send its `configId` back as `expectedConfigId` for a
+  config change and its `name` back as `expectedName` for a rename — a rename
+  does not rotate the config, so the config token cannot detect a concurrent
+  one — and a concurrent edit is rejected rather than silently reverted
 - **Manage a project's environments** — list, read, create, edit, archive, and
   restore the named execution bundles (host + optional server group + optional
   pinned skills and plugin versions) that eval suites and journeys run against,

@@ -6014,7 +6014,7 @@
           }
         ],
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
@@ -17096,7 +17096,7 @@
                 "type": "string",
                 "minLength": 1,
                 "pattern": ".*\\S.*",
-                "description": "Model id the host pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a client created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though hosts created before this rule stay editable."
+                "description": "Model id the client pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a client created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though clients created before this rule stay editable."
               }
             },
             "description": "Full client config v2, used verbatim (alternative to `template`). Must pin `modelId`."
@@ -19046,7 +19046,7 @@
           "expectedConfigId": {
             "type": "string",
             "minLength": 1,
-            "description": "The `configId` you last read for this client. REQUIRED whenever the request changes the config (`config` or `set`): without it a write composed from a stale read silently reverts whatever landed in between. A mismatch is `409 CONFLICT` carrying `details.currentConfigId`."
+            "description": "The `configId` you last read for this client. ALWAYS required here: this operation rewrites the config, and without the token a write composed from a stale read silently reverts whatever landed in between. A mismatch is `409 CONFLICT` carrying `details.currentConfigId`."
           },
           "expectedImpact": {
             "allOf": [
