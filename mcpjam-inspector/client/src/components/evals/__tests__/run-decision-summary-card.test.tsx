@@ -399,6 +399,9 @@ describe("evidence and navigation", () => {
     expect(onViewTrace).toHaveBeenCalledWith({
       runId: summary.runId,
       iterationId: first.iterationId,
+      // The CASE travels with it: focusing an iteration goes through its case
+      // editor, which is the one route that actually consumes an iteration id.
+      testCaseId: first.testCaseId,
     });
     // The API path is a locator for the endpoint, not an app route, so it is
     // never rendered as a link.
@@ -422,6 +425,29 @@ describe("evidence and navigation", () => {
       },
     };
     renderSummary(foreign, { onViewTrace: vi.fn() });
+
+    expect(
+      screen.queryByTestId(
+        `run-decision-view-trace-${summary.diagnostics.items[0].iterationId}`,
+      ),
+    ).toBeNull();
+  });
+
+  it("offers no trace jump when the diagnostic names no case", () => {
+    // Without a case there is nowhere to send the reader: the viewer focuses an
+    // iteration through its case. A button that lands on the current page
+    // having opened nothing reads as broken, so it is not offered.
+    const summary = readDecisionSummaryFixture(
+      "measured-failure-at-every-stage",
+    );
+    const caseless: EvalRunDecisionSummary = {
+      ...summary,
+      diagnostics: {
+        ...summary.diagnostics,
+        items: summary.diagnostics.items.map(({ testCaseId: _drop, ...item }) => item),
+      },
+    };
+    renderSummary(caseless, { onViewTrace: vi.fn() });
 
     expect(
       screen.queryByTestId(

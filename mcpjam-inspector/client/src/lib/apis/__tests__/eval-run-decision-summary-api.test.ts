@@ -35,6 +35,17 @@ import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixture
 
 const PASSING = readDecisionSummaryFixture("policyV2-passing");
 
+/**
+ * The fixture, re-stamped for the run under test.
+ *
+ * The adapter binds the response to the request, so a test that asks about
+ * `run/1` and is answered with `run-1` is now — correctly — an identity
+ * failure. Tests about URL shape or auth say which run they are answering for.
+ */
+function summaryFor(runId: string) {
+  return { ...PASSING, runId };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -65,6 +76,8 @@ describe("fetchEvalRunDecisionSummary", () => {
 
   it("sends the project, run, cursor and limit it was given", async () => {
     authFetchMock.mockResolvedValue(jsonResponse(PASSING));
+
+    authFetchMock.mockResolvedValue(jsonResponse(summaryFor("run/1")));
 
     await fetchEvalRunDecisionSummary({
       projectId: "proj space",
@@ -198,6 +211,33 @@ describe("fetchEvalRunDecisionSummary", () => {
     }).catch((caught: unknown) => caught);
 
     expect((error as EvalRunDecisionSummaryError).kind).toBe("invalidContract");
+  });
+
+  it("refuses a valid summary that belongs to a different run", async () => {
+    // The dangerous case: structurally perfect, and about somebody else's run.
+    // Cached under the requested key it would render the wrong verdict and
+    // point the trace control at a foreign iteration.
+    authFetchMock.mockResolvedValue(jsonResponse(PASSING));
+
+    const error = await fetchEvalRunDecisionSummary({
+      projectId: "p1",
+      runId: "a-different-run",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EvalRunDecisionSummaryError);
+    expect((error as EvalRunDecisionSummaryError).kind).toBe("invalidContract");
+    expect((error as Error).message).toMatch(/different run/);
+  });
+
+  it("accepts the summary whose runId matches the request", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(PASSING));
+
+    const summary = await fetchEvalRunDecisionSummary({
+      projectId: "p1",
+      runId: PASSING.runId,
+    });
+
+    expect(summary.runId).toBe(PASSING.runId);
   });
 
   it("refuses an unknown field rather than letting it ride along", async () => {

@@ -168,5 +168,19 @@ export async function fetchEvalRunDecisionSummary(
       { cause: parsed.error },
     );
   }
+  // Shape is not identity. `runId` is only `string().min(1)` to the schema, so
+  // a valid summary for a DIFFERENT run parses perfectly — and would then be
+  // cached under this run's key, render its verdict and counts, and hand the
+  // trace control a foreign iteration to navigate to. Nothing upstream binds
+  // the answer to the question; this does. A healthy server always echoes the
+  // id it was asked about (the route reads `run.id` from the run it fetched by
+  // that id), so this can only fire on a response that genuinely is not the
+  // one requested.
+  if (parsed.data.runId !== params.runId) {
+    throw new EvalRunDecisionSummaryError(
+      "invalidContract",
+      "The run decision summary is for a different run than the one requested.",
+    );
+  }
   return parsed.data;
 }

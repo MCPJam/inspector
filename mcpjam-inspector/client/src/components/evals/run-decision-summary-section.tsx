@@ -25,8 +25,12 @@ export function RunDecisionSummarySection({
   projectId: string | null | undefined;
   run: EvalSuiteRun;
   enabled: boolean;
-  /** Open one iteration's trace through the app's own run-detail routing. */
-  onViewTrace?: (target: { runId: string; iterationId: string }) => void;
+  /** Focus one iteration's evidence through the app's own routing. */
+  onViewTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
   store?: EvalDecisionSummaryStore;
 }) {
   // Terminal only. A pending or running row has no decision to read, and

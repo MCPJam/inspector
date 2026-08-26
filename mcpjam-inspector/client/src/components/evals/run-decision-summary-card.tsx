@@ -65,10 +65,16 @@ export interface RunDecisionSummaryCardProps {
   onLoadMore: () => void;
   onRetryFailedPage: () => void;
   /**
-   * Open this iteration's trace. Called with identities the card verified
-   * against the run it is showing — see the header note on `tracePath`.
+   * Focus the evidence this diagnostic names. Called with identities the card
+   * verified against the run it is showing — see the header note on
+   * `tracePath` — and with the CASE the iteration belongs to, because that is
+   * what the viewer can actually open to.
    */
-  onViewTrace?: (target: { runId: string; iterationId: string }) => void;
+  onViewTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
 }
 
 /** Human copy for each way the read can come back without a summary. */
@@ -347,20 +353,32 @@ function DiagnosticRow({
 }: {
   diagnostic: EvalRunDecisionDiagnostic;
   runId: string;
-  onViewTrace?: (target: { runId: string; iterationId: string }) => void;
+  onViewTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const chain = describeDiagnosticChain(diagnostic);
   const evidence = describeDiagnosticEvidence(diagnostic);
   const title = truncateUntrusted(diagnostic.title) ?? "Untitled case";
   const observedFailure = truncateUntrusted(diagnostic.observed?.failure);
-  // The evidence names its own run and iteration. Offering a trace jump for a
-  // locator that does not match the run on screen would navigate somewhere
-  // this view cannot answer for.
+  // Three conditions, and the third is the one that keeps this control honest.
+  //
+  // The evidence names its own run and iteration, so a locator that does not
+  // match the run on screen would navigate somewhere this view cannot answer
+  // for. And the app focuses an iteration THROUGH its case — that is the only
+  // path the viewer actually consumes — so without a case id there is nowhere
+  // to send the reader. A button that lands on the page it is already on,
+  // having opened nothing, reads as broken; not offering it is the honest
+  // answer, and the same rule that keeps this card from claiming span or
+  // prompt focus it cannot perform.
   const traceable =
     Boolean(onViewTrace) &&
     diagnostic.evidence.runId === runId &&
-    diagnostic.evidence.iterationId === diagnostic.iterationId;
+    diagnostic.evidence.iterationId === diagnostic.iterationId &&
+    Boolean(diagnostic.testCaseId);
 
   const detailId = `run-decision-diagnostic-${diagnostic.iterationId}`;
 
@@ -424,6 +442,7 @@ function DiagnosticRow({
               onViewTrace?.({
                 runId: diagnostic.evidence.runId,
                 iterationId: diagnostic.evidence.iterationId,
+                testCaseId: diagnostic.testCaseId as string,
               })
             }
             data-testid={`run-decision-view-trace-${diagnostic.iterationId}`}

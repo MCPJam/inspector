@@ -1066,11 +1066,19 @@ export function SuiteIterationsView({
             projectId={projectId}
             run={selectedRunDetails}
             enabled
-            onViewTrace={({ runId, iterationId }) =>
-              // `tracePath` is an API path, not an app route. Navigate through
-              // the app's own run-detail entry point instead, scoped to the
-              // iteration the evidence names.
-              navigation.toRunDetail(suite._id, runId, iterationId)
+            onViewTrace={({ iterationId, testCaseId }) =>
+              // `tracePath` is an API path, not an app route, so this goes
+              // through the app's own routing. It goes to the CASE editor
+              // rather than run detail because that is the one path that
+              // actually consumes an iteration id: the route's `iteration`
+              // becomes `openCompareIterationId` and the editor opens on it.
+              // Run detail takes a `selectedIterationId` that
+              // `RunIterationsSidebar` marks deprecated and never forwards, so
+              // sending the reader there would land them on the page they are
+              // already looking at with nothing opened.
+              navigation.toTestEdit(suite._id, testCaseId, {
+                iteration: iterationId,
+              })
             }
           />
         ) : undefined
