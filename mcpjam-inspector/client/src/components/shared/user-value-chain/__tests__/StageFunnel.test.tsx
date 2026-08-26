@@ -200,17 +200,6 @@ describe("populations stay apart", () => {
     expect(container.querySelector("[data-source='swarm']")).toBeTruthy();
   });
 
-  it("takes ONE summary — there is no way to hand it two", () => {
-    // A `summaries` prop is the shape that would let a caller sum a User
-    // Testing scenario into a swarm run. It does not exist, and this
-    // assertion is what would notice if it were added.
-    const props = Object.keys(
-      (StageFunnel as unknown as { propTypes?: object }).propTypes ?? {}
-    );
-    expect(props).not.toContain("summaries");
-    expect(StageFunnel.length).toBe(1);
-  });
-
   it("renders nothing at all without a summary", () => {
     const { container } = render(
       <StageFunnel

@@ -125,21 +125,40 @@ export async function deriveClaimedSession(
     return "worker_error";
   }
 
-  const applied = await ports.apply({
-    sessionDocId: claim.sessionDocId,
-    generation: claim.generation,
-    // Handed back VERBATIM. The pass never rebuilds the stamp: a worker able
-    // to choose it could declare its own stale work fresh.
-    sourceStamp: claim.sourceStamp,
-    stageResults: derivation.stageResults,
-    ...(derivation.firstFailedStage
-      ? { firstFailedStage: derivation.firstFailedStage }
-      : {}),
-    ...(derivation.failureCategory
-      ? { failureCategory: derivation.failureCategory }
-      : {}),
-    stageAnalyzerVersion: derivation.stageAnalyzerVersion,
-  });
+  let applied: Awaited<ReturnType<typeof applyStageDerivation>>;
+  try {
+    applied = await ports.apply({
+      sessionDocId: claim.sessionDocId,
+      generation: claim.generation,
+      // Handed back VERBATIM. The pass never rebuilds the stamp: a worker able
+      // to choose it could declare its own stale work fresh.
+      sourceStamp: claim.sourceStamp,
+      stageResults: derivation.stageResults,
+      ...(derivation.firstFailedStage
+        ? { firstFailedStage: derivation.firstFailedStage }
+        : {}),
+      ...(derivation.failureCategory
+        ? { failureCategory: derivation.failureCategory }
+        : {}),
+      stageAnalyzerVersion: derivation.stageAnalyzerVersion,
+    });
+  } catch (error) {
+    // The apply is the one backend call that used to run unguarded, and it
+    // throws on any non-200 and rejects on a transport abort. That rejection
+    // escaped `deriveClaimedSession`, escaped `runChatSessionStagePass` —
+    // which this module's docstring promises never happens — and cost the
+    // whole drain: every claim still queued behind this one was abandoned to
+    // the backend's recovery interval, and the outcomes already collected
+    // were thrown away with it. One row's transport failure now costs one row.
+    //
+    // No failure is REPORTED to the backend: the transport is what broke, not
+    // the derivation, and the row's own lease is what re-offers it.
+    logger.warn("[chat-stage] apply failed", {
+      sessionDocId: claim.sessionDocId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "worker_error";
+  }
 
   if (applied.kind === "applied") return "applied";
   if (applied.kind === "superseded") {

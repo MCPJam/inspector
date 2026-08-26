@@ -629,6 +629,12 @@ function deriveSelection(
 ): StageResultRow {
   const prompts = e.prompts ?? [];
   if (selectionNeedsExplicitEvidence(authored, prompts)) {
+    // No trace at all outranks both branches below, the same way it does in
+    // `deriveCall` and `deriveResponse`. "The run recorded no trace" and "a
+    // sink existed and captured nothing" are different facts, and reporting
+    // the second for the first tells an operator to go looking at an empty
+    // channel that was never written.
+    if (e.traceAbsent) return row("selection", "notMeasured", "traceAbsent");
     // Calls happened but nothing adjudicates them ⇒ the verdict is
     // unavailable. Nothing happened at all ⇒ nothing was captured. Two
     // different sentences for an operator, so they keep two reason codes.

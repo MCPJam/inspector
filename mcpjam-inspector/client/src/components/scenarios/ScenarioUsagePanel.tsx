@@ -228,12 +228,10 @@ export function ScenarioUsagePanel({
       {/* D8: this scenario's REAL sessions, and only those — never combined
           with a swarm run's funnel or with eval trials. Self-hiding until the
           backend query exists, same dark-ship reasoning as the strip above. */}
-      <ErrorBoundary fallback={null}>
-        <ScenarioStageFunnelPanel
-          scenarioId={scenario.scenarioId}
-          className="mx-3 mb-3"
-        />
-      </ErrorBoundary>
+      <ScenarioStageFunnelPanel
+        scenarioId={scenario.scenarioId}
+        className="mx-3 mb-3"
+      />
 
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">

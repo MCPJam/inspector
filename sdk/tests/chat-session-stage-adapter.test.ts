@@ -37,7 +37,10 @@ const domainErrorToolSpan = (id: string, toolName: string): StageSpanLike => ({
   toolName,
 });
 
-const protocolErrorToolSpan = (id: string, toolName: string): StageSpanLike => ({
+const protocolErrorToolSpan = (
+  id: string,
+  toolName: string
+): StageSpanLike => ({
   id,
   category: "tool",
   status: "error",
@@ -263,6 +266,20 @@ describe("selection is never inferred from a call", () => {
     });
   });
 
+  test("no trace at all is `traceAbsent`, a third sentence", () => {
+    // "The run recorded no trace" and "a sink existed and captured nothing"
+    // send an operator to two different places, so `selection` reports them
+    // apart — the same way `call` and `response` already do.
+    const rows = derive(base({ traceAbsent: true }));
+    expect(rowFor(rows.stageResults, "selection")).toMatchObject({
+      state: "notMeasured",
+      reason: "traceAbsent",
+    });
+    for (const stage of ["call", "response"] as const) {
+      expect(rowFor(rows.stageResults, stage).reason).toBe("traceAbsent");
+    }
+  });
+
   test("selection is APPLICABLE — an unmeasured gap, never hidden", () => {
     const rows = derive(base({}));
     expect(rowFor(rows.stageResults, "selection").state).not.toBe(
@@ -477,9 +494,7 @@ describe("real upstream failures are still measured", () => {
   });
 
   test("a domain error fails `response`, not `call`", () => {
-    const rows = derive(
-      base({ spans: [domainErrorToolSpan("s1", "search")] })
-    );
+    const rows = derive(base({ spans: [domainErrorToolSpan("s1", "search")] }));
     expect(shape(rows.stageResults)).toMatchObject({
       call: "passed",
       response: "failed",

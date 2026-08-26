@@ -55,6 +55,7 @@ async function postServiceRoute(
     SERVICE_ROUTE_TIMEOUT_MS
   );
   let response: Response;
+  let parsed: any = null;
   try {
     response = await fetch(`${env.convexUrl}${path}`, {
       method: "POST",
@@ -65,14 +66,18 @@ async function postServiceRoute(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    // INSIDE the timer, deliberately. `fetch` resolves as soon as the headers
+    // land, so clearing the timeout around it alone left the body read with no
+    // deadline and no live abort signal — a deployment that answers with
+    // headers and then stalls the stream would hold the pass open forever,
+    // which is the exact wedge this cap exists to prevent.
+    try {
+      parsed = await response.json();
+    } catch {
+      // tolerated; status carries the signal
+    }
   } finally {
     clearTimeout(timeout);
-  }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // tolerated; status carries the signal
   }
   return { status: response.status, body: parsed };
 }

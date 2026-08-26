@@ -227,3 +227,57 @@ describe("a newer analyzer is flagged, not discarded", () => {
     expect(document.body.textContent).toContain("Derived by a newer analyzer");
   });
 });
+
+describe("a row from a newer analyzer degrades, it never throws", () => {
+  /**
+   * `STATE_META`, `USER_VALUE_STAGE_LABELS`, `STAGE_STATE_LABELS` and
+   * `STAGE_REASON_LABELS` are total over THIS build's vocabularies, but rows
+   * arrive off the wire and the panel itself says they may come from a build
+   * ahead of this one. This panel is mounted in the session detail pane with
+   * no boundary above it, so a throw here would take the transcript, the
+   * judge and the checks down with it.
+   */
+  const alien = derivation({
+    stageResults: [
+      { stage: "connection", state: "passed", reason: "observed" },
+      { stage: "discovery", state: "passed", reason: "observed" },
+      // A seventh state and an unknown reason, from a build we have not shipped.
+      {
+        stage: "selection",
+        state: "quarantined" as never,
+        reason: "somethingNew" as never,
+      },
+      { stage: "call", state: "passed", reason: "observed" },
+      { stage: "response", state: "passed", reason: "observed" },
+      { stage: "invented" as never, state: "passed", reason: "observed" },
+    ],
+    analyzerVersionAhead: true,
+  });
+
+  it("renders all six rows instead of throwing", () => {
+    const { container } = render(<SessionUserValueChain derivation={alien} />);
+    expect(container.querySelectorAll("[data-stage]")).toHaveLength(6);
+  });
+
+  it("says the state is not recognized rather than rendering blank", () => {
+    render(<SessionUserValueChain derivation={alien} />);
+    expect(document.body.textContent).toContain("state not recognized");
+  });
+
+  it("falls back to the wire spelling for an unknown stage", () => {
+    render(<SessionUserValueChain derivation={alien} />);
+    // A poor label, but a better one than nothing: it still tells a reader
+    // which row they are looking at.
+    expect(document.body.textContent).toContain("invented");
+  });
+
+  it("survives an unknown failure category too", () => {
+    const { container } = render(
+      <SessionUserValueChain
+        derivation={derivation({ failureCategory: "brandNew" as never })}
+      />
+    );
+    expect(container.querySelectorAll("[data-stage]")).toHaveLength(6);
+    expect(document.body.textContent).toContain("brandNew");
+  });
+});

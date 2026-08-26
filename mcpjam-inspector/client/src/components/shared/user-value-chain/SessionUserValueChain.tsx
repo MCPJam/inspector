@@ -87,8 +87,24 @@ const STATE_META = {
   { Icon: typeof Check; dot: string; rail: string }
 >;
 
+/**
+ * For a state this build has no words for.
+ *
+ * `STATE_META` is total over THIS build's `StageState`, but `row.state` arrives
+ * off the wire — and the footer below says out loud that rows may come from a
+ * build ahead of this one. Indexing with an unknown member would yield
+ * `undefined` and throw on `.Icon`, and this component is mounted in the
+ * session detail pane with no boundary above it: a sixth state would take the
+ * transcript, the judge and the checks down with it. Degrade, never throw.
+ */
+const UNKNOWN_STATE_META = {
+  Icon: Circle,
+  dot: "text-muted-foreground/60",
+  rail: "bg-muted-foreground/10",
+};
+
 function StageRow({ row }: { row: StageResultRow }) {
-  const meta = STATE_META[row.state];
+  const meta = STATE_META[row.state] ?? UNKNOWN_STATE_META;
   const reason = row.reason ? STAGE_REASON_LABELS[row.reason] : null;
   const evidenceReasons = row.evidence?.predicateReasons ?? [];
 
@@ -99,9 +115,12 @@ function StageRow({ row }: { row: StageResultRow }) {
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">
-          {USER_VALUE_STAGE_LABELS[row.stage]}{" "}
+          {/* The wire spelling is a poor label, but it is a better one than
+              blank: an unknown stage still tells a reader something, and
+              rendering `undefined` tells them nothing at all. */}
+          {USER_VALUE_STAGE_LABELS[row.stage] ?? row.stage}{" "}
           <span className="font-normal text-muted-foreground">
-            {STAGE_STATE_LABELS[row.state]}
+            {STAGE_STATE_LABELS[row.state] ?? "state not recognized"}
           </span>
         </p>
         {reason ? (
@@ -218,12 +237,14 @@ export function SessionUserValueChain({
                     never "root cause": this is a position in the chain. */}
                 The chain stopped at{" "}
                 <span className="font-medium text-foreground">
-                  {USER_VALUE_STAGE_LABELS[derivation.firstFailedStage]}
+                  {USER_VALUE_STAGE_LABELS[derivation.firstFailedStage] ??
+                    derivation.firstFailedStage}
                 </span>
                 {derivation.failureCategory ? (
                   <>
                     , grouped under{" "}
-                    {FAILURE_CATEGORY_LABELS[derivation.failureCategory]}
+                    {FAILURE_CATEGORY_LABELS[derivation.failureCategory] ??
+                      derivation.failureCategory}
                   </>
                 ) : null}
                 .
@@ -232,7 +253,9 @@ export function SessionUserValueChain({
             {!derivation.firstFailedStage && derivation.failureCategory ? (
               <p className="text-[11px] text-muted-foreground">
                 No stage failed. This session is grouped under{" "}
-                {FAILURE_CATEGORY_LABELS[derivation.failureCategory]}.
+                {FAILURE_CATEGORY_LABELS[derivation.failureCategory] ??
+                  derivation.failureCategory}
+                .
               </p>
             ) : null}
             {derivation.analyzerVersionAhead ? (

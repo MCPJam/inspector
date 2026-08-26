@@ -123,6 +123,22 @@ describe("one claimed session", () => {
     expect(p.failures).toEqual([]);
   });
 
+  it("a THROWING apply costs one row, not the drain", async () => {
+    // `applyStageDerivation` throws on any non-200 and rejects on a transport
+    // abort. Unguarded, that rejection escaped the pass entirely: the claims
+    // still queued behind it were abandoned to the backend's recovery
+    // interval, and the outcomes already collected were thrown away with them.
+    const p = ports({
+      apply: vi.fn(async () => {
+        throw new Error("apply failed (502)");
+      }),
+    });
+    expect(await deriveClaimedSession(claimFor(), p)).toBe("worker_error");
+    // Not reported: the transport broke, not the derivation, and the row's
+    // own lease is what re-offers it.
+    expect(p.failures).toEqual([]);
+  });
+
   it("an invalid apply is NOT reported again — the backend already parked it", async () => {
     const p = ports({
       apply: vi.fn(async () => ({
@@ -277,6 +293,30 @@ describe("draining the queue", () => {
   it("an empty queue is a benign no-op", async () => {
     const result = await runChatSessionStagePass({ ports: ports() });
     expect(result).toMatchObject({ noop: true, claimed: 0, reason: "empty" });
+  });
+
+  it("a mid-drain apply failure keeps the rest of the queue moving", async () => {
+    let applyCalls = 0;
+    const p = ports({
+      claim: queue([
+        { kind: "claimed", claim: claimFor({ sessionDocId: "a" }) },
+        { kind: "claimed", claim: claimFor({ sessionDocId: "b" }) },
+        { kind: "claimed", claim: claimFor({ sessionDocId: "c" }) },
+        { kind: "empty" },
+      ]),
+      apply: vi.fn(async () => {
+        applyCalls += 1;
+        if (applyCalls === 2) throw new Error("apply failed (502)");
+        return { kind: "applied" as const };
+      }),
+    });
+    const result = await runChatSessionStagePass({ ports: p });
+    // All three are accounted for, and the failure is one row's.
+    expect(result.outcomes).toEqual([
+      { sessionDocId: "a", outcome: "applied" },
+      { sessionDocId: "b", outcome: "worker_error" },
+      { sessionDocId: "c", outcome: "applied" },
+    ]);
   });
 
   it("a claim transport failure never throws out of the pass", async () => {

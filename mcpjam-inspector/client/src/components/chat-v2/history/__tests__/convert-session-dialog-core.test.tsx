@@ -320,20 +320,33 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     expect(submit.hasAttribute("disabled")).toBe(false);
   });
 
-  it("is keyboard reachable and toggleable, and its label is the hit target", () => {
+  it("is a real focusable control, not a div with a click handler", () => {
     renderCore({ detail: ACK_DETAIL });
     const checkbox = ackCheckbox();
-    // A real control, not a div with a click handler: it takes focus and the
-    // accessible name comes from a <label htmlFor> bound to its own id.
+    // A native <button role="checkbox"> is what makes Space activate it and
+    // Tab reach it in a browser. jsdom does not synthesize a click from a
+    // keydown, so asserting on a fired Space event here would prove nothing
+    // about keyboard use — the element type is the real evidence.
+    expect(checkbox.tagName).toBe("BUTTON");
     expect(checkbox.getAttribute("id")).toBe("content-transfer-ack");
     expect(checkbox.getAttribute("aria-describedby")).toBe(
       "content-transfer-consequence"
     );
+    expect(checkbox.hasAttribute("disabled")).toBe(false);
+
     checkbox.focus();
     expect(document.activeElement).toBe(checkbox);
+  });
 
-    fireEvent.keyDown(checkbox, { key: " ", code: "Space" });
-    fireEvent.click(checkbox);
+  it("the sentence is the hit target, not just the box", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    // Clicking the LABEL toggles the control, which is what a `<label
+    // htmlFor>` bound to the checkbox's own id buys — a bigger target and an
+    // accessible name a screen reader reads out with the control.
+    fireEvent.click(
+      screen.getByText(/copies a tester's content into a durable test case/i)
+    );
     expect(checkbox.getAttribute("data-state")).toBe("checked");
   });
 
