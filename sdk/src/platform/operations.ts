@@ -3993,6 +3993,13 @@ const runEvalCaseInput = z
     repetitions: RUN_KNOB_FIELDS.repetitions,
     iterations: RUN_KNOB_FIELDS.iterations,
     idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
+    // A single-case run of an APPROXIMATED case needs the same per-run
+    // approval a suite run does. Without it this operation could never launch
+    // one — the platform refuses a selected approximation that carries no
+    // approval — while `run_eval_suite` with `cases: [thatCase]` launches the
+    // very same case. Two ways to run one case should not disagree about
+    // whether it may run.
+    importApprovals: RUN_KNOB_FIELDS.importApprovals,
   })
   .superRefine((input, ctx) => {
     if (input.repetitions !== undefined && input.iterations !== undefined) {
@@ -4153,6 +4160,9 @@ export const runEvalCaseOperation: PlatformOperation<
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
+              : {}),
+            ...(input.importApprovals?.length
+              ? { importApprovals: input.importApprovals }
               : {}),
           },
         },
