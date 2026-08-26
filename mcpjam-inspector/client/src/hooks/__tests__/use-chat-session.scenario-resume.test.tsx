@@ -354,6 +354,54 @@ describe("useChatSession scenario transcript resume", () => {
     });
   });
 
+  it("keeps each scenario's transcript to itself when the tab switches links", async () => {
+    // A tester can open a SECOND tester link in the same tab: the page replaces
+    // its session in place, so `scenarioId` flips under a mounted chat that is
+    // still holding the first scenario's messages.
+    const scenarioBStored = {
+      chatSessionId: "chat-session-b",
+      messages: [
+        { id: "user-b", role: "user", parts: [{ type: "text", text: "b?" }] },
+      ] as any[],
+    };
+    writeScenarioChatTranscript("scn_2", scenarioBStored);
+
+    const optionsFor = (scenarioId: string) => ({
+      selectedServers: [] as string[],
+      hostedContext: {
+        projectId: "project-1",
+        scenarioId,
+        selectedServerIds: [] as string[],
+      },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ scenarioId }: { scenarioId: string }) =>
+        useChatSession(optionsFor(scenarioId)),
+      { initialProps: { scenarioId: SCENARIO_ID } }
+    );
+
+    act(() => {
+      result.current.setMessages([userMessage, assistantMessage]);
+    });
+    await waitFor(() => {
+      expect(readScenarioChatTranscript(SCENARIO_ID)?.messages).toHaveLength(2);
+    });
+
+    rerender({ scenarioId: "scn_2" });
+
+    // Scenario A's conversation must never be filed under scenario B, and B's
+    // stored row must survive the switch.
+    await waitFor(() => {
+      expect(readScenarioChatTranscript("scn_2")).toEqual(scenarioBStored);
+    });
+    expect(
+      readScenarioChatTranscript("scn_2")?.messages.map((m) => m.id)
+    ).toEqual(["user-b"]);
+    // ...and A's row is left alone too: the switch is not a reset.
+    expect(readScenarioChatTranscript(SCENARIO_ID)?.messages).toHaveLength(2);
+  });
+
   it("does not store a turn that is still streaming", async () => {
     mockState.status = "streaming";
     const { result } = renderHook(() => useChatSession(scenarioOptions));

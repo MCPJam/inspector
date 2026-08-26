@@ -3930,13 +3930,52 @@ export function useChatSession(
     });
   }, [queueSessionHydration]);
 
+  // The scenario the transcript on screen belongs to. A tester can open a
+  // SECOND tester link in the same tab: `session` is replaced in place, so
+  // `hostedContext.scenarioId` flips from A to B under a mounted chat that is
+  // still holding A's messages.
+  // True once this mount has HELD messages for the attached scenario, which is
+  // what separates "the tester reset the chat" from "the restore has not landed
+  // yet". Reset by the switch effect below, so a scenario change starts clean.
+  const hasHeldMessagesThisMountRef = useRef(false);
+  const attachedTranscriptScenarioRef = useRef(resumableScenarioId);
+  // Set while a scenario switch is settling. Persistence is OFF in that window,
+  // and it has to be: the messages on screen still belong to the PREVIOUS
+  // scenario, so a write would file one tester's conversation under another's
+  // key — and the empty pass that follows the reset would then delete the row
+  // the new scenario is supposed to resume from.
+  const awaitingScenarioTranscriptResetRef = useRef(false);
+  useEffect(() => {
+    if (attachedTranscriptScenarioRef.current === resumableScenarioId) return;
+    attachedTranscriptScenarioRef.current = resumableScenarioId;
+    hasHeldMessagesThisMountRef.current = false;
+    awaitingScenarioTranscriptResetRef.current = true;
+  }, [resumableScenarioId]);
+
   // Save after every SETTLED turn, never mid-stream, so a resumed transcript
   // only ever holds turns the tester watched finish — the same turns the owner
   // sees persisted server-side.
-  const hasHeldMessagesThisMountRef = useRef(false);
   useEffect(() => {
     if (!resumableScenarioId) return;
     if (status === "submitted" || status === "streaming") return;
+    // Mid-switch. The scope change also reaches the auth-bootstrap effect,
+    // whose reset empties the transcript; THAT is the signal the messages on
+    // screen are no longer the previous scenario's, and the point at which the
+    // new one may restore its own row and resume being saved.
+    if (awaitingScenarioTranscriptResetRef.current) {
+      if (messages.length > 0) return;
+      awaitingScenarioTranscriptResetRef.current = false;
+      const restored = readScenarioChatTranscript(resumableScenarioId);
+      if (restored) {
+        void queueSessionHydration({
+          sessionId: restored.chatSessionId,
+          messages: restored.messages,
+          resumedVersion: null,
+          persistedSnapshotToolCallIds: [],
+        });
+      }
+      return;
+    }
     if (messages.length > 0) {
       hasHeldMessagesThisMountRef.current = true;
       writeScenarioChatTranscript(resumableScenarioId, {
@@ -3952,7 +3991,13 @@ export function useChatSession(
     if (hasHeldMessagesThisMountRef.current) {
       clearScenarioChatTranscript(resumableScenarioId);
     }
-  }, [resumableScenarioId, status, messages, chatSessionId]);
+  }, [
+    resumableScenarioId,
+    status,
+    messages,
+    chatSessionId,
+    queueSessionHydration,
+  ]);
 
   const startChatWithMessages = useCallback(
     (
