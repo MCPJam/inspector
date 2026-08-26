@@ -76,6 +76,7 @@ so results respect the caller's project access.
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
+| `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
@@ -149,6 +150,12 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `list_clients` | List a project's clients — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns each client's `configId`, the token every write takes. | — |
+| `get_client` | One client's full settings: resolved config, `configId` (echo it back as `expectedConfigId`), and `impact` — what a config edit would follow. The first step of every edit. | — |
+| `create_client` | Create a client from a built-in template or a full config. Additive: nothing that exists changes. | — |
+| `update_client` | Edit a client's name and/or config. `set` changes named fields, `config` replaces everything. Requires `expectedConfigId` for a config edit and `expectedName` for a rename. | — |
+| `set_client_servers` | Replace a client's required and optional server attachments. A REPLACEMENT — omitted servers are detached. Requires `expectedConfigId`. | — |
+| `duplicate_client` | Create a new client carrying the selected client's current config. The source is untouched. | — |
 | `search_registry_directory` | Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. | — |
 | `get_registry_directory_server` | Fetch one scraped directory row by catalogServerId, or by name (optionally with source). | — |
 | `list_registry_directory_sources` | Discover directory source ids for `search_registry_directory`. Sources are data, not an enum. | — |

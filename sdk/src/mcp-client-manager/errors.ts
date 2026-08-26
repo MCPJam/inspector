@@ -449,7 +449,7 @@ export function extractInsufficientScopeChallenge(
 /**
  * Checks if an error is an authentication-related error.
  * Detects auth errors by:
- * 1. Error class name (UnauthorizedError from MCP SDK)
+ * 1. Error class name (UnauthorizedError from MCP SDK, OAuthResponseError)
  * 2. HTTP status codes (401, 403) from transport errors
  * 3. Common auth-related patterns in error messages (case-insensitive)
  */
@@ -468,6 +468,29 @@ export function isAuthError(error: unknown): {
   // (We check by name to avoid importing the runtime class here)
   if (error.name === "UnauthorizedError") {
     return { isAuth: true, statusCode: 401 };
+  }
+
+  // An OAuth error RESPONSE from the authorization server. Built only by
+  // `parseErrorResponse` in `oauth/browser-auth.ts`, which reaches it solely
+  // when a token, refresh, or registration request to a URL the USER
+  // configured came back non-ok with an OAuth error body — so the class is a
+  // positive identification of the hop, not an inference from a generic type.
+  //
+  // Its `message` is `error_description` verbatim, with no prefix of ours.
+  // Left unrecognized, an authorization server phrasing its rejection in words
+  // the pattern list below does not carry (RFC 6749 mandates the
+  // machine-readable `error` code, never the prose) falls past every branch
+  // here, past the inspector's `classifyRuntimeError`, and lands on the 500
+  // INTERNAL_ERROR catch-all — reporting somebody else's authorization server
+  // as an MCPJam outage. That is the failure this branch removes: the verdict
+  // comes from the response SHAPE, which the server cannot phrase its way out
+  // of.
+  //
+  // No `statusCode`: the class carries `code` as the OAuth error string
+  // (`invalid_grant`, ...), not an HTTP status, and the numeric-code branch
+  // below would never match it anyway.
+  if (error.name === "OAuthResponseError") {
+    return { isAuth: true };
   }
 
   // Check for our own MCPAuthError by name

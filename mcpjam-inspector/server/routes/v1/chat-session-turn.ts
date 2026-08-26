@@ -757,6 +757,7 @@ async function handleTurn(c: Context): Promise<Response> {
       return v1Resource(c, {
         sessionId: lease.sessionId ?? body.sessionId ?? null,
         turnId: lease.turnId,
+        projectId,
         persisted: { outcome: "duplicate" as const },
         origin: "api" as const,
         replay: true as const,
@@ -1070,6 +1071,11 @@ async function handleTurn(c: Context): Promise<Response> {
       // is better than an id that resolves to nothing.
       sessionId: sessionDocId ?? null,
       turnId: leaseTurnId,
+      // The project this turn ran in, which on a CONTINUATION the caller never
+      // sent: it comes off the session row. Without it a caller holding only
+      // this response cannot say where the session lives, and the session
+      // permalink an agent is meant to hand back cannot be composed at all.
+      projectId,
       reply: extractAssistantText(result),
       finishReason: result.finishReason ?? null,
       toolCalls: joinToolCalls(result.toolCalls, result.toolResults),
