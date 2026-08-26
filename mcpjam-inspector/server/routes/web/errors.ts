@@ -752,10 +752,15 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "";
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      issue?.message ?? "Request validation failed"
+      issue
+        ? path
+          ? `${path}: ${issue.message}`
+          : issue.message
+        : "Request validation failed"
     );
   }
   return parsed.data;

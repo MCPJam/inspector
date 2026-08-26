@@ -14,16 +14,25 @@ import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
+import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import {
   environmentLaunchConflictError,
+  environmentLaunchRejectionError,
   environmentModelRequiredError,
   isEnvironmentLaunchConflict,
 } from "../environments/resolve.js";
 
-type IterationStatus = "completed" | "failed" | "cancelled";
+/**
+ * The canonical lifecycle vocabulary — `setup_failed` and `skipped` included.
+ * The recorder is a pass-through to {@link finalizeEvalIteration}, so a
+ * narrower union here would silently reject the classification a runner made.
+ */
+type IterationStatus = ContractIterationStatus;
 // Run-level (not per-iteration) terminal stop reason, threaded into the
 // suite-run finalize so the dashboard can show why a run stopped.
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
@@ -132,7 +141,8 @@ export type SuiteRunRecorder = {
      * screenshots.
      */
     videoBytes?: Buffer | null;
-    status?: IterationStatus;
+    /** Explicit harness lifecycle status; never infer it from the verdict. */
+    status: IterationStatus;
     startedAt?: number;
     error?: string;
     errorDetails?: string;
@@ -278,63 +288,63 @@ export const createSuiteRunRecorder = ({
       });
     },
     async finalize({ status, summary, notes, stopReason }) {
-      if (runDeleted) {
-        // Silently skip if run was deleted
-        return;
-      }
-
+      // Drop this run's shadow-mismatch bookkeeping FIRST, and unconditionally.
+      //
+      // `shadow-mismatch.ts` keeps a per-run dedupe set so one comparison is
+      // reported once rather than once per iteration; without a matching
+      // forget, that map is a leak that grows for the life of the process —
+      // one entry per run, one entry per (iteration, kind) inside it. It was
+      // harmless while no cohort produced score rows and stops being harmless
+      // the moment the observation window raises the volume, which is why the
+      // fix lands BEFORE the window rather than after someone notices.
+      //
+      // Before the early return, because a deleted run still had comparisons
+      // recorded against it, and in a `finally` because a failed finalize is
+      // exactly when the entry would otherwise be stranded.
       try {
-        await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
-          runId,
-          status,
-          summary,
-          notes,
-          stopReason,
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // Check if run was deleted/not found
-        if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("unauthorized")
-        ) {
-          runDeleted = true;
-          // Silently skip - run was likely cancelled/deleted
+        if (runDeleted) {
+          // Silently skip if run was deleted
           return;
         }
 
-        logger.error(
-          "[evals] Failed to finalize suite run:",
-          new Error(errorMessage)
-        );
+        try {
+          await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
+            runId,
+            status,
+            summary,
+            notes,
+            stopReason,
+          });
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+          // Check if run was deleted/not found
+          if (
+            errorMessage.includes("not found") ||
+            errorMessage.includes("unauthorized")
+          ) {
+            runDeleted = true;
+            // Silently skip - run was likely cancelled/deleted
+            return;
+          }
+
+          logger.error(
+            "[evals] Failed to finalize suite run:",
+            new Error(errorMessage)
+          );
+        }
+      } finally {
+        forgetShadowMismatchRun(runId);
       }
     },
   };
 };
 
-/**
- * What THIS runner build can actually execute — declared to the backend at run
- * creation (the mixed-version-rollout handshake).
- *
- * The backend pins a run's host config at run start and stamps the run's
- * `executionEngine` from it. If it pinned `harness` unconditionally, a run
- * created by an OLDER runner — a desktop or local inspector that predates the
- * harness execution wiring but talks to the same hosted Convex — would be
- * stamped `harness:claude-code` while that runner went on quietly emulating.
- * That is worse than the bug this program is fixing: today's silent emulation
- * at least isn't labelled, and a false stamp would make it unfalsifiable.
- *
- * So the backend copies `harness` into the run snapshot only when the creating
- * runner says it can honour it. A runner that declares nothing keeps today's
- * behavior — stripped selector, `emulated` stamp — which is honest about what
- * it will do.
- *
- * TEMPORARY. Retire the arg (and this constant) once every runner version in
- * the wild declares it; the backend can then pin `harness` unconditionally.
- */
-const RUNNER_CAPABILITIES = ["harness-execution"] as const;
+// `RUNNER_CAPABILITIES` moved to `./runner-capabilities.ts` when the pre-run
+// disclosure route (G4c) became its second caller — see that module's header
+// for why both callers must send the identical list, and why a route must not
+// import this one to get it.
 
 export const startSuiteRunWithRecorder = async ({
   convexClient,
@@ -358,7 +368,9 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentServerIds,
   source,
   idempotencyKey,
+  sourceHash,
   skillsOverride,
+  ephemeralEnvironment,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -458,12 +470,23 @@ export const startSuiteRunWithRecorder = async ({
    */
   idempotencyKey?: string;
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
+   * Convex `startTestSuiteRun.sourceHash` so a file-owned run records the
+   * exact bytes it ran.
+   */
+  sourceHash?: string;
+  /**
    * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
    * NO skills from any channel and to mark the run `skillsExcluded`, so the
    * comparison arm is labelled rather than merely empty. See the wire schema
    * for the deliberate plugin-servers asymmetry.
    */
   skillsOverride?: "exclude";
+  /**
+   * Compose-and-run: accept a project-scoped, non-archived environment that
+   * is not a suite member. Forwarded to `startTestSuiteRun`.
+   */
+  ephemeralEnvironment?: boolean;
 }) => {
   let response: any;
   try {
@@ -495,7 +518,9 @@ export const startSuiteRunWithRecorder = async ({
           : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
@@ -532,6 +557,17 @@ export const startSuiteRunWithRecorder = async ({
       isEnvironmentLaunchConflict(error)
     ) {
       throw environmentLaunchConflictError(error);
+    }
+    // The remaining structured refusals — a bad ephemeralEnvironment request,
+    // a non-member or ambiguous environment, the resolver's cross-project /
+    // archived / missing verdicts. Each aborts BEFORE any run row exists, and
+    // each names something the caller can act on; rethrowing raw handed them
+    // all to the generic handler as `500 "Server Error"`, which is what the
+    // backend raising ConvexError instead of Error was meant to prevent.
+    // Returns null for anything unrecognized, so a real fault stays a 500.
+    const rejection = environmentLaunchRejectionError(error);
+    if (rejection) {
+      throw rejection;
     }
     throw error;
   }
@@ -758,5 +794,19 @@ export const startSuiteRunWithRecorder = async ({
      */
     pluginVersions: (response?.configSnapshot as any)
       ?.environmentPluginVersions as RunPinnedPluginVersion[] | undefined,
+    /**
+     * The run's FROZEN grading-engine position, straight off its own snapshot.
+     *
+     * Read from the RUN row rather than re-resolved from the suite or a flag,
+     * for the same reason `pluginVersions` is: the run's immutable record is
+     * what every other reader (the judge second pass, all three backend write
+     * boundaries) consults, and a runner that resolved its own position could
+     * grade the first pass under a mode the rest of the pipeline disagrees
+     * with. Absent on a legacy run, an `off` run, or an older backend — all of
+     * which mean the same thing here.
+     */
+    gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
+      | { mode?: unknown }
+      | undefined,
   };
 };

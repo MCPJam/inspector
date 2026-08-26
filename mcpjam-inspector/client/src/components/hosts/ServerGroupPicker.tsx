@@ -70,6 +70,8 @@ type ServerGroupPickerProps = {
    * and other non-modal surfaces so the dropdown can overflow freely.
    */
   inModal?: boolean;
+  /** `data-testid` on the trigger, for composer/lego-strip surfaces. */
+  triggerTestId?: string;
 };
 
 export function ServerGroupPicker({
@@ -82,6 +84,7 @@ export function ServerGroupPicker({
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
   inModal = false,
+  triggerTestId,
 }: ServerGroupPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -276,6 +279,7 @@ export function ServerGroupPicker({
         <button
           type="button"
           disabled={disabled}
+          data-testid={triggerTestId}
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",

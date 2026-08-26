@@ -33,15 +33,30 @@ import { ReleaseProgressRefresher } from "@/components/release-progress-refreshe
 const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 const RELEASE_WORKFLOW = "release.yml";
 
-/** release.yml's job order. Kept in sync manually with the workflow file. */
+/**
+ * release.yml's job order. Kept in sync manually with the workflow file.
+ *
+ * These MUST be the names the jobs API reports, not the keys in release.yml.
+ * A job that comes from a reusable workflow is reported as
+ * "<caller job key> / <called job name>" — so `build-mac` never matches
+ * anything and renders a permanently-pending phantom row while the real job
+ * lands in the unknown-append list below.
+ *
+ * Order reflects the pipeline after the parallelization work: the backend
+ * promote and the npm package build both run alongside the desktop builds
+ * rather than behind them, and finalize no longer waits on the webapp deploy.
+ */
 const JOB_ORDER = [
   "preflight",
-  "build-mac",
-  "build-windows",
+  "build-mac / build-mac",
+  "build-windows / make-windows",
+  "build-packages",
+  "deploy-backend-prod",
   "artifact-gate",
   "publish-packages",
-  "deploy-backend-prod",
-  "promote-production",
+  "deploy-webapp / deploy",
+  "deploy-webapp / smoke / smoke",
+  "deploy-slack-app / Deploy to Railway",
   "finalize"
 ];
 

@@ -215,6 +215,7 @@ export {
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
@@ -336,6 +337,7 @@ export type {
 export {
   MAX_SUITE_FILE_BYTES,
   SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
   formatSuiteFileFindings,
@@ -414,16 +416,57 @@ export type {
   AuthMethod,
 } from "./registration.js";
 export {
+  buildEvalRunReport,
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
+  renderStructuredRunHtml,
 } from "./structured-reporting.js";
+export {
+  buildEvalDecisionSummary,
+  buildEvalDecisionSummaryFromIterations,
+  buildEvalRunDecisionSummary,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  readEvalRunDecisionSummary,
+} from "./eval-decision-summary.js";
+/**
+ * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
+ *
+ * Mirrored onto the main entry because the CLI and the reporters consume it
+ * beside the platform types, and making them import one shape from two subpaths
+ * is how a consumer ends up with two copies of the type at different versions.
+ */
+export {
+  assembleEvalRunDecisionSummary,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  evalRunDecisionSummarySchema,
+} from "./contract/index.js";
 export type {
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionSummary,
+  EvalRunDecisionVerdict,
+} from "./contract/index.js";
+export type {
+  EvalDecisionSummary,
+  EvalDecisionSummaryCase,
+  EvalDecisionSummaryInput,
+  EvalDecisionVerdict,
+  NormalizedEvalDecisionCase,
+  StageChainStatus,
+} from "./eval-decision-summary.js";
+export type {
+  StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
+  StructuredCaseWaiver,
   StructuredSummaryBucket,
   StructuredRunSummary,
   StructuredRunReport,
+  StructuredRunVerdict,
 } from "./structured-reporting.js";
 export {
   toConformanceReport,
@@ -591,6 +634,63 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
+export { runConformance } from "./conformance-run.js";
+export type {
+  ConformanceRunProgress,
+  RunConformanceConfig,
+} from "./conformance-run.js";
+export {
+  detectConformanceCiMetadata,
+  githubActionExternalRunId,
+} from "./conformance-ci.js";
+export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export {
+  finalizeConformanceRun,
+  heartbeatConformanceRun,
+  isConformanceReportingConfigured,
+  reportConformanceRun,
+  reportConformanceRunSafely,
+  startConformanceRun,
+  uploadConformanceSuiteReport,
+} from "./report-conformance-run.js";
+export type {
+  ConformanceRunSource,
+  ConformanceTargetInput,
+  ReportConformanceRunOptions,
+  ReportConformanceRunOutput,
+} from "./report-conformance-run.js";
+export { createConformanceRunReporter } from "./conformance-run-reporter.js";
+export type { ConformanceRunReporter } from "./conformance-run-reporter.js";
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -607,7 +707,7 @@ export type {
   OAuthLoginResult,
 } from "./oauth-login.js";
 // Loopback authorization-code capture + PKCE primitives, reused by the CLI's
-// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+// platform login (`mcpjam cloud login`) in addition to OAuth conformance runs.
 export {
   createInteractiveAuthorizationSession,
   openUrlInBrowser,
@@ -969,6 +1069,25 @@ export {
 export type {
   ConformanceSuiteId,
   ConformanceSupport,
+  MCPConformanceFixtures,
+} from "./mcp-conformance/index.js";
+// Wire-schema validation: the run-wide message record and the validator that
+// grades it against the revision's published JSON Schema. Node-only (Ajv),
+// which is why it is absent from `@mcpjam/sdk/browser`.
+export {
+  WireObservationRecorder,
+  WireSchemaValidator,
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+  TASKS_EXTENSION_ID,
+} from "./mcp-conformance/index.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+  WireSchemaDocument,
+  WireSchemaValidationReport,
+  WireSchemaViolation,
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
@@ -1107,6 +1226,7 @@ export type {
 // custom scorer without a second import path.
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   canonicalDigest,
   canonicalJson,
@@ -1137,6 +1257,47 @@ export type {
   ScorerRole,
 } from "./contract/index.js";
 
+// The v2 run verdict policy (browser-safe; exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here for the same reason as the scoring
+// contract above: a code-first author reading a decision should not need a
+// second import path to name its parts.
+//
+// CONTRACT ONLY in this wave — there is no producer behind these types yet, so
+// nothing in the SDK emits an `EvalVerdictDecision`. Anything that reads one
+// must check `verdictPolicyVersion === EVAL_VERDICT_POLICY_VERSION` first: a
+// row without the field is a legacy percent-threshold row, NOT a v2 row.
+export {
+  EVAL_RATE_MEASUREMENT_STATES,
+  EVAL_RUN_VERDICTS,
+  EVAL_TRIAL_EXCLUSION_REASONS,
+  EVAL_VERDICT_DECISION_REASONS,
+  EVAL_VERDICT_POLICY_SCHEMA_ID,
+  EVAL_VERDICT_POLICY_VERSION,
+  evalCaseVerdictAggregationSchema,
+  evalRateMeasurementSchema,
+  evalRunVerdictSchema,
+  evalVerdictDecisionSchema,
+  isEvalRunVerdict,
+  isEvalTrialExclusionReason,
+  isEvalVerdictDecisionReason,
+  isEvalVerdictPolicyV2,
+  resolvedEvalValidityPolicySchema,
+} from "./contract/index.js";
+export type {
+  EvalCaseVerdictAggregation,
+  EvalRateMeasurement,
+  EvalRateMeasurementState,
+  EvalRunVerdict,
+  EvalTrialExclusionReason,
+  EvalTrialExclusions,
+  EvalValidityCoverage,
+  EvalVerdictDecision,
+  EvalVerdictDecisionReason,
+  EvalVerdictPolicyVersion,
+  EvalVerdictValidity,
+  ResolvedEvalValidityPolicy,
+} from "./contract/index.js";
+
 // The scorer runtime. Main-entry only — `judgeScorer` reaches the model
 // factory, which is not browser-safe.
 export {
@@ -1157,16 +1318,23 @@ export type {
 } from "./scorers/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
-// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
+  GATE_WAIVER_MAX_DURATION_MS,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   GateError,
+  applyGateWaiver,
   assertGate,
   evaluateGates,
   formatGateReport,
+  formatGateWaiverLine,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
+  gateOutcomeVerdict,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
@@ -1177,6 +1345,7 @@ export type {
   GateScore,
   GateStatus,
   GateVerdict,
+  GateWaiver,
   ScoreIntegrity,
 } from "./gates.js";
 

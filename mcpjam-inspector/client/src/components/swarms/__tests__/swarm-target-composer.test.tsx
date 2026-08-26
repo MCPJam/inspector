@@ -50,6 +50,9 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({
+    query: vi.fn(async () => ({ modelMatrix: false })),
+  }),
 }));
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
   ServerGroupPicker: () => <div data-testid="server-group-picker" />,
@@ -209,6 +212,12 @@ describe("SwarmTargetComposer", () => {
       name: "Billing",
       hostIds: ["host-1"],
     });
+  });
+
+  it("hides the models pill so New Swarm does not change product", () => {
+    render(<Harness />);
+    expect(screen.queryByTestId("new-swarm-models-picker")).toBeNull();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeVisible();
   });
 
   it("hides the environments picker when project-environments-enabled is off", () => {

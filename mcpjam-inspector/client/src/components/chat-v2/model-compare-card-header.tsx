@@ -371,7 +371,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFastest
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent"
+                          : "bg-accent"
                       )}
                       style={{
                         width: `${hasComparison ? durationBarPct : 100}%`,
@@ -411,7 +411,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFewestTokens
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent"
+                          : "bg-accent"
                       )}
                       style={{
                         width: `${hasComparison ? tokensBarPct : 100}%`,

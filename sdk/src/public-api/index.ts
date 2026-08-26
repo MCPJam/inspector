@@ -148,6 +148,28 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   // 429 with a `Retry-After` (see `convex-errors.ts`), and telling a caller to
   // wait for money to appear would be the same lie in the other direction.
   BILLING_LIMIT_REACHED: "FORBIDDEN",
+  // Registry / directory install family (mcpjam-backend publicApi contract).
+  // Copied from convex/publicApi/__fixtures__/internal-to-v1-code.json — do
+  // not retype. The inspector fixture keeps BILLING_LIMIT_REACHED (inspector-
+  // only) plus these entries; the backend fixture is the same minus billing.
+  endpoint_url_required: "VALIDATION_ERROR",
+  endpoint_url_invalid: "VALIDATION_ERROR",
+  endpoint_url_not_configurable: "VALIDATION_ERROR",
+  endpoint_url_not_allowed: "VALIDATION_ERROR",
+  already_connected_to_different_endpoint: "CONFLICT",
+  server_name_conflict: "CONFLICT",
+  registry_server_name_conflict: "CONFLICT",
+  catalog_server_removed: "CONFLICT",
+  catalog_server_not_connectable: "CONFLICT",
+  catalog_server_missing_endpoint: "CONFLICT",
+  endpoint_pattern_unusable: "CONFLICT",
+  catalog_server_changed: "CONFLICT",
+  registry_server_changed: "CONFLICT",
+  catalog_server_not_found: "NOT_FOUND",
+  registry_server_not_found: "NOT_FOUND",
+  registry_connection_not_found: "NOT_FOUND",
+  registry_server_not_approved: "FORBIDDEN",
+  registry_project_org_mismatch: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {

@@ -147,6 +147,7 @@ export {
   extractInsufficientScopeChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";

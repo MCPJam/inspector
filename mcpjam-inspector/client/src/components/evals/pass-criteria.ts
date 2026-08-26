@@ -53,7 +53,9 @@ export function computeIterationResult(
       | "completed"
       | "failed"
       | "cancelled"
-      | "timed_out";
+      | "timed_out"
+      | "setup_failed"
+      | "skipped";
     result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
     resultSource?: "reported" | "derived";
     testCaseSnapshot?: {
@@ -68,7 +70,14 @@ export function computeIterationResult(
     }>;
   },
   criteria?: PassCriteria,
-): "pending" | "passed" | "failed" | "cancelled" | "timed_out" {
+):
+  | "pending"
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "timed_out"
+  | "setup_failed"
+  | "skipped" {
   if (
     iteration.resultSource === "reported" &&
     (iteration.result === "pending" ||
@@ -89,6 +98,17 @@ export function computeIterationResult(
   }
   if (iteration.status === "timed_out") {
     return "timed_out";
+  }
+  // Neither of these ever produced a gradeable trial, so they must not reach
+  // the derivation below: matching zero recorded tool calls against expected
+  // ones would score an environment that never came up as a failing SERVER.
+  // Kept as their own results so pass/fail metrics exclude them the same way
+  // `cancelled` is excluded, rather than silently counting as losses.
+  if (iteration.status === "setup_failed") {
+    return "setup_failed";
+  }
+  if (iteration.status === "skipped") {
+    return "skipped";
   }
 
   // Compute pass/fail for completed iterations

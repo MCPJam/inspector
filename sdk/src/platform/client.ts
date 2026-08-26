@@ -3,9 +3,17 @@ import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
   PlatformChatSession,
+  PlatformChatSessionDetail,
+  PlatformChatSessionTrace,
+  PlatformChatTurn,
+  PlatformToolMode,
+  PlatformWidgetRender,
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiverRead,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -15,6 +23,7 @@ import type {
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunDisclosure,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -22,6 +31,7 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalStepResult,
@@ -65,6 +75,10 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
+  PlatformClientImpact,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -86,9 +100,40 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceReport,
+  PlatformConformanceRun,
+  PlatformConformanceRunReceipt,
+  PlatformConformanceSuiteKind,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformDirectorySearchPage,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstall,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
+
+/**
+ * Parse a request URL, tolerating a relative `baseUrl`.
+ *
+ * The default base and every Node caller pass an absolute origin, which
+ * `new URL` parses on its own. Browser and Worker callers may instead pass a
+ * same-origin prefix like `/api/v1` so the request rides the current origin's
+ * session (see `mcpjam-inspector`'s directory-readiness client). That prefix is
+ * not a valid URL by itself: `new URL("/api/v1/...")` throws "Failed to
+ * construct 'URL': Invalid URL" and the call never reaches `fetch`. Resolving
+ * against the document/worker origin fixes the relative case while leaving an
+ * absolute spec untouched (a second `base` argument is ignored when the first
+ * argument is already absolute).
+ */
+function resolvePlatformRequestUrl(spec: string): URL {
+  const origin =
+    typeof globalThis !== "undefined"
+      ? (globalThis as { location?: { origin?: string } }).location?.origin
+      : undefined;
+  return origin ? new URL(spec, origin) : new URL(spec);
+}
 
 export interface PlatformApiClientOptions {
   /** API origin + version prefix. Defaults to the hosted production API. */
@@ -231,6 +276,153 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options,
+    );
+  }
+
+  // ── Registry (directory + curated cards) ─────────────────────────────────
+
+  searchRegistryDirectory(
+    params: {
+      q?: string;
+      source?: string;
+      rowType?: string;
+      endpointKind?: string;
+      verifiedTier?: string;
+      connectableOnly?: boolean;
+      cursor?: string;
+      limit?: number;
+    } = {},
+    options?: RequestOptions,
+  ): Promise<PlatformDirectorySearchPage> {
+    return this.request(
+      "GET",
+      "/registry/directory-servers",
+      {
+        query: {
+          q: params.q,
+          source: params.source,
+          rowType: params.rowType,
+          endpointKind: params.endpointKind,
+          verifiedTier: params.verifiedTier,
+          connectableOnly:
+            params.connectableOnly === undefined
+              ? undefined
+              : params.connectableOnly
+                ? "true"
+                : "false",
+          ...pageQuery({ cursor: params.cursor, limit: params.limit }),
+        },
+      },
+      options,
+    );
+  }
+
+  getRegistryDirectoryServer(
+    params: { catalogServerId: string } | { name: string; source?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformCatalogServer> {
+    if ("catalogServerId" in params) {
+      return this.request(
+        "GET",
+        `/registry/directory-servers/${encodeURIComponent(params.catalogServerId)}`,
+        {},
+        options,
+      );
+    }
+    return this.request(
+      "GET",
+      `/registry/directory-servers/${encodeURIComponent(params.name)}`,
+      { query: { source: params.source } },
+      options,
+    );
+  }
+
+  listRegistryDirectorySources(
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformCatalogSourceStatus>> {
+    return this.request("GET", "/registry/directory-sources", {}, options);
+  }
+
+  listRegistryServers(
+    params: { projectId: string; scope?: "global" | "organization" | "all" },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryServer>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/servers`,
+      { query: { scope: params.scope } },
+      options,
+    );
+  }
+
+  listRegistryConnections(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryConnection>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/connections`,
+      {},
+      options,
+    );
+  }
+
+  installRegistryDirectoryServer(
+    params: {
+      projectId: string;
+      catalogServerId: string;
+      endpointUrl?: string;
+      expectedContentHash?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    // Explicit picks, not a rest spread — see `startClaudeReadinessRun`. The
+    // route's body schema forbids additional properties.
+    const { projectId, catalogServerId, endpointUrl, expectedContentHash } =
+      params;
+    const body: Record<string, unknown> = { catalogServerId };
+    if (endpointUrl !== undefined) body.endpointUrl = endpointUrl;
+    if (expectedContentHash !== undefined) {
+      body.expectedContentHash = expectedContentHash;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
+      { body },
+      options,
+    );
+  }
+
+  installRegistryServer(
+    params: {
+      projectId: string;
+      registryServerId: string;
+      expectedUpdatedAt?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    const { projectId, registryServerId, expectedUpdatedAt } = params;
+    const body: Record<string, unknown> = { registryServerId };
+    if (expectedUpdatedAt !== undefined) {
+      body.expectedUpdatedAt = expectedUpdatedAt;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/installs`,
+      { body },
+      options,
+    );
+  }
+
+  uninstallRegistryServer(
+    params: { projectId: string; registryServerId: string },
+    options?: RequestOptions,
+  ): Promise<{ deleted?: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
       {},
       options,
     );
@@ -418,6 +610,163 @@ export class PlatformApiClient {
   }
 
   /**
+   * Send ONE message to a project's MCP servers and get the model's reply plus
+   * the telemetry a participant in the conversation could not see: which tools
+   * were called, with what arguments, what came back, and what it cost.
+   *
+   * Omit `sessionId` to start a session; pass the one this returns to
+   * continue it. Configuration (model, target, system prompt, tool mode) pins
+   * on the FIRST turn — a continuation that resends any of it is refused
+   * rather than silently repinning.
+   *
+   * `idempotencyKey` is REQUIRED and must be stable for the triggering intent,
+   * NOT freshly minted per HTTP attempt. This call spends model credits, and a
+   * per-attempt key deduplicates nothing: a timeout-and-retry would run and
+   * bill the turn twice. With a stable key, a retry replays the completed
+   * turn instead.
+   */
+  sendChatMessage(
+    params: {
+      idempotencyKey: string;
+      message: string;
+      projectId?: string;
+      sessionId?: string;
+      modelId?: string;
+      environmentId?: string;
+      serverIds?: string[];
+      systemPrompt?: string;
+      temperature?: number;
+      maxSteps?: number;
+      toolMode?: PlatformToolMode;
+      allowedServerIds?: string[];
+      allowedTools?: string[];
+      maxToolCalls?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatTurn> {
+    // Built field by field rather than forwarded wholesale. The route's body
+    // schema is STRICT, so any extra key a caller happens to carry on its own
+    // params object would turn a valid request into a 400 — and forwarding an
+    // unknown key is exactly how a client starts depending on a field the
+    // contract never promised.
+    return this.request(
+      "POST",
+      "/chat-sessions/messages",
+      {
+        body: {
+          idempotencyKey: params.idempotencyKey,
+          message: params.message,
+          ...(params.projectId !== undefined
+            ? { projectId: params.projectId }
+            : {}),
+          ...(params.sessionId !== undefined
+            ? { sessionId: params.sessionId }
+            : {}),
+          ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.environmentId !== undefined
+            ? { environmentId: params.environmentId }
+            : {}),
+          ...(params.serverIds !== undefined
+            ? { serverIds: params.serverIds }
+            : {}),
+          ...(params.systemPrompt !== undefined
+            ? { systemPrompt: params.systemPrompt }
+            : {}),
+          ...(params.temperature !== undefined
+            ? { temperature: params.temperature }
+            : {}),
+          ...(params.maxSteps !== undefined
+            ? { maxSteps: params.maxSteps }
+            : {}),
+          ...(params.toolMode !== undefined
+            ? { toolMode: params.toolMode }
+            : {}),
+          ...(params.allowedServerIds !== undefined
+            ? { allowedServerIds: params.allowedServerIds }
+            : {}),
+          ...(params.allowedTools !== undefined
+            ? { allowedTools: params.allowedTools }
+            : {}),
+          ...(params.maxToolCalls !== undefined
+            ? { maxToolCalls: params.maxToolCalls }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Session metadata plus a bounded window of raw transcript messages.
+   *
+   * The companion to {@link getChatSessionTrace}: spans reference messages by
+   * absolute index, so resolving a span to the payload that produced it needs
+   * both reads.
+   */
+  getChatSession(
+    params: {
+      sessionId: string;
+      projectId?: string;
+      afterMessageIndex?: number;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatSessionDetail> {
+    return this.request(
+      "GET",
+      `/chat-sessions/${encodeURIComponent(params.sessionId)}`,
+      {
+        query: {
+          projectId: params.projectId,
+          afterMessageIndex: params.afterMessageIndex,
+          limit: params.limit,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Per-turn execution spans: tool latency, token usage, message indices.
+   *
+   * INCREMENTAL BY DEFAULT — returns the LATEST turn, not the whole session.
+   * Reach older turns with `turnId` or `afterPromptIndex`, and use
+   * `includeSpans: false` for cheap summaries when deciding which turn to pull.
+   */
+  getChatSessionTrace(
+    params: {
+      sessionId: string;
+      projectId?: string;
+      turnId?: string;
+      afterPromptIndex?: number;
+      limit?: number;
+      includeSpans?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatSessionTrace> {
+    return this.request(
+      "GET",
+      `/chat-sessions/${encodeURIComponent(params.sessionId)}/trace`,
+      {
+        query: {
+          projectId: params.projectId,
+          turnId: params.turnId,
+          afterPromptIndex: params.afterPromptIndex,
+          limit: params.limit,
+          // Serialized explicitly: the query builder takes string|number, and
+          // `false` is the value that MATTERS here (it selects the cheap
+          // summary), so it must not be dropped as falsy.
+          includeSpans:
+            params.includeSpans === undefined
+              ? undefined
+              : String(params.includeSpans),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
    * The unified, cross-surface sessions feed for one project.
    *
    * `q` is optional HERE (omitted = the recency feed) even though the
@@ -491,8 +840,170 @@ export class PlatformApiClient {
     );
   }
 
-  // ── Hosts ────────────────────────────────────────────────────────────
+  // ── Clients ──────────────────────────────────────────────────────────
+  //
+  // A **Client** is the product noun. The `listHosts`…`deleteHost` methods
+  // below these are DEPRECATED compatibility delegates: they keep calling the
+  // `/hosts` alias and keep returning its `PlatformHost*` shapes, so existing
+  // callers are unaffected. They are not thin wrappers over the client methods
+  // — the two surfaces return different fields.
 
+  listClients(
+    params: { projectId: string; includePrivateBacking?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformClient>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/clients/{client}` — `client` is a NAME or an ID.
+   *
+   * Name resolution happens server-side, where one implementation owns the
+   * eligibility and ambiguity rules. A client-side list-and-scan would be a
+   * second answer to "is this name ambiguous?", and would also have to
+   * re-implement the private-backing filter to avoid resolving a name the
+   * server would not.
+   */
+  getClient(
+    params: {
+      projectId: string;
+      client: string;
+      includePrivateBacking?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/clients` — create a client either from a built-in
+   * template (`{ name, template, theme? }`) or from a full config
+   * (`{ name, config }`). Returns the created client detail.
+   */
+  createClient(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `PATCH /projects/{p}/clients/{client}` — rename and/or edit the config.
+   *
+   * The body carries the compare-and-set tokens the canonical route requires
+   * (`expectedConfigId` for a config edit, `expectedName` for a rename); a
+   * stale one comes back as a 409 whose `details` names the current value.
+   */
+  updateClient(
+    params: {
+      projectId: string;
+      client: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  setClientServers(
+    params: {
+      projectId: string;
+      client: string;
+      serverIds: string[];
+      optionalServerIds?: string[];
+      expectedConfigId: string;
+      expectedImpact?: PlatformClientImpact;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/servers`,
+      {
+        body: {
+          serverIds: params.serverIds,
+          ...(params.optionalServerIds
+            ? { optionalServerIds: params.optionalServerIds }
+            : {}),
+          expectedConfigId: params.expectedConfigId,
+          ...(params.expectedImpact
+            ? { expectedImpact: params.expectedImpact }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  duplicateClient(
+    params: { projectId: string; client: string; name?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/duplicate`,
+      { body: params.name === undefined ? {} : { name: params.name } },
+      options,
+    );
+  }
+
+  deleteClient(
+    params: {
+      projectId: string;
+      client: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body ?? {} },
+      options,
+    );
+  }
+
+  // ── Hosts (deprecated compatibility surface) ─────────────────────────
+
+  /** @deprecated Use {@link listClients}. Calls the deprecated `/hosts` alias. */
   listHosts(
     params: { projectId: string },
     options?: RequestOptions,
@@ -505,6 +1016,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link getClient}. Calls the deprecated `/hosts` alias. */
   getHost(
     params: { projectId: string; hostId: string },
     options?: RequestOptions,
@@ -523,6 +1035,8 @@ export class PlatformApiClient {
    * `POST /projects/{p}/hosts` — create a host either from a built-in template
    * (`{ name, template, theme? }`) or from a full host config
    * (`{ name, config }`). Returns the created host detail.
+   *
+   * @deprecated Use {@link createClient}. Calls the deprecated `/hosts` alias.
    */
   createHost(
     params: { projectId: string; body: Record<string, unknown> },
@@ -536,6 +1050,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link updateClient}. Calls the deprecated `/hosts` alias. */
   updateHost(
     params: {
       projectId: string;
@@ -554,6 +1069,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link setClientServers}. Calls the deprecated `/hosts` alias. */
   setHostServers(
     params: {
       projectId: string;
@@ -580,6 +1096,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link duplicateClient}. Calls the deprecated `/hosts` alias. */
   duplicateHost(
     params: { projectId: string; hostId: string; name?: string },
     options?: RequestOptions,
@@ -594,6 +1111,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link deleteClient}. Calls the deprecated `/hosts` alias. */
   deleteHost(
     params: {
       projectId: string;
@@ -1041,6 +1559,75 @@ export class PlatformApiClient {
   }
 
   /**
+   * `GET /projects/{p}/eval-suites/{id}/run-disclosure` — the pre-run
+   * disclosure for a launch plan: what happens to the run's content, keyed by
+   * the SAME destination-affecting subset `createEvalRun` uses
+   * (`caseIds`/`environmentId`/`environmentIds`). Deliberately NOT the
+   * estimator's full arg set — `iterationOverride`/`planCount` only scale
+   * volume, which is not part of this contract, and the inspector server
+   * rejects them rather than silently ignoring them.
+   *
+   * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
+   * `details.reason === "contract_unavailable"` against an inspector
+   * deployment too old to compute this — never treat a missing disclosure as
+   * "nothing to disclose". This is a GUARANTEE only when the deployment's
+   * missing-function error reaches the client unredacted (every non-production
+   * Convex environment, and a production one whose redaction the route can
+   * unambiguously identify as a missing function). Production Convex can
+   * redact that same failure to a generic "Server Error" indistinguishable
+   * from a genuine handler crash; the route disambiguates what it safely can
+   * (a caller who cannot see the suite at all still gets a 404, never this
+   * code), but an ambiguous redacted failure on a suite the caller CAN see
+   * surfaces as a 502 `SERVER_UNREACHABLE` instead — this route has no way to
+   * independently confirm "not deployed yet" over "deployed and broken" in
+   * that one case, and guessing `contract_unavailable` would risk hiding a
+   * real incident. A caller cannot rely on this code alone to detect an
+   * old deployment in production; a 502 does not imply the contract is
+   * available either.
+   */
+  getEvalRunDisclosure(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseIds?: string[];
+      environmentId?: string;
+      environmentIds?: string[];
+      /**
+       * Disclose for a HOST-axis launch — the attached host a run would be
+       * stamped with (G4c). Mutually exclusive with `environmentId`/
+       * `environmentIds`: a launch plan resolves on exactly one axis, and the
+       * route rejects the combination with a 400 rather than letting it reach
+       * the backend as an ambiguous query.
+       *
+       * `runnerCapabilities` is deliberately NOT a parameter here. The
+       * inspector route asserts it from the executing process, which is the
+       * only honest source for what that process can run; a client-supplied
+       * value could claim a harness capability the runner does not have.
+       */
+      namedHostId?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDisclosure> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/run-disclosure`,
+      {
+        query: {
+          caseIds: params.caseIds?.length ? params.caseIds.join(",") : undefined,
+          environmentId: params.environmentId,
+          environmentIds: params.environmentIds?.length
+            ? params.environmentIds.join(",")
+            : undefined,
+          host: params.namedHostId,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
    * `POST /projects/{p}/eval-suites/{id}/environments` — APPEND one
    * environment to the suite's attachments, atomically.
    *
@@ -1109,6 +1696,24 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * `POST /projects/{p}/eval-suites/from-file` — resolve or create a
+   * file-owned suite by declared id. Lookup is by declared id within the
+   * project, never by name. A UI-authored suite has no declared id and
+   * cannot be claimed.
+   */
+  syncFileOwnedEvalSuite(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformFileOwnedEvalSuiteSynced> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-suites/from-file`,
+      { body: params.body },
+      options,
+    );
+  }
+
   getEvalRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions,
@@ -1119,6 +1724,41 @@ export class PlatformApiClient {
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical run
+   * decision contract: the verdict, the unit its counts are in, the run's own
+   * `EvalVerdictDecision` when it has one, and one page of per-trial
+   * diagnostics.
+   *
+   * ADDITIVE, and newer than most deployments: an API that predates it answers
+   * `404`. A caller that must work against both should use the exported
+   * `readEvalRunDecisionSummary` helper, which falls back over
+   * `listEvalRunIterations` and the same contract assembler rather than
+   * creating a summary of its own.
+   *
+   * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
+   * `listEvalRunIterations` issues. The response says whether the page it
+   * returned is the whole non-passing set.
+   */
+  getEvalRunDecisionSummary(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDecisionSummary> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
+      { query: { cursor: params.cursor, limit: params.limit } },
       options,
     );
   }
@@ -1285,6 +1925,94 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Gate waivers ──────────────────────────────────────────────────────
+  //
+  // An audited, time-boxed override of a run's gate. Three calls, and the
+  // asymmetry between them is deliberate: WAIVING is manage-tier, while
+  // READING is available to anyone who can see the run — a waiver only its
+  // grantors can see is not a visible waiver, and visibility is half the
+  // requirement.
+  //
+  // None of these decide authorization; the platform mutation owns that. The
+  // client does not pre-judge whether the caller may waive, because a client
+  // that guesses wrong either blocks a legitimate override or lets an
+  // illegitimate one look accepted until the write fails.
+
+  /**
+   * Grant a waiver over a failing run's gate.
+   *
+   * `reason` is stored UNREDACTED for the life of the suite: any surface
+   * collecting one must warn the human first (`GATE_WAIVER_REASON_NOTICE`).
+   * `expiresAt` is epoch ms, must be in the future, and is capped at 30 days
+   * out by the platform — there is no way to ask for a permanent waiver.
+   *
+   * Re-waiving an already-waived run answers `status: "conflict"` with the
+   * EXISTING waiver. That is a normal result, not an error: two active waivers
+   * over one run would make "which reason is on the check" a race.
+   */
+  createGateWaiver(
+    params: {
+      projectId: string;
+      runId: string;
+      reason: string;
+      expiresAt: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      { body: { reason: params.reason, expiresAt: params.expiresAt } },
+      options,
+    );
+  }
+
+  /**
+   * The waiver in force over a run, or `null`.
+   *
+   * `eval gate` does NOT need this — the run projection already carries
+   * `gateWaiver`, so the gating path folds a waiver in without a second round
+   * trip. This is the explicit read, for asking the question on its own.
+   */
+  getGateWaiver(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverRead> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Revoke a waiver, putting the gate back.
+   *
+   * IDEMPOTENT: revoking an already-revoked waiver answers
+   * `status: "already_revoked"` and is a SUCCESS, not an error — restamping it
+   * would rewrite who actually ended the waiver.
+   */
+  revokeGateWaiver(
+    params: { projectId: string; runId: string; waiverId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(
+        params.runId,
+      )}/gate-waivers/${encodeURIComponent(params.waiverId)}`,
+      {},
+      options,
+    );
+  }
+
   // ── Directory readiness ───────────────────────────────────────────────
   //
   // Asynchronous by design: a readiness run dials somebody else's server,
@@ -1430,6 +2158,86 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * Start a persisted conformance run against a saved server.
+   *
+   * The target is the saved server the path names — never a caller URL.
+   * OAuth is not startable here. Returns a receipt; poll `getConformanceRun`.
+   */
+  startConformanceRun(
+    params: {
+      projectId: string;
+      serverId: string;
+      suites?: PlatformConformanceSuiteKind[];
+      idempotencyKey?: string;
+      protocolVersion?: string;
+      engineVersion?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRunReceipt> {
+    const { projectId, serverId, suites, idempotencyKey, protocolVersion, engineVersion } =
+      params;
+    const body: Record<string, unknown> = {};
+    if (suites !== undefined) body.suites = suites;
+    if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
+    if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
+    if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/conformance-runs`,
+      { body },
+      options,
+    );
+  }
+
+  getConformanceRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listConformanceRuns(
+    params: {
+      projectId: string;
+      serverId?: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformConformanceRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/conformance-runs`,
+      { query },
+      options,
+    );
+  }
+
+  getConformanceReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceReport> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
+      {},
+      options,
+    );
+  }
+
   /** One row per authored step (status + reason + evidence) for one iteration. */
   getEvalRunSteps(
     params: { projectId: string; runId: string; iterationId: string },
@@ -1466,6 +2274,14 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       baseRunId?: string;
+      /**
+       * Pin the baseline by SOURCE SHA instead of run id. Mutually exclusive
+       * with `baseRunId` — sending both is a 400. A SHA that resolves to no
+       * completed run in the suite is the ordinary BASELINE_NOT_FOUND 404, not
+       * this error: "we looked and established nothing" stays distinct from
+       * "you asked for something impossible".
+       */
+      baseCommitSha?: string;
       previewChars?: number;
     },
     options?: RequestOptions,
@@ -1478,6 +2294,7 @@ export class PlatformApiClient {
       {
         query: {
           baseRunId: params.baseRunId,
+          baseCommitSha: params.baseCommitSha,
           previewChars: params.previewChars,
         },
       },
@@ -1745,6 +2562,34 @@ export class PlatformApiClient {
     options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "tools/call", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/widgets/render` — render an MCP App
+   * widget headlessly and describe what it produced.
+   *
+   * Defaults return the widget as an ACCESSIBILITY TREE and omit the
+   * screenshot. That is the reverse of the local Inspector route, and
+   * deliberate: the caller here is usually a model, for which a base64 image
+   * it may not be able to see is the most expensive possible way to say
+   * nothing.
+   */
+  renderServerWidget(
+    params: ServerScope & {
+      body: {
+        toolName: string;
+        parameters?: Record<string, unknown>;
+        includeSnapshot?: boolean;
+        includeScreenshot?: boolean;
+        injectOpenAiCompat?: boolean;
+        viewport?: { width: number; height: number };
+      };
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformWidgetRender> {
+    return this.serverOp(params, "widgets/render", options) as Promise<
+      PlatformWidgetRender
+    >;
   }
 
   /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */
@@ -2870,6 +3715,77 @@ export class PlatformApiClient {
     );
   }
 
+  private sharePath(
+    projectId: string,
+    resourceType: string,
+    resourceId: string,
+  ): string {
+    return `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(
+      resourceType,
+    )}/${encodeURIComponent(resourceId)}`;
+  }
+
+  getShareSettings(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      this.sharePath(params.projectId, params.resourceType, params.resourceId),
+      {},
+      options,
+    );
+  }
+
+  setShareMode(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+      mode: "project_members" | "invited_only" | "anyone_with_link";
+      allowGuestAccess?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    const { projectId, resourceType, resourceId, mode, allowGuestAccess } =
+      params;
+    return this.request(
+      "PATCH",
+      this.sharePath(projectId, resourceType, resourceId),
+      {
+        body: {
+          mode,
+          ...(allowGuestAccess !== undefined ? { allowGuestAccess } : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Rotate the share link. Immediate: holders of the old URL can no longer
+   * redeem it. Agent-excluded; available on REST/CLI/MCP.
+   */
+  rotateShareLink(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.sharePath(params.projectId, params.resourceType, params.resourceId)}/rotate-link`,
+      {},
+      options,
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
@@ -2891,7 +3807,7 @@ export class PlatformApiClient {
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions,
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
+    const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
       if (value !== undefined) {
         url.searchParams.set(name, String(value));

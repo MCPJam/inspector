@@ -365,6 +365,11 @@ export async function rawRequest(
     throw new Error("Raw HTTP capture recorded no exchange");
   }
 
+  // THE one seam where raw traffic enters the run-wide record. Every raw check
+  // in every family builds its requests here, so recording once here covers
+  // all of them — and a check added later is covered without touching it.
+  ctx.recorder?.recordExchange(exchange);
+
   const { response } = exchange;
   return {
     status: response.status,

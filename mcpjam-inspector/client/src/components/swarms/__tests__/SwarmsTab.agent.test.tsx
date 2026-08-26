@@ -138,7 +138,7 @@ async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   openPersonasTab();
   await waitFor(() => {
-    expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+    expect(screen.getByLabelText("Use cases and context")).toBeTruthy();
   });
 }
 

@@ -904,6 +904,56 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Failed")).toBeDefined();
   });
 
+  it("marks a pending failed protocol check unscored and leaves a scored failure unmarked", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        passed: true,
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "failed",
+            durationMs: 1,
+            error: { message: "pong missing" },
+          },
+          {
+            id: "wire-schema-valid",
+            category: "protocol",
+            title: "Wire schema is valid",
+            description: "Schema check.",
+            status: "failed",
+            durationMs: 1,
+            error: { message: "schema mismatch" },
+          },
+        ],
+        profile: {
+          profileId: "mcp-protocol",
+          profileVersion: "1",
+          manifestDigest: "digest",
+          checkerVersion: "1",
+          pendingCheckIds: ["wire-schema-valid"],
+        },
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("Protocol summary");
+
+    const pendingRow = screen
+      .getByText("Wire schema is valid")
+      .closest("button");
+    expect(pendingRow).toHaveTextContent("unscored");
+    expect(
+      screen.getByTitle("unscored by this run's profile").closest("button"),
+    ).toBe(pendingRow);
+
+    const scoredRow = screen.getByText("Ping").closest("button");
+    expect(scoredRow).not.toHaveTextContent("unscored");
+  });
+
   it("badges an incomplete tasks run distinctly from a passing one", async () => {
     setupSuccessfulRunMocks();
     mockRunTasks.mockResolvedValue({

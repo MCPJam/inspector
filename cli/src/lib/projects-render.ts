@@ -29,7 +29,7 @@ function table(rows: string[][]): string[] {
 /**
  * Organizations render alongside projects rather than in their own module: an
  * organization id is only ever useful as an argument to a project command
- * (`projects list --organization`, `projects create --organization-id`), so the
+ * (`projects list --org`, `projects create --org`), so the
  * two tables want the same column widths and the same timestamp treatment.
  */
 export function formatOrganizationsHuman(

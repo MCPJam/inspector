@@ -45,7 +45,8 @@ describe("buildRegistryUiTools", () => {
 
   it("connect disambiguates itself from ui_connect_server (already-added path)", () => {
     const description = getTool("ui_connect_registry_server").description;
-    expect(description).toContain("registry");
+    expect(description).toContain("Catalog");
+    expect(description).toContain("connector directory");
     expect(description).toContain("ui_connect_server");
   });
 

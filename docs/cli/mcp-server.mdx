@@ -119,7 +119,7 @@ Tool results are JSON payloads describing the target server. Errors come back as
 
 ## Relationship to the hosted MCP server
 
-MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary:
+MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary. `mcpjam mcp` protocol `serverInfo.name` is `mcpjam`; its title is `MCPJam CLI`. The hosted server identifies as `MCPJam MCP`.
 
 | | `mcpjam mcp` (this page) | `mcp.mcpjam.com` |
 |---|---|---|
@@ -127,9 +127,11 @@ MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes yo
 | Auth | None | MCPJam account (OAuth) |
 | Scope | Test any server reachable from your machine, including local stdio | Servers and evals saved in your projects |
 | Transport to MCPJam | stdio | Streamable HTTP |
+| Protocol name | `mcpjam` | `MCPJam MCP` |
+| Title | `MCPJam CLI` | `MCPJam MCP` |
 
 ## Troubleshooting
 
-- **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
+- **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam CLI MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
 - **`connect_server` fails with `SERVER_UNREACHABLE`** — the target URL or command is wrong, or the target crashed on startup. Try `server_doctor` against the same target for a structured diagnosis.
 - **A connection name is already taken** — `connect_server` refuses to overwrite an existing name; `disconnect_server` it first or pass a different `name`.

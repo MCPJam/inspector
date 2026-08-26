@@ -1,14 +1,16 @@
 import type { GateReport } from "@mcpjam/sdk";
 
 /**
- * Exit code for `mcpjam eval gate`.
+ * Exit code for `mcpjam cloud eval gate`.
  *
  * Copies the `conformance-exit-code.ts` idiom, and for the same reason: "the
  * evals regressed" and "we never established anything" are different failures
  * with different fixes, and a run that could not be graded must never look like
  * a pass. `2` is taken by usage errors, so the third state is `3`.
  *
- *   0 — every requested gate passed.
+ *   0 — every requested gate passed, OR a failing gate was waived: an
+ *       authorized user overrode it on the record, and the waiver is named in
+ *       every artifact this command writes.
  *   1 — an EVAL VERDICT failed. Reserved for exactly that.
  *   2 — usage error: the policy names an unknown or positionally-generated
  *       scorer, or a threshold is out of range.
@@ -24,6 +26,14 @@ import type { GateReport } from "@mcpjam/sdk";
 export function evalGateExitCode(report: GateReport): number {
   switch (report.outcome) {
     case "passed":
+      return 0;
+    // An authorized, recorded, time-boxed override of a real failure. Exit 0,
+    // because unblocking the release is what a waiver is FOR — but it reaches
+    // 0 by its own named outcome rather than by being turned into `passed`
+    // upstream, so nothing downstream has to reconstruct which of the two
+    // happened. The report, and every artifact built from it, still says the
+    // gate failed and was waived.
+    case "waived":
       return 0;
     case "failed":
       return 1;
@@ -74,6 +84,23 @@ const NON_VERDICT_STATUSES = new Set(["cancelled", "timed_out", "failed"]);
  */
 export function isNonVerdictRunStatus(status: string | undefined): boolean {
   return status !== undefined && NON_VERDICT_STATUSES.has(status);
+}
+
+/**
+ * Whether the platform itself declined to decide this run.
+ *
+ * Verdict policy 2 adds a third `result`, `inconclusive`: the run finished,
+ * but not enough of it was gradeable to make a claim about the server. Its
+ * `summary` counts are precisely the evidence the platform judged
+ * insufficient, so gating them is fail-either-way — a run that graded 3 of 30
+ * trials reads as a 100% pass rate, and one that graded none reads as a
+ * regression. Neither is a verdict, so this maps to `incomplete` (exit 3)
+ * alongside cancelled and timed-out runs, and NEVER to the verdict code 1.
+ */
+export function isNonVerdictRunResult(
+  result: string | null | undefined,
+): boolean {
+  return result === "inconclusive";
 }
 
 /** Exit code for a run that never produced a verdict at all. */

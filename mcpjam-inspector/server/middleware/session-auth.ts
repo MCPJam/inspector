@@ -99,6 +99,14 @@ const UNPROTECTED_PREFIXES = [
   // bypass nobody wrote it for. The router's only path is
   // `/api/internal/server-connections/dispatch`, so the slash costs nothing.
   "/api/internal/server-connections/",
+  // Backend→Inspector judge doorbell, for the same reason and with the same
+  // guard: the caller is Convex with a service token and no browser session, so
+  // session auth would 401 it before `internalServiceAuthMiddleware()` — which
+  // the router does mount — could reject a wrong token. The run id in the body
+  // is a selector, not authorization. Trailing slash for the same
+  // `startsWith` reason as above; the router's only path is
+  // `/api/internal/evals/judge-completed`.
+  "/api/internal/evals/",
 ];
 
 /**

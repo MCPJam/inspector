@@ -205,6 +205,20 @@ describe("v1 write routes", () => {
   });
 
   describe("POST /eval-runs", () => {
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", hostIds: ["h1"] }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a body with neither suiteId nor tests (400)", async () => {
       const res = await request(
         makeApp(),
@@ -712,6 +726,40 @@ describe("v1 write routes", () => {
         // The rejection lands before authoring and before any connection.
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
         expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      });
+
+      it("launches an unattached project env when ephemeralEnvironment is true", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds: [],
+          }),
+          "projectEnvironments:getEnvironment": () => ({
+            environmentId: "env_other",
+            projectId: "p1",
+            name: "Adhoc",
+          }),
+          "projectEnvironments:resolveEnvironmentForLaunch": () =>
+            RESOLVED_ENVIRONMENT,
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteId: "suite_1",
+            environmentId: "env_other",
+            ephemeralEnvironment: true,
+          }
+        );
+
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          environmentId: "env_other",
+          ephemeralEnvironment: true,
+        });
       });
 
       it("auto-selects the sole attached environment when none is named", async () => {
@@ -1316,6 +1364,27 @@ describe("v1 write routes", () => {
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     });
 
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hostIds: ["h1"],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a case with an empty steps array (400)", async () => {
       const res = await request(
         makeApp(),
@@ -1529,6 +1598,52 @@ describe("v1 write routes", () => {
         expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
       );
     }
+
+    it("launches unattached environments when ephemeralEnvironment is true", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          environmentIds: [],
+        }),
+        "projectEnvironments:getEnvironment": () => ({
+          environmentId: "env_adhoc",
+          projectId: "p1",
+          name: "Adhoc",
+        }),
+        "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+          environmentRef: {
+            environmentId: "env_adhoc",
+            name: "Adhoc",
+            revision: 1,
+          },
+          hostId: "host_claude",
+          hostConfigId: "hc_1",
+          selectedServerIds: ["s_env"],
+          effectiveServerIds: ["s_env"],
+          servers: [{ serverId: "s_env", name: "env" }],
+        }),
+        "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          ephemeralEnvironment: true,
+          targets: [{ environmentId: "env_adhoc" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        environmentId: "env_adhoc",
+        ephemeralEnvironment: true,
+      });
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
 
     it("launches one run per target under a single minted group id", async () => {
       hostSuiteQueries();
@@ -2180,6 +2295,11 @@ describe("v1 write routes", () => {
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
         source: "api",
         notes: null,
+        // `null`, never omitted — the same convention `judges` uses below, and
+        // for the same reason: a caller must be able to tell "no waiver in
+        // force" from "an API deployment that does not report one", and an
+        // absent field collapses those into one answer.
+        gateWaiver: null,
         createdAt: 1,
         completedAt: 2,
         // Always present on the detail, so a caller can branch on

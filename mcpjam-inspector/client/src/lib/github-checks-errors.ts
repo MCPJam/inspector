@@ -144,3 +144,14 @@ export const GITHUB_BINDING_FAILED_MESSAGE =
  */
 export const GITHUB_CALLBACK_INCOMPLETE_MESSAGE =
   "This page finishes connecting a GitHub account, and it was opened without the details GitHub sends. Start again from Settings.";
+
+/**
+ * The return trip from GitHub landed with nobody signed in to MCPJam.
+ *
+ * Worth its own sentence rather than the generic binding failure: nothing is
+ * wrong with the GitHub account or the app, the session here simply is not
+ * there — and "sign in and start again" is an instruction, where the generic
+ * copy would send someone to re-check GitHub settings that are already fine.
+ */
+export const GITHUB_SIGNED_OUT_MESSAGE =
+  "You are not signed in to MCPJam, so we could not finish connecting that GitHub account. Sign in and start again from Settings.";

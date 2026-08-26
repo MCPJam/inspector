@@ -30,7 +30,8 @@ function deriveTarget(config: MCPServerConfig): string {
 export function normalizeMCPTasksConformanceConfig(
   config: MCPTasksConformanceConfig
 ): NormalizedMCPTasksConformanceConfig {
-  const { checkIds, toolName, toolArguments, pollTimeoutMs, ...rest } = config;
+  const { checkIds, toolName, toolArguments, pollTimeoutMs, inputResponses, ...rest } =
+    config;
   const serverConfig = rest as MCPServerConfig;
   const target = deriveTarget(serverConfig).trim();
 
@@ -46,5 +47,6 @@ export function normalizeMCPTasksConformanceConfig(
     checkIds: normalizeCheckIds(checkIds),
     ...(toolName ? { toolName } : {}),
     ...(toolArguments ? { toolArguments } : {}),
+    ...(inputResponses ? { inputResponses } : {}),
   };
 }

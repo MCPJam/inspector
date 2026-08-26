@@ -19,6 +19,8 @@ import {
 } from "../../utils/org-model-config.js";
 import { loadSuiteHostConfig } from "./compat-runtime.js";
 import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/internal";
+import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
+import { resolveFrozenRunGradingMode } from "./grading-mode.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -81,6 +83,19 @@ export async function prepareSuiteReplayFromRun(
     throw new Error("No replay configuration found for this run");
   }
 
+  // Recovered BEFORE the replay run row is created: an unrecoverable policy
+  // must abort the replay outright, not strand a created run.
+  const replayToolPolicy = await recoverToolPolicyFromSourceRun({
+    convexClient,
+    sourceRunId,
+  });
+  if (replayToolPolicy) {
+    logger.info("[evals] Replay inherits the source run's tool policy", {
+      sourceRunId,
+      mode: replayToolPolicy.mode,
+    });
+  }
+
   const replayManager = buildReplayManager(replayConfig);
   try {
     await connectReplayManagerServers(replayManager, replayConfig);
@@ -95,6 +110,7 @@ export async function prepareSuiteReplayFromRun(
       recorder,
       config,
       hostConfig: runHostConfigSnapshot,
+      gradingEngine: runGradingEngine,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -180,6 +196,15 @@ export async function prepareSuiteReplayFromRun(
           mcpClientManager: replayManager,
           recorder,
           suiteInjectOpenAiCompat,
+          // B3b: a replay is a RUN, and it grades under its own frozen
+          // position like any other. Omitting this let the runner fall back to
+          // the env-only resolver in `buildIterationFinishParams`, so a replay
+          // of an `off` or `shadow` run would grade at whatever the process env
+          // allowed — a replay reaching a different authority than the record
+          // it replays. An absent stamp is the backend's `off`, not an absent
+          // opinion; see the same translation in `routes/shared/evals.ts`.
+          gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
+          ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
         });
       },
       cleanup: () => replayManager.disconnectAllServers(),

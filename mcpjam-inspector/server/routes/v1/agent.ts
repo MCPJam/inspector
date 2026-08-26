@@ -128,9 +128,16 @@ export function isValidAgentActionId(actionId: string): boolean {
 }
 
 function suiteUrl(suiteId: string, projectId: string): string {
-  // `?project=` makes the link self-describing: eval routes carry no project
-  // segment, so without it the app renders whatever project the viewer's
-  // picker was parked on (an empty state for everyone but the author).
+  // `?project=` makes the link self-describing: without it the app renders
+  // whatever project the viewer's picker was parked on (an empty state for
+  // everyone but the author).
+  //
+  // The app's canonical form is now `/p/<projectId>/evals/suite/<id>`, and it
+  // accepts BOTH: this parameter normalizes onto that path on arrival. This
+  // emitter stays legacy until the canonical routes are deployed everywhere
+  // that opens these links — emitting a URL the production client cannot yet
+  // route is worse than emitting one it rewrites. See the agent-permalink
+  // work, which owns the switch.
   return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
     suiteId
   )}?project=${encodeURIComponent(projectId)}`;
@@ -152,7 +159,25 @@ function relaxProjectRequirement(schema: unknown): unknown {
   if (!asObject?.shape?.project || typeof asObject.extend !== "function") {
     return schema;
   }
-  return asObject.extend({
+  // Zod 4 keeps `superRefine` checks on the ZodObject itself. Calling
+  // `.extend()` on such an object throws because it could invalidate those
+  // checks; use `.safeExtend()` when available so the gated tool surface can
+  // advertise the same schema without turning the whole agent request into a
+  // 500. The operation's original schema is still used for execution-time
+  // validation, so its cross-field checks remain intact.
+  const extend =
+    typeof (
+      asObject as z.ZodObject<z.ZodRawShape> & {
+        safeExtend?: typeof asObject.extend;
+      }
+    ).safeExtend === "function"
+      ? (
+          asObject as z.ZodObject<z.ZodRawShape> & {
+            safeExtend: typeof asObject.extend;
+          }
+        ).safeExtend
+      : asObject.extend;
+  return extend.call(asObject, {
     project: z
       .string()
       .trim()
@@ -216,7 +241,9 @@ function toWireProposal(proposal: ProposedAction): PublicProposedAction {
  * response-level dedupe, same registry-supplied copy. A second path that minted
  * proposals its own way would be a second set of rules for what a click can do.
  *
- * @returns the action id, or undefined when persistence failed
+ * @returns the minted action id (with the human-readable description), or a
+ * model-facing `error` when nothing was persisted — either a retryable
+ * persistence failure or a fail-closed freeze refusal
  */
 async function persistProposal(opts: {
   operation: AnyPlatformOperation;
@@ -227,20 +254,63 @@ async function persistProposal(opts: {
   turnIdempotencyKey?: string;
   /** Used to FREEZE argument meanings at mint time. See `normalizeArgs`. */
   client?: PlatformApiClient;
-}): Promise<string | undefined> {
+}): Promise<{ actionId: string; description: string } | { error: string }> {
   const { operation, projectId, proposed, surface } = opts;
   const meta = proposalMetaFor(operation.name);
+  const retryableError = {
+    error: `Could not propose ${operation.title} right now. Try again in a moment.`,
+  };
+  const unpinnableError = {
+    error:
+      `Could not pin ${operation.title} to the current registry entry, so ` +
+      "nothing was proposed. Re-read the entry and try again.",
+  };
   // FROZEN BEFORE ANYTHING ELSE, because everything downstream — the derived
   // action id, the stored row, the description a human reads, the arguments
   // approval executes — has to describe the same set. `allAttached: true`
   // would otherwise be re-expanded at click time against whatever is attached
   // THEN, silently widening an approved spend.
-  const input = opts.client
-    ? await meta.normalizeArgs(opts.input, {
-        projectId,
-        client: opts.client,
-      })
-    : opts.input;
+  //
+  // FAIL-CLOSED for entries that declare `requiredFrozenKeys` (the installs):
+  // there the mint-time pin IS what the human approves, so a freeze that
+  // failed — or a caller with no client to freeze with — REFUSES the mint
+  // rather than persisting a proposal whose click would install whatever the
+  // registry row resolves to an hour later.
+  if (meta.requiredFrozenKeys.length > 0 && !opts.client) {
+    logger.warn("[v1/agent] no client to freeze a pin-required proposal", {
+      operation: operation.name,
+    });
+    return unpinnableError;
+  }
+  let input: Record<string, unknown>;
+  try {
+    input = opts.client
+      ? await meta.normalizeArgs(opts.input, {
+          projectId,
+          client: opts.client,
+        })
+      : opts.input;
+  } catch (error) {
+    // Only a `requiredFrozenKeys` entry lets a normalizer throw reach here;
+    // the generic tier degrades inside `normalizeArgs` instead.
+    logger.warn("[v1/agent] refusing to mint an unpinned proposal", {
+      operation: operation.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return unpinnableError;
+  }
+  const missingPins = meta.requiredFrozenKeys.filter(
+    (key) => input[key] === undefined
+  );
+  if (missingPins.length > 0) {
+    // Belt to the throw's braces: a normalizer that RETURNED without its pins
+    // is the same unpinned proposal as one that threw.
+    logger.warn("[v1/agent] frozen proposal input is missing required pins", {
+      operation: operation.name,
+      missing: missingPins,
+    });
+    return unpinnableError;
+  }
   // Derived where possible: same turn + same operation + same arguments must
   // yield the SAME proposal, so a redelivery re-offers the existing control
   // rather than minting a second one. `randomUUID` only for callers with no
@@ -250,7 +320,7 @@ async function persistProposal(opts: {
     ? deriveOperationIdempotencyKey(
         opts.turnIdempotencyKey,
         `proposal:${operation.name}`,
-        input
+        meta.hashInput(input)
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
@@ -258,7 +328,7 @@ async function persistProposal(opts: {
       operation: operation.name,
       length: actionId.length,
     });
-    return undefined;
+    return retryableError;
   }
   try {
     await createProposedAction({
@@ -277,7 +347,7 @@ async function persistProposal(opts: {
       operation: operation.name,
       error: error instanceof Error ? error.message : String(error),
     });
-    return undefined;
+    return retryableError;
   }
 
   // The derived id already collapses repeats in the BACKEND row; this collapses
@@ -307,7 +377,7 @@ async function persistProposal(opts: {
       ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
     });
   }
-  return actionId;
+  return { actionId, description: meta.description(input) };
 }
 
 /**
@@ -396,7 +466,10 @@ function buildGatedProposalTools(opts: {
    * The platform client a proposal normalizer uses to resolve selectors at
    * mint time. Optional so a caller that cannot supply one still gets
    * proposals — with the arguments unfrozen, which is the pre-existing
-   * behaviour and never worse than no proposal at all.
+   * behaviour and never worse than no proposal at all. The exception is an
+   * operation whose entry declares `requiredFrozenKeys` (the registry
+   * installs): those cannot mint unpinned, so without a client
+   * `persistProposal` refuses them instead.
    */
   client?: PlatformApiClient;
   /**
@@ -427,7 +500,6 @@ function buildGatedProposalTools(opts: {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
     if (opts.disabledOperations?.has(operation.name)) continue;
-    const meta = proposalMetaFor(operation.name);
     tools[operation.name] = tool({
       description:
         `${operation.description} ` +
@@ -481,7 +553,7 @@ function buildGatedProposalTools(opts: {
           return { error: `${operation.title} was cancelled.` };
         }
 
-        const actionId = await persistProposal({
+        const minted = await persistProposal({
           operation,
           input: parsed.data,
           projectId: opts.projectId,
@@ -492,15 +564,17 @@ function buildGatedProposalTools(opts: {
             ? { turnIdempotencyKey: opts.turnIdempotencyKey }
             : {}),
         });
-        if (!actionId) {
-          return {
-            error: `Could not propose ${operation.title} right now. Try again in a moment.`,
-          };
+        if ("error" in minted) {
+          // Not "proposed": the model must not tell the user a button exists,
+          // whether persistence failed or the freeze refused the mint.
+          return { error: minted.error };
         }
         return {
           proposed: true,
-          actionId,
-          description: meta.description(parsed.data),
+          actionId: minted.actionId,
+          // The FROZEN description — the same text the approval control shows,
+          // which for an install includes the resolved endpoint host.
+          description: minted.description,
           note: "Awaiting human approval. Do not claim this has started.",
         };
       },

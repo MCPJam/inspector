@@ -3,6 +3,7 @@ export { MCPConformanceSuite } from "./suite.js";
 
 export type {
   MCPCheckCategory,
+  MCPConformanceFixtures,
   MCPCheckEra,
   MCPCheckEras,
   MCPCheckId,
@@ -66,6 +67,26 @@ export type {
   SubscriptionFilterWire,
   SubscriptionNotificationMethod,
 } from "./raw-listen.js";
+
+// The run-wide wire record and the schema validator that reads it. Node-only:
+// Ajv compiles with `new Function`, so neither is exported from the browser
+// entry (see `wire-schema.ts` for the full reasoning).
+export { WireObservationRecorder } from "./wire-observations.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+} from "./wire-observations.js";
+export { WireSchemaValidator, TASKS_EXTENSION_ID } from "./wire-schema.js";
+export type {
+  WireSchemaValidationReport,
+  WireSchemaViolation,
+} from "./wire-schema.js";
+export {
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+} from "./schemas/index.js";
+export type { WireSchemaDocument } from "./schemas/index.js";
 
 export {
   canRunConformance,

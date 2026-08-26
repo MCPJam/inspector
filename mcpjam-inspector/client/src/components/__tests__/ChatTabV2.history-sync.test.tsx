@@ -131,6 +131,10 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 vi.mock("@/lib/session-token", () => ({
   addTokenToUrl: (url: string) => url,
   authFetch: vi.fn(),

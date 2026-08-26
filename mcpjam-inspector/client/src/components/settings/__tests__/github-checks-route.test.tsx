@@ -16,6 +16,7 @@ const {
   mockSetRepoEnabled,
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
+  mockSetRepoConformance,
   mockDisconnectRepo,
   mockConnectRepo,
   mockConnectVerifiedRepo,
@@ -36,6 +37,7 @@ const {
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
+  mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
   // The unverified connect the backend still exposes for the two-deploy
   // window. It is handed to the component so that reaching for it is a
@@ -87,6 +89,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoEnabled: mockSetRepoEnabled,
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
+    setRepoConformance: mockSetRepoConformance,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
     startInstallation: mockStartInstallation,
@@ -302,6 +305,23 @@ describe("GithubChecksRoute availability gate", () => {
     expect(mockSetRepoEnabled).toHaveBeenCalledWith({
       configId: "cfg-1",
       enabled: false,
+    });
+  });
+
+  it("the conformance switch is off by default and opt-in", () => {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    fireEvent.click(
+      screen.getByLabelText(
+        "Enable conformance check for mcpjam/mcp-check-fixture"
+      )
+    );
+
+    expect(mockSetRepoConformance).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      conformanceEnabled: true,
     });
   });
 

@@ -1,0 +1,90 @@
+{
+  "id": "hosted-0018",
+  "note": "tools were withheld: discovery observed fewer tools than exist",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "toolSignals": {
+      "toolsTotalBefore": 12,
+      "toolsExposed": 0
+    },
+    "spans": [],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": false
+      }
+    ],
+    "predicateResults": []
+  },
+  "iteration": {
+    "status": "failed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "failed",
+        "reason": "missingToolCall",
+        "evidence": {
+          "promptIndexes": [
+            0
+          ]
+        }
+      },
+      {
+        "stage": "call",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "response",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "selection",
+    "failureCategory": "selection",
+    "stageAnalyzerVersion": 4
+  }
+}

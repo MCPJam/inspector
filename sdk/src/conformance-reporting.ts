@@ -11,7 +11,9 @@ import {
   scoreFromTasksResult,
   type ConformanceScore,
 } from "./conformance-score.js";
+import { deepJsonSafe } from "./json-safe.js";
 import { redactForTelemetry } from "./telemetry-redaction.js";
+import type { ConformanceProfileStamp } from "./conformance-profile.js";
 import type {
   MCPConformanceResult,
   MCPConformanceSuiteResult,
@@ -98,6 +100,14 @@ export interface ConformanceReportCase {
    * `"could-not-run"` skip means an obligation went untested.
    */
   skipReason?: ConformanceSkipReason;
+  /**
+   * The active profile does not score this check. It ran and its verdict is
+   * reported verbatim, but it must not turn a build red: the frozen profile
+   * exists so a MUST added this week cannot retroactively fail a server that
+   * was green last week, and a reporter that emitted `<failure>` for it would
+   * reopen exactly that hole on the CI channel while the exit code stayed 0.
+   */
+  pending?: boolean;
   durationMs: number;
   description?: string;
   error?: string;
@@ -133,6 +143,18 @@ export interface ConformanceReport {
    * applicable — e.g. OAuth against a server that serves without auth.
    */
   score?: ConformanceScore;
+  /**
+   * Which questions the run asked, and which build asked them (see
+   * `conformance-profile.ts`). Present for the protocol suite (`mcp-protocol`)
+   * and the Tasks suite (`mcp-tasks`); absent for the suites that carry no
+   * profile yet, and for reports produced before profiles existed.
+   *
+   * A reader comparing two reports must check this first, and must check the
+   * ID as well as the version: two scores from different profile versions are
+   * not the same measurement, and two scores from different profile IDs are not
+   * even the same question set.
+   */
+  profile?: ConformanceProfileStamp;
   durationMs: number;
   groups: ConformanceReportGroup[];
   /**
@@ -197,7 +219,11 @@ function buildDetailPayload(parts: Record<string, unknown>): unknown {
     return undefined;
   }
 
-  return Object.fromEntries(entries);
+  // Reports get persisted, and the persistence layer rejects class instances
+  // (a raw MCPAuthError in `errorDetails` used to fail the whole report
+  // write). The check helpers already sanitize what they attach; this is the
+  // shared last line for every suite's detail payload.
+  return deepJsonSafe(Object.fromEntries(entries));
 }
 
 function summarizeHttpAttempts(
@@ -218,12 +244,16 @@ function summarizeHttpAttempts(
     .join("\n");
 }
 
-function reportCaseFromMcpCheck(check: MCPCheckResult): ConformanceReportCase {
+function reportCaseFromMcpCheck(
+  check: MCPCheckResult,
+  pendingIds?: ReadonlySet<string>,
+): ConformanceReportCase {
   return {
     id: check.id,
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(pendingIds?.has(check.id) ? { pending: true } : {}),
     ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
@@ -239,15 +269,26 @@ function reportCaseFromMcpCheck(check: MCPCheckResult): ConformanceReportCase {
   };
 }
 
-/** Apps and Tasks checks share a result shape, so they share a case mapper. */
+/**
+ * Apps and Tasks checks share a result shape, so they share a case mapper.
+ *
+ * `pendingIds` is threaded here for the same reason it is on the protocol
+ * mapper: JUnit renders a pending case as `<skipped>`, and without it a failing
+ * PENDING Tasks check emitted `<failure>` while the run exited 0 — reopening the
+ * retroactive-failure hole the frozen profile exists to close, on the one
+ * channel most teams gate on. Apps carries no profile yet, so it passes
+ * `undefined` and nothing changes there.
+ */
 function reportCaseFromCheck(
   check: MCPAppsCheckResult | MCPTasksCheckResult,
+  pendingIds?: ReadonlySet<string>,
 ): ConformanceReportCase {
   return {
     id: check.id,
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(pendingIds?.has(check.id) ? { pending: true } : {}),
     ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
@@ -376,7 +417,12 @@ function mcpGroupFromResult(
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.checks.map(reportCaseFromMcpCheck),
+    cases: (() => {
+      const pendingIds = new Set(result.profile?.pendingCheckIds ?? []);
+      return result.checks.map((check) =>
+        reportCaseFromMcpCheck(check, pendingIds),
+      );
+    })(),
   };
 }
 
@@ -386,6 +432,13 @@ function appsGroupFromResult(
   index: number,
   idPrefix = "apps",
 ): ConformanceReportGroup {
+  // Read off the RESULT rather than passed in: the Tasks runner stamps its own
+  // `mcp-tasks` profile, and reading it here keeps the two from disagreeing
+  // about which checks that run scored.
+  const pendingIds = new Set(
+    (result as { profile?: { pendingCheckIds?: string[] } }).profile
+      ?.pendingCheckIds ?? [],
+  );
   return {
     id: `${idPrefix}-${index + 1}`,
     title,
@@ -393,7 +446,9 @@ function appsGroupFromResult(
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.checks.map(reportCaseFromCheck),
+    cases: result.checks.map((check) =>
+      reportCaseFromCheck(check, pendingIds),
+    ),
   };
 }
 
@@ -478,6 +533,26 @@ function isOAuthSuiteResult(
   );
 }
 
+/**
+ * The profile every run in a matrix shares, if they share one. A single run
+ * without a stamp is enough to make the answer "none": the pooled score then
+ * mixes a scored check from one run with a pending one from another, and a
+ * label that hid that would be worse than no label.
+ */
+function sharedProfileFields(
+  results: ReadonlyArray<{ profile?: ConformanceProfileStamp }>,
+): { profile?: ConformanceProfileStamp } {
+  const first = results[0]?.profile;
+  if (!first) return {};
+  const same = results.every(
+    (entry) =>
+      entry.profile?.profileId === first.profileId &&
+      entry.profile?.profileVersion === first.profileVersion &&
+      entry.profile?.manifestDigest === first.manifestDigest,
+  );
+  return same ? { profile: first } : {};
+}
+
 function createProtocolReport(
   result: MCPConformanceResult | MCPConformanceSuiteResult,
 ): ConformanceReport {
@@ -491,6 +566,11 @@ function createProtocolReport(
       score: pooledConformanceScore(
         result.results.map(scoreFromProtocolResult),
       ),
+      // Only when every run in the matrix asked the same questions. A suite
+      // whose runs disagree (different profile versions, or one run without a
+      // stamp) has no single profile to name, and naming one of them would
+      // label the pooled number with an identity it does not have.
+      ...sharedProfileFields(result.results),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -505,6 +585,7 @@ function createProtocolReport(
     passed: result.passed,
     ...outcomeFields(result),
     score: scoreFromProtocolResult(result),
+    ...(result.profile ? { profile: result.profile } : {}),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
   };
@@ -960,6 +1041,9 @@ export function toConformanceReport(
       passed: result.passed,
       ...outcomeFields(result),
       score: scoreFromTasksResult(result),
+      // `mcp-tasks`, never `mcp-protocol` — the two suites are separately
+      // versioned so a Tasks addition cannot move the protocol denominator.
+      ...(result.profile ? { profile: result.profile } : {}),
       durationMs: result.durationMs,
       groups: [
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
@@ -994,6 +1078,18 @@ function renderConformanceTestCase(
 
   if (testCase.status === "skipped") {
     return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}">\n      <skipped/>\n    </testcase>`;
+  }
+
+  // A pending check renders as `<skipped>` carrying its real verdict, never as
+  // `<failure>`. The run's exit code already refuses to fail on it; emitting a
+  // failure here would turn the CI job red anyway — the retroactive-failure
+  // hole the frozen profile exists to close, reopened on the one channel most
+  // teams actually gate on.
+  if (testCase.pending) {
+    const note = escapeXml(
+      `unscored by the active profile${testCase.error ? `: ${testCase.error}` : ""}`,
+    );
+    return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}">\n      <skipped message="${note}"/>\n    </testcase>`;
   }
 
   if (testCase.status === "failed") {
@@ -1041,11 +1137,14 @@ function renderConformanceTestSuite(
 ): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
+  // The tallies follow what the cases RENDER as, or the attribute would
+  // contradict the elements beneath it: a pending check is emitted as
+  // `<skipped>` regardless of its verdict, so it counts as skipped here.
   const failures = group.cases.filter(
-    (entry) => entry.status === "failed",
+    (entry) => entry.status === "failed" && !entry.pending,
   ).length;
   const skipped = group.cases.filter(
-    (entry) => entry.status === "skipped",
+    (entry) => entry.status === "skipped" || entry.pending,
   ).length;
   const time = (group.durationMs / 1000).toFixed(3);
   const classname = group.target || `mcpjam.${sanitizeToken(group.id)}`;
@@ -1086,14 +1185,21 @@ export function renderConformanceReportJUnitXml(
     (sum, group) => sum + group.cases.length,
     0,
   );
+  // Same rule as the per-suite tallies: pending cases render as `<skipped>`,
+  // so they are counted as skipped and never as failures.
   const failures = redactedReport.groups.reduce(
     (sum, group) =>
-      sum + group.cases.filter((entry) => entry.status === "failed").length,
+      sum +
+      group.cases.filter((entry) => entry.status === "failed" && !entry.pending)
+        .length,
     0,
   );
   const skipped = redactedReport.groups.reduce(
     (sum, group) =>
-      sum + group.cases.filter((entry) => entry.status === "skipped").length,
+      sum +
+      group.cases.filter(
+        (entry) => entry.status === "skipped" || entry.pending,
+      ).length,
     0,
   );
   const time = (redactedReport.durationMs / 1000).toFixed(3);

@@ -10,6 +10,21 @@ const telemetryDisabled = {
   },
 };
 
+/** Cloud audience lines share stderr with structured errors. Parse the JSON object. */
+function parseStderrJson(stderr: string): {
+  error: { code: string; message: string };
+} {
+  const line = stderr
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((entry) => entry.startsWith("{"));
+  if (!line) {
+    throw new Error(`no JSON object in stderr:\n${stderr}`);
+  }
+  return JSON.parse(line);
+}
+
 async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   result: T;
   stdout: string;
@@ -291,6 +306,7 @@ function projectsArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "projects",
     ...args,
     "--api-key",
@@ -317,7 +333,7 @@ test("projects commands honor the global timeout option", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
     assert.match(payload.error.message, /20ms/);
   } finally {
@@ -368,7 +384,7 @@ test("command-level deadline spanning multiple requests still reports TIMEOUT", 
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
   } finally {
     server.closeAllConnections?.();
@@ -422,14 +438,14 @@ test("projects list emits items as JSON and a table as human output", async () =
   }
 });
 
-test("projects list --organization-id sends the filter, and refuses a blank one", async () => {
+test("projects list --org sends the filter, and refuses a blank one", async () => {
   const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "org-1",
           "--format",
           "json",
@@ -454,7 +470,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "   ",
           "--format",
           "json",
@@ -463,6 +479,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       ),
     );
     assert.notEqual(blankRun.result.exitCode, 0);
+    assert.match(blankRun.stderr, /--org/);
   } finally {
     await fixture.close();
   }
@@ -514,7 +531,7 @@ test("projects servers surfaces unknown projects as NOT_FOUND", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "NOT_FOUND");
     assert.match(payload.error.message, /Available projects/);
   } finally {
@@ -697,7 +714,7 @@ test("server connect rejects a URL that is not http(s) at the keyboard", async (
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "file:///etc/passwd",
@@ -732,7 +749,7 @@ test("server connect prints the authorization link even with --no-browser", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -772,7 +789,7 @@ test("server connect names the account and deployment the link belongs to", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -814,7 +831,7 @@ test("server connect still prints the link when the account lookup fails", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -831,7 +848,7 @@ test("server connect still prints the link when the account lookup fails", async
     // The connection request already succeeded. Failing the command because a
     // decorative lookup failed would trade a working result for none.
     assert.match(run.stderr, /connect\/server\/tok/);
-    assert.match(run.stderr, /mcpjam whoami/);
+    assert.match(run.stderr, /mcpjam cloud whoami/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();
@@ -848,7 +865,7 @@ test("server connect-status reads an existing request", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect-status",
             "--request",
             "scr_1",
@@ -886,7 +903,7 @@ test("server connect stops watching once the request settles", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -923,7 +940,7 @@ test("server connect exits non-zero when it gave up rather than finished", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1023,7 +1040,7 @@ test("server connect honors --project instead of silently ignoring it", async ()
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1070,7 +1087,7 @@ test("a failing command does not leave its exit code on the next main()", async 
         [
           ...projectsArgv(
             gaveUp.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1144,7 +1161,7 @@ test("Ctrl-C during an in-flight poll returns without waiting out the request", 
         [
           ...projectsArgv(
             `http://127.0.0.1:${port}/api/v1`,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",

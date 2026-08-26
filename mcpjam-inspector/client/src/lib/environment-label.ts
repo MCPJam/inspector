@@ -40,6 +40,7 @@ export type EnvironmentLabelRow = Pick<
       | "skillSelection"
       | "pluginVersionIds"
       | "computerEnvironmentId"
+      | "modelId"
     >
   >;
 
@@ -59,6 +60,8 @@ export interface EnvironmentLabelContext {
   /** Absent when the computers flag is off or no loaded row pins an image. */
   imageName?: (imageId: string) => string | undefined;
   computersEnabled?: boolean;
+  /** Catalog display name for a stored model override. Omit when unused. */
+  modelName?: (modelId: string) => string | undefined;
 }
 
 /** Shown when a row's host has been deleted out from under it. */
@@ -126,9 +129,20 @@ export function environmentLabel(
   // pay for the host query. "Unknown client" would be a lie there; it means
   // "the host was deleted", which we cannot know without the lookup.
   if (!ctx.hostName) return GENERIC_ADHOC_LABEL;
-  return (
-    trimOrUndefined(ctx.hostName(environment.hostId)) ?? UNKNOWN_HOST_LABEL
-  );
+  const host =
+    trimOrUndefined(ctx.hostName(environment.hostId)) ?? UNKNOWN_HOST_LABEL;
+  const modelId = trimOrUndefined(environment.modelId);
+  if (!modelId) return host;
+  const model =
+    trimOrUndefined(ctx.modelName?.(modelId)) ?? compactModelIdTail(modelId);
+  return `${host} · ${model}`;
+}
+
+/** Segment after the last `/` — mirrors backend `environmentLabel`. */
+export function compactModelIdTail(modelId: string): string {
+  const trimmed = modelId.trim();
+  const slash = trimmed.lastIndexOf("/");
+  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
 }
 
 /** `"Server group attached"` vs `"Client's own servers"`. */
