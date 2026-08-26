@@ -23,18 +23,25 @@ every case carries an `import.status` you can defend.
    conversion into declarative YAML needs neither executed. If a mapping seems
    to require executing something, that mapping is `unsupported` — that is the
    correct outcome, not a blocker.
-2. **`exact` must be earned.** `exact` is not "I believe these two tests mean
-   the same thing". It is a claim licensed by a **cited structural rule** from
-   the format's recipe below. If you cannot cite one, the status is
-   `approximated`. You may not self-certify fidelity.
+2. **`exact` must be earned, and it stays a CLAIM.** `exact` is not "I believe
+   these two tests mean the same thing". It is a claim licensed by a **cited
+   structural rule** from the format's recipe below, and the rule goes in
+   `note` — a `status: exact` with no note is refused by the contract. If you
+   cannot cite a rule, the status is `approximated`. You may not self-certify
+   fidelity, and nothing downstream will: MCPJam stores what you claimed and
+   says "converter-claimed exact" everywhere it shows it. It never verifies
+   semantic equivalence, and no surface calls it "verified" or "accepted".
 3. **Default pessimistically.** Unsure → `approximated`. Semantic that MCPJam
    cannot represent → `unsupported`. Depends on something only live discovery or
    executed code can settle (tool names, server names, fixture contents) →
    `unresolved`.
 4. **Non-exact cases do not gate anything.** Mark every `approximated`,
-   `unsupported` and `unresolved` case `disabled: true`. It stays in the file,
-   and is not uploaded or run until a human reviews it. Only `exact` cases run
-   unreviewed.
+   `unsupported` and `unresolved` case `disabled: true`. It stays in the file
+   and is not RUN until a human reviews it. It IS still synced: every declared
+   case is persisted with its claim, disabled or not, so parking a case never
+   costs it its hosted history. Only `exact` cases run with no human decision
+   at all — and only when their deterministic tool references still resolve
+   against the live target (see [Running it](#running-it)).
 5. **Never invent a reference.** Tool names, server names and model ids you did
    not read in the source are not yours to guess. Ask, or leave the case
    `unresolved`.
@@ -189,7 +196,10 @@ Required as soon as one case carries `import`. `sourceHash` makes a re-import
 identifiable: the same source bytes converted twice are the same import, and a
 changed `sourceHash` with an unchanged suite is a re-import that needs auditing.
 `reportHash` points at the detailed mapping report, which lives beside the suite
-rather than inside it so the file stays readable and diffable.
+rather than inside it so the file stays readable and diffable. The report stays
+in Git and is never uploaded: MCPJam's hosted record is the per-case claim plus
+the frozen run decision, and `reportHash` is the pointer that ties the two
+together without copying one into the other.
 
 Compute both from the bytes on disk, e.g. `sha256sum <path>`, and record them as
 `sha256:<hex>`. Set `model` to the model that assisted the conversion when one
@@ -201,7 +211,8 @@ did, and `sourceFormatVersion` when the source declares its own version.
 npx mcpjam cloud eval validate --file .mcpjam/evals/<suite>.yaml --format human
 ```
 
-Offline: no auth, no `--project`, no network. Exit codes:
+Offline by default: no auth, no network, and nothing leaves the machine. Exit
+codes:
 
 | Exit | Meaning | What to do |
 | --- | --- | --- |
@@ -213,12 +224,27 @@ Loop: convert → validate → read every finding (not just the first) → repai
 re-run, until `0`. `--format json` gives the same findings as an envelope when
 you want to iterate programmatically.
 
-**What exit 0 does not mean.** The validator checks the file against the
-contract. It does **not** re-resolve tool names, server references or fixtures
-against a project's live discovery, so a suite that validates can still fail to
-run against a real server. That is why tool references you could not confirm are
-`unresolved` and disabled: nothing in this loop will catch an invented tool name
-for you.
+**What exit 0 does not mean.** The offline validator checks the file against the
+contract. It does **not** re-resolve tool names, server references or fixtures,
+so a suite that validates can still fail to run against a real server. That is
+why tool references you could not confirm are `unresolved` and disabled:
+nothing in the offline loop will catch an invented tool name for you.
+
+**Checking the names against a real project.** Add `--project <id-or-name>` to
+resolve every deterministic `toolCall` step against that project's live tool
+inventory, per target rather than over a union of them:
+
+```bash
+npx mcpjam cloud eval validate --file .mcpjam/evals/<suite>.yaml --project <project>
+```
+
+This authenticates and makes network calls — which is exactly why it is opt-in
+and why the flag alone turns it on. It only inspects `toolCall` steps: a tool
+named in prompt text is a hint the model may or may not act on, and an
+assertion about a tool is an expectation a case may legitimately fail at run
+time, so neither is treated as a deterministic reference. An unresolved
+reference is a verdict on the file (exit `1`); an auth or network failure is a
+command error, never a finding about your YAML.
 
 ## Running it
 
@@ -226,23 +252,61 @@ for you.
 mcpjam cloud eval run --file .mcpjam/evals/<suite>.yaml
 ```
 
-This authenticates, uploads the file as a hosted suite owned by `suite.id`, and
-runs the **enabled** cases. Notes that bite imports specifically: a
+This authenticates, uploads the file as a hosted suite owned by `suite.id`,
+syncs **every declared case with its `import` claim** — disabled ones included —
+and runs the **enabled** ones. Notes that bite imports specifically: a
 contract-invalid file exits `2` here (exit `1` is reserved for a verdict);
 `repetitions` above 10 are refused rather than clamped; `defaults.toolPolicy` and
 non-empty `defaults.validity` gates are refused; a case the file no longer
-declares is deleted from the hosted suite, while a `disabled` case is kept with
-its history only if it had already been uploaded while enabled. An initially
-disabled case never receives a hosted row. A file with no enabled cases is
+declares is deleted from the hosted suite. A file with no enabled cases is
 refused, so an import in which nothing reached `exact` cannot launch — review
 something first.
 
-`eval run --file` still batch-creates the enabled cases, and that API body drops
-each case's `import` block. The per-case mapping record therefore lives in the
-local suite file and mapping report, not on the platform. The file path is still
-preferred because it carries suite-level provenance and the declared disabled
-set. Persisting per-case mapping status at the API boundary is a later import
-step, not part of this skill.
+**Live tool resolution is mandatory here.** Every file run performs the same
+check `--project` performs, before it writes anything. There is no flag to skip
+it. What happens next depends on the case:
+
+- A **selected** case whose deterministic reference does not resolve refuses
+  the launch outright, before the suite is synced, so a bad reference costs
+  nothing.
+- An **imported, unselected** case has its claim rewritten to `unresolved`
+  (keeping `sourceCaseKey`) and is still persisted, so the hosted record says
+  what MCPJam found rather than still asserting a claim about a tool that is
+  not there.
+- A **native** case never acquires an `import` block from this. Absence of a
+  claim means "authored by hand", and manufacturing one would destroy that
+  fact permanently.
+
+**Approximations need a fresh approval on every run.** A selected
+`approximated` case refuses unless this invocation approves it by authored
+case id:
+
+```bash
+mcpjam cloud eval run --file .mcpjam/evals/<suite>.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-1421"
+```
+
+`--allow-approximated` is repeatable and file-run only; `--approval-reason` is
+required with it and bounded at 500 characters. Approving a native, `exact`,
+`unsupported`, `unresolved`, disabled, unselected or unknown case is refused
+before anything is billed. The approver and the timestamp are derived by the
+server and frozen into the run's own snapshot — you never supply either.
+
+**There is no persistent acceptance.** The approval belongs to that one run. Edit
+the suite, re-sync, or launch again, and the flags are required again. That is
+the whole distinction: an approximation is approved for a RUN, never accepted
+for a case.
+
+**A selected `unsupported` or `unresolved` case refuses.** Neither can be
+approved into running: approval covers a case whose behaviour was approximated,
+not one whose behaviour is missing. Disable it, or fix the mapping.
+
+**Gating.** `mcpjam cloud eval gate --run <id>` returns exit `3` — not gateable
+— when the run's import evidence is incomplete, before any verdict or waiver is
+considered, and a waiver cannot override it. Import completeness is evidence
+eligibility, not a measurement of the server, so it is never reported as exit
+`1`.
 
 ## Worked example
 

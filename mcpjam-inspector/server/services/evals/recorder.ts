@@ -371,6 +371,7 @@ export const startSuiteRunWithRecorder = async ({
   sourceHash,
   skillsOverride,
   ephemeralEnvironment,
+  importApprovals,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -487,6 +488,20 @@ export const startSuiteRunWithRecorder = async ({
    * is not a suite member. Forwarded to `startTestSuiteRun`.
    */
   ephemeralEnvironment?: boolean;
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted test-case id.
+   *
+   * Forwarded to `startTestSuiteRun.importApprovals`, which validates them
+   * against the cases this run will actually execute, derives the approver
+   * from the authenticated launcher, stamps the time, and freezes the
+   * resulting decision into the run's own case snapshot. Nothing here is
+   * persisted on the case: a later run needs a new approval.
+   *
+   * Must be declared here or a reconstruction of the mutation args would
+   * silently drop it — and a dropped approval surfaces to the caller as the
+   * backend refusing a run they did approve.
+   */
+  importApprovals?: Array<{ testCaseId: string; reason: string }>;
 }) => {
   let response: any;
   try {
@@ -521,6 +536,9 @@ export const startSuiteRunWithRecorder = async ({
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+        ...(importApprovals && importApprovals.length
+          ? { importApprovals }
+          : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );

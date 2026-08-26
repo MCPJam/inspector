@@ -48,7 +48,11 @@ import {
   readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
-import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import {
+  evalSuiteFileCaseImportSchema,
+  IMPORT_MAPPING_STATUSES,
+  opaqueIdSchema,
+} from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
@@ -111,7 +115,10 @@ import {
 } from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
-import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import {
+  translateConvexWriteError as translateConvexError,
+  translateImportIneligibleError,
+} from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
@@ -1373,8 +1380,133 @@ function toRunDto(run: RunDoc) {
     // the run rather than to grant a waiver; a waiver its readers cannot see
     // is not a visible waiver.
     gateWaiver: toGateWaiverDto(run.gateWaiver),
+    // Whether this run's imported cases carry evidence a gate may rely on.
+    //
+    // OMITTED, not defaulted, when the platform did not report one: absence
+    // says "this deployment has no opinion", and `{status: "legacy"}` says
+    // "there were no imported cases". A gate that read the second where the
+    // first was true would vouch for a run nobody had checked.
+    ...toImportEligibilityProjection(run.importEligibility),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+  };
+}
+
+/**
+ * The eligibility projection, field by field, or nothing.
+ *
+ * Explicit rather than a spread of whatever the platform sent. This object
+ * decides whether a run may gate a deploy, so its shape is part of the public
+ * contract in a way a passthrough could not keep: an internal field added
+ * upstream would be published here without anyone deciding to, and a MALFORMED
+ * one would be republished as though it had been checked.
+ *
+ * A payload that fails these checks is dropped entirely rather than
+ * partially projected. A gate cannot tell a missing field from a satisfied
+ * one, so half a projection is worse than none — and none is already handled
+ * correctly downstream as "older deployment, behave as before".
+ */
+function toImportEligibilityProjection(
+  raw: unknown,
+): { importEligibility?: Record<string, unknown> } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const source = raw as Record<string, unknown>;
+  const status = source.status;
+  if (
+    status !== "legacy" &&
+    status !== "eligible" &&
+    status !== "incomplete"
+  ) {
+    return {};
+  }
+  if (typeof source.gateable !== "boolean") return {};
+  if (typeof source.importedCaseCount !== "number") return {};
+
+  // A required list is validated WHOLE, exactly like the scalars above.
+  //
+  // Coercing an absent or malformed list to `[]` would publish a projection
+  // that reads as complete: an `eligible` run whose frozen approval receipts
+  // silently became an empty array still says "imported cases ran with a
+  // recorded decision", while the audit that made them runnable is simply
+  // gone, and nothing on the wire distinguishes "approved by nobody" from
+  // "we could not read who approved". `undefined` is the ONLY way this
+  // function reports "no opinion", and a payload that is present but wrong
+  // must not borrow it.
+  const stringList = (value: unknown): string[] | undefined =>
+    Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === "string")
+      ? (value as string[])
+      : undefined;
+
+  const claimedExactCaseIds = stringList(source.claimedExactCaseIds);
+  if (claimedExactCaseIds === undefined) return {};
+  const approvedApproximationCaseIds = stringList(
+    source.approvedApproximationCaseIds,
+  );
+  if (approvedApproximationCaseIds === undefined) return {};
+
+  if (!Array.isArray(source.approvedApproximationReceipts)) return {};
+  const receipts: Array<Record<string, unknown>> = [];
+  for (const entry of source.approvedApproximationReceipts) {
+    if (!entry || typeof entry !== "object") return {};
+    const receipt = entry as Record<string, unknown>;
+    // Every field of a receipt is load-bearing — who, when, why, and for which
+    // case. A receipt missing any of them is not a weaker receipt; it is one a
+    // reader would have to guess at. Dropping just that ENTRY would leave
+    // `approvedApproximationCaseIds` naming a case with no receipt to explain
+    // it, so the whole projection goes instead of a self-contradicting one.
+    if (
+      typeof receipt.testCaseId !== "string" ||
+      typeof receipt.approvedBy !== "string" ||
+      typeof receipt.approvedAt !== "number" ||
+      typeof receipt.reason !== "string"
+    ) {
+      return {};
+    }
+    receipts.push({
+      testCaseId: receipt.testCaseId,
+      ...(typeof receipt.caseKey === "string"
+        ? { caseKey: receipt.caseKey }
+        : {}),
+      ...(typeof receipt.sourceCaseKey === "string"
+        ? { sourceCaseKey: receipt.sourceCaseKey }
+        : {}),
+      approvedBy: receipt.approvedBy,
+      approvedAt: receipt.approvedAt,
+      reason: receipt.reason,
+    });
+  }
+
+  if (!Array.isArray(source.issues)) return {};
+  const issues: Array<Record<string, unknown>> = [];
+  for (const entry of source.issues) {
+    if (!entry || typeof entry !== "object") return {};
+    const issue = entry as Record<string, unknown>;
+    // `code` is what names the problem. An issue without one explains nothing,
+    // and a partial issue list understates how much is wrong with the run.
+    if (typeof issue.code !== "string") return {};
+    issues.push({
+      code: issue.code,
+      ...(typeof issue.testCaseId === "string"
+        ? { testCaseId: issue.testCaseId }
+        : {}),
+      ...(typeof issue.caseKey === "string" ? { caseKey: issue.caseKey } : {}),
+      ...(typeof issue.toolName === "string"
+        ? { toolName: issue.toolName }
+        : {}),
+    });
+  }
+
+  return {
+    importEligibility: {
+      status,
+      gateable: source.gateable,
+      importedCaseCount: source.importedCaseCount,
+      claimedExactCaseIds,
+      approvedApproximationCaseIds,
+      approvedApproximationReceipts: receipts,
+      issues,
+    },
   };
 }
 
@@ -1573,7 +1705,45 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
   return steps;
 }
 
+/**
+ * The three CLAIM fields of a stored import record, and nothing else.
+ *
+ * The persisted row is a superset: alongside the claim it can carry acceptance
+ * bookkeeping the platform wrote (`acceptedBy`, `acceptedAt`, and friends).
+ * Spreading the stored object would publish internal fields the public contract
+ * never promised and cannot take back, so this picks the three fields by name
+ * and validates the status against the closed vocabulary rather than trusting
+ * whatever the row happens to hold.
+ *
+ * Returns `undefined` for a native case and for a row whose status is not one
+ * we know — an unreadable claim is reported as no claim rather than as a claim
+ * whose meaning the caller has to guess.
+ */
+function toPublicCaseImportClaim(
+  raw: unknown,
+): { status: string; sourceCaseKey?: string; note?: string } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const status = record.status;
+  if (
+    typeof status !== "string" ||
+    !(IMPORT_MAPPING_STATUSES as readonly string[]).includes(status)
+  ) {
+    return undefined;
+  }
+  return {
+    status,
+    ...(typeof record.sourceCaseKey === "string" && record.sourceCaseKey
+      ? { sourceCaseKey: record.sourceCaseKey }
+      : {}),
+    ...(typeof record.note === "string" && record.note
+      ? { note: record.note }
+      : {}),
+  };
+}
+
 function toCaseDto(testCase: CaseDoc) {
+  const importClaim = toPublicCaseImportClaim(testCase.import);
   return {
     id: String(testCase._id),
     // The EFFECTIVE declared identity — what the case answers to in a suite
@@ -1627,6 +1797,7 @@ function toCaseDto(testCase: CaseDoc) {
           },
         }
       : {}),
+    ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
   };
@@ -1904,6 +2075,24 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
+/**
+ * The per-case IMPORT CLAIM, as the public API accepts it.
+ *
+ * Reused verbatim from the suite-file contract rather than restated: a claim a
+ * converter can write into a YAML file is exactly a claim it can POST, and two
+ * spellings of the same object is how the file loader and the API end up
+ * disagreeing about whether a 512-character source key is legal.
+ *
+ * CLAIM-ONLY, and the closed object is the enforcement. `exact` here means
+ * CONVERTER-CLAIMED exact — MCPJam has verified nothing — so the acceptance
+ * side of the record (who approved, when, and why) is deliberately
+ * unrepresentable in a request body: approvals are per-run decisions the
+ * platform derives from the authenticated launcher, and a caller-supplied
+ * `approvedBy` would file one person's approval under another's name. A body
+ * that carries one is a 400, never a silently-stripped field.
+ */
+const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
+
 const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
@@ -1918,8 +2107,20 @@ const createCaseSchema = z.strictObject({
    * same request.
    */
   id: opaqueIdSchema.optional(),
+  /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
+  import: publicCaseImportSchema.optional(),
 });
-const updateCaseSchema = z.strictObject(publicCaseBodyShape);
+const updateCaseSchema = z.strictObject({
+  ...publicCaseBodyShape,
+  /**
+   * The converter's CLAIM about this case, or `null` to remove one.
+   *
+   * Omitted means unchanged; `null` means the case no longer carries a claim.
+   * The two are different requests and a PATCH that conflated them would erase
+   * provenance on every unrelated edit.
+   */
+  import: z.union([publicCaseImportSchema, z.null()]).optional(),
+});
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
@@ -2113,8 +2314,19 @@ const generateCasesSchema = z
  * body. `defaultModels` (resolved from the suite when the body omits models)
  * is only used for create — update leaves models untouched when omitted.
  */
+/**
+ * The case body either write path may hand to {@link buildCaseMutationArgs}.
+ *
+ * Create's `import` is a claim; PATCH's is a claim OR `null` (remove it), so
+ * the two schemas do not infer to one type. Widened here rather than casting at
+ * the PATCH call site, which would lose exactly the `null` this has to carry.
+ */
+type CaseMutationBody = Omit<z.infer<typeof createCaseSchema>, "import"> & {
+  import?: z.infer<typeof publicCaseImportSchema> | null;
+};
+
 function buildCaseMutationArgs(
-  body: z.infer<typeof createCaseSchema>,
+  body: CaseMutationBody,
   opts: {
     forCreate: boolean;
     defaultModels?: Array<{ model: string; provider: string }>;
@@ -2214,6 +2426,18 @@ function buildCaseMutationArgs(
       body.checks === null
         ? null
         : { mode: body.checks.mode, list: body.checks.list };
+
+  // The import CLAIM, forwarded by name.
+  //
+  // Explicit rather than spread through, because `args` is built key by key
+  // from a strict schema: a field nobody names here never reaches Convex, and
+  // "the claim silently didn't persist" is indistinguishable from "the case was
+  // authored natively" once the write has landed.
+  //
+  // `null` is a real value on PATCH (remove the claim) and is unrepresentable
+  // on create, where `createCaseSchema` rejects it before this runs — so
+  // `undefined` is the only "leave it alone", exactly as the mutation reads it.
+  if (body.import !== undefined) args.import = body.import;
 
   return args;
 }
@@ -2909,7 +3133,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     );
   } catch (error) {
     releaseSlotOnce();
-    throw error;
+    // An import refusal is actionable BY THE CALLER — approve the case for this
+    // run or exclude it — so it must not escape as a 500.
+    throw translateImportIneligibleError(error) ?? error;
   }
 });
 
@@ -2954,6 +3180,25 @@ const createEvalRunGroupSchema = z.object({
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
   idempotencyKey: z.string().min(1).max(256).optional(),
   ephemeralEnvironment: z.boolean().optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted case id.
+   *
+   * The SAME approvals go to every target. A case's approximation is
+   * approximated the same way on each of them, so approving per target would
+   * make one human decision into N, and the caller who approved it once meant
+   * it once.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict(),
+    )
+    .min(1)
+    .optional(),
 })
   // STRICT, like every other v1 write body: the published contract says an
   // unknown key is invalid, and the two knobs this route deliberately omits
@@ -3210,6 +3455,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           ...(body.ephemeralEnvironment === true
             ? { ephemeralEnvironment: true }
             : {}),
+          ...(body.importApprovals
+            ? { importApprovals: body.importApprovals }
+            : {}),
           // PER-TARGET run key derived from the group key. This is what makes a
           // replay after a crash mid-launch safe: each target dedupes at the
           // RUN level against the run the first attempt created, instead of
@@ -3255,7 +3503,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // will never run — decrement HERE or the group's slot outlives it.
       releaseRunGroupSlotRef(slot);
       failedCount += 1;
-      const failure = describeLaunchFailure(error);
+      // Same translation as the single route: `describeLaunchFailure` keeps a
+      // `WebRouteError`'s code and message and flattens everything else to
+      // `INTERNAL_ERROR`, so the refusal has to become one first or the entry
+      // reports a server fault for a decision the caller can make.
+      const failure = describeLaunchFailure(
+        translateImportIneligibleError(error) ?? error,
+      );
       logger.warn("[v1 evals] eval run group target failed to launch", {
         projectId,
         suiteId: body.suiteId,
