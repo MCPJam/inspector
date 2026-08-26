@@ -91,6 +91,9 @@ describe("EvalsHeader", () => {
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();
+    // Both crumbs after "Evaluate" are conditional, so the separator has to be
+    // too — otherwise the trail reads "Evaluate /" until the title resolves.
+    expect(screen.queryByText("/")).toBeNull();
   });
 
   it("renders a clickable suite crumb so nested pages can go back", () => {

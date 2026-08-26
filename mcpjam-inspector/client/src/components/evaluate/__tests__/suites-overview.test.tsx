@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "../types";
+import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "../../evals/types";
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",

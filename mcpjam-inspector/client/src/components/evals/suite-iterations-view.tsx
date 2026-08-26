@@ -49,7 +49,7 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
-import { SuiteDetailOverview } from "./suite-detail-overview";
+import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
@@ -272,6 +272,7 @@ export function SuiteIterationsView({
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  suiteDetailOverview = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -341,6 +342,15 @@ export function SuiteIterationsView({
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /**
+   * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
+   * history, cases — instead of the unified dashboard on suite overview.
+   *
+   * OFF by default on purpose. This is a shared component: the shipped
+   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
+   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   */
+  suiteDetailOverview?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -848,10 +858,21 @@ export function SuiteIterationsView({
     runsViewMode,
   ]);
 
-  // Evaluate suite overview uses the checkout-flow identity + run history +
-  // cases layout. Run detail still folds into SuiteDashboard.
+  // Evaluate (New) suite overview uses the checkout-flow identity + run
+  // history + cases layout. Run detail still folds into SuiteDashboard.
+  //
+  // `viewMode` falls through to "overview" for the suite-edit route, so edit
+  // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
+  // edit-mode chrome lives (the name editor and Done), and the only mount
+  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
+  // the settings sheet headerless and the suite's client/model/server
+  // composer unreachable from both routes.
   const showEvaluateSuiteDetail =
-    hideRunActions && !caseListInSidebar && viewMode === "overview";
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "overview";
 
   const showSuiteHeader =
     !showEvaluateSuiteDetail &&
@@ -1034,10 +1055,11 @@ export function SuiteIterationsView({
   // split (rail included), which felt like a page transition on every click.
   const showFoldedUnifiedDashboard =
     foldRunDetail &&
-    viewMode === "run-detail" &&
-    selectedRunDetails &&
-    !selectedCompareBaseRunId &&
-    !selectedRunTestCaseId;
+    (viewMode === "overview" ||
+      (viewMode === "run-detail" &&
+        selectedRunDetails &&
+        !selectedCompareBaseRunId &&
+        !selectedRunTestCaseId));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1235,7 +1257,20 @@ export function SuiteIterationsView({
                 )}
               </div>
             ) : viewMode === "overview" ? (
-              runsViewMode === "runs" ? (
+              hideRunActions && !caseListInSidebar ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+                >
+                  {renderUnifiedDashboard()}
+                </motion.div>
+              ) : runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}
