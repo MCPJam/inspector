@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronRight,
   Loader2,
@@ -87,6 +87,16 @@ export function PluginGroupCard({
   initiallyExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
+  // Follow a CHANGE of target, then get out of the way.
+  //
+  // The state seeds from the prop, so a card already mounted when the viewer
+  // opens a second plugin permalink would keep whatever expansion it had and
+  // the newly-named plugin would stay shut. Syncing only when the prop
+  // transitions to `true` opens the new target without springing an
+  // already-open card back after the viewer collapses it.
+  useEffect(() => {
+    if (initiallyExpanded) setExpanded(true);
+  }, [initiallyExpanded]);
   const [pendingAction, setPendingAction] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   /** componentId of the server whose inline setup editor is open. */

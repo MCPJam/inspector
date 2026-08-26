@@ -59,7 +59,11 @@ export function AuthUpperArea({
               size="sm"
               onClick={() => {
                 track("sign_up_button_clicked", { location: "header" });
-                signUp();
+                // Same return as sign-in: a first-time visitor arriving on a
+                // permalink creates an account rather than signing in, and
+                // losing the resource on that path loses it for exactly the
+                // people who have never seen the product.
+                signUp(permalinkSignInOptions());
               }}
             >
               Create account

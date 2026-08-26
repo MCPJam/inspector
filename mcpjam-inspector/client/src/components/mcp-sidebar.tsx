@@ -121,6 +121,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
+  "evaluate-enabled",
 ] as const;
 
 /**
@@ -264,6 +265,17 @@ export const navigationSections: NavSection[] = [
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
+        billingFeature: "evals",
+      },
+      {
+        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
+        // is dogfooded — the point of a second tab is being able to compare
+        // them. When the redesign wins, this item takes the "Evaluate" name
+        // and the one above is deleted.
+        title: "Evaluate (New)",
+        url: "/evaluate",
+        icon: FlaskConical,
+        featureFlag: "evaluate-enabled",
         billingFeature: "evals",
       },
       {
@@ -484,6 +496,7 @@ export function MCPSidebar({
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled"
   );
+  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -564,6 +577,9 @@ export function MCPSidebar({
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
+      // Project-scoped like the rows above: every screen behind it needs a
+      // project to resolve suites against.
+      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
     }),
     [
       learningEnabled,
@@ -574,6 +590,7 @@ export function MCPSidebar({
       xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
+      evaluateEnabled,
       isAuthenticated,
     ]
   );

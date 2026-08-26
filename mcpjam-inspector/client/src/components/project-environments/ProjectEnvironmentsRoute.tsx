@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router";
 import {
   Archive,
@@ -183,15 +183,26 @@ export function ProjectEnvironmentsRoute({
 
   // ── Permalink round-trip ───────────────────────────────────────────
   //
-  // Route → selection. Runs on every change of the param rather than once at
-  // mount: the project switch above clears `selectedId`, and a deep-linked
-  // arrival has to survive that.
+  // NO EFFECT WRITES THE URL. Selection changes go through
+  // `selectEnvironment`, which sets the state and navigates in the same call;
+  // the effect below only follows the URL when it changes from OUTSIDE (a
+  // pasted permalink, Back, a project switch).
+  //
+  // It was briefly two effects — route→selection and selection→route — and
+  // they fought. Opening a deleted environment cleared `selected`, so the
+  // second effect rewrote the URL to `/environments`, which erased the target
+  // the first effect needed, and the unavailable message survived exactly one
+  // paint before the ordinary list replaced it. Back had the mirror-image
+  // race: it cleared `selectedId`, the route effect restored it from the URL
+  // that had not changed yet, and the detail sprang back open. With the state
+  // and the URL written together neither can happen, and the screen still
+  // works mounted without a Router (its own component tests do exactly that),
+  // where navigating is a history write nothing re-renders from.
   useEffect(() => {
-    const wanted = routeEnvironmentId?.trim();
-    if (!wanted || wanted === selectedId) return;
-    setSelectedId(wanted);
-    setCreating(false);
-  }, [routeEnvironmentId, selectedId]);
+    const wanted = routeEnvironmentId?.trim() ?? null;
+    setSelectedId((current) => (current === wanted ? current : wanted));
+    if (wanted) setCreating(false);
+  }, [routeEnvironmentId]);
 
   const routeState = resolvePermalinkTarget(
     routeEnvironmentId,
@@ -199,32 +210,19 @@ export function ProjectEnvironmentsRoute({
     (environment) => environment.environmentId
   );
 
-  // Selection → route, so the address bar always names what is on screen and
-  // Back leaves the detail instead of leaving the surface. `replace` because
-  // clicking through a list is not navigation history anyone wants to walk.
-  //
   // `navigateApp` rather than `useAppNavigate()`: the hook reads react-router's
   // navigation CONTEXT, and this screen's component tests render it without a
   // Router. The imperative form goes through the router ref and degrades to
   // `window.history` when there is none, so a test that never asserts on the
   // URL is unaffected instead of failing to mount.
-  useEffect(() => {
-    if (flagEnabled !== true) return;
-    const current = routeEnvironmentId?.trim() ?? null;
-    const shown = !creating && selected ? selected.environmentId : null;
-    if (current === shown) return;
-    // While the list is still loading, a permalink's id is not yet known to be
-    // good or bad — rewriting the URL then would erase the target before it
-    // could be honored.
-    if (shown === null && routeState.kind === "loading") return;
-    navigateApp(buildProjectEnvironmentPath(shown), { replace: true });
-  }, [
-    flagEnabled,
-    creating,
-    selected,
-    routeEnvironmentId,
-    routeState.kind,
-  ]);
+  //
+  // `replace` because clicking through a list is not navigation history
+  // anyone wants to walk back through one row at a time.
+  const selectEnvironment = useCallback((environmentId: string | null) => {
+    setSelectedId(environmentId);
+    if (environmentId) setCreating(false);
+    navigateApp(buildProjectEnvironmentPath(environmentId), { replace: true });
+  }, []);
 
   // Only the seed/draft consumed FOR THE CURRENT project may reach the form.
   const activeSeed =
@@ -280,7 +278,7 @@ export function ProjectEnvironmentsRoute({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigateApp(routePaths.environments)}
+            onClick={() => selectEnvironment(null)}
           >
             Back to environments
           </Button>
@@ -297,7 +295,7 @@ export function ProjectEnvironmentsRoute({
         environment={selected}
         canManage={canManage}
         isAuthenticated={isAuthenticated}
-        onBack={() => setSelectedId(null)}
+        onBack={() => selectEnvironment(null)}
       />
     );
   }
@@ -348,7 +346,7 @@ export function ProjectEnvironmentsRoute({
                 setSeed(null);
                 setTentativeDraft(null);
                 setJustCreated(env);
-                setSelectedId(env.environmentId);
+                selectEnvironment(env.environmentId);
               }}
               onCancelCreate={() => {
                 setCreating(false);
@@ -362,7 +360,7 @@ export function ProjectEnvironmentsRoute({
             environments={environments}
             canManage={canManage}
             tentativeCastles={tentativeCastles}
-            onSelect={setSelectedId}
+            onSelect={selectEnvironment}
             onNew={() => {
               setSeed(null);
               setTentativeDraft(null);

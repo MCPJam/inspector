@@ -54,6 +54,8 @@ export {
   type PlatformResourceType,
 } from "./permalinks.js";
 
+export { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+
 export {
   computeRunTargets,
   type ComputeRunTargetsInput,
@@ -121,6 +123,10 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessSubmissionMode,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiver,
+  PlatformGateWaiverRead,
+  PlatformGateWaiverWriteResult,
   PlatformRunCompare,
   PlatformRunCompareCase,
   PlatformRunCompareCaseSide,
@@ -333,6 +339,9 @@ export {
   getHostOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,

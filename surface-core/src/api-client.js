@@ -283,10 +283,8 @@ export function createApiClient(options = {}) {
 		// decides whether to watch a run by the resource TYPE the server sent,
 		// never by guessing from an operation name it may not recognise.
 		//
-		// NON-EMPTY, not merely a string. `resource?.url ?? legacy` short-circuits
-		// on `''` (?? only skips null/undefined), so an empty url would set
-		// `runUrl` to `''` and defeat the legacy synthesis in exactly the
-		// mixed-version case that fallback exists to cover.
+		// NON-EMPTY, not merely a string: an empty url is not a link, and
+		// letting one through would hand a caller `runUrl: ''` to render.
 		const resource =
 			payload?.resource &&
 			typeof payload.resource.url === "string" &&

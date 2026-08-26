@@ -245,7 +245,20 @@ function requirePlatformApiUrl(env: Env): string {
  */
 function resolveAppOrigin(env: Env): string {
   const explicit = env.MCPJAM_APP_ORIGIN?.trim();
-  if (explicit) return explicit;
+  if (explicit) {
+    try {
+      // PARSED, not trusted. `buildAppPermalink` rejects an origin with a path
+      // prefix, a query, credentials, or a non-http(s) scheme — and the
+      // adapter catches that rejection per link, so one malformed variable
+      // would silently strip every permalink from every tool result on the
+      // deployment, with nothing failing to point at the cause. Normalizing to
+      // `.origin` here also drops a trailing slash, which is the likeliest way
+      // for someone to write this by hand.
+      return new URL(explicit).origin;
+    } catch {
+      // Fall through to the API origin rather than minting nothing at all.
+    }
+  }
   try {
     return new URL(requirePlatformApiUrl(env)).origin;
   } catch {

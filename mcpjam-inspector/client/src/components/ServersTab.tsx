@@ -1215,12 +1215,18 @@ export function ServersTab({
   // what every other project-scoped Convex consumer expects for local mode,
   // and matches `sharedProjectIdForHostScope` on the Add Server modal.
   const hostedProjectId = sharedProjectId ?? null;
-  const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
-    {
-      projectId: sharedProjectId ?? null,
-      isAuthenticated,
-    }
-  );
+  const {
+    serversRecord: sharedProjectServersRecord,
+    // The RAW array, which is `undefined` until the query settles. The record
+    // beside it is `{}` in that state AND for a project with no servers, so it
+    // cannot tell "still loading" from "loaded, empty" — and a permalink
+    // resolved against the empty one flashes the deleted-or-forbidden notice
+    // before the target arrives.
+    servers: sharedProjectServers,
+  } = useRemoteProjectServers({
+    projectId: sharedProjectId ?? null,
+    isAuthenticated,
+  });
 
   // ── Permalink targets ──────────────────────────────────────────────
   //
@@ -1229,16 +1235,12 @@ export function ServersTab({
   // rows this viewer can actually see, is what keeps a link to a deleted or
   // inaccessible resource from quietly rendering the collection instead —
   // the wrong-resource failure the permalink work exists to end.
-  const remoteServerRows = useMemo(
-    () => Object.values(sharedProjectServersRecord),
-    [sharedProjectServersRecord]
-  );
   const routeServerState = resolvePermalinkTarget(
     routeServerId,
-    // `useRemoteProjectServers` answers `{}` both while loading and for an
-    // empty project, so "still loading" is the auth/project gate, not the
-    // record's size.
-    isAuthenticated && hostedProjectId ? remoteServerRows : undefined,
+    // `undefined` until the query settles, so a cold load waits instead of
+    // deciding. A project with no servers at all still answers with a real
+    // empty array, which resolves to `unavailable` — the honest answer.
+    isAuthenticated && hostedProjectId ? sharedProjectServers : undefined,
     (row) => row?._id
   );
   const routeServerName =
@@ -2207,6 +2209,11 @@ export function ServersTab({
 
   const renderEmptyContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
+      {/* Rendered in BOTH branches: a permalink to a server this viewer
+          cannot see most often lands on a project with no servers at all,
+          which is exactly when the collection fallback would say only "No
+          servers connected" and the link's failure would go unmentioned. */}
+      {renderPermalinkNotice()}
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">

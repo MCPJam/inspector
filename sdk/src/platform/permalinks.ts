@@ -127,7 +127,7 @@ export type PlatformPermalinkPolicy<TInput, TOutput> =
       resources(
         result: TOutput,
         input: TInput,
-        context: PlatformPermalinkContext,
+        context: PlatformPermalinkContext
       ): PlatformResourceRef[];
     }
   | {
@@ -141,7 +141,7 @@ export type PlatformPermalinkPolicy<TInput, TOutput> =
       permalinks(
         result: TOutput,
         input: TInput,
-        context: PlatformPermalinkContext,
+        context: PlatformPermalinkContext
       ): PlatformPermalink[];
     }
   | {
@@ -262,18 +262,6 @@ export const PLATFORM_PERMALINK_ROUTES = {
     label: "View conformance run",
     segments: ["conformance", "runs", ":id"],
   },
-  /**
-   * One readiness run, selected on the Conformance screen.
-   *
-   * `?readinessRun=` rather than a path segment: the section can rediscover
-   * "the newest run for this server", and that is the WRONG run for someone
-   * following a link about a specific one.
-   */
-  readiness_run: {
-    label: "View readiness run",
-    segments: ["conformance"],
-    idParam: "readinessRun",
-  },
   /** A swarm (a saved fan-out definition). */
   swarm: {
     label: "Open swarm",
@@ -312,12 +300,9 @@ export type PlatformResourceType = keyof typeof PLATFORM_PERMALINK_ROUTES;
 
 /** Runtime membership test for a resource type, for adapters reading wire data. */
 export function isPlatformResourceType(
-  value: string,
+  value: string
 ): value is PlatformResourceType {
-  return Object.prototype.hasOwnProperty.call(
-    PLATFORM_PERMALINK_ROUTES,
-    value,
-  );
+  return Object.prototype.hasOwnProperty.call(PLATFORM_PERMALINK_ROUTES, value);
 }
 
 /**
@@ -349,27 +334,27 @@ function normalizeAppOrigin(appOrigin: string): URL {
     parsed = new URL(appOrigin);
   } catch {
     throw new PlatformPermalinkError(
-      `App origin "${appOrigin}" is not an absolute URL.`,
+      `App origin "${appOrigin}" is not an absolute URL.`
     );
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new PlatformPermalinkError(
-      `App origin "${appOrigin}" must use http(s).`,
+      `App origin "${appOrigin}" must use http(s).`
     );
   }
   if (parsed.username || parsed.password) {
     throw new PlatformPermalinkError(
-      "App origin must not carry credentials; they would travel in every permalink.",
+      "App origin must not carry credentials; they would travel in every permalink."
     );
   }
   if (parsed.pathname !== "/" && parsed.pathname !== "") {
     throw new PlatformPermalinkError(
-      `App origin "${appOrigin}" must not carry a path prefix.`,
+      `App origin "${appOrigin}" must not carry a path prefix.`
     );
   }
   if (parsed.search || parsed.hash) {
     throw new PlatformPermalinkError(
-      `App origin "${appOrigin}" must not carry a query or fragment.`,
+      `App origin "${appOrigin}" must not carry a query or fragment.`
     );
   }
   return parsed;
@@ -386,21 +371,21 @@ function normalizeAppOrigin(appOrigin: string): URL {
  */
 export function buildAppPermalink(
   resource: PlatformResourceRef,
-  options: { appOrigin: string },
+  options: { appOrigin: string }
 ): PlatformPermalink {
   const route = PLATFORM_PERMALINK_ROUTES[resource.type] as
     | PlatformPermalinkRoute
     | undefined;
   if (!route) {
     throw new PlatformPermalinkError(
-      `No app route for resource type "${resource.type}".`,
+      `No app route for resource type "${resource.type}".`
     );
   }
 
   const id = resource.id?.trim();
   if (!id) {
     throw new PlatformPermalinkError(
-      `A ${resource.type} permalink needs a non-empty id.`,
+      `A ${resource.type} permalink needs a non-empty id.`
     );
   }
 
@@ -411,18 +396,18 @@ export function buildAppPermalink(
   if (route.parent) {
     if (!resource.parent) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink needs its ${route.parent} parent; without it the URL would address the wrong resource.`,
+        `A ${resource.type} permalink needs its ${route.parent} parent; without it the URL would address the wrong resource.`
       );
     }
     if (resource.parent.type !== route.parent) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink nests under ${route.parent}, not ${resource.parent.type}.`,
+        `A ${resource.type} permalink nests under ${route.parent}, not ${resource.parent.type}.`
       );
     }
     parentId = resource.parent.id?.trim();
     if (!parentId) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink needs a non-empty ${route.parent} id.`,
+        `A ${resource.type} permalink needs a non-empty ${route.parent} id.`
       );
     }
   }
@@ -451,7 +436,7 @@ export function buildAppPermalink(
   if (projectScoped) {
     if (!projectId) {
       throw new PlatformPermalinkError(
-        `A ${resource.type} permalink needs a project id: without \`?${PROJECT_DEEP_LINK_PARAM}=\` the link opens whatever project the recipient was last parked on.`,
+        `A ${resource.type} permalink needs a project id: without \`?${PROJECT_DEEP_LINK_PARAM}=\` the link opens whatever project the recipient was last parked on.`
       );
     }
     url.searchParams.set(PROJECT_DEEP_LINK_PARAM, projectId);
@@ -482,7 +467,7 @@ export function buildAppPermalink(
  */
 export function permalinkProjectId(
   resource: PlatformResourceRef,
-  context: PlatformPermalinkContext,
+  context: PlatformPermalinkContext
 ): string | undefined {
   return resource.projectId ?? context.resolvedScope?.projectId;
 }
@@ -493,13 +478,13 @@ export function permalinkProjectId(
  */
 export function buildAppPermalinks(
   resources: readonly PlatformResourceRef[],
-  context: PlatformPermalinkContext,
+  context: PlatformPermalinkContext
 ): PlatformPermalink[] {
   return resources.map((resource) =>
     buildAppPermalink(
       { ...resource, projectId: permalinkProjectId(resource, context) },
-      { appOrigin: context.appOrigin },
-    ),
+      { appOrigin: context.appOrigin }
+    )
   );
 }
 
@@ -514,8 +499,8 @@ export function derivePermalinks<TInput, TOutput>(
   resources: (
     result: TOutput,
     input: TInput,
-    context: PlatformPermalinkContext,
-  ) => PlatformResourceRef[],
+    context: PlatformPermalinkContext
+  ) => PlatformResourceRef[]
 ): PlatformPermalinkPolicy<TInput, TOutput> {
   return { kind: "derive", resources };
 }
@@ -525,8 +510,8 @@ export function responsePermalinks<TInput, TOutput>(
   permalinks: (
     result: TOutput,
     input: TInput,
-    context: PlatformPermalinkContext,
-  ) => PlatformPermalink[],
+    context: PlatformPermalinkContext
+  ) => PlatformPermalink[]
 ): PlatformPermalinkPolicy<TInput, TOutput> {
   return { kind: "response", permalinks };
 }
@@ -540,7 +525,7 @@ export function responsePermalinks<TInput, TOutput>(
  */
 export function noPermalink<TInput = unknown, TOutput = unknown>(
   reason: PlatformNoPermalinkReason,
-  note?: string,
+  note?: string
 ): PlatformPermalinkPolicy<TInput, TOutput> {
   return { kind: "none", reason, ...(note ? { note } : {}) };
 }
@@ -577,13 +562,33 @@ export function derivePermalinksFor<TInput, TOutput, TContext>(
   result: TOutput,
   input: TInput,
   context: PlatformPermalinkContext,
-  onError?: (error: unknown, operationName: string) => void,
+  onError?: (error: unknown, operationName: string) => void
 ): PlatformPermalink[] {
   const policy = operation.permalink;
   if (policy.kind === "none") return [];
   try {
     if (policy.kind === "response") {
-      return policy.permalinks(result, input, context);
+      // Validated, not trusted. A response permalink comes off the wire —
+      // `search_sessions` copies `session.link.url` — and `PlatformSessionLink`
+      // only promises a string. A relative or empty one would be rendered
+      // verbatim into a tool result as though it were openable, so an entry
+      // that is not an absolute http(s) URL is reported and dropped rather
+      // than handed to a model to pass on.
+      const permalinks: PlatformPermalink[] = [];
+      for (const permalink of policy.permalinks(result, input, context)) {
+        try {
+          const parsed = new URL(permalink.url);
+          if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+            throw new PlatformPermalinkError(
+              `Response permalink "${permalink.url}" is not an http(s) URL.`
+            );
+          }
+          permalinks.push(permalink);
+        } catch (error) {
+          onError?.(error, operation.name);
+        }
+      }
+      return permalinks;
     }
     // Each ref independently: one unaddressable row must not silently drop
     // the permalinks of every row beside it.
@@ -593,8 +598,8 @@ export function derivePermalinksFor<TInput, TOutput, TContext>(
         permalinks.push(
           buildAppPermalink(
             { ...resource, projectId: permalinkProjectId(resource, context) },
-            { appOrigin: context.appOrigin },
-          ),
+            { appOrigin: context.appOrigin }
+          )
         );
       } catch (error) {
         onError?.(error, operation.name);
@@ -620,7 +625,7 @@ export function derivePermalinksFor<TInput, TOutput, TContext>(
 export async function runOperationWithPermalinks<
   TInput,
   TOutput,
-  TContext extends PermalinkScopeReceiver,
+  TContext extends PermalinkScopeReceiver
 >(
   operation: PermalinkAwareOperation<TInput, TOutput, TContext>,
   input: TInput,
@@ -628,7 +633,7 @@ export async function runOperationWithPermalinks<
   options: {
     appOrigin: string;
     onError?: (error: unknown, operationName: string) => void;
-  },
+  }
 ): Promise<{ result: TOutput; permalinks: PlatformPermalink[] }> {
   let resolvedScope: { projectId: string; organizationId?: string } | undefined;
   const caller = context.onScopeResolved;
@@ -643,8 +648,11 @@ export async function runOperationWithPermalinks<
     operation,
     result,
     input,
-    { appOrigin: options.appOrigin, ...(resolvedScope ? { resolvedScope } : {}) },
-    options.onError,
+    {
+      appOrigin: options.appOrigin,
+      ...(resolvedScope ? { resolvedScope } : {}),
+    },
+    options.onError
   );
   return { result, permalinks };
 }
@@ -660,7 +668,7 @@ export async function runOperationWithPermalinks<
  */
 export function withPermalinkEnvelope<TOutput>(
   result: TOutput,
-  permalinks: PlatformPermalink[],
+  permalinks: PlatformPermalink[]
 ): Record<string, unknown> {
   if (result !== null && typeof result === "object" && !Array.isArray(result)) {
     return { ...(result as Record<string, unknown>), permalinks };
@@ -678,14 +686,16 @@ export function withPermalinkEnvelope<TOutput>(
  */
 export function formatPermalinkLines(
   permalinks: readonly PlatformPermalink[],
-  options: { limit?: number } = {},
+  options: { limit?: number } = {}
 ): string {
   const limit = options.limit ?? 10;
   const shown = permalinks.slice(0, limit);
-  const lines = shown.map((permalink) => `${permalink.label}: ${permalink.url}`);
+  const lines = shown.map(
+    (permalink) => `${permalink.label}: ${permalink.url}`
+  );
   if (permalinks.length > shown.length) {
     lines.push(
-      `…and ${permalinks.length - shown.length} more in \`permalinks\`.`,
+      `…and ${permalinks.length - shown.length} more in \`permalinks\`.`
     );
   }
   return lines.join("\n");

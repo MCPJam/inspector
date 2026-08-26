@@ -425,10 +425,31 @@ export {
 export {
   buildEvalDecisionSummary,
   buildEvalDecisionSummaryFromIterations,
+  buildEvalRunDecisionSummary,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  readEvalRunDecisionSummary,
 } from "./eval-decision-summary.js";
+/**
+ * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
+ *
+ * Mirrored onto the main entry because the CLI and the reporters consume it
+ * beside the platform types, and making them import one shape from two subpaths
+ * is how a consumer ends up with two copies of the type at different versions.
+ */
+export {
+  assembleEvalRunDecisionSummary,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  evalRunDecisionSummarySchema,
+} from "./contract/index.js";
+export type {
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionSummary,
+  EvalRunDecisionVerdict,
+} from "./contract/index.js";
 export type {
   EvalDecisionSummary,
   EvalDecisionSummaryCase,
@@ -441,9 +462,11 @@ export type {
   StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
+  StructuredCaseWaiver,
   StructuredSummaryBucket,
   StructuredRunSummary,
   StructuredRunReport,
+  StructuredRunVerdict,
 } from "./structured-reporting.js";
 export {
   toConformanceReport,
@@ -1298,14 +1321,20 @@ export type {
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
+  GATE_WAIVER_MAX_DURATION_MS,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   GateError,
+  applyGateWaiver,
   assertGate,
   evaluateGates,
   formatGateReport,
+  formatGateWaiverLine,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
   gateOutcomeVerdict,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
@@ -1316,6 +1345,7 @@ export type {
   GateScore,
   GateStatus,
   GateVerdict,
+  GateWaiver,
   ScoreIntegrity,
 } from "./gates.js";
 

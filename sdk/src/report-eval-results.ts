@@ -66,11 +66,17 @@ type StartRunResponse = {
 export function projectRunVerdict(
   run: Pick<
     StartRunResponse,
-    "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+    | "result"
+    | "verdictPolicyVersion"
+    | "verdictSummary"
+    | "verdictPolicyIntegrityError"
   >
 ): Pick<
   ReportEvalResultsOutput,
-  "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+  | "result"
+  | "verdictPolicyVersion"
+  | "verdictSummary"
+  | "verdictPolicyIntegrityError"
 > {
   return {
     result: isEvalRunVerdict(run.result) ? run.result : "failed",
@@ -223,7 +229,7 @@ export function printRunUrl(
             parent: { type: "eval_suite", id: suiteId },
             projectId,
           },
-          { appOrigin },
+          { appOrigin }
         ).url
       : // NOT a permalink, and knowingly so: with no project id the link
         // opens whichever project the reader's picker is parked on. It is
@@ -233,8 +239,10 @@ export function printRunUrl(
         // at all. Built through `URL` rather than concatenation so it stays
         // encoded and stays out of the string-building this module retired.
         new URL(
-          `/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}`,
-          appOrigin,
+          `/evals/suite/${encodeURIComponent(
+            suiteId
+          )}/runs/${encodeURIComponent(runId)}`,
+          appOrigin
         ).toString();
   } catch {
     // A convenience line may never fail a CI report that already succeeded.

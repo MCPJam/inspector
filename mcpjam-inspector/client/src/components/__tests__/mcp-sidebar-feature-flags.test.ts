@@ -260,6 +260,35 @@ describe("declared nav flags are actually resolved", () => {
       .map((i) => i.title);
     expect(on).toContain("Sessions");
   });
+
+  it("Evaluate (New) is gated by evaluate-enabled and sits beside Evaluate", () => {
+    // The redesigned tab ships ALONGSIDE the shipped one so the two can be
+    // compared, so a flag-off user must see exactly the nav they see today —
+    // this is the assertion that a mis-wired flag would break.
+    const evaluateItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.url === "/evaluate");
+
+    expect(evaluateItem).toMatchObject({
+      title: "Evaluate (New)",
+      featureFlag: "evaluate-enabled",
+      billingFeature: "evals",
+    });
+
+    const off = filterByFeatureFlags(navigationSections, {})
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+    expect(off).not.toContain("Evaluate (New)");
+    expect(off).toContain("Evaluate");
+
+    const measure = filterByFeatureFlags(navigationSections, {
+      "evaluate-enabled": true,
+    }).find((section) => section.id === "measure");
+    const titles = measure?.items.map((item) => item.title) ?? [];
+    expect(titles).toContain("Evaluate (New)");
+    const evaluateIndex = titles.indexOf("Evaluate");
+    expect(titles.indexOf("Evaluate (New)")).toBe(evaluateIndex + 1);
+  });
 });
 
 describe("applyBillingGateNavState", () => {

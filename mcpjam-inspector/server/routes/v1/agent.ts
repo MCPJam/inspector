@@ -151,6 +151,26 @@ export function isValidAgentActionId(actionId: string): boolean {
 const MAX_CREATED_RESOURCES_PER_CALL = 10;
 
 /**
+ * Operation-name prefixes that BRING SOMETHING INTO EXISTENCE.
+ *
+ * A prefix list rather than an explicit set: the catalog gains operations
+ * regularly, and a set would silently stop reporting each new create until
+ * someone remembered this file. The naming convention is already load-bearing
+ * across the catalog (`create_*`, `run_*`, `launch_*`, `start_*`,
+ * `generate_*`, `install_*`), so keying on it is reading a rule the catalog
+ * already follows rather than inventing a second one.
+ */
+const CREATE_OPERATION_PREFIXES = [
+  "create_",
+  "run_",
+  "launch_",
+  "start_",
+  "generate_",
+  "install_",
+  "publish_",
+] as const;
+
+/**
  * The resources one WRITE produced, as links the host can render.
  *
  * Read off the operation's own permalink policy rather than a name check for
@@ -159,9 +179,13 @@ const MAX_CREATED_RESOURCES_PER_CALL = 10;
  * agrees with the one the MCP worker, the CLI and the approval path hand out,
  * because all four ask the same builder.
  *
- * Writes only. A read's rows are not "created", and a `list_project_servers`
- * turn that reported twenty created resources would be describing the project,
- * not what it did.
+ * CREATES only, not every write. A read's rows are not "created" — a
+ * `list_project_servers` turn reporting twenty created resources would be
+ * describing the project rather than what it did — and neither is an EDIT:
+ * `update_eval_suite` and `name_environment` change a row that already
+ * existed, and the public contract (`AgentTurnResponse.createdResources`) and
+ * the Slack renderer both say "created". Saying it of an edit is a lie the
+ * host then renders as one.
  */
 function createdResourcesFor(
   operation: AnyPlatformOperation,
@@ -169,7 +193,11 @@ function createdResourcesFor(
   input: unknown,
   projectId: string
 ): CreatedResource[] {
-  if (operation.readOnly) return [];
+  if (operation.readOnly || !CREATE_OPERATION_PREFIXES.some((prefix) =>
+    operation.name.startsWith(prefix)
+  )) {
+    return [];
+  }
   const permalinks = derivePermalinksFor(
     operation,
     result,

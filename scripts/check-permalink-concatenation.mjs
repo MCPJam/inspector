@@ -22,8 +22,8 @@
  *     are backend-minted product capabilities with their own access rules,
  *     explicitly not permalinks, and the builder must never mint one.
  */
-import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 /** Route roots a permalink can address. Grown only with the route registry. */
 const ROUTE_SEGMENTS = [
@@ -61,14 +61,57 @@ const ALLOWLIST = [
   /\/tests\//,
 ];
 
-const files = execFileSync(
-  "git",
-  ["ls-files", "*.ts", "*.tsx", "*.js", "*.mjs", "*.jsx"],
-  { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-)
-  .split("\n")
-  .filter(Boolean)
-  .filter((file) => !file.includes("node_modules/") && !file.includes("/dist/"));
+/**
+ * Directories never worth scanning.
+ *
+ * A plain walk rather than `git ls-files`: the runner checks the repo out as a
+ * different uid than the one the job runs as, so git refuses the worktree as
+ * "dubious ownership" and the whole check dies before it reads a single file.
+ * Walking the filesystem has no such failure mode, works in a container, and
+ * catches an offending file before it is ever committed.
+ */
+const SKIP_DIRS = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  ".next",
+  ".turbo",
+  ".wrangler",
+  "playwright-report",
+  "test-results",
+]);
+
+const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+
+function* walk(directory) {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      yield* walk(full);
+    } else if (
+      entry.isFile() &&
+      EXTENSIONS.some((extension) => entry.name.endsWith(extension)) &&
+      // Generated bundles embed whatever their source embedded; the source is
+      // what the guard is for.
+      !entry.name.includes(".bundled.") &&
+      !entry.name.includes(".generated.")
+    ) {
+      yield relative(process.cwd(), full).split(sep).join("/");
+    }
+  }
+}
+
+const files = [...walk(process.cwd())];
 
 const findings = [];
 for (const file of files) {

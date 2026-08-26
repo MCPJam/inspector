@@ -39,6 +39,13 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   update_journey: "swarms/journeys/:journeyId",
   generate_journeys: "swarms/journeys/:journeyId",
   list_personas: "swarms/personas/:personaId",
+  // Readiness runs: the /conformance section rediscovers the LATEST run for a
+  // server, so no query parameter or segment can address a specific one.
+  start_claude_readiness_run: "conformance/readiness/:runId",
+  start_openai_readiness_run: "conformance/readiness/:runId",
+  get_readiness_run: "conformance/readiness/:runId",
+  list_readiness_runs: "conformance/readiness/:runId",
+  get_readiness_report: "conformance/readiness/:runId",
   get_persona: "swarms/personas/:personaId",
   create_persona: "swarms/personas/:personaId",
   update_persona: "swarms/personas/:personaId",
@@ -72,10 +79,10 @@ describe("every catalog operation declares a permalink policy", () => {
     const declared = ALL_OPERATIONS.filter(
       (operation) =>
         operation.permalink.kind === "none" &&
-        operation.permalink.reason === "route-not-addressable",
+        operation.permalink.reason === "route-not-addressable"
     );
     expect(declared.map((operation) => operation.name).sort()).toEqual(
-      Object.keys(ROUTE_DEBT_ALLOWLIST).sort(),
+      Object.keys(ROUTE_DEBT_ALLOWLIST).sort()
     );
     for (const operation of declared) {
       const policy = operation.permalink as {
@@ -86,7 +93,7 @@ describe("every catalog operation declares a permalink policy", () => {
       // prevent: it says "not addressable" without saying what would fix it.
       expect(policy.note, operation.name).toBeTruthy();
       expect(policy.note, operation.name).toContain(
-        ROUTE_DEBT_ALLOWLIST[operation.name],
+        ROUTE_DEBT_ALLOWLIST[operation.name]
       );
     }
   });
@@ -141,7 +148,9 @@ describe("every catalog operation declares a permalink policy", () => {
       // `create_persona` is the deliberate exception: personas are real and
       // durable but have no route, so it is allowed to be route debt.
       const allowed =
-        ROUTE_DEBT_ALLOWLIST[name] !== undefined ? ["derive", "none"] : ["derive"];
+        ROUTE_DEBT_ALLOWLIST[name] !== undefined
+          ? ["derive", "none"]
+          : ["derive"];
       expect(allowed, name).toContain(operation!.permalink.kind);
     }
   });

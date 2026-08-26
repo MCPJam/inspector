@@ -22,28 +22,28 @@ const PROJECT = "v977phvmg9dttdemo";
 
 function build(
   resource: PlatformResourceRef,
-  appOrigin = ORIGIN,
+  appOrigin = ORIGIN
 ): PlatformPermalink {
   return buildAppPermalink(resource, { appOrigin });
 }
 
 describe("route mappings", () => {
   it("addresses a project by its own landing screen", () => {
-    expect(build({ type: "project", id: PROJECT, projectId: PROJECT }).path).toBe(
-      `/servers?project=${PROJECT}`,
-    );
+    expect(
+      build({ type: "project", id: PROJECT, projectId: PROJECT }).path
+    ).toBe(`/servers?project=${PROJECT}`);
   });
 
   it("addresses a saved server, an environment, and a plugin exactly", () => {
     expect(
-      build({ type: "project_server", id: "p170b5c", projectId: PROJECT }).path,
+      build({ type: "project_server", id: "p170b5c", projectId: PROJECT }).path
     ).toBe(`/servers/p170b5c?project=${PROJECT}`);
     expect(
       build({ type: "project_environment", id: "env_1", projectId: PROJECT })
-        .path,
+        .path
     ).toBe(`/environments/env_1?project=${PROJECT}`);
     expect(
-      build({ type: "project_plugin", id: "plg_1", projectId: PROJECT }).path,
+      build({ type: "project_plugin", id: "plg_1", projectId: PROJECT }).path
     ).toBe(`/servers/plugins/plg_1?project=${PROJECT}`);
   });
 
@@ -54,7 +54,7 @@ describe("route mappings", () => {
         id: "c_1",
         parent: { type: "eval_suite", id: "s_1" },
         projectId: PROJECT,
-      }).path,
+      }).path
     ).toBe(`/evals/suite/s_1/test/c_1?project=${PROJECT}`);
     expect(
       build({
@@ -62,7 +62,7 @@ describe("route mappings", () => {
         id: "run_1",
         parent: { type: "eval_suite", id: "s_1" },
         projectId: PROJECT,
-      }).path,
+      }).path
     ).toBe(`/evals/suite/s_1/runs/run_1?project=${PROJECT}`);
   });
 
@@ -76,38 +76,45 @@ describe("route mappings", () => {
       projectId: PROJECT,
     });
     expect(permalink.path).toBe(
-      `/evals/suite/s_1?view=runs&project=${PROJECT}`,
+      `/evals/suite/s_1?view=runs&project=${PROJECT}`
     );
     expect(permalink.resource).toEqual({ type: "eval_run_group", id: "grp_1" });
   });
 
-  it("selects a session and a readiness run by query, not by path", () => {
+  it("selects a session by query, not by path", () => {
     expect(
-      build({ type: "chat_session", id: "qh7fem", projectId: PROJECT }).path,
+      build({ type: "chat_session", id: "qh7fem", projectId: PROJECT }).path
     ).toBe(`/sessions?session=qh7fem&project=${PROJECT}`);
-    expect(
-      build({ type: "readiness_run", id: "rr_1", projectId: PROJECT }).path,
-    ).toBe(`/conformance?readinessRun=rr_1&project=${PROJECT}`);
+  });
+
+  it("has no route for a readiness run, which nothing can address", () => {
+    // Deliberately absent, not an oversight. `/conformance?readinessRun=` was
+    // in this table and no client code reads that parameter — the readiness
+    // section rediscovers the LATEST run for a server. A link carrying it
+    // would switch the reader's project and then show them a different run,
+    // which is the exact failure the registry exists to prevent, so the
+    // readiness operations declare route debt instead.
+    expect(isPlatformResourceType("readiness_run")).toBe(false);
   });
 
   it("addresses a conformance run, a swarm, a wave and a scenario", () => {
     expect(
-      build({ type: "conformance_run", id: "cr_1", projectId: PROJECT }).path,
+      build({ type: "conformance_run", id: "cr_1", projectId: PROJECT }).path
     ).toBe(`/conformance/runs/cr_1?project=${PROJECT}`);
     expect(build({ type: "swarm", id: "sw_1", projectId: PROJECT }).path).toBe(
-      `/swarms/sw_1?project=${PROJECT}`,
+      `/swarms/sw_1?project=${PROJECT}`
     );
     // A wave/journey run takes the FIRST segment after /swarms/ — the client
     // routes on it, so `/swarms/runs/<id>` would dead-link.
     expect(
-      build({ type: "journey_run", id: "jr_1", projectId: PROJECT }).path,
+      build({ type: "journey_run", id: "jr_1", projectId: PROJECT }).path
     ).toBe(`/swarms/jr_1?project=${PROJECT}`);
     expect(
       build({
         type: "user_testing_scenario",
         id: "sc_1",
         projectId: PROJECT,
-      }).path,
+      }).path
     ).toBe(`/user-testing/sc_1?project=${PROJECT}`);
   });
 
@@ -133,11 +140,8 @@ describe("query merging", () => {
     expect(permalink.url.split("?")).toHaveLength(2);
   });
 
-  it("coexists with readinessRun, session, tab and sel selectors", () => {
-    for (const [type, key] of [
-      ["readiness_run", "readinessRun"],
-      ["chat_session", "session"],
-    ] as const) {
+  it("coexists with a route's own id selector", () => {
+    for (const [type, key] of [["chat_session", "session"]] as const) {
       const params = new URL(build({ type, id: "x", projectId: PROJECT }).url)
         .searchParams;
       expect(params.get(key)).toBe("x");
@@ -154,9 +158,7 @@ describe("encoding and origin validation", () => {
       id: "a/b?c#d",
       projectId: PROJECT,
     });
-    expect(permalink.path).toBe(
-      `/servers/a%2Fb%3Fc%23d?project=${PROJECT}`,
-    );
+    expect(permalink.path).toBe(`/servers/a%2Fb%3Fc%23d?project=${PROJECT}`);
     expect(new URL(permalink.url).pathname).toBe("/servers/a%2Fb%3Fc%23d");
   });
 
@@ -172,10 +174,10 @@ describe("encoding and origin validation", () => {
   it("accepts a custom staging origin, port and all", () => {
     const permalink = build(
       { type: "project_server", id: "s1", projectId: PROJECT },
-      "http://localhost:3001",
+      "http://localhost:3001"
     );
     expect(permalink.url).toBe(
-      `http://localhost:3001/servers/s1?project=${PROJECT}`,
+      `http://localhost:3001/servers/s1?project=${PROJECT}`
     );
   });
 
@@ -193,7 +195,7 @@ describe("encoding and origin validation", () => {
       "https://app.mcpjam.com/?a=1",
     ]) {
       expect(() => build(resource, origin), origin).toThrow(
-        PlatformPermalinkError,
+        PlatformPermalinkError
       );
     }
   });
@@ -202,13 +204,13 @@ describe("encoding and origin validation", () => {
 describe("required scope and parents", () => {
   it("refuses to mint a project-scoped link with no project", () => {
     expect(() => build({ type: "project_server", id: "s1" })).toThrow(
-      /needs a project id/,
+      /needs a project id/
     );
   });
 
   it("refuses an eval case with no suite, and one nested under the wrong type", () => {
     expect(() =>
-      build({ type: "eval_case", id: "c_1", projectId: PROJECT }),
+      build({ type: "eval_case", id: "c_1", projectId: PROJECT })
     ).toThrow(/needs its eval_suite parent/);
     expect(() =>
       build({
@@ -216,13 +218,13 @@ describe("required scope and parents", () => {
         id: "c_1",
         parent: { type: "swarm", id: "sw_1" },
         projectId: PROJECT,
-      }),
+      })
     ).toThrow(/nests under eval_suite, not swarm/);
   });
 
   it("refuses an empty id", () => {
     expect(() =>
-      build({ type: "project_server", id: "  ", projectId: PROJECT }),
+      build({ type: "project_server", id: "  ", projectId: PROJECT })
     ).toThrow(/non-empty id/);
   });
 });
@@ -234,7 +236,7 @@ describe("the resolved-scope receipt", () => {
         { type: "project_server", id: "s1" },
         { type: "project", id: "other", projectId: "other" },
       ],
-      { appOrigin: ORIGIN, resolvedScope: { projectId: PROJECT } },
+      { appOrigin: ORIGIN, resolvedScope: { projectId: PROJECT } }
     );
     expect(permalinks[0]!.projectId).toBe(PROJECT);
     expect(permalinks[1]!.projectId).toBe("other");
@@ -253,7 +255,7 @@ describe("the route registry is the type list", () => {
 
   it("every project-scoped route mints exactly one project parameter", () => {
     for (const type of Object.keys(
-      PLATFORM_PERMALINK_ROUTES,
+      PLATFORM_PERMALINK_ROUTES
     ) as PlatformResourceType[]) {
       const route = PLATFORM_PERMALINK_ROUTES[type] as {
         parent?: string;
@@ -263,13 +265,15 @@ describe("the route registry is the type list", () => {
         type,
         id: "id-1",
         ...(route.parent
-          ? { parent: { type: route.parent as PlatformResourceType, id: "p-1" } }
+          ? {
+              parent: { type: route.parent as PlatformResourceType, id: "p-1" },
+            }
           : {}),
         projectId: PROJECT,
       });
       const params = new URL(permalink.url).searchParams;
       expect(params.getAll("project"), type).toEqual(
-        route.projectScoped === false ? [] : [PROJECT],
+        route.projectScoped === false ? [] : [PROJECT]
       );
       expect(permalink.label.length, type).toBeGreaterThan(0);
     }
@@ -291,7 +295,7 @@ describe("policy application", () => {
       _input: Record<string, never>,
       context: {
         onScopeResolved?: (scope: { projectId: string }) => void;
-      },
+      }
     ) {
       context.onScopeResolved?.({ projectId: PROJECT });
       return { items: [{ id: "s1" }, { id: "s2" }] };
@@ -303,7 +307,7 @@ describe("policy application", () => {
       operation,
       {},
       {},
-      { appOrigin: ORIGIN },
+      { appOrigin: ORIGIN }
     );
     expect(result.items).toHaveLength(2);
     expect(permalinks.map((p) => p.url)).toEqual([
@@ -322,7 +326,7 @@ describe("policy application", () => {
       operation,
       {},
       { onScopeResolved: (scope) => seen.push(scope) },
-      { appOrigin: ORIGIN },
+      { appOrigin: ORIGIN }
     );
     expect(seen).toEqual([{ projectId: PROJECT }]);
   });
@@ -345,7 +349,7 @@ describe("policy application", () => {
       {},
       {},
       { appOrigin: ORIGIN },
-      (error) => errors.push(error),
+      (error) => errors.push(error)
     );
     expect(permalinks).toHaveLength(1);
     expect(errors).toHaveLength(1);
@@ -361,8 +365,8 @@ describe("policy application", () => {
         },
         {},
         {},
-        { appOrigin: ORIGIN },
-      ),
+        { appOrigin: ORIGIN }
+      )
     ).toEqual([]);
   });
 });
@@ -386,7 +390,7 @@ describe("the adapter envelope", () => {
 
   it("caps the text fallback and says how much it withheld", () => {
     const many = Array.from({ length: 12 }, (_, index) =>
-      build({ type: "project_server", id: `s${index}`, projectId: PROJECT }),
+      build({ type: "project_server", id: `s${index}`, projectId: PROJECT })
     );
     const text = formatPermalinkLines(many, { limit: 3 });
     expect(text.split("\n")).toHaveLength(4);
@@ -417,7 +421,7 @@ describe("the receipt covers a result that stops carrying its project", () => {
       },
       async execute(
         _input: Record<string, never>,
-        context: { onScopeResolved?: (scope: { projectId: string }) => void },
+        context: { onScopeResolved?: (scope: { projectId: string }) => void }
       ) {
         context.onScopeResolved?.({ projectId: PROJECT });
         return { runId: "run_1" };
@@ -428,10 +432,10 @@ describe("the receipt covers a result that stops carrying its project", () => {
       operation,
       {},
       {},
-      { appOrigin: ORIGIN },
+      { appOrigin: ORIGIN }
     );
     expect(permalinks[0]!.url).toBe(
-      `${ORIGIN}/evals/suite/s_1/runs/run_1?project=${PROJECT}`,
+      `${ORIGIN}/evals/suite/s_1/runs/run_1?project=${PROJECT}`
     );
   });
 });

@@ -16,6 +16,7 @@ import App, {
   ComputerRoute,
   EvalRunSharedRoute,
   EvalsRoute,
+  EvaluateRoute,
   HostCompareRoute,
   HostsRoute,
   HomeRoute,
@@ -226,6 +227,17 @@ const ROUTE_ELEMENTS: Record<
     element: <EvalsRoute mode="runs" />,
   },
   "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
+  // Evaluate (New). Its own element, so nothing about the shipped Evaluate
+  // routes above changes while the redesign is behind a flag.
+  evaluate: { element: <EvaluateRoute /> },
+  "evaluate/create": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/test/:testId": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/test/:testId/edit": {
+    element: <EvaluateRoute />,
+  },
+  "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
   // Legacy `/ci-evals/*` → `/evals/runs/*`. Rewrite the raw pathname rather
   // than rebuilding from params: the sub-tree is matched with a splat, and the
   // string form preserves commit SHAs and suite ids exactly as encoded.

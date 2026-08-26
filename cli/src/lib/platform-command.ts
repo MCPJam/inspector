@@ -395,7 +395,17 @@ export function bindOperation<
           },
           input,
           { client, signal },
-          { appOrigin: webOrigin }
+          {
+            appOrigin: webOrigin,
+            // stderr, so `--format json` stdout stays a parseable contract.
+            onError: (error, operationName) => {
+              process.stderr.write(
+                `mcpjam: could not build a permalink for ${operationName}: ${
+                  error instanceof Error ? error.message : String(error)
+                }\n`
+              );
+            },
+          }
         );
         permalinks = ran.permalinks;
         return ran.result;

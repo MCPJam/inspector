@@ -13,8 +13,15 @@ describe("resolvePermalinkTarget", () => {
     expect(resolvePermalinkTarget("   ", rows, byId)).toEqual({ kind: "none" });
   });
 
-  it("waits while the collection is undefined", () => {
+  it("waits while the collection is undefined or null", () => {
+    // Both spellings of "not here yet": a Convex reactive query answers
+    // `undefined`, and a caller threading an optional prop can hand us `null`.
+    // Either one deciding "unavailable" would flash the deleted-or-forbidden
+    // notice at someone whose link is about to work.
     expect(resolvePermalinkTarget("a", undefined, byId)).toEqual({
+      kind: "loading",
+    });
+    expect(resolvePermalinkTarget("a", null, byId)).toEqual({
       kind: "loading",
     });
   });

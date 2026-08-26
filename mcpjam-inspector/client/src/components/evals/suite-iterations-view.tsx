@@ -49,6 +49,7 @@ import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
+import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
@@ -271,6 +272,7 @@ export function SuiteIterationsView({
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  suiteDetailOverview = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -340,6 +342,15 @@ export function SuiteIterationsView({
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /**
+   * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
+   * history, cases — instead of the unified dashboard on suite overview.
+   *
+   * OFF by default on purpose. This is a shared component: the shipped
+   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
+   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   */
+  suiteDetailOverview?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -847,8 +858,25 @@ export function SuiteIterationsView({
     runsViewMode,
   ]);
 
+  // Evaluate (New) suite overview uses the checkout-flow identity + run
+  // history + cases layout. Run detail still folds into SuiteDashboard.
+  //
+  // `viewMode` falls through to "overview" for the suite-edit route, so edit
+  // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
+  // edit-mode chrome lives (the name editor and Done), and the only mount
+  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
+  // the settings sheet headerless and the suite's client/model/server
+  // composer unreachable from both routes.
+  const showEvaluateSuiteDetail =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "overview";
+
   const showSuiteHeader =
-    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+    !showEvaluateSuiteDetail &&
+    (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
@@ -1175,6 +1203,44 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateSuiteDetail ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+              >
+                <SuiteDetailOverview
+                  suite={suite}
+                  cases={cases}
+                  runs={runs}
+                  runsLoading={runsLoading}
+                  allIterations={allIterations}
+                  hostNamesById={hostNamesById}
+                  onRerun={onRerunWithOverride}
+                  onEditSuite={() => navigation.toSuiteEdit(suite._id)}
+                  onEditCases={onCreateTestCase}
+                  onGenerateTestCases={onGenerateTestCases}
+                  canGenerateTestCases={canGenerateTestCases}
+                  generateTestCasesDisabledReason={
+                    generateTestCasesDisabledReason
+                  }
+                  isGeneratingTestCases={isGeneratingTestCases}
+                  onRunClick={handleRunClick}
+                  onTestCaseClick={(testCaseId) =>
+                    navigation.toTestEdit(suite._id, testCaseId)
+                  }
+                  rerunningSuiteId={rerunningSuiteId}
+                  replayingRunId={replayingRunId}
+                  runningTestCaseId={runningTestCaseId}
+                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  readOnlyConfig={readOnlyConfig}
+                />
+              </motion.div>
             ) : showFoldedUnifiedDashboard ? (
               <div
                 key="unified-results-split"

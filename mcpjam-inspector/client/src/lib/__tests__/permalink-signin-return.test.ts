@@ -43,6 +43,8 @@ describe("a permalink survives the sign-in round trip", () => {
       `/conformance?readinessRun=rr_1&project=${PROJECT}`,
       `/swarms/sw_1?project=${PROJECT}`,
       `/user-testing/sc_1?project=${PROJECT}`,
+      // Above project scope, and the one route with no `?project=` at all.
+      "/organizations/org_1",
     ]) {
       const nonce = rememberPermalinkSignInReturn(target, ORIGIN);
       expect(takePermalinkSignInReturn(nonce, ORIGIN), target).toBe(target);
@@ -65,6 +67,16 @@ describe("what it refuses", () => {
       rememberPermalinkSignInReturn("https://evil.example/x", ORIGIN),
     ).toBeNull();
     expect(rememberPermalinkSignInReturn("//evil.example/x", ORIGIN)).toBeNull();
+  });
+
+  it("refuses an absent or empty path rather than storing a marker", () => {
+    // The caller is `captureCurrentReturnPath()`, which answers `null` at the
+    // app root — a nonce stored for nothing would capture the NEXT sign-in in
+    // this tab and redirect it somewhere the user never asked to go.
+    expect(rememberPermalinkSignInReturn(null, ORIGIN)).toBeNull();
+    expect(rememberPermalinkSignInReturn(undefined, ORIGIN)).toBeNull();
+    expect(rememberPermalinkSignInReturn("", ORIGIN)).toBeNull();
+    expect(rememberPermalinkSignInReturn("   ", ORIGIN)).toBeNull();
   });
 
   it("refuses the root and the callback itself", () => {

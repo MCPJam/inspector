@@ -373,6 +373,49 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    // Evaluate (New): the redesigned Evaluate tab, behind
+    // `evaluate-enabled`. A SEPARATE surface rather than a variant of
+    // `evals` so the shipped tab keeps its routes, its agent tools, and its
+    // behaviour untouched while this one is dogfooded. It is deleted (and its
+    // routes folded into `evals`) once the redesign replaces the original.
+    id: "evaluate",
+    canonicalPath: "/evaluate",
+    routePatterns: [
+      "evaluate",
+      "evaluate/create",
+      "evaluate/suite/:suiteId",
+      "evaluate/suite/:suiteId/edit",
+      "evaluate/suite/:suiteId/runs/:runId",
+      "evaluate/suite/:suiteId/test/:testId",
+      "evaluate/suite/:suiteId/test/:testId/edit",
+    ],
+    navSegments: ["evaluate"],
+    title: "Evaluate (New)",
+    purpose:
+      "Preview of the redesigned Evaluate tab: a suites landing with a Runs view, a full-page create-suite flow, and a suite overview built around run history. Same suites and same data as Evaluate — only the screens differ.",
+    userActivities: [
+      "Browse eval suites from the landing table",
+      "Create a suite on the full-page create flow",
+      "Open a suite's overview to see its run history and cases",
+      "Open a run to inspect each step, tool call, and score",
+    ],
+    // No snapshot provider and no tool group of its own: the component
+    // bridges as `surfaceId: "evals"`, reusing that surface's group and
+    // snapshot. The two tabs are never mounted at once, and duplicating the
+    // agent contract for a preview shell would give the model two names for
+    // one set of suites.
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        'Flag-gated preview of the Evaluate tab. It bridges as surfaceId "evals" and reuses that surface\'s tool group, so declaring a second group would advertise duplicate tools for the same suites.',
+    },
+    // Flag-gated: the atlas is static and cannot read `evaluate-enabled`,
+    // so advertising this path would send the agent to a screen that is
+    // unreachable for almost every project. Same rationale as `sessions`.
+    showInAtlas: false,
+  },
+  {
     id: "tools",
     canonicalPath: "/tools",
     routePatterns: ["tools"],

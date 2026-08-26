@@ -1153,6 +1153,33 @@ describe("agent op registry", () => {
     ).toMatchObject({ type: "conformance_run", id: "run_1" });
   });
 
+  it("returns undefined rather than throwing when a policy fails", () => {
+    // Link derivation runs AFTER the work is done. A policy that throws must
+    // cost the link and nothing else — the caller records `succeeded` from
+    // this value, and an exception escaping here would re-record an action
+    // that happened as failed.
+    const original = startConformanceRunOperation.permalink;
+    (startConformanceRunOperation as { permalink: unknown }).permalink = {
+      kind: "derive",
+      resources: () => {
+        throw new Error("bad policy");
+      },
+    };
+    try {
+      expect(
+        executedActionResource(
+          startConformanceRunOperation,
+          { run: { runId: "run_1", projectId: "p1" } },
+          {},
+          { projectId: "p1" }
+        )
+      ).toBeUndefined();
+    } finally {
+      (startConformanceRunOperation as { permalink: unknown }).permalink =
+        original;
+    }
+  });
+
   it("links a GROUP launch to the group, not to one of its runs", () => {
     // The contract carries one resource. Linking the first run would hide a
     // sibling's failure — the one thing an approver of N paid runs needs.
@@ -1629,6 +1656,17 @@ describe("tier derives from operation.risk", () => {
         "out whether its widget works, which is the weaker of the two " +
         "capabilities.",
     },
+    revoke_eval_gate_waiver: {
+      tier: "gated",
+      reason:
+        "risk is none (nothing spent, no record destroyed — the waiver row " +
+        "and its audit event survive a revoke) but ending a waiver puts a " +
+        "release gate back and blocks whatever it was unblocking. That is " +
+        "somebody else's release, so a person approves it. It also keeps " +
+        "the surface symmetric with waive_eval_gate: an agent that needed " +
+        "approval to grant an override should not be able to withdraw one " +
+        "unasked.",
+    },
     start_conformance_run: {
       tier: "gated",
       reason:
@@ -1862,6 +1900,9 @@ const EXPECTED_PROMPT_NOTES = [
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
   "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
+      "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
+      "- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately \"3\" or \"15\" and a count without its unit is not a fact. And `verdict: \"notEstablished\"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.",
+      "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
   "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
