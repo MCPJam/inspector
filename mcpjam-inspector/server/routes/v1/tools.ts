@@ -23,10 +23,11 @@ tools.post("/projects/:projectId/servers/:serverId/tools", async (c) =>
 );
 
 // POST /v1/projects/:projectId/servers/:serverId/tools/call
-// Execute a tool and return the MCP CallToolResult directly. Tool-level
-// failures (result.isError === true) are successful calls — the server
-// answered; only transport/auth errors flow through the v1 error envelope.
-// Mirrors /api/web/tools/execute, including the hosted task restriction.
+// Execute a tool and return the MCP CallToolResult plus additive durationMs.
+// Tool-level failures (result.isError === true) are successful calls — the
+// server answered; only transport/auth errors flow through the v1 error
+// envelope. Mirrors /api/web/tools/execute, including the hosted task
+// restriction.
 tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
   runV1ServerOp(
     c,
@@ -42,11 +43,24 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
           "Task-augmented tool execution is not supported on /api/v1"
         );
       }
-      return await manager.executeTool(
+      const startedAt = Date.now();
+      const result = await manager.executeTool(
         body.serverId,
         body.toolName,
         body.parameters
       );
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      // Additive sibling on the MCP CallToolResult. `v1Resource` returns the
+      // object verbatim, so agents can read latency without a second hop.
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        const record = result as Record<string, unknown>;
+        // Never shadow the server's own field. `CallToolResult` allows extra
+        // keys, so a server may already report a `durationMs` of its own —
+        // overwriting it would destroy upstream data to report our copy of
+        // roughly the same number.
+        return "durationMs" in record ? record : { ...record, durationMs };
+      }
+      return result;
     },
     (ctx, result) => v1Resource(ctx, result)
   )

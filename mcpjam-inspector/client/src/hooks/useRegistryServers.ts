@@ -385,6 +385,24 @@ function isMissingProjectConnectionError(error: unknown): boolean {
 }
 
 /**
+ * Auth bootstrap failures from the Convex registry routes. Catalog used to
+ * 401 before a bearer was attached (and still can, on star-merge), and the
+ * hook toasted the raw `Missing or invalid bearer token` message on every
+ * /servers pageload. These are retryable, not user-actionable.
+ */
+function isBackgroundAuthError(error: unknown): boolean {
+  if (error instanceof WebApiError) {
+    if (error.status === 401 || error.status === 403) return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message === "Missing or invalid bearer token" ||
+    message === "Signed-in user required" ||
+    message === "User not found"
+  );
+}
+
+/**
  * Hook for fetching registry servers and managing connections.
  *
  * Pattern follows useProjectMutations / useServerMutations in useProjects.ts.
@@ -436,12 +454,15 @@ export function useRegistryServers({
       const cards = await fetchRegistryCatalog();
       setRawCatalog(cards);
     } catch (error) {
+      if (isBackgroundAuthError(error)) {
+        return;
+      }
       const message =
         error instanceof WebApiError
           ? error.message
           : "Failed to load registry catalog";
       toast.error(message);
-      setRawCatalog([]);
+      setRawCatalog((prev) => prev ?? []);
     }
   }, []);
 
@@ -449,7 +470,9 @@ export function useRegistryServers({
     if (!enabled) return;
     if (DEV_MOCK_REGISTRY) return;
     void loadCatalog();
-  }, [enabled, loadCatalog]);
+    // Re-fetch when the actor flips so a first anonymous/unstarred catalog
+    // is replaced with the viewer's `isStarred` once a session exists.
+  }, [enabled, loadCatalog, isAuthenticated]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -480,10 +503,22 @@ export function useRegistryServers({
         mergeRanRef.current = true;
       } catch (error) {
         const message =
-          error instanceof WebApiError
-            ? error.message
-            : "Could not merge guest stars";
-        toast.error(message);
+          error instanceof Error ? error.message : String(error);
+        if (
+          message === "Signed-in user required" ||
+          message === "User not found"
+        ) {
+          // Convex guests cannot merge. Latch so we don't toast or retry.
+          mergeRanRef.current = true;
+          return;
+        }
+        if (!isBackgroundAuthError(error)) {
+          toast.error(
+            error instanceof WebApiError
+              ? error.message
+              : "Could not merge guest stars",
+          );
+        }
         // Schedule a retry by bumping the nonce, which is in this effect's
         // deps. Backoff grows with attempt count; capped by MAX_MERGE_ATTEMPTS.
         if (

@@ -45,7 +45,7 @@ import {
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown, Download } from "lucide-react";
+import { ArrowUpDown, Download, Share2 } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -166,6 +166,12 @@ interface RunDetailViewProps {
   runTrendData?: RunTrendPoint[];
   /** Opens the OTLP trace-export modal for this run (rendered on the hero band). */
   onExportTraces?: () => void;
+  /**
+   * Opens the share dialog. Owned by run-detail parents (not CI-embedded
+   * views). Widens the action-row guard so plugin-free runs still render
+   * the row when sharing is available.
+   */
+  onShare?: () => void;
   /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
@@ -397,6 +403,7 @@ export function RunDetailView({
   hideKpiStrip = false,
   hideAccuracyHero = false,
   onExportTraces,
+  onShare,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -969,10 +976,22 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3",
       )}
     >
-      {onExportTraces || pluginSubmissionVersions.length > 0 ? (
+      {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
         <div className="mb-3 flex shrink-0 justify-end gap-2">
+          {onShare ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onShare}
+              className="gap-1.5"
+              data-testid="run-detail-share"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </Button>
+          ) : null}
           {pluginSubmissionVersions.length > 0 ? (
             // Offered only for a run that pinned a plugin. The document's
             // entire value is naming the bundle it is evidence about, so on a

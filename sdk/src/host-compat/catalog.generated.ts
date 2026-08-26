@@ -866,7 +866,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       hostStyle: "chatgpt",
-      modelId: "openai/gpt-5-nano",
+      modelId: "openai/gpt-5.6-luna",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,

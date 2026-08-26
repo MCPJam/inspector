@@ -39,7 +39,11 @@ import {
   listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
+  getEvalRunDisclosureOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -65,6 +69,10 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -96,6 +104,14 @@ import {
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -127,12 +143,24 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // Read-only, checked BEFORE a launch decision — placed ahead of the two run
+  // operations it exists to inform. `run_eval_suite` already fetches and
+  // returns its own disclosure on the receipt, so this is for when a caller
+  // needs the answer before committing to launch, not after.
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -198,6 +226,14 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /**
@@ -236,6 +272,24 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
   cancel_wave_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  // Launches a browser and executes the caller's tool. The Apps tab renders
+  // the same widget interactively, with the console and network panes beside
+  // it — a chat tool would hand back a verdict with none of that context.
+  render_server_widget:
+    "The Apps tab renders the widget interactively, with the console and network evidence beside it. Available on REST/CLI/MCP.",
+  // Agent Playground. `send_chat_message` runs an assistant turn, and this
+  // toolset IS an assistant turn — offering it here lets a chat turn spawn
+  // chat turns, which is recursive spend with no natural floor. The two reads
+  // follow it out rather than being split off: their only use in chat is to
+  // read back a session this toolset cannot create, and the Sessions tab
+  // already renders both the transcript and the trace with the context around
+  // them.
+  send_chat_message:
+    "An assistant turn that starts assistant turns — recursive spend with no floor. Available on REST/CLI/MCP, where the caller is not already inside a turn.",
+  get_chat_session:
+    "Reads back a session this toolset cannot create; the Sessions tab renders the transcript with its context.",
+  get_chat_session_trace:
+    "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
@@ -259,6 +313,12 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
   rotate_user_testing_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  rotate_share_link:
+    "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
+  get_share_settings:
+    "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
+  set_share_mode:
+    "Changing who can open a shared resource belongs next to the share link the UI already shows.",
   upsert_user_testing_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
   remove_user_testing_member:
@@ -411,6 +471,16 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // supplied by whoever is talking to the model, this server dials it, and a
   // completed flow adds a server row to the user's project.
   connectProjectServerOperation.name,
+  // create_project_server with different spelling: the caller supplies
+  // `endpointUrl`, and a completed install adds a server row to the user's
+  // project — so it takes the same approval its sibling does.
+  installRegistryDirectoryServerOperation.name,
+  // Installs a registry card whose config was written by another org member;
+  // the completed flow still adds a server row to the user's project.
+  installRegistryServerOperation.name,
+  // Destructive, same as delete_project_server: removes the installed server
+  // row and its connection.
+  uninstallRegistryServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted

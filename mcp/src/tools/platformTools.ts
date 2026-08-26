@@ -9,6 +9,7 @@
  */
 import {
   callServerToolOperation,
+  renderServerWidgetOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -16,6 +17,10 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
@@ -38,10 +43,13 @@ import {
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
+  getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
@@ -50,6 +58,9 @@ import {
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -126,6 +137,14 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -173,6 +192,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
+  renderServerWidgetOperation,
   listServerPromptsOperation,
   getServerPromptOperation,
   listServerResourcesOperation,
@@ -184,12 +204,22 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  // What a suite run would disclose (models called and where they route,
+  // which analyzers/judges can fire, retention/region) — a planning read for
+  // an unattended agent to check, or show a human, BEFORE it launches.
+  // `run_eval_suite` already fetches and returns this itself; this tool is
+  // for asking ahead of that decision, same rationale as `get_capabilities`.
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
@@ -203,6 +233,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   generateEvalCasesOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  // The waiver READ, beside the run read it explains. `get_eval_run` already
+  // carries `gateWaiver`, so withholding the dedicated read would hide nothing
+  // while making the surface incoherent — and a waiver an unattended reader
+  // cannot see is not the visible waiver the workflow exists to produce.
+  getEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -213,6 +248,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Compose-to-run. Already tier-"direct" in-app; the catalog withheld it
+  // because `run_eval_suite`'s `compose` mints the same row. Exposing it
+  // lets a caller pin a cell (then `name_environment`, or hand the id to
+  // `set_eval_suite_environments`) without launching.
+  ensureAdhocEnvironmentOperation,
   // Sandbox image READS. They are the picker behind `update_eval_suite`'s
   // `environment.computerEnvironment`: without them an agent can set a
   // suite's computer image but never enumerate the choices.
@@ -227,6 +267,18 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getScenarioOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  // Agent Playground: drive a conversation against a project's MCP servers
+  // and read the telemetry it produced. `send_chat_message` SPENDS, and is
+  // advertised anyway — this is the one surface where a model debugging its
+  // own server can close the loop (send, read the trace, fix, resend), and an
+  // MCP client already gates a non-read tool through its own approval.
+  //
+  // The two reads are here while `list_chat_sessions`/`search_sessions`
+  // remain deliberately narrow elsewhere, because taking an id the caller
+  // produced is not the same claim as enumerating an org's conversations.
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //
@@ -297,6 +349,14 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -348,8 +408,6 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
-  ensure_adhoc_environment:
-    "Project infrastructure writes are not offered on the unattended catalog surface. Composing a stack to RUN it needs no separate tool here: run_eval_suite takes a `compose` object and ensures the environment itself, so excluding this costs the surface no capability.",
   name_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface. Promotion turns a throwaway into a permanent entry in the project's environment list, which is exactly the kind of durable edit an unattended caller should not make on its own.",
   update_project_environment:
@@ -372,6 +430,29 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
+  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // resource types and belong with the Share dialog / agent-op registry until
+  // this catalog grows a dedicated share group — same decision as CLI
+  // `op-bindings.ts`.
+  // The gate-waiver WRITES. Not excluded for being writes — this catalog
+  // carries cancel_eval_run, request_eval_run_judge and the case writes — but
+  // for being GOVERNANCE. Waiving overrides a human release decision, and the
+  // platform makes it manage-tier with no creator hatch precisely so whoever
+  // ran the failing evals cannot wave their own run through. An unattended
+  // caller granting itself that override is the same hole with a longer path
+  // to it, and the charter's "authorized actor" clause is what it defeats. It
+  // also publishes unredacted free text that outlives the waiver.
+  waive_eval_gate:
+    "Overriding a release gate is a governance act reserved to the manage tier, with no creator hatch, so an unattended caller must not be able to grant itself one. The waiver READ (get_eval_gate_waiver) is in the catalog.",
+  revoke_eval_gate_waiver:
+    "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
+  get_share_settings:
+    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+  set_share_mode:
+    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+  rotate_share_link:
+    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
 };
 
 const catalogOperationNames = new Set(
@@ -448,6 +529,13 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
  * just handed back.
  */
 const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
+  // A widget render EXECUTES the caller's tool first, and nobody can promise
+  // that running a third party's tool twice is safe. It reaches this list
+  // rather than `call_server_tool`'s absent-hints branch because its
+  // `risk: "destructive"` classification takes precedence above — which lands
+  // it STRICTER than the bare tool call (explicitly destructive, explicitly
+  // not retryable), never looser.
+  renderServerWidgetOperation.name,
   deletePersonaOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,

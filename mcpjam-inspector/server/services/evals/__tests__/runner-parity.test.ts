@@ -199,6 +199,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
   };
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
+    listTools: vi.fn(),
+    getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     // Pinned (`toolCall`) turns execute directly; inert for prompt-only cases.
@@ -218,6 +220,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
+    mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     streamTextMock.mockReturnValue({
       consumeStream: async () => {},

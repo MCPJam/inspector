@@ -70,6 +70,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },
+  {
+    path: "conformance/runs/:runId",
+    kind: "screen",
+    surfaceId: "conformance",
+  },
+  {
+    path: "conformance/shared/:token",
+    kind: "special",
+    note: "Read-only shared conformance run. Redeem-based (guest session or WorkOS). Legacy HMAC tokens read as invalid on this page; /api/web/conformance-shared still serves them until I6.",
+  },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow" },
@@ -176,6 +186,11 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "organizations",
   },
+  {
+    path: "evals/shared/:token",
+    kind: "special",
+    note: "Read-only shared eval run. Redeem-based (guest session or WorkOS). Chrome-less.",
+  },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },
   { path: "evals/suite/:suiteId", kind: "screen", surfaceId: "evals" },
@@ -224,6 +239,36 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "evals/runs/suite/:suiteId/edit",
     kind: "screen",
     surfaceId: "evals",
+  },
+  // Evaluate (New) — the flag-gated redesign. A sibling tree of `/evals`, so
+  // the original tab's URLs are untouched. Suites lens only: the new landing's
+  // Runs view is in-page state, and the commit lens stays on /evals/runs.
+  { path: "evaluate", kind: "screen", surfaceId: "evaluate" },
+  { path: "evaluate/create", kind: "screen", surfaceId: "evaluate" },
+  {
+    path: "evaluate/suite/:suiteId",
+    kind: "screen",
+    surfaceId: "evaluate",
+  },
+  {
+    path: "evaluate/suite/:suiteId/edit",
+    kind: "screen",
+    surfaceId: "evaluate",
+  },
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId",
+    kind: "screen",
+    surfaceId: "evaluate",
+  },
+  {
+    path: "evaluate/suite/:suiteId/test/:testId",
+    kind: "screen",
+    surfaceId: "evaluate",
+  },
+  {
+    path: "evaluate/suite/:suiteId/test/:testId/edit",
+    kind: "screen",
+    surfaceId: "evaluate",
   },
   {
     path: "ci-evals",

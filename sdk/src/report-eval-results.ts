@@ -5,6 +5,7 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import { isEvalRunVerdict } from "./contract/verdict-policy.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 import {
@@ -47,7 +48,43 @@ type StartRunResponse = {
   status?: string;
   result?: string;
   summary?: ReportEvalResultsOutput["summary"];
+  /** v2 verdict fields, absent from a legacy run and a legacy backend. */
+  verdictPolicyVersion?: number;
+  verdictSummary?: ReportEvalResultsOutput["verdictSummary"];
+  verdictPolicyIntegrityError?: string;
 };
+
+/**
+ * Project a backend run response onto {@link ReportEvalResultsOutput}.
+ *
+ * The verdict is carried through as the backend spelled it — `inconclusive`
+ * included. Narrowing it to `passed | failed` (which is what a bare cast did)
+ * reports an unmeasurable run as a failing one, which points a gate at the
+ * server under test when the harness is what broke.
+ */
+export function projectRunVerdict(
+  run: Pick<
+    StartRunResponse,
+    "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+  >
+): Pick<
+  ReportEvalResultsOutput,
+  "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+> {
+  return {
+    result: isEvalRunVerdict(run.result) ? run.result : "failed",
+    ...(run.verdictPolicyVersion !== undefined
+      ? {
+          verdictPolicyVersion:
+            run.verdictPolicyVersion as ReportEvalResultsOutput["verdictPolicyVersion"],
+        }
+      : {}),
+    ...(run.verdictSummary ? { verdictSummary: run.verdictSummary } : {}),
+    ...(run.verdictPolicyIntegrityError
+      ? { verdictPolicyIntegrityError: run.verdictPolicyIntegrityError }
+      : {}),
+  };
+}
 
 type AppendIterationsResponse = {
   inserted: number;
@@ -1023,6 +1060,11 @@ async function reportEvalResultsInternal(
         expectedIterations: input.expectedIterations,
         tags: input.tags,
         evaluationConfigHash: input.evaluationConfigHash,
+        // The v2 marker. Sent only when the caller declared a policy, so a
+        // legacy run's body is byte-identical to what it was: this is the field
+        // that decides which aggregation a run is graded under, and a default
+        // would silently re-grade every existing suite.
+        ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
         results: resultsWithIterationIds,
         ...wireHostConfigBody,
       }
@@ -1044,6 +1086,10 @@ async function reportEvalResultsInternal(
     expectedIterations: input.expectedIterations,
     tags: input.tags,
     evaluationConfigHash: input.evaluationConfigHash,
+    // Resolved and FROZEN by the backend at run start — which is why it rides
+    // the start call rather than each chunk. Later chunks carry evidence, not
+    // policy.
+    ...(input.verdictPolicy ? { verdictPolicy: input.verdictPolicy } : {}),
     ...wireHostConfigBody,
   });
 
@@ -1061,7 +1107,7 @@ async function reportEvalResultsInternal(
       runId: start.runId,
       ...(start.projectId ? { projectId: start.projectId } : {}),
       status: start.status as "completed" | "failed",
-      result: start.result as "passed" | "failed",
+      ...projectRunVerdict(start),
       summary: start.summary,
     };
     printRunUrl(config, reused);

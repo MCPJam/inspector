@@ -72,6 +72,12 @@ export interface ProjectEnvironmentView {
   hostId: string;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
+  /**
+   * Stored model override. Absent ⇒ this environment inherits its client's
+   * model. Deliberately NOT the effective model: a list row that conflated
+   * the two could not tell "pinned to X" from "inheriting X".
+   */
+  modelId?: string;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
@@ -228,6 +234,8 @@ export function useEnsureAdhocEnvironment(): (args: {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
+  /** Explicit model override. Omit to inherit the client's model. */
+  modelId?: string;
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
     "projectEnvironments:ensureAdhocEnvironment" as any
@@ -253,6 +261,8 @@ export function useEnsureAdhocEnvironments(): (args: {
     serverAttachmentId?: string | null;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
     computerEnvironmentId?: string;
+    /** Explicit model override. Omit to inherit the client's model. */
+    modelId?: string;
   }>;
 }) => Promise<
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>
@@ -376,3 +386,5 @@ export function isRevisionConflictError(err: unknown): boolean {
     typeof data === "string" ? data : err instanceof Error ? err.message : "";
   return /revision/i.test(message) && /conflict|stale|changed/i.test(message);
 }
+
+export { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";

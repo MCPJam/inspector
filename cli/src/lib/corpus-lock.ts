@@ -220,7 +220,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     if (isMissingFileError(error)) {
       throw incomplete(
         "CORPUS_LOCK_MISSING",
-        `No corpus lock at "${lockPath}". Run \`mcpjam eval pull\` to create ` +
+        `No corpus lock at "${lockPath}". Run \`mcpjam cloud eval pull\` to create ` +
           `one before checking it with --frozen.`
       );
     }
@@ -238,7 +238,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is not valid JSON. Re-create it with ` +
-        `\`mcpjam eval pull\`.`,
+        `\`mcpjam cloud eval pull\`.`,
       { source: error instanceof Error ? error.message : String(error) }
     );
   }
@@ -255,7 +255,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is missing "lockVersion" or "cases". ` +
-        `Re-create it with \`mcpjam eval pull\`.`
+        `Re-create it with \`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -273,7 +273,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is malformed: ${structural}. ` +
-        `Re-create it with \`mcpjam eval pull\`.`
+        `Re-create it with \`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -287,7 +287,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
       `The corpus lock at "${lockPath}" is version ${lock.lockVersion}, but ` +
         `this CLI writes version ${CORPUS_LOCK_VERSION}. Hashes are not ` +
         `comparable across lock versions. Re-create it with ` +
-        `\`mcpjam eval pull\`.`
+        `\`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -366,7 +366,7 @@ export function renderCorpusDrift(drift: CorpusDrift[]): string {
     }):`,
     ...lines,
     "",
-    "Run `mcpjam eval pull` to accept these changes, or restore the cases in " +
+    "Run `mcpjam cloud eval pull` to accept these changes, or restore the cases in " +
       "the dashboard.",
   ].join("\n");
 }

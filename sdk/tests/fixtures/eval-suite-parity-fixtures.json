@@ -41,6 +41,57 @@
     },
     {
       "__kind": "suiteFile",
+      "__label": "environment-only target with execution config and host attachments",
+      "__why": "A project environment is independently runnable, while host attachments and explicitly authored execution fields must survive export and file launch without invented defaults.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_environment_only",
+        "name": "Environment-backed billing"
+      },
+      "target": {
+        "environment": "production",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing"
+              }
+            ]
+          },
+          {
+            "name": "Cursor",
+            "servers": []
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "Use the billing tools and keep the answer concise.",
+        "temperature": 0.2,
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_environment_only",
+          "title": "Runs from a named project environment",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
       "__label": "full — all four step kinds, both assertion vocabularies, provenance and every import status",
       "__why": "Exercises the widget-assertion union AND the predicate union inside `assert` steps (disjoint discriminators, `kind` vs `type`), plus one case per IMPORT_MAPPING_STATUS. A `disabled` case that is still `unsupported` is deliberate: eligibility is runtime policy, not schema.",
       "schemaVersion": "1",
@@ -61,11 +112,25 @@
             "name": "search"
           }
         ],
-        "environment": "staging"
+        "environment": "staging",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing",
+                "id": "srv_9Fa1"
+              }
+            ]
+          }
+        ]
       },
       "defaults": {
         "model": "anthropic/claude-sonnet-4-6",
         "provider": "anthropic",
+        "systemPrompt": "Use only evidence returned by the attached servers.",
+        "temperature": 0.2,
         "repetitions": 25,
         "passThreshold": 0.9,
         "validity": {
@@ -259,6 +324,170 @@
     }
   ],
   "reject": [
+    {
+      "__kind": "suiteFile",
+      "__label": "target with neither servers nor environment",
+      "__why": "Host attachments augment a runnable target; they cannot replace the required legacy-server or project-environment selection.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_no_runnable_target",
+        "name": "No runnable target"
+      },
+      "target": {
+        "hosts": [
+          {
+            "name": "Claude Desktop"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_no_runnable_target",
+          "title": "Cannot run without servers or an environment",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "systemPrompt has the wrong type",
+      "__why": "Execution prompts are strings; coercing another type would manufacture a different hosted configuration.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_bad_prompt",
+        "name": "Bad system prompt"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": 42,
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_bad_prompt",
+          "title": "Rejects a non-string prompt",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "temperature has the wrong type",
+      "__why": "Execution temperature is numeric; a string must not be accepted and forwarded ambiguously.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_bad_temperature",
+        "name": "Bad temperature"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "temperature": "0.2",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_bad_temperature",
+          "title": "Rejects a non-number temperature",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "host attachment carries an unknown field",
+      "__why": "Host target objects are closed like every other suite-file-owned object.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_open_host",
+        "name": "Open host object"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ],
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "transport": "stdio"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_open_host",
+          "title": "Rejects undeclared host configuration",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
     {
       "__kind": "suiteFile",
       "__label": "reserved mode \"serverContract\"",
@@ -1353,11 +1582,25 @@
             "name": "search"
           }
         ],
-        "environment": "staging"
+        "environment": "staging",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing",
+                "id": "srv_9Fa1"
+              }
+            ]
+          }
+        ]
       },
       "defaults": {
         "model": "anthropic/claude-sonnet-4-6",
         "provider": "anthropic",
+        "systemPrompt": "Use only evidence returned by the attached servers.",
+        "temperature": 0.2,
         "repetitions": 25,
         "passThreshold": 0.9,
         "validity": {

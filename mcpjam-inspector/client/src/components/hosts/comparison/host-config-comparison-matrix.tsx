@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
+import { StyleColorSwatch } from "@/components/hosts/style-token-swatch";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
@@ -70,6 +71,8 @@ interface HostConfigComparisonMatrixProps {
    * surface (`presetOnly`), where every column is a synthetic preset host.
    */
   verifyBaseUrl?: string;
+  /** Template ids that are visible for reference but cannot be verified yet. */
+  disabledVerifyTemplateIds?: ReadonlySet<string>;
 }
 
 /**
@@ -91,6 +94,7 @@ export function HostConfigComparisonMatrix({
   themeMode = "light",
   mobileOptimized = false,
   verifyBaseUrl,
+  disabledVerifyTemplateIds,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
@@ -247,6 +251,7 @@ export function HostConfigComparisonMatrix({
                   onRemove={onRemoveHost}
                   themeMode={themeMode}
                   verifyBaseUrl={verifyBaseUrl}
+                  disabledVerifyTemplateIds={disabledVerifyTemplateIds}
                 />
               ))}
             </tr>
@@ -714,28 +719,52 @@ function FieldCell({
 
     case "style-variable": {
       const v = value as StyleVariableByTheme;
+      // Colors get a chip: two hex strings are only comparable at a glance
+      // once you can see them. Sizes, radii and shadows have nothing to show.
+      const isColor = field.label.startsWith("--color-");
       // One string answering both themes renders bare — labelling it "light"
       // and "dark" twice would imply a distinction the host does not make.
+      // A `light-dark(…)` value is NOT this case: it is decoded upstream into
+      // the pair below, so the notation a host happens to use never changes
+      // the shape of its cell.
+      // Everything centers on the cell's own axis: each theme block spans the
+      // full cell (`w-full`), so LIGHT and DARK center over the same width
+      // and therefore line up with each other AND with the same rows in every
+      // other column. Sizing the blocks to their own content instead makes
+      // each label drift to wherever its value happens to be wide.
       if ("same" in v) {
-        return <span className="font-mono text-[12px] break-all">{v.same}</span>;
+        return (
+          <span className="inline-flex max-w-full items-center justify-center gap-1.5">
+            {isColor ? <StyleColorSwatch value={v.same} /> : null}
+            <span className="min-w-0 font-mono text-[12px] break-all">
+              {v.same}
+            </span>
+          </span>
+        );
       }
       return (
-        <div className="flex flex-col gap-1">
+        <span className="flex w-full flex-col gap-1.5" title={v.raw}>
           {(["light", "dark"] as const).map((theme) => (
-            <div key={theme} className="flex flex-col gap-0.5">
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+            // `items-center` centers the theme label over the swatch+value row
+            // it names; the row itself keeps its own left edge, so the two
+            // themes still line up with each other for reading down the cell.
+            <span key={theme} className="flex w-full flex-col items-center gap-0.5">
+              <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
               </span>
               {v[theme] === undefined ? (
                 <span className="text-[12px] text-muted-foreground/60">—</span>
               ) : (
-                <span className="font-mono text-[12px] break-all">
-                  {v[theme]}
+                <span className="flex max-w-full items-center justify-center gap-1.5">
+                  {isColor ? <StyleColorSwatch value={v[theme]} /> : null}
+                  <span className="min-w-0 font-mono text-[12px] break-all">
+                    {v[theme]}
+                  </span>
                 </span>
               )}
-            </div>
+            </span>
           ))}
-        </div>
+        </span>
       );
     }
 
@@ -878,11 +907,13 @@ function HostColumnHeader({
   onRemove,
   themeMode,
   verifyBaseUrl,
+  disabledVerifyTemplateIds,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
   themeMode: HostThemeMode;
   verifyBaseUrl?: string;
+  disabledVerifyTemplateIds?: ReadonlySet<string>;
 }) {
   const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
@@ -890,7 +921,11 @@ function HostColumnHeader({
     themeMode
   );
   const reduceMotion = useReducedMotion();
-  const verifyHref = buildVerifyHref(verifyBaseUrl, subject.hostId);
+  const verifyHref = buildVerifyHref(
+    verifyBaseUrl,
+    subject.hostId,
+    disabledVerifyTemplateIds
+  );
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -959,11 +994,13 @@ function HostColumnHeader({
  */
 function buildVerifyHref(
   baseUrl: string | undefined,
-  hostId: string
+  hostId: string,
+  disabledVerifyTemplateIds?: ReadonlySet<string>
 ): string | null {
   if (!baseUrl) return null;
   if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return baseUrl;
   const templateId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
+  if (disabledVerifyTemplateIds?.has(templateId)) return null;
   return `${baseUrl}/hosts?${buildHostVerifySearch(templateId, "behavior")}`;
 }
 

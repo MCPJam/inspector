@@ -187,10 +187,21 @@ function finalizeMetricStripData(series: MetricStripPoint[]): MetricStripData | 
   };
 }
 
+/**
+ * A run the platform declined to decide (verdict policy 2 `inconclusive`) has
+ * no place in a pass-rate series or aggregate. Its counts are exactly the
+ * evidence the backend judged insufficient, so plotting them would draw a
+ * regression — or a recovery — out of measurements that were never trusted.
+ */
+function measuredRuns(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+  return runs.filter((run) => run.result !== "inconclusive");
+}
+
 export function buildSuiteMetricStripData(
-  runs: EvalSuiteRun[],
+  allRuns: EvalSuiteRun[],
   allIterations: EvalIteration[],
 ): MetricStripData | null {
+  const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
 
   const itsByRun = new Map<string, EvalIteration[]>();
@@ -228,9 +239,10 @@ export function buildSuiteMetricStripData(
  * so it reads as one point-in-time aggregate, not an N-point per-host "trend".
  */
 export function buildAggregateMetricStripData(
-  runs: EvalSuiteRun[],
+  allRuns: EvalSuiteRun[],
   allIterations: EvalIteration[],
 ): MetricStripData | null {
+  const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
 
   const runIds = new Set(runs.map((r) => r._id));

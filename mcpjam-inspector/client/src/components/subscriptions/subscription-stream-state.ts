@@ -91,7 +91,7 @@ export function unacknowledgedInterests(
       case "capability-not-advertised":
         return `${what} (not advertised)`;
       // The connection cannot put the tasks declaration on the listen, so the
-      // task-id selection was dropped rather than sent undeclared (-32003).
+      // task-id selection was dropped rather than sent undeclared (-32021).
       // Polling continues — nothing is lost but latency.
       case "tasks-declaration-unavailable":
         return `${what} (cannot declare tasks extension; polling instead)`;

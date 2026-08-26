@@ -156,7 +156,7 @@ describe("fail loud", () => {
     const call = vi.fn(async () => "sent");
     // Simulates upstream moving the request literal below an `await`, or
     // dropping the envelope from listen entirely. Either way the declaration
-    // did not reach the wire, and a conforming server would answer -32003.
+    // did not reach the wire, and a conforming server would answer -32021.
     await expect(
       withTasksExtensionEnvelope(client, {}, call)
     ).rejects.toThrow(TasksExtListenMetaSeamError);
@@ -311,7 +311,7 @@ describe("the declaration on a real subscriptions/listen frame", () => {
     expect(frame).toBeDefined();
 
     // 1. The per-request eligibility declaration. Without it a conforming
-    //    server MUST answer -32003.
+    //    server MUST answer -32021.
     const capabilities = frame?.params?._meta?.[CLIENT_CAPABILITIES_META_KEY];
     expect(capabilities?.extensions?.[TASKS_EXT]).toEqual({});
     // The client's own declared capabilities survive the merge.

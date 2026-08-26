@@ -7,6 +7,9 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
   useQuery: () => undefined,
+  // No Convex identity: nothing to wait on, so `useActorCanQuery` lets the
+  // suite-config read through exactly as it did before it was gated.
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({

@@ -108,6 +108,19 @@ describe("eval-edit operation input validation", () => {
     ).toBe(false);
   });
 
+  it("update_eval_suite rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      hostIds: ["h1"],
+      servers: ["echo"],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const detail = parsed.error.issues.map((issue) => issue.message).join("; ");
+    expect(detail).toContain("hostIds");
+    expect(detail).toContain("servers");
+  });
+
   it("update_eval_suite rejects an out-of-range minimumAccuracy", () => {
     expect(
       updateEvalSuiteOperation.inputSchema.safeParse({

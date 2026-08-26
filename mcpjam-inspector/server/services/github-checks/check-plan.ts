@@ -45,7 +45,10 @@
  *   8. obey the typed ACTION returned by every /attempt
  *   9. on `run_eval`: launch the suite, then IMMEDIATELY post
  *      { phase:'eval', ok:true, runId } — that attempt is what BINDS the run
- *   10. POST /complete { triggerId, planId, runId } — NO `outcome` field
+ *   9b. on `run_conformance` (opt-in dual-check): launch conformance against an
+ *      independent MCP session, then IMMEDIATELY post
+ *      { phase:'conformance', ok:true, conformanceRunId }
+ *   10. POST /complete { triggerId, planId, runId, conformanceRunId? } — NO `outcome` field
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THREE RULES THAT ARE EASY TO SOFTEN AND MUST NOT BE
@@ -95,6 +98,7 @@ export const ATTEMPT_PHASES = [
   "probe",
   "verify",
   "eval",
+  "conformance",
 ] as const;
 export type AttemptPhase = (typeof ATTEMPT_PHASES)[number];
 
@@ -142,6 +146,7 @@ export const ATTEMPT_ACTIONS = [
   "continue_phase",
   "try_next_candidate",
   "run_eval",
+  "run_conformance",
   "complete",
 ] as const;
 export type AttemptAction = (typeof ATTEMPT_ACTIONS)[number];
@@ -182,6 +187,8 @@ export type AttemptInput = {
   detailsClamped?: string;
   /** REQUIRED when `phase === 'eval' && ok`, REFUSED anywhere else. */
   runId?: string;
+  /** REQUIRED when `phase === 'conformance' && ok`, REFUSED anywhere else. */
+  conformanceRunId?: string;
 };
 
 export type AttemptDecision = {
@@ -270,6 +277,7 @@ export interface CheckPlanSession {
   attempt(input: AttemptInput): Promise<AttemptDecision>;
   complete(input: {
     runId?: string;
+    conformanceRunId?: string;
     summary?: {
       total: number;
       passed: number;
@@ -363,6 +371,9 @@ export class HttpCheckPlanSession implements CheckPlanSession {
           ? { detailsClamped: input.detailsClamped }
           : {}),
         ...(input.runId ? { runId: input.runId } : {}),
+        ...(input.conformanceRunId
+          ? { conformanceRunId: input.conformanceRunId }
+          : {}),
         idempotencyKey,
       },
       { phase: input.phase, candidateId: input.candidateId }
@@ -392,6 +403,7 @@ export class HttpCheckPlanSession implements CheckPlanSession {
 
   async complete(input: {
     runId?: string;
+    conformanceRunId?: string;
     summary?: {
       total: number;
       passed: number;
@@ -409,6 +421,9 @@ export class HttpCheckPlanSession implements CheckPlanSession {
       // put the verdict back in this process, which is the whole thing A3b
       // moved.
       ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.conformanceRunId
+        ? { conformanceRunId: input.conformanceRunId }
+        : {}),
       ...(input.summary ? { summary: input.summary } : {}),
       ...(input.detailsMarkdown
         ? { detailsMarkdown: input.detailsMarkdown }
@@ -436,6 +451,10 @@ export class HttpCheckPlanSession implements CheckPlanSession {
         durationMs: Math.max(0, Math.round(attempt.durationMs)),
         ...(attempt.detailsClamped
           ? { detailsClamped: attempt.detailsClamped }
+          : {}),
+        ...(attempt.runId ? { runId: attempt.runId } : {}),
+        ...(attempt.conformanceRunId
+          ? { conformanceRunId: attempt.conformanceRunId }
           : {}),
         idempotencyKey: `${this.planId}:${attempt.candidateId ?? "ladder"}:${
           attempt.phase

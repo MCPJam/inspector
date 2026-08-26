@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TraceViewModeTabs } from "../trace-view-mode-tabs";
 
 describe("TraceViewModeTabs", () => {
-  it("uses sidebar-accent active styling for the selected tab (default)", () => {
+  it("uses accent active styling for the selected tab (default)", () => {
     render(
       <TraceViewModeTabs
         mode="chat"
@@ -13,8 +13,8 @@ describe("TraceViewModeTabs", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
   });
 
@@ -29,8 +29,8 @@ describe("TraceViewModeTabs", () => {
     );
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
   });
 
@@ -122,12 +122,12 @@ describe("TraceViewModeTabs", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Replay" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-accent",
+      "text-accent-foreground",
     );
     // With Replay active, no standard tab is highlighted.
     expect(screen.getByRole("button", { name: "Trace" })).not.toHaveClass(
-      "bg-sidebar-accent",
+      "bg-accent",
     );
   });
 });

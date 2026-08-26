@@ -10,7 +10,12 @@
  * tool surface throws that away at the last step: the model would ask for
  * `summarize` and get whichever row we happened to index first. Every tool here
  * — `loadSkill`, `listSkillFiles`, `readSkillFile` — resolves through the same
- * ref, so a duplicate declared name cannot cross a plugin boundary.
+ * ref, so a duplicate declared name cannot cross a plugin boundary. The
+ * discovery catalog is inlined in the system prompt (budgeted, with overflow
+ * notice); there is no `listSkills` tool. Zero skills → no tools, no stanza.
+ *
+ * Emulated `loadSkill` is an approximation: real Claude Code/Codex read an
+ * installed SKILL.md from the filesystem with no model-callable load tool.
  *
  * Bare names still work, and must: standalone project skills have no namespace,
  * and a model that read `summarize` in a prompt should be able to load it. A
@@ -42,7 +47,8 @@ import {
   type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities.js";
 import {
-  applySkillMetadataBudget,
+  formatSkillCatalogBody,
+  renderBudgetedSkillCatalog,
   skillMetadataBudgetChars,
 } from "./skill-metadata-budget.js";
 
@@ -151,9 +157,9 @@ function findFile(
 }
 
 /**
- * Build the discovery listing under the metadata budget, plus the refs that had
- * to be dropped. Computed ONCE at tool-construction time so every `listSkills`
- * call in a turn describes the same set (and so omissions are traced once).
+ * Build the inlined discovery listing under the metadata budget, plus the
+ * refs that had to be dropped. Computed ONCE at prompt-build time so the
+ * stanza and the overflow warn describe the same set.
  */
 function buildListing(
   skills: EffectiveSkill[],
@@ -161,11 +167,8 @@ function buildListing(
   serverRefs: Set<string>,
   modelContextTokens: number | undefined
 ): { text: string; omittedRefs: string[] } {
-  if (skills.length === 0) {
-    return { text: "No skills are available for this turn.", omittedRefs: [] };
-  }
   const budgetChars = skillMetadataBudgetChars(modelContextTokens);
-  const { entries, omittedRefs } = applySkillMetadataBudget(
+  const { lines, omittedRefs } = renderBudgetedSkillCatalog(
     skills.map((skill) => ({
       ref: skill.ref,
       description: skill.description,
@@ -177,22 +180,8 @@ function buildListing(
     })),
     budgetChars
   );
-
-  const lines = entries.map(
-    (entry) => `- **${entry.ref}** (${entry.origin}): ${entry.description}`
-  );
-  // Absence is semantic: say that skills were dropped rather than presenting a
-  // short list as if it were the whole set. This notice is deliberately emitted
-  // OUTSIDE the budget — it exists precisely to report that the budget bit, so
-  // suppressing it to fit would hide the omission it announces.
-  const notice =
-    omittedRefs.length > 0
-      ? `\n\n(${omittedRefs.length} more skill${
-          omittedRefs.length === 1 ? "" : "s"
-        } could not be listed within this model's skill-metadata budget.)`
-      : "";
   return {
-    text: `Available skills:\n\n${lines.join("\n")}${notice}`,
+    text: formatSkillCatalogBody(lines, omittedRefs),
     omittedRefs,
   };
 }
@@ -203,34 +192,11 @@ export function createEffectiveSkillTools(args: {
   pluginRefs: Set<string>;
   /** Refs captured from MCP servers, which always require approval to load. */
   serverRefs: Set<string>;
-  modelContextTokens?: number;
   signal?: AbortSignal;
 }) {
   const lookup = buildLookup(args.skills);
-  const listing = buildListing(
-    args.skills,
-    args.pluginRefs,
-    args.serverRefs,
-    args.modelContextTokens
-  );
-  if (listing.omittedRefs.length > 0) {
-    logger.warn(
-      "[effective-skills] skill metadata budget exceeded; skills omitted from discovery",
-      {
-        omitted: listing.omittedRefs,
-        total: args.skills.length,
-      }
-    );
-  }
 
   return {
-    listSkills: tool({
-      description:
-        "List the skills available to you for this turn. Returns each skill's reference, origin, and description. Call this first, then `loadSkill` with the reference.",
-      inputSchema: z.object({}),
-      execute: async () => listing.text,
-    }),
-
     loadSkill: {
       ...tool({
         description:
@@ -239,7 +205,7 @@ export function createEffectiveSkillTools(args: {
           name: z
             .string()
             .describe(
-              "The skill reference from `listSkills` — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
+              "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
             ),
         }),
         execute: async ({ name }) => {
@@ -338,46 +304,76 @@ export function createEffectiveSkillTools(args: {
   };
 }
 
-const EFFECTIVE_SKILLS_PROMPT_BASE =
-  `\n\n## Skills\n\n` +
-  `This turn has a fixed set of skills — reusable instruction packages for ` +
-  `specific tasks. Call the \`listSkills\` tool to see them, then \`loadSkill\` ` +
-  `with a skill's reference to load its full instructions when a task matches. ` +
-  `A reference is either a bare name or \`<plugin>/<skill>\` for a skill a ` +
-  `plugin provides; always pass the reference exactly as \`listSkills\` returned it.`;
+const EFFECTIVE_SKILLS_TRIGGER =
+  `You have access to the following skills. When the user names a skill ` +
+  `or a task clearly matches one's purpose, load it with \`loadSkill\` ` +
+  `before acting. A reference is either a bare name or \`<plugin>/<skill>\` ` +
+  `for a skill a plugin provides; always pass the reference exactly as ` +
+  `listed below.`;
 
 const EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE =
-  ` If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
+  `If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
   `\`readSkillFile\` with the same reference to access them.`;
 
 /**
  * Tools + prompt section for a turn driven by an `EffectiveCapabilitySet`.
  *
- * The file-tools sentence is advertised only when the set actually contains a
- * file-bearing skill: promising tools for files that do not exist invites the
- * model to go looking for them.
+ * Empty capability set → no tools, no stanza. The already-built listing
+ * (budgeted, with overflow notice) is inlined in the prompt. The file-tools
+ * sentence is advertised only when the set actually contains a file-bearing
+ * skill: promising tools for files that do not exist invites the model to go
+ * looking for them.
  */
 export function getEffectiveSkillToolsAndPrompt(
   capabilities: EffectiveCapabilitySet,
   options?: { modelContextTokens?: number; signal?: AbortSignal }
 ): {
-  tools: ReturnType<typeof createEffectiveSkillTools>;
+  tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
 } {
   const skills = allEffectiveSkills(capabilities);
+  if (skills.length === 0) {
+    return { tools: {}, systemPromptSection: "" };
+  }
+  const pluginRefs = new Set(
+    capabilities.pluginSkills.map((skill) => skill.ref)
+  );
+  const serverRefs = new Set(
+    capabilities.serverSkills.map((skill) => skill.ref)
+  );
+  const listing = buildListing(
+    skills,
+    pluginRefs,
+    serverRefs,
+    options?.modelContextTokens
+  );
+  if (listing.omittedRefs.length > 0) {
+    logger.warn(
+      "[effective-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
+      {
+        omitted: listing.omittedRefs,
+        total: skills.length,
+      }
+    );
+  }
   const hasFiles = skills.some((skill) => skill.files.length > 0);
+  const parts = [
+    "## Skills",
+    "",
+    EFFECTIVE_SKILLS_TRIGGER,
+    "",
+    listing.text,
+  ];
+  if (hasFiles) {
+    parts.push("", EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE);
+  }
   return {
     tools: createEffectiveSkillTools({
       skills,
-      pluginRefs: new Set(capabilities.pluginSkills.map((skill) => skill.ref)),
-      serverRefs: new Set(capabilities.serverSkills.map((skill) => skill.ref)),
-      ...(options?.modelContextTokens !== undefined
-        ? { modelContextTokens: options.modelContextTokens }
-        : {}),
+      pluginRefs,
+      serverRefs,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
-    systemPromptSection:
-      EFFECTIVE_SKILLS_PROMPT_BASE +
-      (hasFiles ? EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE : ""),
+    systemPromptSection: `\n\n${parts.join("\n")}`,
   };
 }

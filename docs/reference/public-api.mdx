@@ -256,7 +256,7 @@ plugin pins whose version no longer exists.
 | `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
 | `POST .../check-oauth` | Does this server require an OAuth grant? |
 | `POST .../tools` | List the server's tools |
-| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` verbatim |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs` |
 | `POST .../prompts` | List the server's prompts |
 | `POST .../prompts/get` | Render a prompt; returns the MCP `GetPromptResult` verbatim |
 | `POST .../resources` | List the server's resources |
@@ -272,7 +272,11 @@ plugin pins whose version no longer exists.
 | `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite). `environmentId` (requires `suiteId`) runs against one of the suite's attached environments instead. Responds `202` + `runId` |
 | `PATCH .../eval-suites/{suiteId}` | Edit suite settings, including `environmentIds` — the project environments the suite runs against (non-empty array sets/replaces, `null` clears) |
 | `PATCH .../eval-suites/{suiteId}/schedule` | Enable/disable scheduled runs; `environmentId` pins which environment they launch |
-| `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
+| `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal. Carries `gateWaiver`: the audited override in force over this run's gate, or `null` |
+| `GET .../eval-runs/{runId}/decision-summary` | **Start here when a run did not pass.** The canonical run decision contract: the verdict and where it came from, counts labelled with the population they count, the run's own verdict decision, and per-trial diagnostics with the user-value chain, the first failed stage, the failure category, evidence scoped to that stage, and one next action (paginated) |
+| `POST .../eval-runs/{runId}/gate-waivers` | Override a **failing** run's release gate until `expiresAt` (required, future, max 30 days out), with a `reason` (required, max 500 chars). Manage tier. Does NOT change the run's `result` — the run keeps its verdict and the waiver is reported alongside it. `409` when one is already in force, returning the existing waiver |
+| `GET .../eval-runs/{runId}/gate-waivers` | The waiver in force over a run, or `null`. Readable by anyone who can view the run |
+| `DELETE .../eval-runs/{runId}/gate-waivers/{waiverId}` | Revoke a waiver, putting the gate back. Idempotent — a second call reports the original revocation rather than restamping it |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
 | `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
@@ -559,10 +563,38 @@ RUN_ID=$(curl -fsS -X POST \
 curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 
-# 3. Inspect per-iteration tool calls, token usage, latency
+# 3. If it did not pass, read the decision summary FIRST
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/decision-summary" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 4. Or go straight to per-iteration tool calls, token usage, latency
 curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 ```
+
+The decision summary composes steps 2 and 4 into one versioned object so every
+client reads a run the same way. Four things to know before gating on it:
+
+- **`measurementUnit` ships with every count.** Under verdict policy v2 the
+  counts are case-execution *variants*, with repetitions as trials inside them;
+  on a legacy run they are trials. The same suite reports a different total
+  under each, so a count without its unit is not a fact.
+- **It explains the verdict; it never re-decides it.** The run's own decision is
+  the authority and is carried through on `decision`. The per-trial
+  `diagnostics` sit underneath it — a case can pass with a failing trial in it,
+  so tallying diagnostics gives a different answer than the platform reached.
+- **`verdict: "notEstablished"` is not a failure and not `inconclusive`.** It
+  means no verdict exists at all (unfinished, stopped early, or undecidable);
+  `undecided.reason` says which. `inconclusive` *is* a decision — the validity
+  phase ran and withheld a verdict.
+- **`diagnostics.complete` says whether you have the whole list.** A page
+  fetched with a `cursor` is never complete, and `scannedIterations` separates
+  "nothing failed" from "we did not look".
+
+Evidence is scoped to the claim it supports: for a measured failure the span
+ids, prompt indexes and reasons come from the first failed stage's row alone,
+and `evidence.tracePath` is an API-relative path you can append to your base URL
+to read the full trace.
 
 `model` takes an id from the hosted catalog — `provider/name` form, e.g.
 `anthropic/claude-haiku-4.5` — and runs on your organization's credits.

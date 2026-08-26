@@ -27,7 +27,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
-import { synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody } from "./adapter.js";
 
 const hosts = new Hono();
 const HOST_CATALOG_FETCH_TIMEOUT_MS = 6_500;
@@ -235,7 +235,7 @@ function withTrimmedModelId(
 }
 
 const createHostSchema = z
-  .object({
+  .strictObject({
     name: z.string().trim().min(1),
     template: z.string().trim().min(1).optional(),
     theme: z.enum(["light", "dark"]).optional(),
@@ -265,7 +265,7 @@ const createHostSchema = z
   });
 
 const updateHostSchema = z
-  .object({
+  .strictObject({
     name: z.string().trim().min(1).optional(),
     config: hostConfigSchema.optional(),
   })
@@ -273,12 +273,12 @@ const updateHostSchema = z
     message: "Provide at least one of `name` or `config` to update.",
   });
 
-const updateHostServersSchema = z.object({
+const updateHostServersSchema = z.strictObject({
   serverIds: z.array(z.string().trim().min(1)),
   optionalServerIds: z.array(z.string().trim().min(1)).optional(),
 });
 
-const duplicateHostSchema = z.object({
+const duplicateHostSchema = z.strictObject({
   name: z.string().trim().min(1).optional(),
 });
 
@@ -316,7 +316,7 @@ hosts.get("/projects/:projectId/hosts/:hostId", async (c) => {
 // POST /v1/projects/:projectId/hosts — create from a template or a full config.
 hosts.post("/projects/:projectId/hosts", async (c) => {
   const projectId = c.req.param("projectId");
-  const body = parseWithSchema(createHostSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(createHostSchema, await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
 
@@ -354,7 +354,7 @@ hosts.post("/projects/:projectId/hosts", async (c) => {
 hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   const projectId = c.req.param("projectId");
   const hostId = c.req.param("hostId");
-  const body = parseWithSchema(updateHostSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(updateHostSchema, await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
 
   // `hosts:updateHost` enforces project scope from `projectId` (a host from
@@ -404,7 +404,7 @@ hosts.post("/projects/:projectId/hosts/:hostId/servers", async (c) => {
   const hostId = c.req.param("hostId");
   const body = parseWithSchema(
     updateHostServersSchema,
-    await synthesizeServerBody(c)
+    await readJsonObjectBody(c)
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
@@ -431,7 +431,7 @@ hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
   const hostId = c.req.param("hostId");
   const body = parseWithSchema(
     duplicateHostSchema,
-    await synthesizeServerBody(c)
+    await readJsonObjectBody(c)
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
@@ -471,42 +471,10 @@ hosts.post("/projects/:projectId/hosts/:hostId/duplicate", async (c) => {
 hosts.delete("/projects/:projectId/hosts/:hostId", async (c) => {
   const projectId = c.req.param("projectId");
   const hostId = c.req.param("hostId");
-  // Delete takes no body. Read the raw payload directly (NOT via
-  // synthesizeServerBody, which injects the path projectId/serverId) so the
-  // contract is truly bodyless: reject ANY field — a legacy `force`, or even a
-  // stray `projectId` — as VALIDATION_ERROR rather than accepting or dropping it.
-  const rawDeleteBody = await c.req.text();
-  if (rawDeleteBody.trim()) {
-    let parsedDeleteBody: unknown;
-    try {
-      parsedDeleteBody = JSON.parse(rawDeleteBody);
-    } catch {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid JSON body"
-      );
-    }
-    if (
-      !parsedDeleteBody ||
-      typeof parsedDeleteBody !== "object" ||
-      Array.isArray(parsedDeleteBody)
-    ) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Request body must be a JSON object"
-      );
-    }
-    const strayDeleteFields = Object.keys(parsedDeleteBody).sort();
-    if (strayDeleteFields.length > 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `Unexpected field(s) in delete body: ${strayDeleteFields.join(", ")}`
-      );
-    }
-  }
+  // Delete takes no body. Parse the caller's JSON (no synthesized path
+  // params) against a strict empty object so a leftover `force` — or a
+  // stray `projectId` — is a VALIDATION_ERROR that names the key.
+  parseWithSchema(z.strictObject({}), await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
   // `hosts:deleteHost` enforces project scope from `projectId`.
   const convexClient = createConvexClient(token);

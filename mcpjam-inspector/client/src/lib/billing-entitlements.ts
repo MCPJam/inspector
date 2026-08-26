@@ -39,6 +39,9 @@ export const BILLING_FEATURE_BY_TAB = {
   // feature — server-side ingest enforces it — it just no longer gates a
   // client route.
   evals: "evals",
+  // Evaluate (New) is the same product behind a flag, so it gates on the same
+  // feature — a preview must not be a way around the paywall.
+  evaluate: "evals",
   scenarios: "scenarios",
   // The agent Swarm surface shares the human Scenario's billing feature.
   swarms: "scenarios",

@@ -6,7 +6,7 @@
  * `params._meta["io.modelcontextprotocol/clientCapabilities"]` and MUST be
  * present on every extension operation — the `tools/call` that may produce a
  * task AND the subsequent `tasks/get` / `tasks/update` / `tasks/cancel`
- * (`-32003` otherwise).
+ * (`-32021` otherwise).
  *
  * ## The beta.4 envelope seam (investigated, PR2)
  *
@@ -166,7 +166,7 @@ export interface TasksExtCallContext {
  * (`tasks-conformance/`) issues its UNDECLARED probes directly, bypassing this
  * helper. It has to — this helper always attaches the eligibility declaration,
  * and the whole point of those probes is to observe what a server does when
- * the declaration is absent (a conforming one answers `-32003`). That bypass
+ * the declaration is absent (a conforming one answers `-32021`). That bypass
  * is the test, not a bug. Being off this path, it installs the era-gate shadow
  * itself before probing (`tasks-conformance/runner.ts`), since the probes still
  * have to reach the wire on a 2026-07-28 connection to be answered at all.
@@ -204,7 +204,7 @@ async function sendTasksExtRequest(
  * eligibility declaration.
  *
  * The declaration is mandatory on this request too — a non-declaring client
- * MUST get `-32003` (`tasks.md:797-799`) — but `Client.listen` builds its own
+ * MUST get `-32021` (`tasks.md:797-799`) — but `Client.listen` builds its own
  * `params._meta` and takes no caller `_meta`. `tasks-ext-listen-meta.ts`
  * explains the seam and why it is scoped to this one call.
  *

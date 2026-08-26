@@ -117,6 +117,7 @@
             "icon": "map",
             "pages": [
               "cli/overview",
+              "cli/migration",
               "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",

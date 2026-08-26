@@ -340,6 +340,7 @@ export function buildHostedStepHandlers(
         mcpClientManager: ctx.mcpClientManager,
         browser: ctx.browser,
         promptIndex: turnOrdinal,
+        toolPolicyGate: ctx.toolPolicyGate,
       });
       const accounting = buildPinnedTurnAccounting(pinned, result);
       // messageHistory invariant: append only a COMPLETE plain-TEXT

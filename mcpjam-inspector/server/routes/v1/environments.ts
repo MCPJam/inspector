@@ -483,7 +483,11 @@ environments.get(
   async (c) => {
     const projectId = c.req.param("projectId");
     const readClient = createConvexClient(await getConvexBearerForRequest(c));
-    let capabilities: { modelOverrides?: boolean; modelMatrix?: boolean } = {};
+    let capabilities: {
+      modelOverrides?: boolean;
+      modelMatrix?: boolean;
+      ephemeralEnvironmentLaunch?: boolean;
+    } = {};
     try {
       capabilities =
         ((await readClient.query(
@@ -511,6 +515,8 @@ environments.get(
     return v1Resource(c, {
       modelOverrides: capabilities.modelOverrides === true,
       modelMatrix: capabilities.modelMatrix === true,
+      ephemeralEnvironmentLaunch:
+        capabilities.ephemeralEnvironmentLaunch === true,
     });
   }
 );
@@ -553,9 +559,12 @@ environments.get(
     const projectId = c.req.param("projectId");
     const environmentId = c.req.param("environmentId");
     const token = await getConvexBearerForRequest(c);
+    const row = await readEnvironment(token, projectId, environmentId);
     return v1Resource(
       c,
-      toEnvironmentDto(await readEnvironment(token, projectId, environmentId))
+      isNamedEnvironmentRow(row)
+        ? toEnvironmentDto(row)
+        : toAdhocEnvironmentDto(row)
     );
   }
 );

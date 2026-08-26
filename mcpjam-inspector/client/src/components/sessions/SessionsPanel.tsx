@@ -48,6 +48,7 @@ import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
   SESSION_SOURCE_TYPE_LABELS,
+  sessionOriginChipLabel,
   sessionParentChipLabel,
   type SessionFeedItem,
   type SessionFeedSourceType,
@@ -353,6 +354,7 @@ function SessionFeedRow({
   onSelect: () => void;
 }) {
   const parentChip = sessionParentChipLabel(row.parentRef);
+  const originChip = sessionOriginChipLabel(row.origin);
   const title = row.title?.trim() || row.firstMessagePreview || "Untitled";
 
   return (
@@ -379,6 +381,14 @@ function SessionFeedRow({
         <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {SESSION_SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType}
         </span>
+        {originChip ? (
+          <span
+            data-testid="session-origin-chip"
+            className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            {originChip}
+          </span>
+        ) : null}
         {row.ownedByViewer ? (
           <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
             Yours

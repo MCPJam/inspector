@@ -150,11 +150,13 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // NOT `passed`: three modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, and a graceful subscription close is server-initiated and
-    // cannot be induced by a client-side probe. Both report `could-not-run`,
-    // so the run is honestly `incomplete` rather than green.
+    // configure, a declared outputSchema can only be graded against a real
+    // `tools/call` result and so needs a safe-to-execute fixture, and a
+    // graceful subscription close is server-initiated and cannot be induced by
+    // a client-side probe. All three report `could-not-run`, so the run is
+    // honestly `incomplete` rather than green.
     expect(result.outcome).toBe("incomplete");
     expect(
       result.checks
@@ -163,6 +165,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .sort(),
     ).toEqual([
       "modern-subscription-graceful-close",
+      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
 
@@ -261,11 +264,13 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // NOT `passed`: three modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, and a graceful subscription close is server-initiated and
-    // cannot be induced by a client-side probe. Both report `could-not-run`,
-    // so the run is honestly `incomplete` rather than green.
+    // configure, a declared outputSchema can only be graded against a real
+    // `tools/call` result and so needs a safe-to-execute fixture, and a
+    // graceful subscription close is server-initiated and cannot be induced by
+    // a client-side probe. All three report `could-not-run`, so the run is
+    // honestly `incomplete` rather than green.
     expect(result.outcome).toBe("incomplete");
     expect(
       result.checks
@@ -274,6 +279,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .sort(),
     ).toEqual([
       "modern-subscription-graceful-close",
+      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
     for (const id of LEGACY_ONLY) {

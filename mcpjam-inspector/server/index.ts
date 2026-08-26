@@ -146,6 +146,8 @@ import {
 } from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
+import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
+import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -283,6 +285,9 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+// One line, after the env is loaded: which grading-engine mode this process
+// could reach. Mirror of the call in server/app.ts.
+logGradingEngineModeOnce();
 
 // Immediately after the env load and before anything that can throw: the init
 // reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
@@ -469,6 +474,11 @@ app.route("/api/web/xaa", createXaaWebRouter());
 // /api/web so it never inherits that family's bearer middleware.
 // Mirror of the mount in server/app.ts.
 app.route("/api/internal/server-connections", internalServerConnections);
+// Backend → inspector doorbell for a finished judge. Same shape and the same
+// service-token gate; the route resolves the grading-engine mode itself and
+// no-ops at `off`/`shadow`, because the backend rings this on every judge save
+// without consulting the flag. Mirror of the mount in server/app.ts.
+app.route("/api/internal/evals", internalEvalJudgeCompletions);
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
@@ -533,7 +543,7 @@ if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerSelfFetch((request) => app.fetch(request));
 
-// CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+// CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
 // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
 // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
 // set. Mirror of the mount in server/app.ts::createHonoApp — both

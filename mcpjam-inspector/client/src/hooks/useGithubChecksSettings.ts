@@ -146,6 +146,12 @@ export type GithubCheckRepoConfigRow = {
   outagePolicy?: GithubCheckOutagePolicy;
   /** Backend-derived. See {@link GithubCheckConnectionStatus}. */
   connectionStatus: GithubCheckConnectionStatus;
+  /**
+   * Dual-check. Absent/false on existing rows so enabling GitHub Checks does
+   * not silently add a required MCPJam Conformance check.
+   */
+  conformanceEnabled?: boolean;
+  conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   createdAt: number;
   updatedAt: number;
 };
@@ -268,6 +274,9 @@ export function useGithubChecksSettings(
   );
   const setRepoOutagePolicyMutation = useMutation(
     "github/checkRepoConfigs:setRepoOutagePolicy" as any
+  );
+  const setRepoConformanceMutation = useMutation(
+    "github/checkRepoConfigs:setRepoConformance" as any
   );
   const disconnectRepoMutation = useMutation(
     "github/checkRepoConfigs:disconnectRepo" as any
@@ -392,6 +401,21 @@ export function useGithubChecksSettings(
     [setRepoOutagePolicyMutation, organizationId]
   );
 
+  const setRepoConformance = useCallback(
+    (args: {
+      configId: string;
+      conformanceEnabled: boolean;
+      conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
+    }) =>
+      setRepoConformanceMutation({
+        organizationId,
+        ...args,
+      } as any) as Promise<{
+        changed: boolean;
+      }>,
+    [setRepoConformanceMutation, organizationId]
+  );
+
   const disconnectRepo = useCallback(
     (args: { configId: string }) =>
       disconnectRepoMutation({ organizationId, ...args } as any),
@@ -416,6 +440,7 @@ export function useGithubChecksSettings(
     setRepoEnabled,
     setRepoSuite,
     setRepoOutagePolicy,
+    setRepoConformance,
     disconnectRepo,
     listInstallationRepos,
     startInstallation,

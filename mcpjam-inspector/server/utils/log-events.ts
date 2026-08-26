@@ -262,7 +262,13 @@ export type RequestEventMap = {
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -272,7 +278,13 @@ export type RequestEventMap = {
    */
   "chat.session.persist.skipped": {
     sourceType?: "scenario" | "direct" | "eval" | "swarm";
-    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };

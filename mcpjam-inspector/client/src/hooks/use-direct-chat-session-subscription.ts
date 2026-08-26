@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
   ChatHistoryDetailSession,
   ChatHistoryWidgetSnapshot,
@@ -13,9 +14,11 @@ export function useDirectChatSessionSubscription({
   projectId: string | null;
   enabled: boolean;
 }) {
+  const isUserReady = useDbUserReady();
+  const canQuery = enabled && isUserReady;
   const session = useQuery(
     "directChatHistory:getCurrentSession" as any,
-    enabled && sessionId
+    canQuery && sessionId
       ? ({
           sessionId,
           projectId: projectId ?? undefined,
@@ -25,7 +28,7 @@ export function useDirectChatSessionSubscription({
 
   const widgetSnapshots = useQuery(
     "directChatHistory:getCurrentSessionWidgetSnapshots" as any,
-    enabled && sessionId ? ({ sessionId } as const) : "skip",
+    canQuery && sessionId ? ({ sessionId } as const) : "skip",
   ) as ChatHistoryWidgetSnapshot[] | undefined;
 
   // Note: turnTraces are intentionally NOT subscribed here. They're fetched
