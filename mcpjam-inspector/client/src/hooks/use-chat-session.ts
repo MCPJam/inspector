@@ -207,6 +207,12 @@ import * as AppStateContext from "@/state/app-state-context";
 import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { isEmbeddedPreview } from "@/lib/embedded-preview";
+import {
+  clearScenarioChatTranscript,
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -1706,7 +1712,33 @@ export function useChatSession(
     setSystemPromptState(resolveSystemPrompt(prompt));
   }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
-  const [chatSessionId, setChatSessionId] = useState(generateId());
+  /**
+   * The scenario whose transcript this surface may resume across a refresh, or
+   * null for every other surface.
+   *
+   * The embedded Preview iframe is excluded for the same reason it is excluded
+   * from reading the scenario grant: it is same-origin with the dashboard and
+   * shares its sessionStorage, so writing there would leak a preview's
+   * conversation into the tester page (and back). A preview reloads by
+   * re-redeeming its token anyway.
+   */
+  const resumableScenarioId =
+    hostedScenarioId && !isEmbeddedPreview() ? hostedScenarioId : null;
+  /**
+   * Read ONCE, during the first render, before anything can overwrite the row:
+   * this is what a refresh has to work from, and both the initial
+   * `chatSessionId` below and the hydration effect further down consume it.
+   */
+  const restoredScenarioTranscriptRef = useRef(
+    resumableScenarioId
+      ? readScenarioChatTranscript(resumableScenarioId)
+      : null
+  );
+  // Restoring the stored id — rather than minting a fresh one and seeding it —
+  // is what keeps the resumed turns appending to the SAME server-side thread.
+  const [chatSessionId, setChatSessionId] = useState(
+    () => restoredScenarioTranscriptRef.current?.chatSessionId ?? generateId()
+  );
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
   /**
@@ -3874,6 +3906,53 @@ export function useChatSession(
     syncResumedVersion,
     syncRestoredToolRenderOverrides,
   ]);
+
+  // ── Tester-surface transcript resume (BB-51) ──────────────────────────────
+  //
+  // Apply the row read during the first render. `queueSessionHydration` takes
+  // its same-session branch — `chatSessionId` was INITIALIZED from this very
+  // record — so the messages land without minting a second session, and the
+  // restored thread is the one the next turn appends to.
+  const hasAppliedRestoredTranscriptRef = useRef(false);
+  useEffect(() => {
+    if (hasAppliedRestoredTranscriptRef.current) return;
+    hasAppliedRestoredTranscriptRef.current = true;
+    const restored = restoredScenarioTranscriptRef.current;
+    if (!restored) return;
+    void queueSessionHydration({
+      sessionId: restored.chatSessionId,
+      messages: restored.messages,
+      // Null, not a stored number: the tab that wrote those turns is gone, so
+      // there is no version this one can be optimistic about. The first ingest
+      // after a resume therefore carries no `expectedVersion` and cannot 409.
+      resumedVersion: null,
+      persistedSnapshotToolCallIds: [],
+    });
+  }, [queueSessionHydration]);
+
+  // Save after every SETTLED turn, never mid-stream, so a resumed transcript
+  // only ever holds turns the tester watched finish — the same turns the owner
+  // sees persisted server-side.
+  const hasHeldMessagesThisMountRef = useRef(false);
+  useEffect(() => {
+    if (!resumableScenarioId) return;
+    if (status === "submitted" || status === "streaming") return;
+    if (messages.length > 0) {
+      hasHeldMessagesThisMountRef.current = true;
+      writeScenarioChatTranscript(resumableScenarioId, {
+        chatSessionId,
+        messages,
+      });
+      return;
+    }
+    // An empty transcript is only news once this mount has HAD messages — the
+    // tester reset the chat. On the first render it means the restore has not
+    // been applied yet, and clearing there would delete the very row this
+    // mount is about to resume from.
+    if (hasHeldMessagesThisMountRef.current) {
+      clearScenarioChatTranscript(resumableScenarioId);
+    }
+  }, [resumableScenarioId, status, messages, chatSessionId]);
 
   const startChatWithMessages = useCallback(
     (
