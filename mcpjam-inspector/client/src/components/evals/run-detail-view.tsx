@@ -1039,7 +1039,9 @@ export function RunDetailView({
         <div className="shrink-0">{decisionSummarySlot}</div>
       ) : null}
 
-      <div className="shrink-0">{runMetadataBlock}</div>
+      <div className="shrink-0" data-testid="run-detail-metadata">
+        {runMetadataBlock}
+      </div>
 
       {useTwoColumnLayout ? (
         <>

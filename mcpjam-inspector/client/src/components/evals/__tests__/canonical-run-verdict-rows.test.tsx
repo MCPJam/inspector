@@ -18,7 +18,14 @@
  * has not decided anything.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
 vi.mock("@/lib/apis/eval-run-decision-summary-api", async (importOriginal) => {
@@ -235,6 +242,56 @@ describe("ProjectRunsTable with canonical verdicts", () => {
     // The locally stored pass rate is replaced, not shown beside the canonical
     // counts where a reader would compare two different populations.
     expect(within(screen.getByRole("table")).queryByText("75%")).toBeNull();
+  });
+
+  it("never prints stored arithmetic beside a canonical no-counts verdict", async () => {
+    // The summary ARRIVED and reported no counts — the contract forbids them
+    // on a run with no verdict. Falling back to `row.summary` here would put
+    // "No verdict" and "75% (3/4)" in the same row: two readings of one run,
+    // which is the whole thing this PR exists to stop.
+    fetchMock.mockResolvedValue(
+      readDecisionSummaryFixture("non-terminal-run-is-notEstablished"),
+    );
+    mocks.paginated.current = {
+      results: [makeProjectRow()],
+      status: "Exhausted",
+      isLoading: false,
+      loadMore: vi.fn(),
+    };
+
+    render(
+      <ProjectRunsTable
+        projectId="p1"
+        onSelectRun={vi.fn()}
+        decisionSummaryEnabled
+      />,
+    );
+
+    const table = () => within(screen.getByRole("table"));
+    await waitFor(() => {
+      expect(table().getByText("No verdict")).toBeInTheDocument();
+    });
+    expect(table().getByText("no counts reported")).toBeInTheDocument();
+    expect(table().queryByText(/75%/)).toBeNull();
+    expect(table().queryByText("Accuracy")).toBeNull();
+  });
+
+  it("keeps showing the stored metric for a row it has not read", async () => {
+    // The other half of the same rule: before a summary arrives (here: flag
+    // off), the stored aggregate is still the only answer this row has, and
+    // suppressing it would blank a column for no reason.
+    mocks.paginated.current = {
+      results: [makeProjectRow()],
+      status: "Exhausted",
+      isLoading: false,
+      loadMore: vi.fn(),
+    };
+
+    render(<ProjectRunsTable projectId="p1" onSelectRun={vi.fn()} />);
+
+    const table = within(screen.getByRole("table"));
+    expect(table.getByText(/75%/)).toBeInTheDocument();
+    expect(table.queryByText("no counts reported")).toBeNull();
   });
 
   it("leaves a running row lifecycle-only and asks for nothing", async () => {
@@ -516,12 +573,46 @@ describe("Evaluate suite run history with canonical verdicts", () => {
     renderHistory({ projectId: "p1", decisionSummaryEnabled: true }, runs, []);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    // Eight visible rows, eight reads — "Show all" must not be able to ask for
-    // the whole history at once.
+    // Eight rendered rows, eight reads. This is the PAGE SLICE — the rows
+    // beyond it are not rendered at all yet, so it says nothing about the
+    // visibility gate. The next test covers that.
     const runIds = new Set(
       fetchMock.mock.calls.map((call) => (call[0] as { runId: string }).runId),
     );
     expect(runIds.size).toBe(8);
+  });
+
+  it("reads nothing extra when Show all reveals the rest of the history", async () => {
+    autoIntersect = false;
+    fetchMock.mockResolvedValue(INCONCLUSIVE);
+    const runs = Array.from({ length: 20 }, (_, index) =>
+      makeRun({
+        _id: `run-${index}`,
+        createdAt: 1_700_000_000_000 - index * 1_000,
+        completedAt: 1_700_000_000_000 - index * 1_000,
+      }),
+    );
+
+    renderHistory({ projectId: "p1", decisionSummaryEnabled: true }, runs, []);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const readRunIds = () =>
+      new Set(
+        fetchMock.mock.calls.map((call) => (call[0] as { runId: string }).runId),
+      );
+    expect(readRunIds().size).toBe(8);
+
+    // Reveal the whole history. Twelve more rows mount, and NONE of them may
+    // read: one click asking for an entire suite's run history at once is the
+    // burst the visibility gate exists to prevent.
+    fireEvent.click(screen.getByRole("button", { name: /view all 20 runs/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("suite-run-row-run-19")).toBeInTheDocument(),
+    );
+    expect(readRunIds().size).toBe(8);
+
+    // Scrolled to, they read — the gate defers the request, it does not drop it.
+    scrollAllIntoView();
+    await waitFor(() => expect(readRunIds().size).toBe(20));
   });
 
   it("does not read a pending row that has decided nothing", async () => {

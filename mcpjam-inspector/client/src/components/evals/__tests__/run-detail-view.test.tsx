@@ -227,7 +227,15 @@ describe("RunDetailView", () => {
       />
     );
 
-    expect(screen.getByTestId("decision-slot")).toBeInTheDocument();
+    // ORDER, not just presence: "the run's own answer comes before the
+    // browser's derived metrics" is the claim this slot makes, and a layout
+    // change that moved it below the metadata would otherwise keep this green.
+    const slot = screen.getByTestId("decision-slot");
+    const metadata = screen.getByTestId("run-detail-metadata");
+    expect(
+      slot.compareDocumentPosition(metadata) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders the Export action even when the accuracy hero is hidden (folded run detail)", async () => {

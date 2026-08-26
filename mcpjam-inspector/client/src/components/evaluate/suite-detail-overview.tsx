@@ -448,6 +448,24 @@ export function SuiteDetailOverview({
                         lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
                       />
                     </TableCell>
+                    {/*
+                      DELIBERATELY still the locally derived rate, and the one
+                      place this surface diverges from the project Runs table.
+
+                      There, the Metric column is the run's own counts, so a
+                      canonical summary replaces the stored aggregate outright.
+                      Here the column is per-TRIAL accuracy shown beside
+                      latency, tokens and tool calls — a row of local operating
+                      metrics, not a restatement of the verdict. Swapping in
+                      case-variant counts would put a different population in
+                      the middle of that row.
+
+                      What it must never do is contradict the verdict, and it
+                      cannot: the verdict cell reads the canonical summary and
+                      this cell has no say in it. Lane D10a keeps this local
+                      context; retiring it is a later change with its own
+                      column design.
+                    */}
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
                     </TableCell>

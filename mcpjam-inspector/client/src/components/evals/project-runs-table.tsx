@@ -467,6 +467,16 @@ function ProjectRunTableRow({
               {canonicalUnit ? `counted in ${canonicalUnit}` : null}
             </span>
           </span>
+        ) : summary ? (
+          // The summary ARRIVED and reported no counts — a legacy run that
+          // recorded none, or a run with no verdict, for which the contract
+          // forbids them outright. Absence stays absence: the stored aggregate
+          // is a different reading of this run, and printing it beside the
+          // canonical verdict would put two answers in one row.
+          <span className="flex flex-col leading-tight">
+            <span>—</span>
+            <span className="text-[10px] opacity-70">no counts reported</span>
+          </span>
         ) : row.summary ? (
           <span className="flex flex-col leading-tight">
             <span>
