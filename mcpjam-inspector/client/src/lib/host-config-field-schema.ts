@@ -640,7 +640,7 @@ const TOOL_RESULT_CONTENT_KINDS = [
 const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "toolResult.structuredContent",
-    section: "protocol",
+    section: "apps",
     subsection: "Widget tool results",
     label: "Structured content",
     path: "mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent",
@@ -653,7 +653,7 @@ const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   ...TOOL_RESULT_CONTENT_KINDS.map(
     ([key, label]): HostConfigFieldDef => ({
       id: `toolResult.content.${key}`,
-      section: "protocol",
+      section: "apps",
       subsection: "Widget tool results",
       label,
       path: `mcpProfile.apps.mcpAppsOverrides.toolResult.content.${key}`,
@@ -941,10 +941,6 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
-  // ============================================================
-  // Protocol · Widget tool results
-  // ============================================================
-  ...TOOL_RESULT_WIDGET_FIELDS,
 
   // ============================================================
   // Protocol · Client capabilities supported
@@ -1122,6 +1118,11 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
   ...SANDBOX_PERMISSION_FIELDS,
   ...BROWSER_STORAGE_FIELDS,
+
+  // ============================================================
+  // Apps · Widget tool results
+  // ============================================================
+  ...TOOL_RESULT_WIDGET_FIELDS,
   ...TOOL_LIST_CHANGED_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
