@@ -282,6 +282,7 @@ describe("useGithubChecksSettings writes", () => {
         "action:github/appInstallLinkNode:startDirectClaim",
         "mutation:github/appInstallLink:unbindInstallation",
         "mutation:github/checkRepoConfigs:disconnectRepo",
+        "mutation:github/checkRepoConfigs:setRepoConformance",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
         "mutation:github/checkRepoConfigs:setRepoSuite",

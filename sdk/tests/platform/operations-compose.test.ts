@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ensureAdhocEnvironmentOperation,
+  getEnvironmentOperation,
   nameEnvironmentOperation,
   PlatformApiClient,
   PlatformApiError,
   runEvalCaseOperation,
   runEvalSuiteOperation,
 } from "../../src/platform/index.js";
+import { expandComposeModelChoices } from "../../src/platform/operations.js";
 
 /**
  * COMPOSED run targets: assembling a client/model/computer/skills stack instead
@@ -73,6 +75,12 @@ interface Fixture {
   launchFails?: boolean;
   /** Make promotion fail the way an already-named row does. */
   alreadyNamed?: boolean;
+  /** Omit / lie about ephemeralEnvironmentLaunch (old backend). */
+  ephemeralLaunch?: boolean;
+  /** Deployment that predates environment model overrides. */
+  modelOverrides?: boolean;
+  /** Suite already has these attached environment ids (union-cap tests). */
+  attachedEnvironmentIds?: string[];
 }
 
 function makeClient(fixture: Fixture = {}) {
@@ -82,7 +90,50 @@ function makeClient(fixture: Fixture = {}) {
     if (path === "/api/v1/projects") return Response.json({ items: [PROJECT] });
     if (/\/hosts$/.test(path)) return Response.json({ items: HOSTS });
     if (/\/images$/.test(path)) return Response.json({ items: IMAGES });
-    if (/\/eval-suites$/.test(path)) return Response.json({ items: [SUITE] });
+    if (/\/eval-suites$/.test(path) && method === "GET") {
+      return Response.json({ items: [SUITE] });
+    }
+    if (/\/environments\/capabilities$/.test(path)) {
+      return Response.json({
+        modelOverrides: fixture.modelOverrides !== false,
+        modelMatrix: fixture.modelOverrides !== false,
+        ephemeralEnvironmentLaunch: fixture.ephemeralLaunch !== false,
+      });
+    }
+    if (/\/environments\/[^/]+$/.test(path) && method === "GET") {
+      const id = path.split("/").pop()!;
+      return Response.json({
+        ...ADHOC_ENVIRONMENT,
+        id,
+        name: null,
+        adhoc: true,
+      });
+    }
+    if (/\/eval-run-groups$/.test(path) && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as {
+        targets: Array<{ environmentId?: string }>;
+      };
+      return Response.json(
+        {
+          runGroupId: "grp-composed",
+          suiteId: SUITE.id,
+          outcome: "started",
+          startedCount: body.targets.length,
+          failedCount: 0,
+          targets: body.targets.map((target, index) => ({
+            target,
+            status: "started",
+            runId: `run-composed-${index + 1}`,
+            runStatus: "running",
+            servers: [],
+            environment: target.environmentId
+              ? { id: target.environmentId, name: null, revision: 1 }
+              : null,
+          })),
+        },
+        { status: 202 },
+      );
+    }
     if (/\/eval-suites\/[^/]+\/cases$/.test(path)) {
       return Response.json({
         items: [{ id: "case-1", suiteId: SUITE.id, title: "echo works" }],
@@ -100,9 +151,20 @@ function makeClient(fixture: Fixture = {}) {
           { status: 400 },
         );
       }
+      const body = JSON.parse(String(init?.body)) as { modelId?: string };
+      const id = body.modelId
+        ? `env-adhoc-${body.modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        : ADHOC_ENVIRONMENT.id;
       return Response.json({
-        environment: ADHOC_ENVIRONMENT,
+        environment: { ...ADHOC_ENVIRONMENT, id, modelId: body.modelId },
         created: !fixture.alreadyEnsured,
+      });
+    }
+    if (/\/eval-suites\/[^/]+$/.test(path) && method === "GET") {
+      return Response.json({
+        ...SUITE,
+        environmentIds: fixture.attachedEnvironmentIds ?? [],
+        hosts: [],
       });
     }
     if (/\/eval-suites\/[^/]+\/environments$/.test(path) && method === "POST") {
@@ -246,7 +308,7 @@ describe("name_environment", () => {
 });
 
 describe("run_eval_suite compose", () => {
-  it("ensures the stack, ATTACHES it, and launches pinned to it", async () => {
+  it("ensures the stack and launches ephemerally without attaching", async () => {
     const { client, fetchMock } = makeClient();
     const result = await runEvalSuiteOperation.execute(
       {
@@ -260,49 +322,38 @@ describe("run_eval_suite compose", () => {
       hostId: "host-claude",
       sandboxImageId: "img-default",
     });
-    // ATOMIC APPEND, not a replace: the replace door would silently detach an
-    // environment someone else attached between read and write.
+    expect(
+      bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
+    ).toBeUndefined();
+    expect(bodyOf(fetchMock, /\/eval-runs$/)).toEqual({
+      suiteId: SUITE.id,
+      environmentId: ADHOC_ENVIRONMENT.id,
+      ephemeralEnvironment: true,
+    });
+    expect(result.composed?.attachment).toEqual({ attached: false });
+    expect(result.composed?.environment.id).toBe(ADHOC_ENVIRONMENT.id);
+  });
+
+  it("attaches on saveTargets", async () => {
+    const { client, fetchMock } = makeClient();
+    const result = await runEvalSuiteOperation.execute(
+      {
+        suite: "Smoke",
+        compose: { host: "Claude Code", saveTargets: true },
+      },
+      { client },
+    );
     expect(bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/)).toEqual({
       environmentId: ADHOC_ENVIRONMENT.id,
     });
-    // The launch takes the ORDINARY environment path — no new run-level
-    // execution-context channel.
     expect(bodyOf(fetchMock, /\/eval-runs$/)).toEqual({
       suiteId: SUITE.id,
       environmentId: ADHOC_ENVIRONMENT.id,
     });
-    expect(result.composed).toEqual({
-      environment: {
-        id: ADHOC_ENVIRONMENT.id,
-        name: null,
-        adhoc: true,
-        created: true,
-      },
-      attachment: { attached: true },
-    });
+    expect(result.composed?.attachment).toEqual({ attached: true });
   });
 
-  it("reports both persisted writes as no-ops on a repeat compose", async () => {
-    const { client } = makeClient({
-      alreadyEnsured: true,
-      alreadyAttached: true,
-    });
-    const result = await runEvalSuiteOperation.execute(
-      { suite: "Smoke", compose: { host: "Claude Code" } },
-      { client },
-    );
-    expect(result.composed).toEqual({
-      environment: {
-        id: ADHOC_ENVIRONMENT.id,
-        name: null,
-        adhoc: true,
-        created: false,
-      },
-      attachment: { attached: false },
-    });
-  });
-
-  it("still tells the caller the suite CHANGED when the launch fails", async () => {
+  it("still tells the caller the cells were minted when the launch fails", async () => {
     // Compose writes before it spends. An unannotated error would leave the
     // caller believing nothing happened, when their suite's attachment list
     // has already changed.
@@ -318,21 +369,134 @@ describe("run_eval_suite compose", () => {
     expect(message).toContain("environment revision conflict");
     expect(message).toContain(ADHOC_ENVIRONMENT.id);
     expect(message).toContain("retrying is safe");
-    // The writes really did happen, in order.
+    expect(message).toContain("minted without attaching");
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeDefined();
     expect(
       bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
-    ).toBeDefined();
-    // STRUCTURED as well as prose, so a surface deciding whether to warn about
-    // the suite edit reads a field instead of parsing a sentence.
-    expect((error as PlatformApiError).details?.composed).toEqual({
-      environment: {
-        id: ADHOC_ENVIRONMENT.id,
-        name: null,
-        adhoc: true,
-        created: true,
+    ).toBeUndefined();
+    expect((error as PlatformApiError).details?.composed).toMatchObject({
+      environment: { id: ADHOC_ENVIRONMENT.id, created: true },
+      attachment: { attached: false },
+    });
+  });
+
+  it("forces a group plan for multi-model compose", async () => {
+    const { client, fetchMock } = makeClient();
+    const result = await runEvalSuiteOperation.execute(
+      {
+        suite: "Smoke",
+        compose: {
+          host: "Claude Code",
+          models: [
+            "anthropic/claude-haiku-4.5",
+            "google/gemini-2.5-flash",
+          ],
+        },
       },
-      attachment: { attached: true },
+      { client },
+    );
+    expect(result.runGroupId).toBe("grp-composed");
+    expect(result.startedCount).toBe(2);
+    expect(bodyOf(fetchMock, /\/eval-run-groups$/)).toMatchObject({
+      suiteId: SUITE.id,
+      ephemeralEnvironment: true,
+      targets: [
+        { environmentId: "env-adhoc-anthropic-claude-haiku-4-5" },
+        { environmentId: "env-adhoc-google-gemini-2-5-flash" },
+      ],
+    });
+    expect(
+      bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
+    ).toBeUndefined();
+  });
+
+  it("rejects multi-cell × refreshSnapshot before minting", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          refreshSnapshot: true,
+          compose: {
+            host: "Claude Code",
+            models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain("refreshSnapshot");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("refuses multi-model compose when the backend lacks ephemeral launch", async () => {
+    const { client, fetchMock } = makeClient({ ephemeralLaunch: false });
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: {
+            host: "Claude Code",
+            models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "ephemeralEnvironmentLaunch",
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("refuses a named model when the backend lacks model overrides", async () => {
+    // `environments create --model` has always preflighted this. The compose
+    // path — the one that grew a model axis — did not, so a skew deployment
+    // answered --compose-model with the raw validator error from
+    // ensure-adhoc. Refused before any write.
+    const { client, fetchMock } = makeClient({ modelOverrides: false });
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: {
+            host: "Claude Code",
+            models: ["anthropic/claude-haiku-4.5"],
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "does not support environment model overrides",
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("still composes an inherit-only stack on a backend without model overrides", async () => {
+    // Nothing sends a modelId here, so the missing capability is irrelevant —
+    // gating on "compose was used" rather than "a model was named" would
+    // break every composed run against an older deployment.
+    const { client, fetchMock } = makeClient({ modelOverrides: false });
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", compose: { host: "Claude Code" } },
+      { client },
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeDefined();
+  });
+
+  it("falls back to attach for a single cell on an old backend", async () => {
+    const { client, fetchMock } = makeClient({ ephemeralLaunch: false });
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", compose: { host: "Claude Code" } },
+      { client },
+    );
+    expect(
+      bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
+    ).toBeDefined();
+    expect(bodyOf(fetchMock, /\/eval-runs$/)).toEqual({
+      suiteId: SUITE.id,
+      environmentId: ADHOC_ENVIRONMENT.id,
     });
   });
 
@@ -383,7 +547,7 @@ describe("run_eval_suite compose", () => {
 });
 
 describe("run_eval_case compose", () => {
-  it("composes, attaches, and pins the single-case run to the result", async () => {
+  it("composes ephemerally and pins the single-case run to the result", async () => {
     const { client, fetchMock } = makeClient();
     const result = await runEvalCaseOperation.execute(
       {
@@ -400,9 +564,67 @@ describe("run_eval_case compose", () => {
     expect(bodyOf(fetchMock, /\/eval-runs$/)).toEqual({
       suiteId: SUITE.id,
       caseIds: ["case-1"],
-      environmentId: ADHOC_ENVIRONMENT.id,
+      environmentId: "env-adhoc-anthropic-claude-haiku-4-5",
+      ephemeralEnvironment: true,
     });
     expect(result.composed?.environment.created).toBe(true);
-    expect(result.composed?.attachment.attached).toBe(true);
+    expect(result.composed?.attachment.attached).toBe(false);
+  });
+
+  it("rejects more than one compose model on a case run", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalCaseOperation
+      .execute(
+        {
+          suite: "Smoke",
+          case: "echo works",
+          compose: {
+            host: "Claude Code",
+            models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain("only one compose model");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+});
+
+describe("resolveEnvironmentSelector id passthrough", () => {
+  // A real Convex document id: 32 lowercase base32 characters, no separators.
+  // The shape is load-bearing — the fast path deliberately ignores anything
+  // that could be a display name, so a readable stand-in like
+  // `env-adhoc-hidden-01` would take the list path and never reach the GET.
+  const HIDDEN_ADHOC_ID = "x173p8g5kd3xvrk2btsp8bq3rs8c7yny";
+
+  it("resolves a list-hidden ad-hoc row by id via GET", async () => {
+    const { client } = makeClient();
+    const result = await getEnvironmentOperation.execute(
+      { environment: HIDDEN_ADHOC_ID },
+      { client },
+    );
+    expect(result.id).toBe(HIDDEN_ADHOC_ID);
+  });
+});
+
+describe("expandComposeModelChoices", () => {
+  it("inherits only when no models are named", () => {
+    expect(expandComposeModelChoices({})).toEqual([{ modelId: undefined }]);
+  });
+
+  it("replaces the client default unless includeClientDefault is set", () => {
+    expect(
+      expandComposeModelChoices({ models: ["google/gemini-2.5-flash"] }),
+    ).toEqual([{ modelId: "google/gemini-2.5-flash" }]);
+    expect(
+      expandComposeModelChoices({
+        models: ["google/gemini-2.5-flash"],
+        includeClientDefault: true,
+      }),
+    ).toEqual([
+      { modelId: undefined },
+      { modelId: "google/gemini-2.5-flash" },
+    ]);
   });
 });

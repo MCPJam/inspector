@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
@@ -63,6 +64,12 @@ export function useHostList({
   hosts: HostListItem[];
   isLoading: boolean;
 } {
+  const isUserReady = useDbUserReady();
+  const queryProjectId = projectId?.trim() ?? "";
+  const hasQueryableProjectId = shouldQueryProjectId(queryProjectId);
+  const shouldQuery =
+    isAuthenticated && isUserReady && hasQueryableProjectId;
+
   // Skip until `projectId` is a real Convex id. A transient LOCAL project id
   // (UUID, or a `local_`/`project_` placeholder) flows in while the shared
   // Convex id is still resolving — passing it to a `v.id("projects")` query
@@ -70,9 +77,7 @@ export function useHostList({
   // every other project-scoped Convex query uses.
   const result = useQuery(
     "hosts:listHosts" as any,
-    isAuthenticated && shouldQueryProjectId(projectId)
-      ? ({ projectId } as any)
-      : "skip",
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as HostListItem[] | null | undefined;
 
   const hosts = useMemo(() => {
@@ -84,6 +89,12 @@ export function useHostList({
 
   return {
     hosts,
+    // Loading in EVERY skip window, not just while the query is in flight.
+    // `HostsRoute` reads an empty list as a dead permalink and bounces it, and
+    // the `?template=` flow reads it as "no such host yet" and mints one — both
+    // are wrong while the answer is merely unknown (signed out, `projectId`
+    // still a placeholder, or the `users` row still bootstrapping), so those
+    // windows must read as pending rather than as an answered empty.
     isLoading: result === undefined,
   };
 }
@@ -128,7 +139,9 @@ export function useHost({
   host: HostDetail | null;
   isLoading: boolean;
 } {
-  const shouldQuery = isAuthenticated && shouldQueryHostId(hostId);
+  const isUserReady = useDbUserReady();
+  const hasQueryableHostId = shouldQueryHostId(hostId);
+  const shouldQuery = isAuthenticated && isUserReady && hasQueryableHostId;
   // Trimmed, so a padded id can't pass the guard and then fail validation.
   const queryHostId = hostId?.trim() ?? "";
 
@@ -139,9 +152,12 @@ export function useHost({
 
   return {
     host: result ?? null,
-    // A skipped query never resolves, so reporting it as loading would leave
-    // callers (the Connect canvas, the compare grid) spinning forever.
-    isLoading: shouldQuery && result === undefined,
+    // Loading only while an answer is actually coming: signed out, or a hostId
+    // that can never resolve (a catalog slug in the URL), reports NOT loading,
+    // because that query stays skipped forever and callers (the Connect canvas,
+    // the compare grid) would spin forever waiting on it. Waiting for the
+    // `users` row IS loading — that skip does resolve, once bootstrap lands.
+    isLoading: isAuthenticated && hasQueryableHostId && result === undefined,
   };
 }
 

@@ -137,7 +137,7 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 
 Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
-Judge results are also accessible outside the app. `mcpjam eval status` returns a `judges` block in its JSON output with each grader's status, summary, model used, threshold, and per-case grades. To request grading from the CLI, use `mcpjam eval judge --run <id> --project <name>`. See the [`eval judge` reference](/cli/reference#eval-judge) for the full flag list, including `--force` to re-grade and `--enable` to grade a run recorded before the judge was turned on.
+Judge results are also accessible outside the app. `mcpjam cloud eval status` returns a `judges` block in its JSON output with each grader's status, summary, model used, threshold, and per-case grades. To request grading from the CLI, use `mcpjam cloud eval judge --run <id> --project <name>`. See the [`cloud eval judge` reference](/cli/reference#cloud-eval-judge) for the full flag list, including `--force` to re-grade and `--enable` to grade a run recorded before the judge was turned on.
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
@@ -210,7 +210,7 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
-- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
+- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam cloud eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
 - **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 

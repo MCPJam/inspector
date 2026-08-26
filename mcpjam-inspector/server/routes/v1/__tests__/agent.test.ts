@@ -133,6 +133,7 @@ import {
   createEvalSuiteOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  installRegistryDirectoryServerOperation,
   listProjectServersOperation,
   runEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -905,6 +906,59 @@ describe("gated proposal tools", () => {
     // Not "proposed": the model must not tell the user a button exists.
     expect(result.proposed).toBeUndefined();
     expect(result.error).toMatch(/Try again in a moment/);
+  });
+
+  it("REFUSES to mint an install proposal the freeze could not pin", async () => {
+    // The default self-fetch answers `{}`: the mint-time directory lookup
+    // resolves a row with no endpoint and no content hash, so the freeze has
+    // nothing to pin. The tool must refuse rather than persist — an unpinned
+    // install proposal is exactly the TOCTOU hole the pin exists to close: an
+    // approver shown "install cs_1" with no endpoint, and a click that
+    // installs whatever the row resolves to an hour later.
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    const result = await tools[
+      installRegistryDirectoryServerOperation.name
+    ]!.execute({ catalogServerId: "cs_1" }, {});
+    expect(result.proposed).toBeUndefined();
+    expect(result.error).toMatch(/Could not pin/);
+    expect(createProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("persists an install proposal WITH its pins when the row resolves", async () => {
+    getSelfFetchMock.mockReturnValue(async (request: Request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname.includes("/registry/directory-servers/")) {
+        return new Response(
+          JSON.stringify({
+            id: "cs_1",
+            source: "claude",
+            serverName: "linear",
+            remoteUrl: "https://mcp.linear.app/mcp",
+            latestContentHash: "hash_now",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("{}");
+    });
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    const result = await tools[
+      installRegistryDirectoryServerOperation.name
+    ]!.execute({ catalogServerId: "cs_1" }, {});
+    expect(result).toMatchObject({ proposed: true });
+    // The FROZEN description — the endpoint host the approval control shows.
+    expect(result.description).toBe(
+      "Install directory server cs_1 at mcp.linear.app"
+    );
+    expect(createProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: expect.objectContaining({
+          endpointUrl: "https://mcp.linear.app/mcp",
+          expectedContentHash: "hash_now",
+        }),
+      })
+    );
   });
 
   it("does not persist a proposal for an aborted turn", async () => {

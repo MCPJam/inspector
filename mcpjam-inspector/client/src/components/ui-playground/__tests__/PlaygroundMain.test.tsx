@@ -183,6 +183,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 // Mock convex/react
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers

@@ -15,6 +15,13 @@ export interface Organization {
   updatedAt: number;
   myRole?: string;
   isCreator?: boolean;
+  /**
+   * The user was invited by email to a paid-seat org, but the membership stays
+   * unlinked until that seat is paid — so every org-scoped query for it is
+   * denied server-side. Surface it as unavailable; never make it the active
+   * org (opening one crashed the route: Sentry INSPECTOR-CLIENT-24C).
+   */
+  seatPending?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;

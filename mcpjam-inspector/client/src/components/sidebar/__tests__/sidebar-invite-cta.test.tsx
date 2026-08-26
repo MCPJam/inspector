@@ -308,3 +308,44 @@ describe("sidebar invite CTA", () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * The rail's left margin. Reported twice as looking off, so it is pinned:
+ * jsdom has no layout, so the classes are the only observable, and the measured
+ * intent lives in the comments beside them.
+ */
+describe("MCPSidebar — one left margin down the rail", () => {
+  // Its own setup: the nav renders a skeleton with no group labels while auth
+  // is still resolving, and this block sits outside the suite above's beforeEach.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.keys(mockFeatureFlags).forEach((flag) => {
+      delete mockFeatureFlags[flag];
+    });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: {
+        email: "owner@example.com",
+        firstName: "Owner",
+        lastName: "Example",
+      },
+    });
+  });
+
+  it("left-aligns the logo instead of centring it", () => {
+    renderSidebar();
+
+    const logo = screen.getByAltText("MCP Jam");
+    const button = logo.closest("button");
+    // Centred, the mark landed at 63px while every nav row started at 16px.
+    expect(button?.className).toContain("justify-start");
+    expect(button?.className).not.toContain("justify-center");
+    // The collapse control's slot is still reserved, so a wider logo can never
+    // slide under its hit target.
+    expect(button?.className).toContain("pr-10");
+  });
+
+});

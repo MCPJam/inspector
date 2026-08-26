@@ -237,6 +237,51 @@ describe("useServerState hosted OAuth callback guards", () => {
     readStoredOAuthConfigMock.mockReturnValue({});
   });
 
+  // A `?code=` on a route this hook does not own must not be claimed. The
+  // GitHub App bind returns to `/settings/integrations/github/callback`, and
+  // this effect used to complete it as an MCP flow, fail, toast "No pending
+  // OAuth flow found", and navigate away — stripping GitHub's `code`/`state`
+  // before `GithubInstallCallbackRoute` could read them, so the bind failed
+  // 100% in production with a misleading "opened without the details GitHub
+  // sends".
+  it("leaves a GitHub App bind callback alone when no MCP flow is pending", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/settings/integrations/github/callback?code=gh-code&state=gh-state",
+    );
+
+    renderHostedServerState();
+
+    await waitFor(() => {
+      expect(mockListServers).toHaveBeenCalled();
+    });
+
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+    // The params must survive for the route that actually owns them.
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("code")).toBe("gh-code");
+    expect(params.get("state")).toBe("gh-state");
+  });
+
+  // Non-vacuity for the guard above: it must refuse only callbacks with no
+  // pending MCP flow, never disable the handler outright.
+  it("still completes an MCP callback when a flow IS pending", async () => {
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+    });
+
+    renderHostedServerState();
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalled();
+    });
+  });
+
   it("defers hosted scenario OAuth callbacks to App.tsx", async () => {
     writeHostedOAuthPendingMarker({
       surface: "scenario",

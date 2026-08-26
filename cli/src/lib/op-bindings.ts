@@ -26,156 +26,189 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // ── Organizations ───────────────────────────────────────────────────────
   // Read-only, and the only organization command there is. Member, role,
   // invite and billing writes are account administration and stay in the app.
-  list_organizations: { command: "organizations list" },
+  list_organizations: { command: "cloud organizations list" },
 
   // ── Projects and servers ────────────────────────────────────────────────
-  list_projects: { command: "projects list" },
-  create_project: { command: "projects create" },
-  update_project: { command: "projects update" },
-  delete_project: { command: "projects delete" },
-  list_project_servers: { command: "projects servers" },
-  create_project_server: { command: "projects server add" },
-  connect_project_server: { command: "projects server connect" },
-  // Its OWN command, not `server connect`. `connect` does poll this operation
+  list_projects: { command: "cloud projects list" },
+  create_project: { command: "cloud projects create" },
+  update_project: { command: "cloud projects update" },
+  delete_project: { command: "cloud projects delete" },
+  list_project_servers: { command: "cloud projects servers" },
+  create_project_server: { command: "cloud projects servers add" },
+  connect_project_server: { command: "cloud projects servers connect" },
+  // Its OWN command, not `servers connect`. `connect` does poll this operation
   // while it waits, but `--no-wait` and Ctrl-C both hand back a request id, and
   // pointing the binding at `connect` claimed a command that could not follow
   // one — re-running `connect` starts a second request rather than reading the
   // first.
   get_project_server_connection_status: {
-    command: "projects server connect-status",
+    command: "cloud projects servers connect-status",
   },
-  get_project_server: { command: "projects server get" },
-  update_project_server: { command: "projects server update" },
-  delete_project_server: { command: "projects server remove" },
-  show_servers: { command: "projects status" },
+  get_project_server: { command: "cloud projects servers get" },
+  update_project_server: { command: "cloud projects servers update" },
+  delete_project_server: { command: "cloud projects servers remove" },
+  show_servers: { command: "cloud projects status" },
 
   // ── Journeys (the Swarms product) ───────────────────────────────────────
   // Flag-gated beta. Bound normally rather than excluded: the server returns a
   // clean "not currently available for your organization" when the flag is off,
   // which is a better answer than a command that does not exist. Same shape as
   // `environments` and `images` for an org that lacks those.
-  list_journeys: { command: "journeys list" },
-  list_journey_runs: { command: "journeys runs" },
-  get_journey_run: { command: "journeys status" },
-  list_journey_run_sessions: { command: "journeys sessions" },
-  launch_journey_run: { command: "journeys run" },
-  cancel_journey_run: { command: "journeys cancel" },
+  list_journeys: { command: "cloud journeys list" },
+  list_journey_runs: { command: "cloud journeys runs" },
+  get_journey_run: { command: "cloud journeys status" },
+  list_journey_run_sessions: { command: "cloud journeys sessions" },
+  launch_journey_run: { command: "cloud journeys run" },
+  cancel_journey_run: { command: "cloud journeys cancel" },
   // Authoring + insights, in `commands/swarms.ts` but hung off the same
   // `journeys` group so `journeys run` and `journeys create` are one surface
   // to the person typing them.
-  get_journey: { command: "journeys get" },
-  create_journey: { command: "journeys create" },
-  update_journey: { command: "journeys update" },
-  archive_journey: { command: "journeys archive" },
-  generate_journeys: { command: "journeys generate" },
-  get_swarms_overview: { command: "journeys overview" },
-  get_journey_run_scorecard: { command: "journeys scorecard" },
-  list_swarm_findings: { command: "journeys findings" },
-  dismiss_swarm_finding: { command: "journeys dismiss-finding" },
-  undismiss_swarm_finding: { command: "journeys undismiss-finding" },
-  get_wave_insights: { command: "journeys insights" },
-  request_wave_insights: { command: "journeys request-insights" },
-  cancel_wave_insights: { command: "journeys cancel-insights" },
+  get_journey: { command: "cloud journeys get" },
+  create_journey: { command: "cloud journeys create" },
+  update_journey: { command: "cloud journeys update" },
+  archive_journey: { command: "cloud journeys archive" },
+  generate_journeys: { command: "cloud journeys generate" },
+  get_swarms_overview: { command: "cloud journeys overview" },
+  get_journey_run_scorecard: { command: "cloud journeys scorecard" },
+  list_swarm_findings: { command: "cloud journeys findings" },
+  dismiss_swarm_finding: { command: "cloud journeys dismiss-finding" },
+  undismiss_swarm_finding: { command: "cloud journeys undismiss-finding" },
+  get_wave_insights: { command: "cloud journeys insights" },
+  request_wave_insights: { command: "cloud journeys request-insights" },
+  cancel_wave_insights: { command: "cloud journeys cancel-insights" },
 
   // ── Personas and swarm containers (Swarms authoring) ────────────────────
-  list_personas: { command: "personas list" },
-  get_persona: { command: "personas get" },
-  create_persona: { command: "personas create" },
-  update_persona: { command: "personas update" },
-  delete_persona: { command: "personas delete" },
-  generate_personas: { command: "personas generate" },
-  list_swarms: { command: "swarms list" },
-  get_swarm: { command: "swarms get" },
-  create_swarm: { command: "swarms create" },
-  update_swarm: { command: "swarms update" },
-  archive_swarm: { command: "swarms archive" },
+  list_personas: { command: "cloud personas list" },
+  get_persona: { command: "cloud personas get" },
+  create_persona: { command: "cloud personas create" },
+  update_persona: { command: "cloud personas update" },
+  delete_persona: { command: "cloud personas delete" },
+  generate_personas: { command: "cloud personas generate" },
+  list_swarms: { command: "cloud swarms list" },
+  get_swarm: { command: "cloud swarms get" },
+  create_swarm: { command: "cloud swarms create" },
+  update_swarm: { command: "cloud swarms update" },
+  archive_swarm: { command: "cloud swarms archive" },
 
   // ── Capabilities ────────────────────────────────────────────────────────
-  // Top-level rather than nested: the answer spans Swarms, user testing and
-  // the plan, so filing it under one of them would suggest it only describes
-  // that one.
-  get_capabilities: { command: "capabilities" },
+  // Nested under projects: the answer is project-scoped (role, org betas,
+  // plan limits) even though it spans Swarms, user testing, and the plan.
+  get_capabilities: { command: "cloud projects capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
   // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
   // are bound under "Chat surfaces" below — they used to be a separate group
   // under the product's older name, and now share this one command.
-  publish_scenario: { command: "scenarios publish" },
-  unpublish_scenario: { command: "scenarios unpublish" },
+  publish_scenario: { command: "cloud scenarios publish" },
+  unpublish_scenario: { command: "cloud scenarios unpublish" },
   // ── User testing: everything you do with a scenario once it exists ──────
-  get_user_testing_scenario: { command: "user-testing get" },
-  update_user_testing_scenario: { command: "user-testing update" },
-  list_user_testing_sessions: { command: "user-testing sessions" },
-  get_user_testing_session: { command: "user-testing session" },
-  get_user_testing_metrics: { command: "user-testing metrics" },
-  get_user_testing_usage: { command: "user-testing usage" },
-  list_user_testing_findings: { command: "user-testing findings" },
-  get_user_testing_signals: { command: "user-testing signals" },
-  get_user_testing_insights: { command: "user-testing insights" },
-  request_user_testing_insights: { command: "user-testing request-insights" },
-  cancel_user_testing_insights: { command: "user-testing cancel-insights" },
-  dismiss_user_testing_finding: { command: "user-testing dismiss-finding" },
-  undismiss_user_testing_finding: {
-    command: "user-testing undismiss-finding",
+  get_user_testing_scenario: { command: "cloud user-testing get" },
+  update_user_testing_scenario: { command: "cloud user-testing update" },
+  list_user_testing_sessions: { command: "cloud user-testing sessions" },
+  get_user_testing_session: { command: "cloud user-testing session" },
+  get_user_testing_metrics: { command: "cloud user-testing metrics" },
+  get_user_testing_usage: { command: "cloud user-testing usage" },
+  list_user_testing_findings: { command: "cloud user-testing findings" },
+  get_user_testing_signals: { command: "cloud user-testing signals" },
+  get_user_testing_insights: { command: "cloud user-testing insights" },
+  request_user_testing_insights: {
+    command: "cloud user-testing request-insights",
   },
-  set_user_testing_guest_execution: { command: "user-testing guest-execution" },
-  rotate_user_testing_link: { command: "user-testing rotate-link" },
-  upsert_user_testing_member: { command: "user-testing invite" },
-  remove_user_testing_member: { command: "user-testing remove-member" },
-  rebind_user_testing_scenario: { command: "user-testing rebind" },
+  cancel_user_testing_insights: {
+    command: "cloud user-testing cancel-insights",
+  },
+  dismiss_user_testing_finding: {
+    command: "cloud user-testing dismiss-finding",
+  },
+  undismiss_user_testing_finding: {
+    command: "cloud user-testing undismiss-finding",
+  },
+  set_user_testing_guest_execution: {
+    command: "cloud user-testing guest-execution",
+  },
+  rotate_user_testing_link: { command: "cloud user-testing rotate-link" },
+  upsert_user_testing_member: { command: "cloud user-testing invite" },
+  remove_user_testing_member: { command: "cloud user-testing remove-member" },
+  rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
+  // Unified share. I5 shipped SDK/MCP/agent; there is no `cloud share`
+  // command yet. Exclude until one exists — a binding with no Commander path
+  // fails the tree test.
+  get_share_settings: {
+    excluded:
+      "Share settings are read from the Share dialog; no `cloud share` command exists yet.",
+  },
+  set_share_mode: {
+    excluded:
+      "Changing who can open a shared resource is confirmed in the Share dialog; no CLI write exists yet.",
+  },
+  rotate_share_link: {
+    excluded:
+      "Rotating a unified share URL is irreversible and confirmed in the UI; no CLI command exists yet.",
+  },
 
   // ── Evals ───────────────────────────────────────────────────────────────
-  list_eval_suites: { command: "eval list" },
-  create_eval_suite: { command: "eval create" },
-  get_eval_suite: { command: "eval get" },
-  update_eval_suite: { command: "eval update" },
-  delete_eval_suite: { command: "eval delete" },
-  set_eval_suite_schedule: { command: "eval schedule" },
-  set_eval_suite_environments: { command: "eval environments set" },
-  list_eval_suite_runs: { command: "eval runs" },
-  run_eval_suite: { command: "eval run" },
-  cancel_eval_run: { command: "eval cancel" },
-  request_eval_run_judge: { command: "eval judge" },
-  list_eval_check_repos: { command: "eval checks list" },
-  connect_eval_check_repo: { command: "eval checks connect" },
-  get_eval_run: { command: "eval status" },
-  compare_eval_run: { command: "eval compare" },
-  list_eval_run_iterations: { command: "eval iterations" },
-  get_eval_iteration_trace: { command: "eval trace" },
-  get_eval_run_steps: { command: "eval steps" },
-  list_eval_cases: { command: "eval cases list" },
-  get_eval_case: { command: "eval cases get" },
-  create_eval_case: { command: "eval cases create" },
-  create_eval_cases: {
+  list_eval_suites: { command: "cloud eval list" },
+  create_eval_suite: { command: "cloud eval create" },
+  get_eval_suite: { command: "cloud eval get" },
+  get_eval_run_disclosure: {
     excluded:
-      'Authoring several cases from a shell means passing a FILE, and that file\'s format is now settled: the versioned eval suite file (`schemaVersion: "1"`, YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`), which `eval validate` reads offline and `eval export` writes. What is still missing is the UPLOAD half — a suite file has cases with declared ids and the batch surface takes cases inline, and deciding which of the two owns identity on the way up is the same decision as `eval run --file`\'s ownership rules. So this binds when that command lands, not before; a batch command today would ship a second spelling of "send these cases" ahead of it. The bulk writers meanwhile are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline.',
+      "Not a standalone command: `cloud eval run` already fetches this for its frozen launch plan and prints it (writeRunDisclosure) before the run link in human mode — on stderr instead of stdout when a --reporter is configured, so the structured report stays the sole document on stdout without losing the disclosure entirely — and carries it on the JSON receipt's `disclosure` field. A separate command would only invite checking by hand what the launch already discloses.",
   },
-  update_eval_case: { command: "eval cases update" },
-  delete_eval_case: { command: "eval cases delete" },
-  generate_eval_cases: { command: "eval cases generate" },
-  run_eval_case: { command: "eval cases run" },
+  update_eval_suite: { command: "cloud eval update" },
+  delete_eval_suite: { command: "cloud eval delete" },
+  set_eval_suite_schedule: { command: "cloud eval schedule" },
+  set_eval_suite_environments: { command: "cloud eval environments set" },
+  list_eval_suite_runs: { command: "cloud eval runs" },
+  run_eval_suite: { command: "cloud eval run" },
+  cancel_eval_run: { command: "cloud eval cancel" },
+  request_eval_run_judge: { command: "cloud eval judge" },
+  list_eval_check_repos: { command: "cloud eval checks list" },
+  connect_eval_check_repo: { command: "cloud eval checks connect" },
+  get_eval_run: { command: "cloud eval status" },
+  compare_eval_run: { command: "cloud eval compare" },
+  waive_eval_gate: { command: "cloud eval gate waive" },
+  revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },
+  get_eval_gate_waiver: {
+    excluded:
+      "Not a standalone command: `cloud eval gate` already reads the waiver off the run projection and names it in every artifact it writes, and `gate unwaive` resolves the waiver in force when `--waiver` is omitted. A separate read command would only invite checking by hand what the gate already reports.",
+  },
+  list_eval_run_iterations: { command: "cloud eval iterations" },
+  get_eval_iteration_trace: { command: "cloud eval trace" },
+  get_eval_run_steps: { command: "cloud eval steps" },
+  list_eval_cases: { command: "cloud eval cases list" },
+  get_eval_case: { command: "cloud eval cases get" },
+  create_eval_case: { command: "cloud eval cases create" },
+  create_eval_cases: { command: "cloud eval run --file" },
+  update_eval_case: { command: "cloud eval cases update" },
+  delete_eval_case: { command: "cloud eval cases delete" },
+  generate_eval_cases: { command: "cloud eval cases generate" },
+  run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────
-  list_hosts: { command: "hosts list" },
-  get_host: { command: "hosts get" },
-  create_host: { command: "hosts create" },
-  update_host: { command: "hosts update" },
-  delete_host: { command: "hosts delete" },
-  set_host_servers: { command: "hosts servers" },
-  duplicate_host: { command: "hosts duplicate" },
-  list_project_environments: { command: "environments list" },
+  // `cloud clients …`, with `cloud hosts …` kept as a command alias so existing
+  // scripts keep working. The binding names the CANONICAL path — the alias is
+  // resolvable by the same Commander tree, and pointing the binding at it would
+  // document the spelling we are moving away from.
+  list_clients: { command: "cloud clients list" },
+  get_client: { command: "cloud clients get" },
+  create_client: { command: "cloud clients create" },
+  update_client: { command: "cloud clients update" },
+  delete_client: { command: "cloud clients delete" },
+  set_client_servers: { command: "cloud clients servers" },
+  duplicate_client: { command: "cloud clients duplicate" },
+  list_project_environments: { command: "cloud environments list" },
   get_project_environment_capabilities: {
     excluded:
       "Not a user-facing command: it answers 'does this deployment accept a model override?', which `environments create --model` / `environments update --model|--clear-model` already ask on the caller's behalf before writing. A standalone command would only invite people to check by hand what the write already checks.",
   },
-  get_project_environment: { command: "environments get" },
-  resolve_project_environment: { command: "environments resolve" },
-  create_project_environment: { command: "environments create" },
-  ensure_adhoc_environment: { command: "environments ensure-adhoc" },
-  name_environment: { command: "environments name" },
-  update_project_environment: { command: "environments update" },
-  archive_project_environment: { command: "environments archive" },
-  restore_project_environment: { command: "environments restore" },
+  get_project_environment: { command: "cloud environments get" },
+  resolve_project_environment: { command: "cloud environments resolve" },
+  create_project_environment: { command: "cloud environments create" },
+  ensure_adhoc_environment: { command: "cloud environments ensure-adhoc" },
+  name_environment: { command: "cloud environments name" },
+  update_project_environment: { command: "cloud environments update" },
+  archive_project_environment: { command: "cloud environments archive" },
+  restore_project_environment: { command: "cloud environments restore" },
   list_project_plugins: {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
@@ -184,29 +217,32 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
   },
-  list_sandbox_images: { command: "images list" },
-  get_sandbox_image: { command: "images get" },
-  create_sandbox_image: { command: "images create" },
-  update_sandbox_image: { command: "images edit" },
-  validate_sandbox_image_blueprint: { command: "images validate" },
-  build_sandbox_image: { command: "images build" },
-  list_sandbox_image_builds: { command: "images logs" },
-  promote_sandbox_image: { command: "images promote" },
-  use_sandbox_image: { command: "images use" },
-  delete_sandbox_image: { command: "images delete" },
-  reset_computer: { command: "images reset" },
+  list_sandbox_images: { command: "cloud images list" },
+  get_sandbox_image: { command: "cloud images get" },
+  create_sandbox_image: { command: "cloud images create" },
+  update_sandbox_image: { command: "cloud images edit" },
+  validate_sandbox_image_blueprint: { command: "cloud images validate" },
+  build_sandbox_image: { command: "cloud images build" },
+  list_sandbox_image_builds: { command: "cloud images logs" },
+  promote_sandbox_image: { command: "cloud images promote" },
+  use_sandbox_image: { command: "cloud images use" },
+  delete_sandbox_image: { command: "cloud images delete" },
+  reset_computer: { command: "cloud images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_scenarios: { command: "scenarios list" },
-  get_scenario: { command: "scenarios get" },
-  list_chat_sessions: { command: "chat-sessions list" },
-  search_sessions: { command: "sessions search" },
+  list_scenarios: { command: "cloud scenarios list" },
+  get_scenario: { command: "cloud scenarios get" },
+  list_chat_sessions: { command: "cloud sessions list" },
+  search_sessions: { command: "cloud sessions search" },
+  send_chat_message: { command: "cloud sessions send" },
+  get_chat_session: { command: "cloud sessions show" },
+  get_chat_session_trace: { command: "cloud sessions trace" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
-  create_tunnel: { command: "tunnel" },
+  create_tunnel: { command: "cloud tunnel" },
   close_tunnel: {
     excluded:
-      "The tunnel closes when `mcpjam tunnel` exits; a separate close command would only strand a session nobody is holding.",
+      "The tunnel closes when `mcpjam cloud tunnel` exits; a separate close command would only strand a session nobody is holding.",
   },
 
   // ── Deliberately local-first ────────────────────────────────────────────
@@ -223,6 +259,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   call_server_tool: {
     excluded:
       "`tools call` connects to the server directly, so it works without a project or an API key.",
+  },
+  render_server_widget: {
+    excluded:
+      "`apps render` connects to the server directly and mounts the widget in the developer's OWN Chromium, so it works without a project or an API key — and spends no hosted browser to answer a question the local command already answers.",
   },
   list_server_prompts: {
     excluded:
@@ -267,14 +307,40 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
   get_readiness_report: { command: "readiness report" },
+  start_conformance_run: {
+    excluded:
+      "Hosted conformance runs dial the platform's view of a saved server and persist results for the app; the local `mcpjam conformance` commands grade what this machine reaches without a project row. Different surfaces, and only the hosted run leaves a durable record agents can poll.",
+  },
+  get_conformance_run: {
+    excluded:
+      "No `conformance runs` poll command yet — run history and status live in the hosted app and agent surfaces until a CLI subcommand mirrors list/status against saved servers.",
+  },
+  list_conformance_runs: {
+    excluded:
+      "Listing persisted conformance runs is an app/agent concern today; the CLI's conformance commands are one-shot local runs, not a hosted run ledger.",
+  },
+  get_conformance_report: {
+    excluded:
+      "Report projection for agents is sized for model context on the platform API; the CLI already emits full suite output locally via `mcpjam conformance` and does not need a second report fetch path.",
+  },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {
     excluded:
-      "`auth whoami` already reports the signed-in identity for the stored credentials.",
+      "`cloud whoami` already reports the signed-in identity for the stored credentials.",
   },
   list_models: {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
   },
+  search_registry_directory: { command: "registry search" },
+  get_registry_directory_server: { command: "registry show" },
+  list_registry_directory_sources: { command: "registry sources" },
+  list_registry_servers: { command: "registry servers" },
+  list_registry_connections: { command: "registry connections" },
+  // One Commander path, two ops. `--card` is the shelf disambiguator;
+  // the op-bindings test accepts a flag-qualified command string.
+  install_registry_directory_server: { command: "registry install" },
+  install_registry_server: { command: "registry install --card" },
+  uninstall_registry_server: { command: "registry uninstall" },
 };

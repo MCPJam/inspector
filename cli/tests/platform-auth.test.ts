@@ -25,7 +25,7 @@ async function tempAuthFile(): Promise<string> {
 
 function storedAuth(
   tokenEndpoint: string,
-  overrides: Partial<StoredPlatformAuth> = {},
+  overrides: Partial<StoredPlatformAuth> = {}
 ): StoredPlatformAuth {
   return {
     version: 1,
@@ -52,6 +52,8 @@ type FixtureRequest = {
 async function startAuthFixture(options: {
   tokenResponses?: Array<Record<string, unknown>>;
   configStatus?: number;
+  meStatus?: number;
+  meBody?: unknown;
 }): Promise<{
   origin: string;
   requests: FixtureRequest[];
@@ -84,8 +86,8 @@ async function startAuthFixture(options: {
                 redirectUri: `${origin}/api/cli/auth/callback`,
                 scope: "openid profile email offline_access",
               }
-            : { code: "FEATURE_NOT_SUPPORTED", message: "disabled" },
-        ),
+            : { code: "FEATURE_NOT_SUPPORTED", message: "disabled" }
+        )
       );
       return;
     }
@@ -103,12 +105,32 @@ async function startAuthFixture(options: {
       return;
     }
 
+    if (url.pathname === "/api/v1/me") {
+      res.statusCode = options.meStatus ?? 200;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify(
+          options.meBody ?? {
+            id: "user-1",
+            email: "dev@example.com",
+            name: "Dev",
+            imageUrl: null,
+            profilePictureUrl: null,
+            plan: "pro",
+            createdAt: null,
+            updatedAt: null,
+          }
+        )
+      );
+      return;
+    }
+
     res.statusCode = 404;
     res.end("not found");
   });
 
   await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", () => resolve()),
+    server.listen(0, "127.0.0.1", () => resolve())
   );
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -121,13 +143,15 @@ async function startAuthFixture(options: {
     requests,
     close: () =>
       new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
+        server.close((error) => (error ? reject(error) : resolve()))
       ),
   };
 }
 
 /** Plays the browser: follows the start URL by hitting the CLI loopback with a code. */
-function browserSimulator(code = "auth-code-1"): (url: string) => Promise<void> {
+function browserSimulator(
+  code = "auth-code-1"
+): (url: string) => Promise<void> {
   return async (startUrl: string) => {
     const parsed = new URL(startUrl);
     const loopback = new URL(parsed.searchParams.get("redirect_uri")!);
@@ -141,7 +165,7 @@ function browserSimulator(code = "auth-code-1"): (url: string) => Promise<void> 
 test("resolvePlatformCredential prefers the --api-key flag", async () => {
   const credential = resolvePlatformCredential(
     { apiKey: "sk_flag" },
-    { env: { MCPJAM_API_KEY: "sk_env" } },
+    { env: { MCPJAM_API_KEY: "sk_env" } }
   );
 
   assert.equal(credential.kind, "api-key");
@@ -154,14 +178,14 @@ test("resolvePlatformCredential hard-errors on an explicit legacy key", () => {
     (error: unknown) =>
       error instanceof CliError &&
       error.code === "USAGE_ERROR" &&
-      error.message.includes("sk_"),
+      error.message.includes("sk_")
   );
 });
 
 test("resolvePlatformCredential uses MCPJAM_API_KEY when no flag is given", async () => {
   const credential = resolvePlatformCredential(
     {},
-    { env: { MCPJAM_API_KEY: "sk_env" } },
+    { env: { MCPJAM_API_KEY: "sk_env" } }
   );
 
   assert.equal(credential.kind, "api-key");
@@ -180,7 +204,7 @@ test("resolvePlatformCredential warns on a legacy env key and falls through to s
       authFilePath,
       now: () => NOW,
       warn: (message) => warnings.push(message),
-    },
+    }
   );
 
   assert.equal(credential.kind, "oauth");
@@ -195,7 +219,7 @@ test("getOAuthAccessToken errors when not logged in", async () => {
   await assert.rejects(
     getOAuthAccessToken({ authFilePath, now: () => NOW }),
     (error: unknown) =>
-      error instanceof CliError && /not logged in/i.test(error.message),
+      error instanceof CliError && /not logged in/i.test(error.message)
   );
 });
 
@@ -205,14 +229,18 @@ test("getOAuthAccessToken returns the stored token while fresh", async () => {
 
   assert.equal(
     await getOAuthAccessToken({ authFilePath, now: () => NOW }),
-    "stored-access",
+    "stored-access"
   );
 });
 
 test("getOAuthAccessToken refreshes within 60s of expiry and persists rotation", async () => {
   const fixture = await startAuthFixture({
     tokenResponses: [
-      { access_token: "rotated-access", refresh_token: "rotated-refresh", expires_in: 1800 },
+      {
+        access_token: "rotated-access",
+        refresh_token: "rotated-refresh",
+        expires_in: 1800,
+      },
     ],
   });
   try {
@@ -220,8 +248,10 @@ test("getOAuthAccessToken refreshes within 60s of expiry and persists rotation",
     await writeStoredAuth(
       storedAuth(`${fixture.origin}/oauth2/token`, {
         expiresAt: NOW + 30_000,
+        email: "dev@example.com",
+        plan: "pro",
       }),
-      authFilePath,
+      authFilePath
     );
 
     const token = await getOAuthAccessToken({ authFilePath, now: () => NOW });
@@ -230,11 +260,15 @@ test("getOAuthAccessToken refreshes within 60s of expiry and persists rotation",
     const persisted = readStoredAuth(authFilePath);
     assert.equal(persisted?.accessToken, "rotated-access");
     assert.equal(persisted?.refreshToken, "rotated-refresh");
+    assert.equal(persisted?.email, "dev@example.com");
+    assert.equal(persisted?.plan, "pro");
     // The rotated expiry is computed from the injected clock, so it is
     // exactly NOW + expires_in.
     assert.equal(persisted?.expiresAt, NOW + 1800 * 1000);
 
-    const tokenRequest = fixture.requests.find((r) => r.path === "/oauth2/token");
+    const tokenRequest = fixture.requests.find(
+      (r) => r.path === "/oauth2/token"
+    );
     assert.equal(tokenRequest?.body.get("grant_type"), "refresh_token");
     assert.equal(tokenRequest?.body.get("refresh_token"), "stored-refresh");
     assert.equal(tokenRequest?.body.get("client_id"), "client_123");
@@ -254,7 +288,7 @@ test("getOAuthAccessToken errors when expired without a refresh token", async ()
   await assert.rejects(
     getOAuthAccessToken({ authFilePath, now: () => NOW }),
     (error: unknown) =>
-      error instanceof CliError && /login expired/i.test(error.message),
+      error instanceof CliError && /login expired/i.test(error.message)
   );
 });
 
@@ -270,7 +304,7 @@ test("runPlatformLogin completes the PKCE flow end to end and stores tokens", as
         authFilePath,
         timeoutMs: 10_000,
         now: () => NOW,
-      },
+      }
     );
 
     assert.equal(result.authFilePath, authFilePath);
@@ -282,17 +316,55 @@ test("runPlatformLogin completes the PKCE flow end to end and stores tokens", as
     // The API base URL of the deployment is stored with the session so later
     // cloud commands default to it instead of prod.
     assert.equal(persisted?.apiUrl, `${fixture.origin}/api/v1`);
+    assert.equal(persisted?.email, "dev@example.com");
+    assert.equal(persisted?.plan, "pro");
+    assert.equal(result.email, "dev@example.com");
+    assert.equal(result.plan, "pro");
+    assert.equal(result.apiUrl, `${fixture.origin}/api/v1`);
 
-    const tokenRequest = fixture.requests.find((r) => r.path === "/oauth2/token");
+    const tokenRequest = fixture.requests.find(
+      (r) => r.path === "/oauth2/token"
+    );
     assert.equal(tokenRequest?.body.get("grant_type"), "authorization_code");
     assert.equal(tokenRequest?.body.get("code"), "auth-code-1");
     // The exchange presents the HOSTED redirect URI registered with AuthKit,
     // not the loopback the code was forwarded to.
     assert.equal(
       tokenRequest?.body.get("redirect_uri"),
-      `${fixture.origin}/api/cli/auth/callback`,
+      `${fixture.origin}/api/cli/auth/callback`
     );
     assert.ok((tokenRequest?.body.get("code_verifier")?.length ?? 0) >= 43);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("runPlatformLogin still succeeds when account lookup fails", async () => {
+  const fixture = await startAuthFixture({
+    meStatus: 500,
+    meBody: { code: "INTERNAL", message: "nope" },
+  });
+  try {
+    const authFilePath = await tempAuthFile();
+    const warnings: string[] = [];
+
+    const result = await runPlatformLogin(
+      { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+      {
+        openUrl: browserSimulator(),
+        authFilePath,
+        timeoutMs: 10_000,
+        now: () => NOW,
+        warn: (message) => warnings.push(message),
+      }
+    );
+
+    assert.equal(result.authFilePath, authFilePath);
+    assert.equal(result.email, undefined);
+    assert.equal(readStoredAuth(authFilePath)?.accessToken, "new-access");
+    assert.equal(readStoredAuth(authFilePath)?.email, undefined);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /account details/);
   } finally {
     await fixture.close();
   }
@@ -312,10 +384,10 @@ test("runPlatformLogin fails actionably when no refresh token is returned", asyn
           openUrl: browserSimulator(),
           authFilePath,
           timeoutMs: 10_000,
-        },
+        }
       ),
       (error: unknown) =>
-        error instanceof CliError && /refresh token/i.test(error.message),
+        error instanceof CliError && /refresh token/i.test(error.message)
     );
     assert.equal(readStoredAuth(authFilePath), null);
   } finally {
@@ -329,12 +401,12 @@ test("runPlatformLogin reports a disabled hosted bridge actionably", async () =>
     await assert.rejects(
       runPlatformLogin(
         { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
-        { timeoutMs: 1000 },
+        { timeoutMs: 1000 }
       ),
       (error: unknown) =>
         error instanceof CliError &&
         /not enabled/i.test(error.message) &&
-        /api-key/i.test(error.message),
+        /api-key/i.test(error.message)
     );
   } finally {
     await fixture.close();

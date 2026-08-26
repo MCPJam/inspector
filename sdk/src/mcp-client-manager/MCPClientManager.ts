@@ -308,6 +308,10 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  private readonly toolsAnnotationsCache = new Map<
+    string,
+    Map<string, Record<string, unknown> | undefined>
+  >();
   /**
    * Servers whose CURRENT connection has completed a no-`cursor`
    * `tools/list` — the only call that writes upstream's aggregated
@@ -791,6 +795,7 @@ export class MCPClientManager {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -846,6 +851,7 @@ export class MCPClientManager {
       } catch (error) {
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
+          this.toolsAnnotationsCache.set(serverId, new Map());
           // A server without `tools/list` cannot declare `x-mcp-header` on
           // anything, so the mirroring source is trivially complete.
           this.aggregatedToolsListWarmed.add(serverId);
@@ -924,6 +930,25 @@ export class MCPClientManager {
       return undefined;
     }
     return { ...(metadata as Record<string, unknown>) };
+  }
+
+  /**
+   * Gets annotations for all tools from the most recent cached tools/list.
+   */
+  getAllToolAnnotations(
+    serverId: string
+  ): Record<string, Record<string, unknown> | undefined> {
+    const annotationsMap = this.toolsAnnotationsCache.get(serverId);
+    return annotationsMap ? Object.fromEntries(annotationsMap) : {};
+  }
+
+  /**
+   * Whether a complete tools/list response has populated the annotation cache.
+   * An empty map is still a valid populated response for a server with no
+   * tools; callers must distinguish that from a cold or invalidated cache.
+   */
+  hasCachedToolAnnotations(serverId: string): boolean {
+    return this.toolsAnnotationsCache.has(serverId);
   }
 
   /**
@@ -1794,7 +1819,7 @@ export class MCPClientManager {
     options?: ClientRequestOptions
   ) {
     // Legacy-form reads carry no per-request extension declaration, so a
-    // conforming extension server MUST answer `-32003`: refuse locally instead
+    // conforming extension server MUST answer `-32021`: refuse locally instead
     // and send nothing (callers dispatch on `getTasksWire`).
     this.assertLegacyTasksReadWire(serverId, "tasks/get");
     return this.runRetryableReadOperation(serverId, options, (client) =>
@@ -1959,7 +1984,7 @@ export class MCPClientManager {
   /**
    * Opens a task-filtered `subscriptions/listen` carrying the extension's
    * per-request eligibility declaration (SEP-2663). A non-declaring
-   * task-filtered listen MUST be answered `-32003`, so this is the ONLY way a
+   * task-filtered listen MUST be answered `-32021`, so this is the ONLY way a
    * `taskIds` filter may reach the wire.
    *
    * Port contract: on `SubscriptionClientPort`, availability is expressed by
@@ -2922,9 +2947,18 @@ export class MCPClientManager {
     const pin = config.mcpProtocolVersion;
     if (!pin) return undefined;
     const negotiation = resolveVersionNegotiation(pin);
-    // `undefined` is a legacy pin (exact `initialize`, no discover probe) and
-    // `"auto"` falls back on its own. Only an explicit modern pin refuses.
-    if (!negotiation || negotiation.mode === "auto") return undefined;
+    // `"auto"` falls back on its own, so it can never refuse — and a config
+    // with no pin already returned above.
+    //
+    // A legacy pin (`undefined` here: exact `initialize`, no discover probe)
+    // DOES refuse, and used to be excluded. It narrows the accept-list to the
+    // pinned version, so a server whose `initialize` reply names anything else
+    // — e.g. a 2025-11-25 pin against a server that answers 2025-06-18 — fails
+    // the connect just as a modern pin does. Excluding it sent that failure to
+    // the generic connection patterns, which report the user's own version
+    // setting as "the server appears to be down". The verdict below is what
+    // keeps a real outage out: it only matches a version refusal.
+    if (negotiation?.mode === "auto") return undefined;
     for (const error of errors) {
       // NOT "is this an era-negotiation error": that code also covers a probe
       // that hit an HTTP status, a network failure, or a closed transport —
@@ -3075,6 +3109,7 @@ export class MCPClientManager {
 
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
+      this.toolsAnnotationsCache.delete(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3097,6 +3132,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3128,6 +3164,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.toolsAnnotationsCache.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3658,15 +3695,25 @@ export class MCPClientManager {
 
   private cacheToolsMetadata(
     serverId: string,
-    tools: Array<{ name: string; _meta?: any }>
+    tools: Array<{
+      name: string;
+      _meta?: any;
+      annotations?: Record<string, unknown>;
+    }>
   ): void {
     const metadataMap = new Map<string, any>();
+    const annotationsMap = new Map<
+      string,
+      Record<string, unknown> | undefined
+    >();
     for (const tool of tools) {
       if (tool._meta) {
         metadataMap.set(tool.name, tool._meta);
       }
+      annotationsMap.set(tool.name, tool.annotations);
     }
     this.toolsMetadataCache.set(serverId, metadataMap);
+    this.toolsAnnotationsCache.set(serverId, annotationsMap);
   }
 
   private isStdioConfig(config: MCPServerConfig): config is StdioServerConfig {

@@ -132,10 +132,68 @@ function validateOptionalStringRecord(value: unknown, label: string): void {
   }
 }
 
+/** The only two keys a fixtures block may carry, and the name each entry needs. */
+const FIXTURE_COLLECTIONS = [
+  ["toolCalls", "toolName"],
+  ["promptGets", "promptName"],
+] as const;
+
+/**
+ * Fixtures name primitives the operator says are SAFE TO EXECUTE, so the
+ * validation is deliberately strict about the KEYS and the NAMES, and
+ * permissive about the arguments (arbitrary JSON by definition).
+ *
+ * UNKNOWN KEYS ARE REJECTED, and that is the point rather than tidiness. A
+ * misspelled `toolCall` would otherwise be silently ignored, leaving an empty
+ * fixture set — and an empty fixture set makes the fixture-gated checks SKIP,
+ * which an operator reads as "my server does not support this" rather than "my
+ * config has a typo". A config error that presents as a server finding is worse
+ * than a loud rejection.
+ *
+ * Shared with the `--fixtures-file` reader so the two paths cannot drift into
+ * disagreeing about what a valid fixtures block is.
+ */
+export function validateFixtures(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+  assertObject(value, label);
+  const fixtures = value as JsonObject;
+
+  const known = new Set<string>(FIXTURE_COLLECTIONS.map(([key]) => key));
+  const unknown = Object.keys(fixtures).filter((key) => !known.has(key));
+  if (unknown.length > 0) {
+    throw usageError(
+      `${label} has unknown key${unknown.length === 1 ? "" : "s"} ${unknown
+        .map((key) => JSON.stringify(key))
+        .join(", ")}; expected ${[...known].join(" and/or ")}`,
+    );
+  }
+
+  for (const [key, nameField] of FIXTURE_COLLECTIONS) {
+    const entries = fixtures[key];
+    if (entries === undefined) continue;
+    if (!Array.isArray(entries)) {
+      throw usageError(`${label}.${key} must be an array`);
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      assertObject(entry, `${label}.${key}[${index}]`);
+      const name = (entry as JsonObject)[nameField];
+      if (typeof name !== "string" || name.trim() === "") {
+        throw usageError(
+          `${label}.${key}[${index}].${nameField} must be a non-empty string`,
+        );
+      }
+    }
+  }
+}
+
 function validateProtocolRun(run: JsonObject, label: string): void {
   validateOptionalString(run.label, `${label}.label`);
   validateEnumArray(run.categories, MCP_CHECK_CATEGORIES, `${label}.categories`);
   validateEnumArray(run.checkIds, MCP_CHECK_IDS, `${label}.checkIds`);
+  validateFixtures(run.fixtures, `${label}.fixtures`);
   if (run.protocolVersion !== undefined) {
     if (
       typeof run.protocolVersion !== "string" ||

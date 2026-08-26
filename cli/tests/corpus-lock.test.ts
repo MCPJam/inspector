@@ -75,7 +75,7 @@ describe("readCorpusLock", () => {
     await withTempDir(async (dir) => {
       await assert.rejects(
         () => readCorpusLock(path.join(dir, "missing.json")),
-        /mcpjam eval pull/
+        /mcpjam cloud eval pull/
       );
     });
   });
@@ -329,7 +329,7 @@ describe("renderCorpusDrift", () => {
     // different fixes; collapsing them into one word hides which happened.
     assert.ok(rendered.includes("content"));
     assert.ok(rendered.includes("grading"));
-    assert.match(rendered, /mcpjam eval pull/);
+    assert.match(rendered, /mcpjam cloud eval pull/);
   });
 
   test("counts a single change in the singular", () => {

@@ -76,6 +76,7 @@ import {
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -97,6 +98,7 @@ import {
   useCurrentSearchParam,
   buildOrganizationPath,
 } from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -226,31 +228,62 @@ function PendingSeatPaymentNotice({
   onFinish: () => void;
   onCancel: () => void;
 }) {
+  const needsRetry = intent.needsRetry === true;
+  const cleanupPending = intent.status === "cleanup_pending";
+
   return (
     <Alert
-      className="border-primary/20 bg-primary/[0.04]"
-      data-testid="pending-seat-payment-notice"
+      className={
+        needsRetry
+          ? "border-destructive/30 bg-destructive/[0.04]"
+          : "border-primary/20 bg-primary/[0.04]"
+      }
+      data-testid={
+        needsRetry ? "failed-seat-payment-notice" : "pending-seat-payment-notice"
+      }
     >
-      <CreditCard className="size-4 text-primary" />
-      <AlertTitle>Seat payment required</AlertTitle>
+      <CreditCard
+        className={needsRetry ? "size-4 text-destructive" : "size-4 text-primary"}
+      />
+      <AlertTitle>
+        {needsRetry ? "Seat payment didn't go through" : "Seat payment required"}
+      </AlertTitle>
       <AlertDescription className="space-y-3">
         <p>
-          Finish payment to add {intent.email}. They will not get access or
-          credits until payment succeeds.
+          {cleanupPending ? (
+            <>
+              Stripe is closing {intent.email}'s declined invoice. Retry will
+              unlock as soon as cleanup is confirmed.
+            </>
+          ) : needsRetry ? (
+            <>
+              We couldn't charge for {intent.email}'s seat. They won't get
+              access or credits until it's paid.
+            </>
+          ) : (
+            <>
+              Finish payment to add {intent.email}. They will not get access or
+              credits until payment succeeds.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
             onClick={onFinish}
-            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+            disabled={
+              cleanupPending ||
+              isFinishingSeatPayment ||
+              isCancelingSeatPayment
+            }
           >
-            {isFinishingSeatPayment ? (
+            {cleanupPending || isFinishingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : (
               <CreditCard className="mr-2 size-4" />
             )}
-            Finish payment
+            {needsRetry ? "Retry payment" : "Finish payment"}
           </Button>
           <Button
             type="button"
@@ -262,7 +295,7 @@ function PendingSeatPaymentNotice({
             {isCancelingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : null}
-            Cancel
+            {needsRetry ? "Remove invite" : "Cancel"}
           </Button>
         </div>
       </AlertDescription>
@@ -460,7 +493,16 @@ export function OrganizationsTab({
           Members, models, and billing live on your organization. Sign in to
           manage them.
         </p>
-        <Button onClick={() => signIn()}>Sign in</Button>
+        <Button
+          onClick={() => {
+            // Remember where they were, so WorkOS returns them here rather
+            // than to the app's front door.
+            captureAppSignInReturnPath();
+            signIn();
+          }}
+        >
+          Sign in
+        </Button>
       </OrganizationStateShell>
     );
   }
@@ -599,6 +641,7 @@ function OrganizationPage({
     openIntervalChangePortal,
     cancelScheduledBillingChange,
     finishSeatPayment,
+    retrySeatPayment,
     cancelSeatPayment,
   } = useOrganizationBilling(organization._id, {
     enabled: isAuthenticated,
@@ -842,16 +885,78 @@ function OrganizationPage({
     }
   };
 
-  const handleCancelSeatPayment = async () => {
+  const seatInviteRemovalInFlightRef = useRef(false);
+  const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
+
+  const handleRetrySeatPayment = async () => {
+    if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
     try {
-      await cancelSeatPayment();
-      toast.success("Pending seat payment canceled.");
+      const result = await retrySeatPayment();
+      if (result?.status === "paid") {
+        toast.success(
+          `${activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added."
+      );
+    }
+  };
+
+  const handleCancelSeatPayment = async () => {
+    // For a terminal charge the button says "Remove invite", and that is what
+    // it has to do: cancelSeatPayment returns immediately for anything not
+    // still active, so calling it here left the invite and the notice exactly
+    // where they were while claiming success.
+    const isInviteRemoval = activeSeatPaymentIntent?.needsRetry === true;
+    // Removal has no spinner of its own — the shared one belongs to
+    // cancelSeatPayment, which this path never calls — so a second click would
+    // fire a concurrent removeMember that finds no row and reports "Member not
+    // found" on top of the first one's success. The state below disables the
+    // button and is what normally prevents that; the ref keeps the handler
+    // self-guarding rather than depending on its own button being disabled.
+    if (isInviteRemoval) {
+      if (seatInviteRemovalInFlightRef.current) return;
+      seatInviteRemovalInFlightRef.current = true;
+      setIsRemovingSeatInvite(true);
+    }
+    try {
+      if (isInviteRemoval && activeSeatPaymentIntent) {
+        await removeMember({
+          organizationId: organization._id,
+          email: activeSeatPaymentIntent.email,
+        });
+        toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
+        return;
+      }
+      const result = await cancelSeatPayment();
+      if (result.outcome === "canceled") {
+        toast.success("Pending seat payment canceled.");
+      } else if (result.outcome === "deferred") {
+        toast.error(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again."
+        );
+      } else if (result.outcome === "paid") {
+        toast.success(
+          "Payment completed before cancellation; the member was added."
+        );
+      } else {
+        toast.error("This seat payment is no longer active.");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
           : "Failed to cancel pending seat payment"
       );
+    } finally {
+      if (isInviteRemoval) {
+        seatInviteRemovalInFlightRef.current = false;
+        setIsRemovingSeatInvite(false);
+      }
     }
   };
 
@@ -1199,8 +1304,12 @@ function OrganizationPage({
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
         isCompletingSeatPayment={isCompletingSeatPayment}
-        isCancelingSeatPayment={isCancelingSeatPayment}
-        onFinish={() => void handleFinishSeatPayment()}
+        isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
+        onFinish={() =>
+          void (activeSeatPaymentIntent.needsRetry
+            ? handleRetrySeatPayment()
+            : handleFinishSeatPayment())
+        }
         onCancel={() => void handleCancelSeatPayment()}
       />
     ) : null;
@@ -1534,6 +1643,11 @@ function OrganizationPage({
               ) : null}
             </CardContent>
           </Card>
+
+          <OrganizationSharingPolicyCard
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
 
           <Card className="border-border/60">
             <CardHeader className="pb-2">

@@ -137,3 +137,55 @@ export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
 
   return { entries: admitted, truncatedRefs, omittedRefs, budgetChars };
 }
+
+/**
+ * Overflow sentence appended OUTSIDE the budget when skills were dropped.
+ * Shared by every inlined catalog (live cloud, pinned, effective) so the
+ * notice stays byte-identical across surfaces.
+ */
+export function skillCatalogOverflowNotice(omittedCount: number): string {
+  return `(${omittedCount} more skill${
+    omittedCount === 1 ? "" : "s"
+  } could not be listed within this model's skill-metadata budget.)`;
+}
+
+/**
+ * Render a budgeted catalog as prompt-ready bullet lines.
+ *
+ * Entries with an `origin` keep the effective-path
+ * `- **<ref>** (<origin>): <description>` shape; cloud/pinned entries omit
+ * origin and render `- **<name>**: <description>`. Budget accounting is
+ * unchanged (origin is optional and uncharged when absent).
+ */
+export function renderBudgetedSkillCatalog<T extends SkillMetadataEntry>(
+  entries: T[],
+  budgetChars: number
+): {
+  lines: string[];
+  omittedRefs: string[];
+  truncatedRefs: string[];
+} {
+  const result = applySkillMetadataBudget(entries, budgetChars);
+  const lines = result.entries.map((entry) =>
+    entry.origin
+      ? `- **${entry.ref}** (${entry.origin}): ${entry.description}`
+      : `- **${entry.ref}**: ${entry.description}`
+  );
+  return {
+    lines,
+    omittedRefs: result.omittedRefs,
+    truncatedRefs: result.truncatedRefs,
+  };
+}
+
+/** Join catalog lines and (when needed) the overflow notice. */
+export function formatSkillCatalogBody(
+  lines: string[],
+  omittedRefs: string[]
+): string {
+  const notice =
+    omittedRefs.length > 0
+      ? `\n\n${skillCatalogOverflowNotice(omittedRefs.length)}`
+      : "";
+  return `${lines.join("\n")}${notice}`;
+}
