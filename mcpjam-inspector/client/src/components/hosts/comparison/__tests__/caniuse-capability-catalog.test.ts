@@ -73,6 +73,30 @@ describe("caniuse capability catalog", () => {
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 
+  it("publishes pagination as a yes/no row, unknown until probed", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("paginationTraversal");
+
+    const field = hostConfigField("paginationTraversal");
+    const withValue = (value: string) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        mcpProfile: { profileVersion: 1, paginationTraversal: value },
+      }) as never;
+
+    // Binary by design: a client either follows nextCursor or stops at page
+    // one. There is no partial state to render.
+    expect(getCaniuseSupportLevel(field, withValue("full"))).toBe("supported");
+    expect(getCaniuseSupportLevel(field, withValue("firstPageOnly"))).toBe(
+      "unsupported"
+    );
+
+    // A host nobody probed must never be published as failing.
+    expect(
+      getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
+    ).toBe("unknown");
+  });
+
   it("excludes config-only fields from public capability pages", () => {
     const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
     expect(ids).not.toContain("modelId");

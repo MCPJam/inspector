@@ -716,6 +716,31 @@ const TOOL_LIST_CHANGED_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
   })
 );
 
+/**
+ * `mcpProfile.paginationTraversal` — whether the client walks `nextCursor`
+ * to the end of a paginated list, or stops at page one.
+ *
+ * Rendered as a support chip rather than the literal, because the question a
+ * reader has is binary: will this host see tools past the first page? An
+ * absent value maps to "unknown" through the shared fallback, so a host
+ * nobody probed is never published as failing.
+ */
+const PAGINATION_FIELD: HostConfigFieldDef = {
+  id: "paginationTraversal",
+  section: "protocol",
+  subsection: "Pagination",
+  label: "Follows nextCursor",
+  path: "mcpProfile.paginationTraversal",
+  description:
+    "Client requests further pages of a paginated list instead of treating page one as the whole result.",
+  kind: {
+    kind: "enum",
+    options: ["full", "firstPageOnly"],
+    support: { full: "supported", firstPageOnly: "unsupported" },
+  },
+  read: (cfg) => mcpProfile(cfg)?.paginationTraversal,
+};
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -1124,6 +1149,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   ...TOOL_RESULT_WIDGET_FIELDS,
   ...TOOL_LIST_CHANGED_FIELDS,
+  PAGINATION_FIELD,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

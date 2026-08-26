@@ -166,7 +166,11 @@ export function getCaniuseSupportLevel(
   if (
     (field.id.startsWith("toolResult.") ||
       field.id.startsWith("sandbox.browserStorage.") ||
-      field.id.startsWith("toolListChanged.")) &&
+      field.id.startsWith("toolListChanged.") ||
+      // Enum rather than boolean, so it resolves to "neutral" rather than
+      // undefined when unset — and "neutral" renders as "Not supported".
+      // Without this an unprobed host publicly claims it cannot paginate.
+      field.id === "paginationTraversal") &&
     field.read(config) === undefined
   ) {
     return "unknown";
