@@ -245,6 +245,28 @@ environments stays CLI-only for now: those writes are revision-guarded
 (`expectedRevision`), and giving an agent a safe path through optimistic
 concurrency is a separate design question.
 
+## Skills over MCP (SEP-2640)
+
+This worker serves MCPJam's own Agent Skills alongside its tools, so an agent that connects gets the tools **and** the how-to knowledge for them without a separate install step. It declares:
+
+```json
+{ "capabilities": { "extensions": { "io.modelcontextprotocol/skills": {} } } }
+```
+
+and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
+
+The catalog is the eval-authoring skills, which are the ones that sit next to this server's tools: `mcpjam-eval-import`, `create-mcp-eval`, `explore-to-sdk-evals`. `mcp-inspector` is deliberately absent — it teaches the CLI's probe/doctor surface, which this server does not expose.
+
+**The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
+
+The generator refuses to emit anything MCPJam's own host would refuse: it runs `checkSkillIdentity`, enforces the draft's 512-entry / 16 MiB per-skill limits, and fails the build rather than warning.
+
+### Two behaviours worth knowing
+
+**Unknown `skill://` reads answer `-32602`, not `-32002`.** Both era codecs rewrite `ResourceNotFoundError` to Invalid params, so this worker cannot emit `-32002` even deliberately. That is what `isSkillNotFoundError` looks for anyway, but it differs from `sdk/tests/support/skills-fixture.ts`, which serves `-32002`.
+
+**The extension is always advertised.** The worker is stateless, so the declaration cannot be gated on the client's own `extensions`. This is correct — SEP-2133 negotiates connection-level and the client half of the gate is the client's to enforce — but it is the same shape of deviation documented at the top of `src/tools/sessionToolRegistrar.ts`.
+
 ## Auth
 
 The worker is an OAuth 2.0 protected resource. AuthKit is the authorization
