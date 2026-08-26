@@ -5,10 +5,7 @@ import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
-import {
-  isSentryBuildSurface,
-  SENTRY_BUILD_SURFACES,
-} from "../shared/sentry-config";
+import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
@@ -126,16 +123,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, rootDir, "");
 
   // Sentry `dist`. Set by whichever pipeline runs this build; a checkout that
-  // names no surface is `local`. Fail rather than accept an unrecognised value
-  // — same reasoning as the `sdkVersion` guard above. A typo here would ship a
-  // bundle reporting a `dist` no upload ever wrote, which is the exact failure
-  // this discriminator exists to end, except silent.
-  const buildSurface = env.MCPJAM_BUILD_SURFACE || "local";
-  if (!isSentryBuildSurface(buildSurface)) {
-    throw new Error(
-      `MCPJAM_BUILD_SURFACE="${buildSurface}" is not a known build surface (${SENTRY_BUILD_SURFACES.join(", ")})`,
-    );
-  }
+  // names no surface is `local`, and an unrecognised one throws — same
+  // reasoning as the `sdkVersion` guard above. Only the surfaces that build
+  // `dist/client` are accepted; the Electron renderer has its own config.
+  const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
 
   return {
     root: clientDir,

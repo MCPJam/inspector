@@ -69,6 +69,49 @@ export function isSentryBuildSurface(
 }
 
 /**
+ * The surfaces `client/vite.config.ts` may stamp, via `MCPJAM_BUILD_SURFACE`.
+ *
+ * Narrower than `SENTRY_BUILD_SURFACES` because that config only ever builds
+ * `dist/client`. The Electron renderer is built by `vite.renderer.config.mts`,
+ * which derives `electron-mac` / `electron-win` from `process.platform` and
+ * never reads the env var — so accepting an `electron-*` value here would
+ * stamp a `dist/client` bundle with the `dist` the renderer's own upload owns,
+ * which is the artifact collision the discriminator exists to end.
+ */
+export const CLIENT_BUILD_SURFACES = [
+  "web",
+  "npm",
+  "desktop-mac",
+  "desktop-win",
+  "local",
+] as const satisfies readonly SentryBuildSurface[];
+
+export type ClientBuildSurface = (typeof CLIENT_BUILD_SURFACES)[number];
+
+function isClientBuildSurface(value: string): value is ClientBuildSurface {
+  return (CLIENT_BUILD_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * Resolve the client bundle's `dist` from the env var the build passes.
+ *
+ * An unset value is a checkout that names no surface, which is `local`. An
+ * unrecognised one throws: a typo would otherwise ship a bundle reporting a
+ * `dist` no upload ever wrote, silently.
+ */
+export function resolveClientBuildSurface(
+  value: string | undefined,
+): ClientBuildSurface {
+  const surface = value || "local";
+  if (!isClientBuildSurface(surface)) {
+    throw new Error(
+      `MCPJAM_BUILD_SURFACE="${surface}" is not a client build surface (${CLIENT_BUILD_SURFACES.join(", ")})`,
+    );
+  }
+  return surface;
+}
+
+/**
  * The Electron surface for a `process.platform`, shared by the renderer build
  * (which stamps the value in) and the main process (which reports it), so the
  * two cannot drift from each other or from what forge uploads.

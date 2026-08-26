@@ -5,8 +5,10 @@ import {
   buildElectronSentryConfig,
   buildSentryConfig,
   buildServerSentryConfig,
+  CLIENT_BUILD_SURFACES,
   electronBuildSurface,
   isSentryBuildSurface,
+  resolveClientBuildSurface,
   SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
@@ -228,5 +230,34 @@ describe("build surfaces", () => {
     expect(isSentryBuildSurface("npm")).toBe(true);
     expect(isSentryBuildSurface("desktop")).toBe(false);
     expect(isSentryBuildSurface("")).toBe(false);
+  });
+
+  it("accepts every surface that builds dist/client", () => {
+    for (const surface of CLIENT_BUILD_SURFACES) {
+      expect(resolveClientBuildSurface(surface)).toBe(surface);
+    }
+  });
+
+  it("resolves an unset build surface to local", () => {
+    expect(resolveClientBuildSurface(undefined)).toBe("local");
+    expect(resolveClientBuildSurface("")).toBe("local");
+  });
+
+  it("rejects the Electron surfaces the client build cannot produce", () => {
+    // `vite.renderer.config.mts` stamps those from `process.platform` and
+    // uploads `.vite/renderer`. A `dist/client` bundle claiming one would be
+    // symbolicated against the renderer's artifacts.
+    expect(() => resolveClientBuildSurface("electron-mac")).toThrow(
+      /not a client build surface/,
+    );
+    expect(() => resolveClientBuildSurface("electron-win")).toThrow(
+      /not a client build surface/,
+    );
+  });
+
+  it("rejects a value no build surface list contains", () => {
+    expect(() => resolveClientBuildSurface("desktop")).toThrow(
+      /not a client build surface/,
+    );
   });
 });
