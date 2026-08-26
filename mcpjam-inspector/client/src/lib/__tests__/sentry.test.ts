@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const init = vi.fn();
 const replayIntegration = vi.fn(() => ({ name: "Replay" }));
-const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
+const reactRouterV7BrowserTracingIntegration = vi.fn(() => ({
+  name: "BrowserTracing",
+}));
+const wrapCreateBrowserRouterV7 = vi.fn((createRouter) => createRouter);
 const getClient = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
   replayIntegration,
-  browserTracingIntegration,
+  reactRouterV7BrowserTracingIntegration,
+  wrapCreateBrowserRouterV7,
   getClient,
 }));
 
@@ -28,7 +32,8 @@ describe("client sentry init", () => {
     vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
     init.mockClear();
     replayIntegration.mockClear();
-    browserTracingIntegration.mockClear();
+    reactRouterV7BrowserTracingIntegration.mockClear();
+    wrapCreateBrowserRouterV7.mockClear();
     getClient.mockReset();
   });
 
@@ -82,7 +87,7 @@ describe("client sentry init", () => {
     // The integration must not even LOAD — zero rates alone would still ship
     // the recorder and open its buffers.
     expect(replayIntegration).not.toHaveBeenCalled();
-    expect(browserTracingIntegration).toHaveBeenCalled();
+    expect(reactRouterV7BrowserTracingIntegration).toHaveBeenCalled();
     expect(config.integrations).toHaveLength(1);
   });
 
@@ -117,6 +122,32 @@ describe("client sentry init", () => {
     expect(replayIntegration).not.toHaveBeenCalled();
     expect(config.replaysSessionSampleRate).toBe(0);
     expect(config.integrations).toHaveLength(1);
+  });
+
+  it("instruments react-router so transactions name the route in view", async () => {
+    // INSPECTOR-CLIENT-253 was reported against `/servers` but crashed on
+    // `/playground`: plain browserTracingIntegration names the transaction
+    // once, at pageload, and never again on a client-side navigation.
+    const { initSentry } = await import("../sentry");
+
+    initSentry();
+    const options = reactRouterV7BrowserTracingIntegration.mock.calls[0][0];
+
+    expect(typeof options.useEffect).toBe("function");
+    expect(typeof options.useLocation).toBe("function");
+    expect(typeof options.useNavigationType).toBe("function");
+    expect(typeof options.createRoutesFromChildren).toBe("function");
+    expect(typeof options.matchRoutes).toBe("function");
+  });
+
+  it("builds the app router through Sentry's router wrapper", async () => {
+    // The hooks above only report navigations the SDK can see; a data router
+    // has to be created through the wrapper for its routes to be matched.
+    const { createBrowserRouter } = await import("react-router");
+    const { createSentryBrowserRouter } = await import("../sentry");
+
+    expect(wrapCreateBrowserRouterV7).toHaveBeenCalledWith(createBrowserRouter);
+    expect(typeof createSentryBrowserRouter).toBe("function");
   });
 });
 
