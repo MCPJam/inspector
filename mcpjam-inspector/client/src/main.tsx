@@ -15,6 +15,7 @@ import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
+import { detectSandboxOriginFault } from "./lib/sandbox-origin-fault";
 import {
   buildElectronHostedAuthCallbackUrl,
   resolveWorkosRedirectUri,
@@ -63,55 +64,16 @@ import {
 // Initialize Sentry before React mounts
 initSentry();
 
-/**
- * A hosted deploy with no sandbox origin is a SECURITY REGRESSION, not a
- * config nicety.
- *
- * `VITE_MCPJAM_SANDBOX_ORIGIN` is what puts MCP Apps widgets on an origin that
- * shares no cookies with the host app. Unset, the iframe falls back to
- * same-origin and the isolation the sandbox exists to provide is simply gone.
- *
- * `widget-react` already warns — but it warns from inside a shared package, at
- * RENDER time, on a `console.warn` nobody is watching, and only for a user who
- * happens to open a widget. Reporting it here instead means it is noticed at
- * BOOT, once, by whoever deployed it, through the channel that pages someone.
- *
- * Deliberately non-fatal: refusing to start would take the whole app down over
- * a widget-isolation setting, which is a worse outcome than a loud deploy.
- *
- * SET TO THE APP'S OWN ORIGIN counts as unset. A configured value that equals
- * `window.location.origin` produces exactly the same same-origin iframe as no
- * value at all — the isolation is gone either way — and it is the more likely
- * mistake of the two, because it looks configured.
- *
- * REPORTED ONCE PER TAB. This is a deployment fault, and it is true for every
- * visitor for as long as the deploy lives: capturing on each load turns one
- * static misconfiguration into an exception per page view (and, with replay on,
- * a session recording per visitor), which buries the signal it is meant to
- * raise. `sessionStorage` bounds it to one report per tab without needing
- * anything server-side. The console line stays unconditional — it costs
- * nothing and it is what a developer looking at THIS page load will see.
- */
-const sandboxOriginFault =
-  HOSTED_MODE && (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+// The invariant a browser can actually decide. Its reasoning, and the half
+// that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
+const sandboxOriginFault = detectSandboxOriginFault({
+  hostedMode: HOSTED_MODE,
+  sandboxOrigin: SANDBOX_ORIGIN,
+});
 if (sandboxOriginFault) {
-  const message = SANDBOX_ORIGIN
-    ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
-    : "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
-  console.error(`[MCPJam] ${message}`);
-
-  const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
-  let alreadyReported = false;
-  try {
-    alreadyReported = window.sessionStorage.getItem(REPORTED_KEY) === "1";
-    window.sessionStorage.setItem(REPORTED_KEY, "1");
-  } catch {
-    // Storage can be unavailable (Safari private mode, a blocked third-party
-    // context). Reporting every load is the safe direction for a security
-    // regression — better noisy than silent.
-  }
-  if (!alreadyReported) {
-    captureSentryException(new Error(message), {
+  console.error(`[MCPJam] ${sandboxOriginFault.message}`);
+  if (sandboxOriginFault.shouldCapture) {
+    captureSentryException(new Error(sandboxOriginFault.message), {
       tags: { area: "sandbox-origin", severity: "config" },
     });
   }
