@@ -231,13 +231,21 @@ describe("ProtocolTab tool list changed controls", () => {
     expect(screen.getByTestId("profile")).toHaveTextContent("<no-profile>");
   });
 
-  it("disables re-fetch once the channel is closed", async () => {
-    // Nothing can arrive, so the answer is unobservable rather than merely
-    // unset — the UI must not invite a claim the probe could never make.
+  it("keeps re-fetch editable once the channel is closed", async () => {
+    // The two are independent. This used to disable re-fetch on the theory
+    // that nothing can arrive without a channel; the 2026-08-26 Copilot
+    // capture disproved it — the server published `list_changed` on an open
+    // tools/call response stream and Copilot re-fetched, having never opened
+    // the standalone channel. closed + re-fetches is a real, probed pair, so
+    // the UI has to be able to express it.
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
     await user.click(listensSwitch());
-    expect(refetchesSwitch()).toBeDisabled();
+    expect(refetchesSwitch()).toBeEnabled();
+
+    await user.click(refetchesSwitch());
+    expect(screen.getByTestId("listens")).toHaveTextContent("false");
+    expect(screen.getByTestId("refetches")).toHaveTextContent("false");
   });
 
   it("round-trips through the JSON document", () => {

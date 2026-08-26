@@ -766,12 +766,27 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "serverTools": true,
           "toolInfo": true,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "allowFeatures": {
             "fullscreen": "*",
+          },
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
           },
           "csp": {
             "cspDirectives": {
@@ -856,6 +871,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "elicitation": false,
         "requestState": false,
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
     },
     "modelId": "anthropic/claude-haiku-4.5",
@@ -1106,12 +1122,27 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "serverTools": true,
           "toolInfo": true,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "allowFeatures": {
             "fullscreen": "*",
+          },
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
           },
           "csp": {
             "cspDirectives": {
@@ -1196,6 +1227,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "elicitation": false,
         "requestState": false,
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
     },
     "modelId": "anthropic/claude-haiku-4.5",
@@ -1354,6 +1386,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "xhr": true,
           },
           "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": true,
           "logging": true,
@@ -1368,8 +1407,62 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "cspDirectives": {
+              "base-uri": [
+                "'none'",
+              ],
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "frame-src": [
+                "'self'",
+                "data:",
+                "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+            },
+            "mode": "declared",
+          },
         },
       },
       "initialize": {
@@ -1384,7 +1477,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": false,
+      },
     },
     "modelId": "openai/gpt-5-nano",
     "optionalServerIds": [],
@@ -1472,6 +1570,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "xhr": true,
           },
           "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": true,
           "logging": true,
@@ -1486,8 +1591,62 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
+        },
+        "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
+          "csp": {
+            "cspDirectives": {
+              "base-uri": [
+                "'none'",
+              ],
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "frame-src": [
+                "'self'",
+                "data:",
+                "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+            },
+            "mode": "declared",
+          },
         },
       },
       "initialize": {
@@ -1502,7 +1661,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": false,
+      },
     },
     "modelId": "openai/gpt-5-nano",
     "optionalServerIds": [],
@@ -1612,14 +1776,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "ms-copilot",
-          "version": "1.0.1",
+          "agentAuthenticationMode": "Integrated",
+          "channelId": "pva-studio",
+          "lcat": "M365_COPILOT_USER",
+          "name": "mcs",
+          "version": "1.0.0",
         },
         "supportedProtocolVersions": [
-          "2025-11-25",
+          "2024-11-05",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": false,
+        "refetches": true,
+      },
     },
     "modelId": "openai/gpt-5.3-chat",
     "optionalServerIds": [],
@@ -1729,14 +1901,22 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "initialize": {
         "clientInfo": {
-          "name": "ms-copilot",
-          "version": "1.0.1",
+          "agentAuthenticationMode": "Integrated",
+          "channelId": "pva-studio",
+          "lcat": "M365_COPILOT_USER",
+          "name": "mcs",
+          "version": "1.0.0",
         },
         "supportedProtocolVersions": [
-          "2025-11-25",
+          "2024-11-05",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": false,
+        "refetches": true,
+      },
     },
     "modelId": "openai/gpt-5.3-chat",
     "optionalServerIds": [],
@@ -1813,8 +1993,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "script": true,
             "stylesheet": true,
           },
+          "downloadFile": false,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -1841,7 +2037,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": true,
+      },
     },
     "modelId": "anthropic/claude-sonnet-4.5",
     "optionalServerIds": [],
@@ -1918,8 +2119,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "script": true,
             "stylesheet": true,
           },
+          "downloadFile": false,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -1946,7 +2163,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "firstPageOnly",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": true,
+      },
     },
     "modelId": "anthropic/claude-sonnet-4.5",
     "optionalServerIds": [],
@@ -2918,8 +3140,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
             "fullscreen",
           ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": true,
           "logging": true,
@@ -2934,10 +3168,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -2967,6 +3216,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
     },
     "modelId": "mistralai/mistral-large-2512",
@@ -3069,8 +3319,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
             "fullscreen",
           ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": true,
           "logging": true,
@@ -3085,10 +3347,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -3118,6 +3395,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
     },
     "modelId": "mistralai/mistral-large-2512",
@@ -3350,6 +3628,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
+        "io.slack/block-kit": {
+          "mimeTypes": [
+            "application/vnd.slack.blocks+json",
+          ],
+        },
       },
     },
     "computer": undefined,
@@ -3360,6 +3643,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
+      "message": {
+        "text": {},
+      },
       "openLinks": {},
       "serverResources": {},
       "serverTools": {},
@@ -3477,11 +3763,23 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "fullscreen",
           ],
           "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": false,
+            "xhr": true,
+          },
           "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": false,
           "logging": true,
-          "message": false,
+          "message": true,
           "openLinks": true,
           "requestTeardown": false,
           "resourcePrefersBorder": false,
@@ -3492,10 +3790,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": true,
           "toolInputPartial": false,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": false,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -3545,6 +3858,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "text/html;profile=mcp-app",
           ],
         },
+        "io.slack/block-kit": {
+          "mimeTypes": [
+            "application/vnd.slack.blocks+json",
+          ],
+        },
       },
     },
     "computer": undefined,
@@ -3555,6 +3873,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "harness": undefined,
     "hostCapabilitiesOverride": {
       "logging": {},
+      "message": {
+        "text": {},
+      },
       "openLinks": {},
       "serverResources": {},
       "serverTools": {},
@@ -3672,11 +3993,23 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "fullscreen",
           ],
           "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": false,
+            "xhr": true,
+          },
           "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": false,
           "hostContextChanged": false,
           "logging": true,
-          "message": false,
+          "message": true,
           "openLinks": true,
           "requestTeardown": false,
           "resourcePrefersBorder": false,
@@ -3687,10 +4020,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": false,
           "toolInfo": true,
           "toolInputPartial": false,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": false,
           "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -3894,7 +4242,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
           ],
           "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
           "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": true,
           "hostContextChanged": true,
           "logging": true,
@@ -3909,6 +4269,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": true,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
@@ -3918,6 +4288,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "clipboard-read": "'src'",
             "cross-origin-isolated": "'src'",
             "local-network-access": "'src'",
+          },
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
           },
           "csp": {
             "mode": "declared",
@@ -3937,20 +4312,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.130.0",
+            "version": "1.134.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "Visual Studio Code",
-          "version": "1.130.0",
+          "version": "1.134.0",
         },
         "supportedProtocolVersions": [
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": true,
+      },
     },
     "modelId": "anthropic/claude-sonnet-4.5",
     "optionalServerIds": [],
@@ -4126,7 +4506,19 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
           ],
           "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
           "cspFrameDomains": true,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
           "downloadFile": true,
           "hostContextChanged": true,
           "logging": true,
@@ -4141,6 +4533,16 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "toolCancelled": true,
           "toolInfo": false,
           "toolInputPartial": true,
+          "toolResult": {
+            "content": {
+              "audio": true,
+              "image": true,
+              "resource": true,
+              "resourceLink": true,
+              "text": true,
+            },
+            "structuredContent": true,
+          },
           "updateModelContext": true,
           "widgetDisplayModeRequests": "accept",
         },
@@ -4150,6 +4552,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "clipboard-read": "'src'",
             "cross-origin-isolated": "'src'",
             "local-network-access": "'src'",
+          },
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
           },
           "csp": {
             "mode": "declared",
@@ -4169,20 +4576,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Visual Studio Code",
-            "version": "1.130.0",
+            "version": "1.134.0",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "Visual Studio Code",
-          "version": "1.130.0",
+          "version": "1.134.0",
         },
         "supportedProtocolVersions": [
           "2025-11-25",
         ],
       },
+      "paginationTraversal": "full",
       "profileVersion": 1,
+      "toolListChanged": {
+        "listens": true,
+        "refetches": true,
+      },
     },
     "modelId": "anthropic/claude-sonnet-4.5",
     "optionalServerIds": [],

@@ -122,8 +122,9 @@ export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
     font: true,
     media: true,
   },
-  // downloadFile stays inherited-true and requestTeardown is an explicit
-  // false, both per the catalog row this matrix is supposed to mirror.
+  // Both explicit false per the catalog row this matrix mirrors. downloadFile
+  // was flipped 2026-08-26: it is absent from Cursor's hostCapabilities.
+  downloadFile: false,
   requestTeardown: false,
 });
 

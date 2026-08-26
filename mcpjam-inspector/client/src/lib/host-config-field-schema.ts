@@ -700,7 +700,7 @@ const TOOL_LIST_CHANGED_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
     [
       "refetches",
       "Re-fetches after list_changed",
-      "Client acts on notifications/tools/list_changed instead of keeping its cached tool list. Only observable when the channel is open.",
+      "Client acts on notifications/tools/list_changed instead of keeping its cached tool list. Independent of the channel: a server can publish the notification on an open tools/call response stream, which reaches a client that never opened one.",
     ],
   ] as const
 ).map(

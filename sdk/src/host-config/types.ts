@@ -293,7 +293,13 @@ export type HostConfigMcpProfileV1 = {
   //               all (legacy: the standalone GET SSE stream; 2026-07-28:
   //               `subscriptions/listen`).
   //   refetches — after receiving the notification, the client re-issues
-  //               `tools/list`. Only measurable when `listens` is true.
+  //               `tools/list`.
+  //
+  // The two are independent. `refetches` was originally documented as only
+  // measurable when `listens` is true; the 2026-08-26 Copilot capture
+  // disproved that — a server can publish the notification on an open
+  // `tools/call` response stream, reaching a client that never opened the
+  // standalone channel, so `listens: false, refetches: true` is real.
   //
   // Absent -> spec-conforming (listens and refetches), like every knob above.
   toolListChanged?: {

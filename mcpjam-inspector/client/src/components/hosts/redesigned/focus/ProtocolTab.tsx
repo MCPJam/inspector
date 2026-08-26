@@ -241,7 +241,7 @@ type ProtocolDoc = {
     listens?: boolean;
     refetches?: boolean;
   };
-    capabilities?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
    * JSON deep-sorted into the canonical hash. Carries the enterprise-managed
@@ -710,14 +710,14 @@ export function ProtocolTab({
     draft.hostStyle === "mcpjam"
       ? undefined
       : initializeProtocolVersions === undefined ||
-          initializeProtocolVersions.length === 0
-        ? initializeProtocolVersions
-        : Array.from(
-            new Set([
-              ...initializeProtocolVersions,
-              ...(catalogProtocolVersions ?? []),
-            ])
-          );
+        initializeProtocolVersions.length === 0
+      ? initializeProtocolVersions
+      : Array.from(
+          new Set([
+            ...initializeProtocolVersions,
+            ...(catalogProtocolVersions ?? []),
+          ])
+        );
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue
@@ -979,13 +979,26 @@ export function ProtocolTab({
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
             is invisible unless the JSON editor below is open. Name both. The
-            list constrains every concrete pin, including 2026. */}
+            list constrains every concrete pin, including 2026.
+
+            A client can advertise a revision MCPJam itself does not speak —
+            Copilot advertises 2024-11-05, which is not in MCP_PROTOCOL_VERSIONS
+            — and that version can never appear in the dropdown however the list
+            is edited. Say so inline rather than leaving the reader to edit the
+            JSON and find nothing changed. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
-            {(advertisedProtocolVersions ?? []).join(", ")}, so no other version
-            can be pinned. Edit <code>supportedProtocolVersions</code> in the
-            JSON below to offer more.
+            {(advertisedProtocolVersions ?? [])
+              .map((version) =>
+                (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(version)
+                  ? version
+                  : `${version} (which MCPJam doesn't support)`
+              )
+              .join(", ")}
+            , so no other version can be pinned. Edit{" "}
+            <code>supportedProtocolVersions</code> in the JSON below to offer
+            more.
           </p>
         )}
         {/* Fires independently of the option count above: force-keeping the
@@ -1139,7 +1152,12 @@ export function ProtocolTab({
                 onCheckedChange={(checked) =>
                   setToolListChangedPart("refetches", checked)
                 }
-                disabled={readOnly || storedToolListChanged?.listens === false}
+                // NOT gated on `listens`. The 2026-08-26 Copilot capture
+                // re-fetched without ever opening the channel: the server
+                // published `list_changed` on an open tools/call response
+                // stream, which reaches a client that never opened the
+                // standalone one. off + on is a real combination.
+                disabled={readOnly}
                 aria-label="Re-fetches tools after the notification"
               />
             </div>
