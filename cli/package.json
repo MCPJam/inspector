@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/cli",
   "version": "5.1.0",
-  "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+  "description": "Test, debug, and validate MCP servers \u2014 health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
   "files": [
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "bundle:skills": "node scripts/generate-skills-bundle.mjs",
     "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
