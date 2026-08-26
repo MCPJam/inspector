@@ -38,8 +38,9 @@ vi.mock("ai", async () => {
 });
 
 vi.mock("@/shared/types", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  const actual = await vi.importActual<typeof import("@/shared/types")>(
+    "@/shared/types"
+  );
   return {
     ...actual,
     isMCPJamProvidedModel: vi.fn().mockReturnValue(true),
@@ -119,7 +120,7 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       discoveryState: undefined,
     });
     handleMCPJamFreeChatModelMock.mockResolvedValue(
-      new Response("ok", { status: 200 }),
+      new Response("ok", { status: 200 })
     );
   });
 
@@ -157,13 +158,13 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
     expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ hostId: "host-claude" }),
+      expect.objectContaining({ hostId: "host-claude" })
     );
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ harness: "claude-code" }),
+      expect.objectContaining({ harness: "claude-code" })
     );
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({ harness: "claude-code" }),
+      expect.objectContaining({ harness: "claude-code" })
     );
   });
 
@@ -217,10 +218,10 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     expect(response.status).toBe(200);
     // Emulated path: harness is never threaded into prepare or the stream.
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
-      expect.not.objectContaining({ harness: expect.anything() }),
+      expect.not.objectContaining({ harness: expect.anything() })
     );
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.not.objectContaining({ harness: expect.anything() }),
+      expect.not.objectContaining({ harness: expect.anything() })
     );
     // No harness ⇒ no availability preflight runs.
     expect(checkHarnessRuntimeAvailableMock).not.toHaveBeenCalled();
@@ -228,5 +229,46 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     // (sourced from the runtime config, never the tampered body).
     expect(resolveHostToolsMock).toHaveBeenCalled();
     expect(resolveHostToolsMock.mock.calls[0][0].computer).toBeUndefined();
+  });
+
+  it("rejects an unavailable harness host with 422 FEATURE_NOT_SUPPORTED (config error, not 5xx)", async () => {
+    // A host the harness can't run is a config problem — it must surface as an
+    // actionable 4xx the client can render as "fix this host", never a transient
+    // 5xx that reads as a server outage and invites retry/spin.
+    checkHarnessRuntimeAvailableMock.mockReturnValue({
+      ok: false,
+      kind: "tool-approval",
+      reason:
+        "the Codex harness can't pause for approval of MCP-server tools — " +
+        "turn off requireToolApproval on this host",
+    });
+    const app = createApp();
+
+    const response = await app.request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer signed-in-test-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-1",
+        hostId: "host-claude",
+        selectedServers: ["server-1"],
+        selectedServerIds: ["server-id-1"],
+        messages: [{ role: "user", content: "create empty.txt" }],
+        model: {
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+          name: "Claude Haiku 4.5",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { code?: string; error?: string };
+    expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(body.error).toMatch(/can't pause for approval of MCP-server tools/);
+    // The turn must be rejected BEFORE the model runs.
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 });
