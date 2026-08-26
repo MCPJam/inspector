@@ -594,6 +594,86 @@ describe("agent tool surface", () => {
     executeSpy.mockRestore();
   });
 
+  it("leaves the result alone when nothing is addressable", async () => {
+    // An empty listing has no resource to open. The envelope must not appear
+    // as an empty array either: `permalinks: []` reads to the model as "this
+    // surface offers links and there are none for you", which is a different
+    // claim from a result that never carried links at all.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as Record<string, unknown>;
+    expect(result).not.toHaveProperty("permalinks");
+    expect(result.items).toEqual([]);
+    executeSpy.mockRestore();
+  });
+
+  it("links the rows it can address and drops the ones it cannot", async () => {
+    // Each ref is built independently. One row missing the id the route needs
+    // must cost that row its link and nothing more — the failure mode worth
+    // guarding is the one where a single bad row silently strips the links off
+    // every row beside it.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "", name: "Unaddressable", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("still returns the read when the permalink policy cannot read it", async () => {
+    // A policy reads a shape (`result.items.map`). A null result throws inside
+    // it. Deriving a link is a convenience on top of the read; it must never
+    // be what turns a successful read into a failed tool call.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue(null as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    await expect(tool.execute({}, {})).resolves.toBeNull();
+    executeSpy.mockRestore();
+  });
+
   it("returns field-addressed validation errors (not a bare 'Invalid input')", async () => {
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,
