@@ -401,6 +401,32 @@ describe("marginal slices", () => {
     ).toHaveLength(2);
   });
 
+  test("a name containing the delimiter cannot merge two model slices", () => {
+    // `("a b", "c")` and `("a", "b c")` join to the same string under any
+    // delimiter that can itself appear in a name. Merged, one slice would
+    // report combined counts under whichever metadata was seen first — a
+    // comparison between two models that is silently neither.
+    const row = aggregate([
+      trial({ trialKey: "a", provider: "a b", model: "c" }),
+      trial({ trialKey: "b", provider: "a", model: "b c" }),
+    ]);
+    const models = row.slices.filter((s) => s.slice.dimension === "model");
+    expect(models).toHaveLength(2);
+    for (const model of models) expect(model.includedTrials).toBe(1);
+    expect(
+      models.map((s) => {
+        const slice = s.slice as { provider: string; model: string };
+        return [slice.provider, slice.model];
+      })
+    ).toEqual([
+      // Canonical order is over the JSON encoding, so `"a b"` precedes `"a"`
+      // here (space sorts before the closing quote). Arbitrary-looking, but
+      // deterministic — which is the property a rebuild depends on.
+      ["a b", "c"],
+      ["a", "b c"],
+    ]);
+  });
+
   test("host slices carry the execution engine when it was recorded", () => {
     const row = aggregate([
       trial({
@@ -503,6 +529,37 @@ describe("latency aggregation", () => {
     const row = aggregate([trial()]);
     expect(stageOf(row, "call").latency).toBeUndefined();
     expect(latencyMeanMs(undefined)).toBeNull();
+  });
+
+  test("a row that describes another stage contributes NO latency", () => {
+    // A misordered measurement payload. Reach already falls back to the
+    // chain's own state; reading latency off the same row anyway would file
+    // one stage's duration under another, and a wrong number is
+    // indistinguishable from a right one once summed into an aggregate.
+    const stageResults = chainOf({});
+    stageResults[2] = {
+      stage: "selection",
+      state: "passed",
+      evidence: { spanIds: ["p"] },
+    };
+    const measurements = deriveStageMeasurements({
+      stageResults,
+      spans: [{ id: "p", startedAt: 0, endedAt: 400 }],
+    });
+    expect(measurements.rows[2]!.latency?.value).toBe(400);
+
+    // Put selection's row — carrying its 400ms — at the `call` index.
+    const corrupted = {
+      ...measurements,
+      rows: measurements.rows.map((r, i) =>
+        i === 3 ? measurements.rows[2]! : r
+      ),
+    };
+    const row = aggregate([trial({ stageResults, measurements: corrupted })]);
+
+    expect(stageOf(row, "call").latency).toBeUndefined();
+    // The stage whose own row is intact keeps its sample.
+    expect(stageOf(row, "selection").latency?.totalMs).toBe(400);
   });
 });
 

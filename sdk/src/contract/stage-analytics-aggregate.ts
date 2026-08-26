@@ -441,7 +441,13 @@ export function aggregateStageAnalytics(
     );
 
     if (trial.provider !== undefined && trial.model !== undefined) {
-      const key = `${trial.provider} ${trial.model}`;
+      // JSON-encoded rather than joined by a delimiter, because ANY delimiter
+      // can appear inside a provider or model name: `("a b", "c")` and
+      // `("a", "b c")` both join to `"a b c"`, silently merging two distinct
+      // model slices into one whose counts belong to neither. The encoding is
+      // also the sort key, so ordering stays deterministic and still reads
+      // provider-then-model.
+      const key = JSON.stringify([trial.provider, trial.model]);
       out.push(
         sliceFor(
           `model:${key}`,
@@ -560,7 +566,15 @@ export function aggregateStageAnalytics(
           bump(tally.excluded, "notMeasured");
         }
 
+        // `agrees` is required, not just a non-empty latency: when it is false
+        // the row at this index describes a DIFFERENT stage (a misordered
+        // payload) or contradicts its own chain. Reach already falls back to
+        // `row.state` in that case; reading latency off the same row anyway
+        // would attribute one stage's duration to another, which is worse than
+        // having no sample — a wrong number is indistinguishable from a right
+        // one once it is summed into an aggregate.
         if (
+          agrees &&
           measuredRow?.latency !== undefined &&
           measuredRow.latency.basis === LATENCY_BASIS_EVIDENCE_SPAN_UNION
         ) {
