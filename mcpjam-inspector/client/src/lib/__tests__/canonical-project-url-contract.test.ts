@@ -22,13 +22,12 @@ const ALLOWED = new Set([
 ]);
 
 /**
- * The shapes a `project` query field is actually written in. Interpolation and
- * a bare literal were the obvious two; the rest are the ways the same thing
- * gets written when nobody is looking at this test — a `URLSearchParams`
- * setter, an object literal handed to its constructor, single quotes, and a
- * concatenation.
+ * The shapes a `project` query field is written in that fit on one line:
+ * interpolation, a bare literal ending a string, and the `URLSearchParams`
+ * setters. The object-literal constructor is handled separately below —
+ * it is the one that does not stay on a line.
  */
-const WRITER_PATTERNS: readonly RegExp[] = [
+const LINE_WRITER_PATTERNS: readonly RegExp[] = [
   // `?project=${id}` / `&project=${id}`
   /[?&]project=\$\{/,
   // A `?project=`/`&project=` that ENDS a string literal — the concatenated
@@ -36,11 +35,66 @@ const WRITER_PATTERNS: readonly RegExp[] = [
   /[?&]project=["'`]/,
   // `params.set("project", …)` / `.append('project', …)`
   /\.(?:set|append)\(\s*["'`]project["'`]\s*,/,
-  // `new URLSearchParams({ project: … })`. Anchored to the constructor on
-  // purpose: a bare `project:` field matches every options bag and dispatch
-  // payload in the app, and a guard that cries wolf gets deleted.
-  /URLSearchParams\(\s*\{[^}]*\bproject\s*:/,
 ];
+
+/**
+ * Matched against the whole file rather than a line at a time, because the
+ * shape it looks for is routinely split across lines by the formatter:
+ *
+ *   new URLSearchParams({
+ *     project: projectId,
+ *   })
+ *
+ * `[^}]` already spans newlines — the old per-line scan was what confined it
+ * to one line, so a prettier-wrapped writer slipped straight past the guard.
+ *
+ * Still anchored to the constructor on purpose: a bare `project:` field
+ * matches every options bag and dispatch payload in the app, and a guard that
+ * cries wolf gets deleted.
+ */
+const SOURCE_WRITER_PATTERNS: readonly RegExp[] = [
+  /URLSearchParams\(\s*\{[^}]*\bproject\s*:/g,
+];
+
+/** 1-based line number of a character offset, for the offender list. */
+function lineOfOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset; i += 1) {
+    if (source[i] === "\n") line += 1;
+  }
+  return line;
+}
+
+function isCommentLine(line: string): boolean {
+  return /^\s*(\/\/|\*|\/\*)/.test(line);
+}
+
+/** The offending `file:line` positions in one file's source. */
+export function findLegacyProjectQueryWriters(source: string): number[] {
+  const lines = source.split("\n");
+  const hits = new Set<number>();
+
+  for (const [index, line] of lines.entries()) {
+    // Writers only. A comment, or a reader like
+    // `searchParams.get("project")`, is fine.
+    if (isCommentLine(line)) continue;
+    if (LINE_WRITER_PATTERNS.some((pattern) => pattern.test(line))) {
+      hits.add(index + 1);
+    }
+  }
+
+  for (const pattern of SOURCE_WRITER_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(source)) !== null) {
+      const line = lineOfOffset(source, match.index);
+      // The constructor opening inside a comment is a doc example, not a call.
+      if (!isCommentLine(lines[line - 1] ?? "")) hits.add(line);
+    }
+  }
+
+  return [...hits].sort((a, b) => a - b);
+}
 
 function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
@@ -60,15 +114,50 @@ describe("no first-party client code mints ?project=", () => {
     for (const file of walk(CLIENT_SRC)) {
       if (ALLOWED.has(file)) continue;
       const source = readFileSync(file, "utf8");
-      for (const [index, line] of source.split("\n").entries()) {
-        // Writers only. A comment, or a reader like
-        // `searchParams.get("project")`, is fine.
-        if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
-        if (WRITER_PATTERNS.some((pattern) => pattern.test(line))) {
-          offenders.push(`${file.slice(CLIENT_SRC.length + 1)}:${index + 1}`);
-        }
+      for (const line of findLegacyProjectQueryWriters(source)) {
+        offenders.push(`${file.slice(CLIENT_SRC.length + 1)}:${line}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The guard is only worth having if it fires, so pin the shapes it must
+   * catch — including the one it used to miss.
+   */
+  it.each([
+    ["template interpolation", 'navigate(`/servers?project=${id}`);'],
+    ["string concatenation", 'navigate("/servers?project=" + id);'],
+    ["single-quoted setter", "params.set('project', id);"],
+    ["append setter", 'params.append("project", id);'],
+    ["inline constructor", "new URLSearchParams({ project: id });"],
+    [
+      "constructor wrapped by the formatter",
+      ["const params = new URLSearchParams({", "  project: id,", "});"].join(
+        "\n"
+      ),
+    ],
+  ])("catches a writer spelled as %s", (_shape, source) => {
+    expect(findLegacyProjectQueryWriters(source)).not.toEqual([]);
+  });
+
+  /**
+   * And only worth having if it stays quiet, otherwise it gets deleted the
+   * first time it blocks an unrelated PR.
+   */
+  it.each([
+    ["a reader", 'const id = params.get("project");'],
+    ["an options bag", "dispatch({ project: id, tab: 'servers' });"],
+    [
+      "a multiline options bag",
+      ["track(evt, {", "  project: id,", "});"].join("\n"),
+    ],
+    ["a commented-out writer", '// navigate(`/servers?project=${id}`);'],
+    [
+      "a doc example of the constructor",
+      [" * new URLSearchParams({", " *   project: id,", " * });"].join("\n"),
+    ],
+  ])("stays quiet on %s", (_shape, source) => {
+    expect(findLegacyProjectQueryWriters(source)).toEqual([]);
   });
 });
