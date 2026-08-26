@@ -224,7 +224,7 @@ describe("StepListEditor", () => {
 
   // A snapshot records what ran; nothing there is authorable, so the authoring
   // flags stay off even on a step that reads incomplete.
-  it("leaves the view flag off in read-only mode", () => {
+  it("leaves the authoring flags off in read-only mode", () => {
     render(
       <StepListEditor
         steps={[
@@ -232,7 +232,7 @@ describe("StepListEditor", () => {
             id: "1",
             kind: "interact",
             toolName: "",
-            action: { kind: "click", target: { testId: "canvas" } },
+            action: { kind: "click", target: { testId: "" } },
           },
         ]}
         onStepsChange={vi.fn()}
@@ -243,6 +243,10 @@ describe("StepListEditor", () => {
       />,
     );
     expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
       "aria-invalid",
       "false",
     );

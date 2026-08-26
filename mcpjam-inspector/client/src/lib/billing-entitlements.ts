@@ -524,6 +524,11 @@ export function getBillingErrorMessage(
   // A payload carrying only a message is not a billing rejection at all —
   // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
   // like any other Convex failure so the redacted "[Request ID: …] Server
-  // Error" prefix never reaches the toast.
-  return convexErrMessage(error, payload.message || fallback);
+  // Error" prefix never reaches the toast. Shape the PARSED message rather than
+  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
+  // hands back the raw JSON blob instead of the sentence inside it.
+  const parsed =
+    typeof payload.message === "string" ? payload.message.trim() : "";
+  if (!parsed) return convexErrMessage(error, fallback);
+  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
 }

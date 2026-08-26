@@ -96,6 +96,23 @@ describe("getBillingErrorMessage", () => {
     ).toBe("Pick an element target.");
   });
 
+  // A non-billing payload can arrive JSON-encoded inside `Error.message`
+  // (thrown, then stringified). The toast must show the sentence, not the blob.
+  it("surfaces the message of a JSON-encoded Error payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new Error(JSON.stringify({ message: "Pick an element target." })),
+        "fallback",
+      ),
+    ).toBe("Pick an element target.");
+  });
+
+  it("surfaces the message of a raw string error", () => {
+    expect(getBillingErrorMessage("Pick an element target.", "fallback")).toBe(
+      "Pick an element target.",
+    );
+  });
+
   it("strips the request-id prefix off a plain Error", () => {
     expect(
       getBillingErrorMessage(new Error("[Request ID: abc] boom"), "fallback"),

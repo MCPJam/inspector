@@ -103,9 +103,11 @@ function defaultAssertion(type: StepAssertion["type"]): StepAssertion {
 export function LocatorFields({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: ElementLocator;
   onChange: (next: ElementLocator) => void;
+  readOnly?: boolean;
 }) {
   const by = locatorBy(value);
   // Every mode seeds an EMPTY field (`emptyLocatorFor`), and a locator with no
@@ -113,8 +115,11 @@ export function LocatorFields({
   // field, not only in the blocked-Save tooltip. `aria-invalid` is enough: the
   // design-system Input carries the destructive outline for it. Read through
   // `trimmedField`: stored locators are cast, not parsed, so a leaf the type
-  // promises can still arrive missing and crash this render-time check.
-  const invalid = !trimmedField(by === "role" ? value.role?.role : value[by]);
+  // promises can still arrive missing and crash this render-time check. A
+  // read-only render is a snapshot of what ran — nothing there is authorable,
+  // so an incomplete locator reads as-is instead of asking to be fixed.
+  const invalid =
+    !readOnly && !trimmedField(by === "role" ? value.role?.role : value[by]);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Select
