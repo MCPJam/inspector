@@ -204,9 +204,21 @@ export async function resolveValidationTargets(
     ];
   }
 
-  // A `--host` override changes the CLIENT the run is stamped with, not the
-  // server set — the servers still come from the file. So it falls through to
-  // the file's own target below rather than making the target unknowable.
+  // A HOST runs against its OWN configured server set, not the file's. The
+  // launch contract is explicit about it — "running an attached host uses that
+  // host's own configured server set, which servers cannot override"
+  // (`assertRunTargetSelectorsCoherent` in sdk/src/platform/operations.ts) —
+  // and validating the file's `target.servers` here instead would be wrong in
+  // both directions: it could approve a tool that exists only on the file
+  // target and then start a paid run on a host that cannot execute it, or
+  // refuse a case the host would have run fine.
+  if (knobs.host?.length) {
+    return Promise.all(
+      knobs.host.map((selector) =>
+        hostTarget(client, params.projectId, selector, undefined, params.signal)
+      )
+    );
+  }
 
   if (target.environment) {
     return [
@@ -221,22 +233,35 @@ export async function resolveValidationTargets(
 
   const fileServers = target.servers ?? [];
   if (target.hosts?.length) {
-    // A host that declares its own servers runs THAT set; one that does not
-    // inherits the file's. Each host is its own target: a tool present on one
-    // host's servers and absent from another's is exactly the multi-target
-    // false positive a union would hide.
+    // A file host that DECLARES servers has them attached to it before launch,
+    // so the declared set is what it will run. One that declares none keeps
+    // whatever it already has configured, which only the platform can tell us.
+    //
+    // Each host is its own target: a tool present on one host's servers and
+    // absent from another's is exactly the multi-target false positive a union
+    // would hide.
     return Promise.all(
-      target.hosts.map(async (host) => ({
-        label: `host ${host.name}`,
-        servers: await resolveServersByName(
-          client,
-          params.projectId,
-          (host.servers?.length ? host.servers : fileServers).map(
-            (server) => server.id ?? server.name
+      target.hosts.map(async (host) => {
+        const selector = host.id ?? host.name;
+        if (!host.servers?.length) {
+          return hostTarget(
+            client,
+            params.projectId,
+            selector,
+            host.name,
+            params.signal
+          );
+        }
+        return {
+          label: `host ${host.name}`,
+          servers: await resolveServersByName(
+            client,
+            params.projectId,
+            host.servers.map((server) => server.id ?? server.name),
+            params.signal
           ),
-          params.signal
-        ),
-      }))
+        };
+      })
     );
   }
 
@@ -251,6 +276,63 @@ export async function resolveValidationTargets(
       ),
     },
   ];
+}
+
+/**
+ * One host's OWN configured server set.
+ *
+ * `config.serverIds` is the host-config v2 field the rest of the product reads
+ * for exactly this question. An EMPTY array is a real answer — a host with no
+ * servers attached — and is passed through as an empty target, where every
+ * deterministic reference correctly fails to resolve.
+ *
+ * A config with no readable `serverIds` at all is a different thing, and it
+ * THROWS rather than degrading to the file's servers: checking the wrong
+ * inventory is how this preflight would start a paid run against a host that
+ * cannot execute the case, which is the failure it exists to prevent. "We could
+ * not look" is the honest answer, and a command error is how this module says
+ * it.
+ */
+async function hostTarget(
+  client: PlatformApiClient,
+  projectId: string,
+  selector: string,
+  displayName: string | undefined,
+  signal: AbortSignal | undefined
+): Promise<ImportValidationTarget> {
+  const page = await client.listHosts({ projectId }, { signal });
+  const host =
+    page.items.find((entry) => entry.id === selector) ??
+    page.items.find((entry) => entry.name === selector);
+  if (!host) {
+    throw cliError(
+      "TOOL_DISCOVERY_UNAVAILABLE",
+      `Host "${selector}" is not in this project, so the suite file's deterministic tool references could not be checked against it. Nothing was written.`,
+      IMPORT_VALIDATION_EXIT_CODE
+    );
+  }
+  const detail = await client.getHost(
+    { projectId, hostId: host.id },
+    { signal }
+  );
+  const serverIds = (detail.config as { serverIds?: unknown } | undefined)
+    ?.serverIds;
+  if (!Array.isArray(serverIds)) {
+    throw cliError(
+      "TOOL_DISCOVERY_UNAVAILABLE",
+      `Host "${host.name}" did not report a server set, so the suite file's deterministic tool references could not be checked against it. Nothing was written.`,
+      IMPORT_VALIDATION_EXIT_CODE
+    );
+  }
+  return {
+    label: `host ${displayName ?? host.name}`,
+    servers: await resolveServersByName(
+      client,
+      projectId,
+      serverIds.filter((id): id is string => typeof id === "string"),
+      signal
+    ),
+  };
 }
 
 async function environmentTarget(
@@ -408,11 +490,20 @@ export async function validateImportToolReferences(
   const findings: ImportToolFinding[] = [];
   for (const target of targets) {
     for (const reference of references) {
-      const server = target.servers.find(
-        (candidate) =>
-          candidate.name === reference.step.serverName ||
-          candidate.id === reference.step.serverId
-      );
+      // `serverId` WINS when the step carries one. The step contract says so
+      // (`toolCallStepSchema` in sdk/src/contract/steps.ts: "Id wins when both
+      // are present"), and `serverName` is a display fallback that can go
+      // stale — an OR here would let a stale name match a different server that
+      // happens to sort first and check the wrong inventory, approving a call
+      // whose real server lacks the tool or blocking one whose real server has
+      // it.
+      const server = reference.step.serverId
+        ? target.servers.find(
+            (candidate) => candidate.id === reference.step.serverId
+          )
+        : target.servers.find(
+            (candidate) => candidate.name === reference.step.serverName
+          );
       if (!server) {
         findings.push(
           finding(reference, {

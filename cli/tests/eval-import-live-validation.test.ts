@@ -332,6 +332,16 @@ type FixtureOptions = {
   servers?: Array<{ id: string; name: string }>;
   /** Environment name → the server names it resolves to. */
   environments?: Record<string, string[]>;
+  /**
+   * Host name → the server NAMES its own config pins.
+   *
+   * A host runs against its own configured set, never the file's — so a host
+   * here can deliberately disagree with `target.servers`, which is the only
+   * way to catch a validator checking the wrong inventory.
+   */
+  hosts?: Record<string, string[]>;
+  /** Report a host whose config carries no readable `serverIds` at all. */
+  hostWithUnreadableConfig?: string;
 };
 
 type Fixture = {
@@ -351,6 +361,15 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
     billing: ["render_refund", "issue_refund"],
   };
   const environments = options.environments ?? {};
+  const hosts = options.hosts ?? {};
+  // Suite ATTACHMENTS, so `--host` gets past the launcher's own
+  // "no attached hosts" guard. Separate from the host's configured server set
+  // above: attachment is what the suite offers, `config.serverIds` is what the
+  // host actually connects.
+  const suiteHostAttachments = Object.keys(hosts).map((name, index) => ({
+    id: `host_${index}`,
+    name,
+  }));
 
   const requests: string[] = [];
   const fromFileBodies: unknown[] = [];
@@ -427,6 +446,46 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
       return;
     }
 
+    if (url.pathname === "/api/v1/projects/proj-alpha/hosts") {
+      json({
+        items: Object.keys(hosts).map((name, index) => ({
+          id: `host_${index}`,
+          name,
+          hostConfigId: `hc_${index}`,
+          modelId: "anthropic/claude-sonnet-4-6",
+          serverCount: (hosts[name] ?? []).length,
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      });
+      return;
+    }
+
+    const hostMatch = url.pathname.match(
+      /^\/api\/v1\/projects\/proj-alpha\/hosts\/([^/]+)$/
+    );
+    if (hostMatch) {
+      const hostId = decodeURIComponent(hostMatch[1]);
+      const name =
+        Object.keys(hosts)[Number(hostId.split("_")[1] ?? "0")] ?? hostId;
+      json({
+        id: hostId,
+        name,
+        config:
+          options.hostWithUnreadableConfig === name
+            ? { modelId: "anthropic/claude-sonnet-4-6" }
+            : {
+                modelId: "anthropic/claude-sonnet-4-6",
+                serverIds: (hosts[name] ?? []).map(
+                  (serverName) =>
+                    servers.find((entry) => entry.name === serverName)?.id ??
+                    `srv_${serverName}`
+                ),
+              },
+      });
+      return;
+    }
+
     if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
       json({
         items: Object.keys(environments).map((name, index) => ({
@@ -480,7 +539,7 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
             projectId: "proj-alpha",
             environment: { servers: ["billing"], computerEnvironment: null },
             executionConfig: { model: "anthropic/claude-sonnet-4-6" },
-            hosts: [],
+            hosts: suiteHostAttachments,
             environmentIds: [],
             settings: {},
             schedule: {},
@@ -552,7 +611,7 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
         projectId: "proj-alpha",
         environment: { servers: ["billing"] },
         executionConfig: { model: "anthropic/claude-sonnet-4-6" },
-        hosts: [],
+        hosts: suiteHostAttachments,
         environmentIds: [],
         settings: {},
         schedule: {},
@@ -1404,6 +1463,179 @@ describe("eval run --file --allow-approximated", () => {
       // had been approved when the run refused it.
       assert.match(run.stdout + run.stderr, /apply to a file run/);
       assert.deepEqual(fixture.runBodies, []);
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+// ── review findings: the three ways a preflight can check the wrong thing ─────
+//
+// Each of these reproduces a real defect the Codex reviewer found on #4391.
+// They are grouped because they share one failure mode: a check that LOOKS like
+// it ran, against something other than what the run will actually do. That is
+// worse than no check at all, because it is trusted.
+
+describe("the preflight checks what the run will actually execute", () => {
+  test("--host validates the HOST's server set, not the file's", async () => {
+    const fixture = await startFixture({
+      servers: [
+        { id: "srv_billing", name: "billing" },
+        { id: "srv_legacy", name: "legacy" },
+      ],
+      // The file targets `billing`, which HAS the tool. The host runs `legacy`,
+      // which does not. Validating the file's servers would approve this and
+      // then start a paid run on a host that cannot execute the call.
+      toolsByServer: { billing: ["render_gone", "render_refund"], legacy: [] },
+      hosts: { "Claude Desktop": ["legacy"] },
+    });
+    try {
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "Claude Desktop"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+        // The finding is scoped to the HOST target, which is what proves the
+        // check ran against the host's set rather than the file's.
+        assert.match(run.stdout + run.stderr, /host Claude Desktop/);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--host does not refuse a case the host CAN run", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "billing" }],
+      toolsByServer: { billing: ["render_gone", "render_refund"] },
+      hosts: { "Claude Desktop": ["billing"] },
+    });
+    try {
+      // The mirror image of the test above: the file names a server the
+      // project no longer has, and the HOST pins the real one. Resolving the
+      // file's `target.servers` yields an empty target and refuses a launch
+      // that is perfectly fine; resolving the host's set finds both tools.
+      const staleFileTarget = IMPORTED_ENABLED_MISSING.replace(
+        "target:\n  servers:\n    - name: billing\n",
+        "target:\n  servers:\n    - name: retired\n"
+      );
+      await withSuiteFile(staleFileTarget, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "Claude Desktop"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+        assert.equal(fixture.runBodies.length, 1);
+        assert.deepEqual(fixture.toolListings, ["srv_billing"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a host that reports no server set refuses rather than guessing", async () => {
+    const fixture = await startFixture({
+      hosts: { "Claude Desktop": ["billing"] },
+      hostWithUnreadableConfig: "Claude Desktop",
+    });
+    try {
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "Claude Desktop"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        // "We could not look" is a command error, and falling back to the
+        // file's servers would be checking the wrong inventory while claiming
+        // to have checked.
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.match(run.stdout + run.stderr, /did not report a server set/);
+        assert.deepEqual(fixture.fromFileBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("serverId wins over a stale serverName", async () => {
+    const fixture = await startFixture({
+      // Two servers; the one the step NAMES sorts first and has the tool, the
+      // one it points at by ID does not. An OR match would check the first and
+      // approve a call that cannot execute.
+      servers: [
+        { id: "srv_billing", name: "billing" },
+        { id: "srv_billing_v2", name: "billing-v2" },
+      ],
+      toolsByServer: { billing: ["render_gone"], "billing-v2": [] },
+    });
+    try {
+      const pinnedById = IMPORTED_ENABLED_MISSING.replace(
+        "        serverName: billing\n        toolName: render_gone",
+        "        serverId: srv_billing_v2\n        serverName: billing\n        toolName: render_gone"
+      );
+      await withSuiteFile(pinnedById, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(fixture.baseUrl, file, "--server", "billing", "billing-v2"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        // The id's server was the one inspected.
+        assert.ok(fixture.toolListings.includes("srv_billing_v2"));
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--case naming a hosted row id still refuses an unresolved case", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          // `selectEnabledRunCases` accepts a hosted row id, but the row ids do
+          // not exist yet at preflight. Reading an unmappable selector as
+          // "selects nothing" would sail past the refusal and bill a run whose
+          // deterministic call is already known not to resolve.
+          main(runArgv(fixture.baseUrl, file, "--case", "row_c_missing"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an unmappable --case selector does not refuse an otherwise-clean run", async () => {
+    const fixture = await startFixture({
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+    });
+    try {
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--case", "row_c_missing"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        // Widening the selection is a fail-CLOSED reading of an unknown
+        // selector, not a blanket refusal: with every reference resolving there
+        // is nothing to refuse, and the launcher settles the selector itself.
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
     } finally {
       await fixture.close();
     }

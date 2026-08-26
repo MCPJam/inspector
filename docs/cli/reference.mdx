@@ -1234,9 +1234,20 @@ case:
 | Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
 | Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
 
+Each target is checked on **its own** server set, and a host target is checked
+against the host's configured servers rather than the file's — `--host` runs
+that host's own set, so validating `target.servers` would approve a tool the
+host cannot reach. A step that pins `serverId` is resolved by id; `serverName`
+is a display fallback and never overrides it.
+
 If the run's target set cannot be enumerated before the suite exists
-(`--all-targets`, `--compose-*`), the launch refuses rather than assuming the
-references are fine.
+(`--all-targets`, `--compose-*`), or a host does not report a server set, the
+launch refuses rather than assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
 
 A selected `approximated` case refuses unless this invocation approves it:
 

@@ -99,7 +99,7 @@ function fileCaseModels(testCase: ResolvedEvalSuiteFileCase) {
 }
 
 export function fileCaseToCreateBody(
-  testCase: ResolvedEvalSuiteFileCase,
+  testCase: ResolvedEvalSuiteFileCase
 ): Record<string, unknown> {
   return {
     id: testCase.id,
@@ -131,7 +131,7 @@ export function fileCaseToCreateBody(
  * `isNegativeTest` or assertions must send an explicit clear.
  */
 export function fileCaseToUpdateBody(
-  testCase: ResolvedEvalSuiteFileCase,
+  testCase: ResolvedEvalSuiteFileCase
 ): Record<string, unknown> {
   return {
     title: testCase.title,
@@ -162,7 +162,7 @@ function refuseEmptyEnabledSet(loaded: {
     throw cliError(
       "NO_ENABLED_CASES",
       "This suite file has no enabled cases. Hosted launch without a case filter runs every persisted case, including rows the file marked disabled. Enable at least one case — the file is refused rather than executed unscoped.",
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }
 }
@@ -183,7 +183,7 @@ function refuseUnsupportedHostedSemantics(loaded: {
     throw cliError(
       "TOOL_POLICY_UNSUPPORTED",
       "defaults.toolPolicy is not representable on a hosted run. The platform would execute the unrestricted tool set while stamping this file's hash. Remove toolPolicy, or run the suite locally.",
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }
 }
@@ -199,7 +199,7 @@ function refuseRepetitions(loaded: {
     throw cliError(
       "REPETITIONS_CAP",
       `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; the file's repetitions (${suiteReps}) exceed that cap. Reduce repetitions to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }
   // Every declared case is persisted, including disabled ones, so the cap
@@ -210,7 +210,7 @@ function refuseRepetitions(loaded: {
       throw cliError(
         "REPETITIONS_CAP",
         `Hosted runs accept at most ${HOSTED_ITERATIONS_CAP} iterations; case "${testCase.id}" sets repetitions ${testCase.repetitions}. Reduce repetitions to ${HOSTED_ITERATIONS_CAP} or fewer — the value is not clamped.`,
-        SUITE_FILE_RUN_INVALID_EXIT_CODE,
+        SUITE_FILE_RUN_INVALID_EXIT_CODE
       );
     }
   }
@@ -230,7 +230,7 @@ function suiteFileLoadError(label: string, loaded: SuiteFileLoadFailure) {
       file: label,
       stage: loaded.stage,
       findings: [...loaded.findings],
-    },
+    }
   );
 }
 
@@ -240,26 +240,45 @@ function suiteFileLoadError(label: string, loaded: SuiteFileLoadFailure) {
  * Selection, not declaration: a disabled case is never selected, and with
  * `--case` in play neither is an enabled case nobody named. This set is what
  * separates "refuse the launch" from "write the corrected claim and move on",
- * so it has to mirror {@link selectEnabledRunCases} exactly — a case this set
- * calls selected but the launcher leaves out would refuse a run that was
- * never going to touch it.
+ * so a case it calls selected but the launcher leaves out would refuse a run
+ * that was never going to touch it.
+ *
+ * IT CANNOT ALWAYS TELL. {@link selectEnabledRunCases} resolves a `--case`
+ * selector against the authored id, the HOSTED ROW ID, and the title — and the
+ * row ids do not exist yet at this point in the launch, which is the whole
+ * reason this check runs before any write. So a selector matching no authored
+ * id or title is not "selects nothing": it is a row id naming one enabled case
+ * whose identity is not knowable here.
+ *
+ * That case fails CLOSED. Treating it as "nothing selected" would sail past the
+ * refusal, sync the suite, and bill a run whose deterministic call is already
+ * known not to resolve — exactly the outcome the pre-write refusal exists to
+ * prevent — so an unresolvable selector widens the set to every enabled case
+ * instead. `indeterminate` reports that widening, because it is a weaker claim
+ * than an exact selection and one caller must read it as such.
  */
 export function selectedAuthoredCaseIds(
   cases: readonly ResolvedEvalSuiteFileCase[],
-  selectors: readonly string[] | undefined,
-): Set<string> {
+  selectors: readonly string[] | undefined
+): { ids: Set<string>; indeterminate: boolean } {
   const enabled = cases.filter((testCase) => !testCase.disabled);
+  const everyEnabled = () => new Set(enabled.map((testCase) => testCase.id));
   if (!selectors?.length) {
-    return new Set(enabled.map((testCase) => testCase.id));
+    return { ids: everyEnabled(), indeterminate: false };
   }
   const chosen = new Set<string>();
   for (const selector of selectors) {
     const hit = enabled.find(
-      (testCase) => testCase.id === selector || testCase.title === selector,
+      (testCase) => testCase.id === selector || testCase.title === selector
     );
-    if (hit) chosen.add(hit.id);
+    // A selector that resolves to no authored case is either a hosted row id
+    // (which the launcher accepts and this stage cannot map) or a typo the
+    // launcher will reject later by name. Neither is "selects nothing", and
+    // guessing that it is would be the fail-open reading.
+    if (!hit) return { ids: everyEnabled(), indeterminate: true };
+    chosen.add(hit.id);
   }
-  return chosen;
+  return { ids: chosen, indeterminate: false };
 }
 
 /**
@@ -313,7 +332,7 @@ export function applyUnresolvedReferences(params: {
           )
           .join("\n"),
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
-      { unresolved: detail },
+      { unresolved: detail }
     );
   }
 
@@ -346,7 +365,7 @@ export function applyUnresolvedReferences(params: {
  */
 function unresolvedNote(
   previous: NonNullable<ResolvedEvalSuiteFileCase["import"]>,
-  findings: readonly ImportToolFinding[],
+  findings: readonly ImportToolFinding[]
 ): string {
   const reasons = findings
     .map((entry) => `${entry.pointer} (${entry.toolName})`)
@@ -382,7 +401,7 @@ export async function syncFileOwnedCases(
      */
     declaredCaseIds: ReadonlySet<string>;
     signal?: AbortSignal;
-  },
+  }
 ): Promise<{
   created: number;
   updated: number;
@@ -393,7 +412,7 @@ export async function syncFileOwnedCases(
 }> {
   const existing = await client.listEvalCases(
     { projectId: params.projectId, suiteId: params.suiteId },
-    { signal: params.signal },
+    { signal: params.signal }
   );
   const byDeclaredId = new Map<string, PlatformEvalCase>();
   for (const row of existing.items) {
@@ -444,7 +463,7 @@ export async function syncFileOwnedCases(
           suiteId: params.suiteId,
           body: { cases: chunk.map(fileCaseToCreateBody) },
         },
-        { signal: params.signal },
+        { signal: params.signal }
       );
       for (const entry of result.created ?? []) {
         const declaredId = entry.declaredId ?? chunk[entry.index]?.id;
@@ -483,7 +502,7 @@ export async function syncFileOwnedCases(
           caseId: row.id,
           body: fileCaseToUpdateBody(file),
         },
-        { signal: params.signal },
+        { signal: params.signal }
       );
       updatedCount += 1;
     } catch (error) {
@@ -507,7 +526,7 @@ export async function syncFileOwnedCases(
         updated: updatedCount,
         deleted: 0,
         batches,
-      },
+      }
     );
   }
 
@@ -519,7 +538,7 @@ export async function syncFileOwnedCases(
           suiteId: params.suiteId,
           caseId: row.id,
         },
-        { signal: params.signal },
+        { signal: params.signal }
       );
     } catch (error) {
       failed.push({
@@ -542,14 +561,14 @@ export async function syncFileOwnedCases(
         updated: updatedCount,
         deleted: toDelete.length - failed.length,
         batches,
-      },
+      }
     );
   }
 
   const enabledDeclaredIds = new Set(
     params.cases
       .filter((testCase) => !testCase.disabled)
-      .map((testCase) => testCase.id),
+      .map((testCase) => testCase.id)
   );
   const enabledCases = [
     ...toUpdate.map(({ row, file }) => ({
@@ -596,6 +615,18 @@ export async function syncFileOwnedCases(
 export function assertApprovalsApplyToRun(params: {
   cases: readonly ResolvedEvalSuiteFileCase[];
   selectedCaseIds: ReadonlySet<string>;
+  /**
+   * False when `--case` carried a selector this stage could not map (see
+   * {@link selectedAuthoredCaseIds}), so `selectedCaseIds` is every enabled
+   * case rather than the exact set.
+   *
+   * Only the NOT-SELECTED refusal reads it, and reads it as "do not claim
+   * this". Refusing an approval for a case that may well be in the run would
+   * block a launch the caller got right; the backend re-checks every approval
+   * against the cases the run actually executes and refuses it there, so the
+   * cost of not guessing here is one round trip rather than a wrong answer.
+   */
+  selectionIsExact?: boolean;
   approvals: { cases: string[]; reason: string } | undefined;
 }): void {
   if (!params.approvals) return;
@@ -633,7 +664,10 @@ export function assertApprovalsApplyToRun(params: {
       });
       continue;
     }
-    if (!params.selectedCaseIds.has(selector)) {
+    if (
+      params.selectionIsExact !== false &&
+      !params.selectedCaseIds.has(selector)
+    ) {
       problems.push({
         case: selector,
         code: testCase.disabled ? "CASE_DISABLED" : "CASE_NOT_SELECTED",
@@ -649,7 +683,7 @@ export function assertApprovalsApplyToRun(params: {
     `${problems.length} approval(s) do not apply to this run. Nothing was written and no run was started.\n` +
       problems.map((entry) => `  ${entry.case}: ${entry.message}`).join("\n"),
     SUITE_FILE_RUN_INVALID_EXIT_CODE,
-    { approvals: problems },
+    { approvals: problems }
   );
 }
 
@@ -668,7 +702,7 @@ export function mapApprovalsToHostedCases(params: {
 }): Array<{ testCaseId: string; reason: string }> | undefined {
   if (!params.approvals) return undefined;
   const byDeclaredId = new Map(
-    params.enabledCases.map((entry) => [entry.declaredId, entry.id] as const),
+    params.enabledCases.map((entry) => [entry.declaredId, entry.id] as const)
   );
   const mapped: Array<{ testCaseId: string; reason: string }> = [];
   const missing: string[] = [];
@@ -683,9 +717,11 @@ export function mapApprovalsToHostedCases(params: {
   if (missing.length > 0) {
     throw cliError(
       "IMPORT_APPROVAL_UNMAPPED",
-      `Sync produced no hosted case for approved case(s) ${missing.join(", ")}; the run was not started.`,
+      `Sync produced no hosted case for approved case(s) ${missing.join(
+        ", "
+      )}; the run was not started.`,
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
-      { missing },
+      { missing }
     );
   }
   return mapped;
@@ -771,18 +807,20 @@ export function deriveFileRunIdempotencyKey(params: {
 function selectEnabledRunCases(
   enabledCases: Array<{ id: string; declaredId: string; title: string }>,
   allCases: ResolvedEvalSuiteFileCase[],
-  selectors: string[] | undefined,
+  selectors: string[] | undefined
 ): string[] {
   if (!selectors?.length) {
     return enabledCases.map((entry) => entry.id);
   }
   const byDeclared = new Map(
-    enabledCases.map((entry) => [entry.declaredId, entry] as const),
+    enabledCases.map((entry) => [entry.declaredId, entry] as const)
   );
   const byTitle = new Map(
-    enabledCases.map((entry) => [entry.title, entry] as const),
+    enabledCases.map((entry) => [entry.title, entry] as const)
   );
-  const byRowId = new Map(enabledCases.map((entry) => [entry.id, entry] as const));
+  const byRowId = new Map(
+    enabledCases.map((entry) => [entry.id, entry] as const)
+  );
   const selected: string[] = [];
   for (const selector of selectors) {
     const hit =
@@ -796,19 +834,19 @@ function selectEnabledRunCases(
     const disabled = allCases.find(
       (testCase) =>
         testCase.disabled &&
-        (testCase.id === selector || testCase.title === selector),
+        (testCase.id === selector || testCase.title === selector)
     );
     if (disabled) {
       throw cliError(
         "CASE_DISABLED",
         `Case "${selector}" is marked disabled in the suite file and is left out of the launch. Remove --case ${selector}, or enable the case in the file.`,
-        SUITE_FILE_RUN_INVALID_EXIT_CODE,
+        SUITE_FILE_RUN_INVALID_EXIT_CODE
       );
     }
     throw cliError(
       "CASE_NOT_IN_FILE",
       `Case "${selector}" is not an enabled case in this suite file.`,
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE
     );
   }
   return selected;
@@ -830,9 +868,12 @@ export async function executeEvalRunFromFile(
     label: string;
     knobs: EvalRunFileKnobs;
     projectSelector?: string;
-  },
+  }
 ): Promise<RunEvalSuiteResult> {
-  const page = await context.client.listProjects({}, { signal: context.signal });
+  const page = await context.client.listProjects(
+    {},
+    { signal: context.signal }
+  );
   const resolution = resolveProject(page.items, params.projectSelector);
   if (!resolution.ok) {
     throw projectResolutionError(resolution.message);
@@ -841,7 +882,7 @@ export async function executeEvalRunFromFile(
 
   if (looksLikeCreateEvalApiJson(params.source.text)) {
     throw usageError(
-      "That looks like an eval create API body, not a versioned suite file. Use `eval create --file` to author a suite from that JSON.",
+      "That looks like an eval create API body, not a versioned suite file. Use `eval create --file` to author a suite from that JSON."
     );
   }
 
@@ -872,14 +913,11 @@ export async function executeEvalRunFromFile(
     knobs,
     signal: context.signal,
   });
-  const selectedCaseIds = selectedAuthoredCaseIds(
-    loaded.resolved.cases,
-    knobs.case,
-  );
+  const selection = selectedAuthoredCaseIds(loaded.resolved.cases, knobs.case);
   const outgoingCases = applyUnresolvedReferences({
     cases: loaded.resolved.cases,
     findings: liveCheck.findings,
-    selectedCaseIds,
+    selectedCaseIds: selection.ids,
   });
   // Against the OUTGOING cases, not the authored ones: a case whose claim the
   // live check just rewrote to `unresolved` cannot be approved as an
@@ -887,7 +925,8 @@ export async function executeEvalRunFromFile(
   // the strength of a status that is no longer true.
   assertApprovalsApplyToRun({
     cases: outgoingCases,
-    selectedCaseIds,
+    selectedCaseIds: selection.ids,
+    selectionIsExact: !selection.indeterminate,
     approvals: knobs.approvals,
   });
 
@@ -933,16 +972,14 @@ export async function executeEvalRunFromFile(
         },
       },
     },
-    { signal: context.signal },
+    { signal: context.signal }
   );
 
   const syncedCases = await syncFileOwnedCases(context.client, {
     projectId: project.id,
     suiteId: synced.suite.id,
     cases: outgoingCases,
-    declaredCaseIds: new Set(
-      outgoingCases.map((testCase) => testCase.id),
-    ),
+    declaredCaseIds: new Set(outgoingCases.map((testCase) => testCase.id)),
     signal: context.signal,
   });
 
@@ -951,7 +988,7 @@ export async function executeEvalRunFromFile(
       knobs.host?.length ||
       knobs.allTargets ||
       knobs.server?.length ||
-      knobs.compose,
+      knobs.compose
   );
   const fileEnvironment =
     !hasExplicitTarget && authored.target.environment
@@ -975,7 +1012,7 @@ export async function executeEvalRunFromFile(
             : {}),
         })),
       },
-      { client: context.client, signal: context.signal },
+      { client: context.client, signal: context.signal }
     );
   }
   if (fileEnvironment) {
@@ -985,13 +1022,13 @@ export async function executeEvalRunFromFile(
         suite: synced.suite.id,
         environments: [fileEnvironment],
       },
-      { client: context.client, signal: context.signal },
+      { client: context.client, signal: context.signal }
     );
   }
   const runCases = selectEnabledRunCases(
     syncedCases.enabledCases,
     outgoingCases,
-    knobs.case,
+    knobs.case
   );
 
   const importApprovals = mapApprovalsToHostedCases({
@@ -1018,19 +1055,19 @@ export async function executeEvalRunFromFile(
       ...(knobs.environment?.length === 1
         ? { environment: knobs.environment[0] }
         : knobs.environment?.length
-          ? { environments: knobs.environment }
-          : fileEnvironment
-            ? { environment: fileEnvironment }
-            : {}),
+        ? { environments: knobs.environment }
+        : fileEnvironment
+        ? { environment: fileEnvironment }
+        : {}),
       ...(knobs.host?.length === 1
         ? { host: knobs.host[0] }
         : knobs.host?.length
-          ? { hosts: knobs.host }
-          : fileHosts?.length === 1
-            ? { host: fileHosts[0] }
-            : fileHosts?.length
-              ? { hosts: fileHosts }
-          : {}),
+        ? { hosts: knobs.host }
+        : fileHosts?.length === 1
+        ? { host: fileHosts[0] }
+        : fileHosts?.length
+        ? { hosts: fileHosts }
+        : {}),
       ...(knobs.allTargets ? { allAttached: true } : {}),
       ...(knobs.repetitions !== undefined || knobs.iterations !== undefined
         ? { repetitions: knobs.repetitions ?? knobs.iterations }
@@ -1051,6 +1088,6 @@ export async function executeEvalRunFromFile(
       signal: context.signal,
       onDisclosure: context.onDisclosure,
       onDisclosureUnavailable: context.onDisclosureUnavailable,
-    },
+    }
   );
 }
