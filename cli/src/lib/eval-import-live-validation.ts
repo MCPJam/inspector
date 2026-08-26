@@ -300,6 +300,32 @@ export async function resolveValidationTargets(
  * not look" is the honest answer, and a command error is how this module says
  * it.
  */
+/**
+ * A host selector, resolved the way THE LAUNCH resolves it.
+ *
+ * `resolveByIdOrName` (sdk/src/platform/operations.ts) trims the selector,
+ * matches an id exactly, and otherwise takes a UNIQUE case-insensitive name
+ * match — refusing outright when a name matches more than one host. Matching
+ * exactly here would report `TOOL_DISCOVERY_UNAVAILABLE` for `claude code`
+ * against a host named `Claude Code` and block a run that launches fine, which
+ * is the same defect as the server display-name fold: a preflight stricter
+ * than the thing it gates refuses good work.
+ */
+function resolveHostSelector<T extends { id: string; name?: string | null }>(
+  items: readonly T[],
+  selector: string
+): { kind: "resolved"; host: T | undefined } | { kind: "ambiguous" } {
+  const trimmed = selector.trim();
+  const byId = items.find((item) => item.id === trimmed);
+  if (byId) return { kind: "resolved", host: byId };
+  const normalized = trimmed.toLocaleLowerCase();
+  const byName = items.filter(
+    (item) => item.name?.toLocaleLowerCase() === normalized
+  );
+  if (byName.length > 1) return { kind: "ambiguous" };
+  return { kind: "resolved", host: byName[0] };
+}
+
 async function hostTarget(
   client: PlatformApiClient,
   projectId: string,
@@ -308,9 +334,18 @@ async function hostTarget(
   signal: AbortSignal | undefined
 ): Promise<ImportValidationTarget> {
   const page = await client.listHosts({ projectId }, { signal });
-  const host =
-    page.items.find((entry) => entry.id === selector) ??
-    page.items.find((entry) => entry.name === selector);
+  const resolved = resolveHostSelector(page.items, selector);
+  if (resolved.kind === "ambiguous") {
+    // `resolveByIdOrName` refuses an ambiguous name rather than picking one,
+    // so the launch would fail here too. Saying which host is meant is more
+    // use than reporting the tools of whichever one sorted first.
+    throw cliError(
+      "TOOL_DISCOVERY_UNAVAILABLE",
+      `Host name "${selector}" matches more than one host in this project, so the suite file's deterministic tool references could not be checked against it. Name the host by id. Nothing was written.`,
+      IMPORT_VALIDATION_EXIT_CODE
+    );
+  }
+  const host = resolved.host;
   if (!host) {
     throw cliError(
       "TOOL_DISCOVERY_UNAVAILABLE",

@@ -1809,6 +1809,59 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("a host named in different case resolves, as it does at launch", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "billing" }],
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+      hosts: { "Claude Desktop": ["billing"] },
+    });
+    try {
+      // `resolveByIdOrName` trims and takes a unique case-insensitive name
+      // match, so this launches. Matching exactly here would report the host
+      // missing and refuse a run that works.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "claude desktop"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.doesNotMatch(
+          run.stdout + run.stderr,
+          /is not in this project/,
+          run.stdout + run.stderr
+        );
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a host name matching two hosts refuses instead of picking one", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "billing" }],
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+      hosts: { "Claude Desktop": ["billing"], "claude desktop": ["billing"] },
+    });
+    try {
+      // `resolveByIdOrName` refuses an ambiguous name rather than picking one,
+      // so the launch fails here too. Checking whichever host sorted first
+      // would vouch for a host the run may never use.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "CLAUDE DESKTOP"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout + run.stderr);
+        assert.match(run.stdout + run.stderr, /matches more than one host/);
+        assert.deepEqual(fixture.fromFileBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a host pinning a server the project lost refuses, and says so", async () => {
     const fixture = await startFixture({
       servers: [{ id: "srv_billing", name: "billing" }],
