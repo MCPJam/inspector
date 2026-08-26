@@ -203,7 +203,7 @@ export interface GatedProposalMeta {
    */
   resource?(
     result: unknown,
-    context: { projectId: string }
+    context: { projectId: string },
   ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
@@ -235,7 +235,7 @@ export interface GatedProposalMeta {
    */
   normalizeProposalArgs?(
     input: Record<string, unknown>,
-    context: { projectId: string; client: PlatformApiClient }
+    context: { projectId: string; client: PlatformApiClient },
   ): Promise<Record<string, unknown>>;
   /**
    * Keys `normalizeProposalArgs` MUST have pinned before the proposal may be
@@ -314,7 +314,7 @@ function describeChatMessage(input: Record<string, unknown>): string {
 /** The session a turn produced, as a linkable resource. */
 function chatSessionResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const sessionId = readString(result, "sessionId");
   if (!sessionId) return undefined;
@@ -322,7 +322,7 @@ function chatSessionResource(
     type: "chat_session",
     id: sessionId,
     url: `${MCPJAM_HOSTED_ORIGIN}/sessions/${encodeURIComponent(
-      sessionId
+      sessionId,
     )}?project=${encodeURIComponent(projectId)}`,
   };
 }
@@ -333,7 +333,7 @@ function chatSessionResource(
  * model-authored proposal may pass a name — hosts match against both).
  */
 function evalSuiteTarget(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
@@ -348,13 +348,13 @@ function evalSuiteTarget(
  */
 function evalRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
   if (!suiteId) return undefined;
   const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId
+    suiteId,
   )}`;
 
   // A GROUPED launch links to the group, not to one of its runs. The contract
@@ -403,7 +403,7 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
   if (compose && typeof compose === "object") {
     return describeComposeEvalSuiteRun(
       suite,
-      compose as Record<string, unknown>
+      compose as Record<string, unknown>,
     );
   }
   const targets = [
@@ -455,7 +455,7 @@ function describeEvalCaseRun(input: Record<string, unknown>): string {
 
 function describeComposeEvalSuiteRun(
   suite: string,
-  compose: Record<string, unknown>
+  compose: Record<string, unknown>,
 ): string {
   // Prefer the freeze-time display name. `host` is rewritten to an id so
   // approval executes the same client; without `hostLabel` the card would
@@ -480,15 +480,17 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-      ? "ephemeral when supported; otherwise attached"
-      : "without attaching them to the suite";
+        ? "ephemeral when supported; otherwise attached"
+        : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
       ` — one paid run, ${attach}`
     );
   }
-  return `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`;
+  return (
+    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
+  );
 }
 
 /**
@@ -510,7 +512,7 @@ function describeComposeEvalSuiteRun(
  */
 async function freezeEvalRunTargets(
   input: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient }
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const suiteSelector = named(input, "suite");
   if (!suiteSelector) return input;
@@ -544,7 +546,7 @@ async function freezeEvalRunTargets(
   const suite = suites.items.find(
     (candidate) =>
       candidate.id === suiteSelector ||
-      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase()
+      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase(),
   );
   if (!suite) return input;
   const detail = await client.getEvalSuite({ projectId, suiteId: suite.id });
@@ -570,7 +572,7 @@ async function freezeEvalRunTargets(
       (detail.hosts ?? []).map((host) => [
         host.name.toLocaleLowerCase(),
         host.id,
-      ])
+      ]),
     );
     const freeze = (selector: string) =>
       byName.get(selector.toLocaleLowerCase()) ?? selector;
@@ -599,7 +601,7 @@ async function freezeEvalRunTargets(
           .map((environment) => [
             (environment.name ?? "").toLocaleLowerCase(),
             environment.id,
-          ])
+          ]),
       );
     } catch {
       // Same posture as the suite lookup above: freezing is a narrowing, and a
@@ -641,7 +643,7 @@ async function freezeEvalRunTargets(
 async function freezeComposeRunTarget(
   input: Record<string, unknown>,
   compose: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient }
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const nextCompose: Record<string, unknown> = { ...compose };
   delete nextCompose.hostLabel;
@@ -653,7 +655,7 @@ async function freezeComposeRunTarget(
         page.items.find((host) => host.id === hostSelector) ??
         page.items.find(
           (host) =>
-            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase()
+            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase(),
         );
       if (match) {
         nextCompose.host = match.id;
@@ -674,7 +676,7 @@ async function freezeComposeRunTarget(
         page.items.find(
           (image) =>
             image.name?.toLocaleLowerCase() ===
-            computerSelector.toLocaleLowerCase()
+            computerSelector.toLocaleLowerCase(),
         );
       if (match) nextCompose.computer = match.id;
     } catch {
@@ -706,7 +708,7 @@ async function freezeComposeRunTarget(
  * paid run. The stored row still keeps the label so the card can render it.
  */
 export function proposalInputForIdempotency(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
 ): Record<string, unknown> {
   // Client writes: drop the two proposal-only keys. `clientLabel` is a display
   // name and `resolvedClientId` is a duplicate of the already-frozen `client`
@@ -767,7 +769,7 @@ function describeClientEdit(input: Record<string, unknown>): string {
     : describeFieldSet(set as Record<string, unknown>);
   const renamePart = nextName ? ` and rename it to **${nextName}**` : "";
   return `Edit client ${bold}: ${changes}${renamePart}. ${describeClientImpact(
-    input
+    input,
   )}`;
 }
 
@@ -827,7 +829,7 @@ function readStringList(input: Record<string, unknown>, key: string): string[] {
 
 function readOptionalString(
   input: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -835,12 +837,10 @@ function readOptionalString(
 
 function readOptionalNumber(
   input: Record<string, unknown>,
-  key: string
+  key: string,
 ): number | undefined {
   const value = input[key];
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /**
@@ -877,7 +877,7 @@ function readOptionalNumber(
  */
 export async function freezeClientWriteArgs(
   input: Record<string, unknown>,
-  context: { projectId: string; client: PlatformApiClient }
+  context: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const selector = named(input, "client");
   if (!selector) {
@@ -905,26 +905,26 @@ export async function freezeClientWriteArgs(
     // human clicking approve on an edit that cannot succeed.
     throw new Error(
       `client "${detail.name}" reported no configId to verify expectedConfigId ` +
-        "against — re-read it and propose again"
+        "against — re-read it and propose again",
     );
   }
   if (expectedConfigId && expectedConfigId !== detail.configId) {
     throw new Error(
       `client "${detail.name}" changed since it was read (expectedConfigId ` +
-        `${expectedConfigId}, current ${detail.configId}) — re-read it and propose again`
+        `${expectedConfigId}, current ${detail.configId}) — re-read it and propose again`,
     );
   }
   const expectedName = readOptionalString(input, "expectedName");
   if (expectedName && expectedName !== detail.name) {
     throw new Error(
       `client was renamed since it was read (expectedName "${expectedName}", ` +
-        `current "${detail.name}") — re-read it and propose again`
+        `current "${detail.name}") — re-read it and propose again`,
     );
   }
   if (!detail.impact) {
     throw new Error(
       `client "${detail.name}" did not report what an edit affects; refusing to ` +
-        "mint an approval whose description cannot be checked"
+        "mint an approval whose description cannot be checked",
     );
   }
 
@@ -954,7 +954,7 @@ export async function freezeClientWriteArgs(
  */
 export async function freezeDirectoryInstallArgs(
   input: Record<string, unknown>,
-  context: { projectId: string; client: PlatformApiClient }
+  context: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const catalogServerId = named(input, "catalogServerId");
   if (!catalogServerId) {
@@ -964,13 +964,14 @@ export async function freezeDirectoryInstallArgs(
   const row = await context.client.getRegistryDirectoryServer({
     catalogServerId,
   });
-  const endpointUrl = readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
+  const endpointUrl =
+    readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
   const expectedContentHash =
     readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
   if (!endpointUrl || !expectedContentHash) {
     throw new Error(
       `directory row ${catalogServerId} cannot be pinned — missing ` +
-        `${endpointUrl ? "content hash" : "endpoint"}`
+        `${endpointUrl ? "content hash" : "endpoint"}`,
     );
   }
   return { ...input, endpointUrl, expectedContentHash };
@@ -983,7 +984,7 @@ export async function freezeDirectoryInstallArgs(
  */
 export async function freezeCardInstallArgs(
   input: Record<string, unknown>,
-  context: { projectId: string; client: PlatformApiClient }
+  context: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const registryServerId = named(input, "registryServerId");
   if (!registryServerId) {
@@ -1001,14 +1002,14 @@ export async function freezeCardInstallArgs(
   const card = page.items.find((item) => item.id === registryServerId);
   if (!card) {
     throw new Error(
-      `registry card ${registryServerId} is not visible to this project`
+      `registry card ${registryServerId} is not visible to this project`,
     );
   }
   const expectedUpdatedAt =
     readOptionalNumber(input, "expectedUpdatedAt") ?? card.updatedAt;
   if (expectedUpdatedAt === undefined) {
     throw new Error(
-      `registry card ${registryServerId} carries no updatedAt to pin against`
+      `registry card ${registryServerId} carries no updatedAt to pin against`,
     );
   }
   // The endpoint shown to the approver is the CARD'S own, never the model's:
@@ -1044,7 +1045,7 @@ export async function freezeCardInstallArgs(
  */
 function readinessRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "run.runId") ?? readString(result, "run.id");
   if (!runId) return undefined;
@@ -1068,7 +1069,7 @@ function readinessRunResource(
  */
 async function freezeConformanceServer(
   input: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient }
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const selector = named(input, "server");
   if (!selector) return input;
@@ -1076,7 +1077,7 @@ async function freezeConformanceServer(
   const match = page.items.find(
     (server) =>
       server.id === selector ||
-      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase()
+      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
   );
   if (!match) return input;
   return { ...input, server: match.id };
@@ -1084,7 +1085,7 @@ async function freezeConformanceServer(
 
 export function conformanceRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const runId =
     readString(result, "run.runId") ??
@@ -1102,7 +1103,7 @@ export function conformanceRunResource(
 
 function journeyRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "run.id") ?? readString(result, "runId");
   if (!runId) return undefined;
@@ -1163,7 +1164,7 @@ const UNTRUSTED_SERVER_CONTENT_NOTE =
  */
 function named(
   input: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -1309,7 +1310,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   const keys = Object.keys(args).sort();
   const shown = keys.slice(0, PREVIEW_MAX_ARGS);
   const parts = shown.map(
-    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`
+    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`,
   );
   const omitted = keys.slice(PREVIEW_MAX_ARGS);
   if (omitted.length > 0) {
@@ -1321,7 +1322,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
     parts.push(
       `+${omitted.length} more: ${omitted
         .map((key) => previewIdentifier(key))
-        .join(", ")}`
+        .join(", ")}`,
     );
   }
   // The NAME is capped (inside previewIdentifier) before the whole preview
@@ -1331,7 +1332,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   // is being called with. That is exactly the state this preview exists to
   // prevent, and it is reachable by an agent choosing a long name.
   const rendered = toSafeLine(
-    `${previewIdentifier(toolName)}(${parts.join(", ")})`
+    `${previewIdentifier(toolName)}(${parts.join(", ")})`,
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -1500,7 +1501,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
       "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
-      '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
+      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
     ],
   },
   {
@@ -1535,7 +1536,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Run conformance suites on ${named(input, "server") ?? "a server"}`,
+        `Run conformance suites on ${
+          named(input, "server") ?? "a server"
+        }`,
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: () => "none",
@@ -1595,7 +1598,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [
       "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
-      '- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately "3" or "15" and a count without its unit is not a fact. And `verdict: "notEstablished"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.',
+      "- Read `measurementUnit` before quoting a count: under verdict policy v2 the counts are CASE-EXECUTION VARIANTS with repetitions as trials inside them, and on a legacy run they are trials, so the same suite is legitimately \"3\" or \"15\" and a count without its unit is not a fact. And `verdict: \"notEstablished\"` is neither a failure nor `inconclusive` — no verdict exists at all (`undecided.reason` says why), so never report it as a regression.",
       "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
     ],
   },
@@ -2500,12 +2503,12 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>
-    entry.tier === "direct"
+    entry.tier === "direct",
 );
 
 const GATED_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "gated" }> =>
-    entry.tier === "gated"
+    entry.tier === "gated",
 );
 
 /**
@@ -2540,17 +2543,17 @@ export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<AnyPlatformOperation> =
  */
 export const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   DIRECT_ENTRIES.filter((entry) => !entry.operation.readOnly).map(
-    (entry) => entry.operation.name
-  )
+    (entry) => entry.operation.name,
+  ),
 );
 
 const GATED_BY_NAME = new Map(
-  GATED_ENTRIES.map((entry) => [entry.operation.name, entry])
+  GATED_ENTRIES.map((entry) => [entry.operation.name, entry]),
 );
 
 /** The gated entry for an operation name, or undefined if it is not gated. */
 export function gatedEntryFor(
-  operationName: string
+  operationName: string,
 ): Extract<AgentOpEntry, { tier: "gated" }> | undefined {
   return GATED_BY_NAME.get(operationName);
 }
@@ -2568,11 +2571,11 @@ export function proposalMetaFor(operationName: string): {
   kind: ProposedActionKind;
   /** Resolved per proposal — the hazard can depend on the arguments. */
   severityFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionSeverity | undefined;
   /** What the proposal is about, when that is a nameable resource. */
   targetFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionTarget | undefined;
   /**
    * Freeze the arguments before they are persisted, or return them unchanged.
@@ -2586,7 +2589,7 @@ export function proposalMetaFor(operationName: string): {
    */
   normalizeArgs: (
     input: Record<string, unknown>,
-    context: { projectId: string; client: PlatformApiClient }
+    context: { projectId: string; client: PlatformApiClient },
   ) => Promise<Record<string, unknown>>;
   /**
    * Canonicalize frozen input for the proposal action-id hash.
@@ -2624,7 +2627,7 @@ export function proposalMetaFor(operationName: string): {
     description: (input: Record<string, unknown>) =>
       capChars(
         toSafeLine(entry.proposal.describe(input)),
-        DESCRIPTION_TOTAL_CHARS
+        DESCRIPTION_TOTAL_CHARS,
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,

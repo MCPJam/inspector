@@ -521,7 +521,11 @@ export function translateConvexWriteError(
   // prose pattern claimed.
   const proseData = (error as { data?: unknown } | null)?.data;
   if (typeof proseData === "string" && proseData.trim().length > 0) {
-    return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, proseData.trim());
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      proseData.trim()
+    );
   }
 
   // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────

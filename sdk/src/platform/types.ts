@@ -431,11 +431,7 @@ export interface PlatformWidgetRender {
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */
-export type PlatformSessionSourceType =
-  | "direct"
-  | "scenario"
-  | "eval"
-  | "swarm";
+export type PlatformSessionSourceType = "direct" | "scenario" | "eval" | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -865,10 +861,7 @@ export interface PlatformDisclosedModel {
  * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
  * a fourth runtime kind.
  */
-export type PlatformDisclosureEngine =
-  | "emulated"
-  | "mixed"
-  | `harness:${string}`;
+export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.

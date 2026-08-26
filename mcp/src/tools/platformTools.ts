@@ -474,18 +474,21 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name)
+  ALL_OPERATIONS.map((operation) => operation.name),
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name)
+  (name) => !allOperationNames.has(name),
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+    !Object.prototype.hasOwnProperty.call(
+      EXCLUDED_FROM_CATALOG,
+      operation.name,
+    ),
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -493,10 +496,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ","
+      ",",
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}`,
   );
 }
 
@@ -540,8 +543,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
-  ).map((operation) => operation.name)
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
+  ).map((operation) => operation.name),
 );
 
 /**
@@ -591,7 +594,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext
+  context: PlatformToolContext,
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -604,7 +607,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined
+      view ? platformWidgetUi(context, operation, view) : undefined,
     );
   }
 }
@@ -619,7 +622,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView
+  view: PlatformWidgetView,
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -632,13 +635,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload)
+        tagPlatformWidgetPayload(view, payload),
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -681,7 +684,7 @@ export function operationAnnotations(
  * before the call, not from the invoice.
  */
 export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): string {
   return operation.risk === "spend"
     ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
@@ -692,7 +695,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object
+  transformPayload?: (payload: TOutput) => object,
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -714,7 +717,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error)
+      errorStructuredContent(error),
     );
   }
 }
@@ -725,7 +728,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown
+  error: unknown,
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     return { error: { code: error.code, message: error.message } };
@@ -887,7 +890,7 @@ function toolSuccess(payload: object) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>,
 ) {
   return {
     isError: true,
