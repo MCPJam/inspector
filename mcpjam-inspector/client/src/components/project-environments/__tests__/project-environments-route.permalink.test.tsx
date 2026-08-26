@@ -131,6 +131,42 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
     expect(screen.queryByText("Other")).not.toBeInTheDocument();
   });
 
+  it("returns to the list when the route drops its id", async () => {
+    // Back, and every other exit from a detail. The two sync directions used
+    // to fight here: clearing the selection rewrote the URL, and the route
+    // effect restored the selection from a URL that had not changed yet, so
+    // the detail sprang back open.
+    mockEnvironments.value = [environment("env_1", "Staging", "proj_1")];
+    const { rerender } = render(
+      <ProjectEnvironmentsRoute
+        isAuthenticated
+        projectId="proj_1"
+        canManage
+        routeEnvironmentId="env_1"
+      />
+    );
+    await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
+
+    for (const empty of [null, "", "   "]) {
+      rerender(
+        <ProjectEnvironmentsRoute
+          isAuthenticated
+          projectId="proj_1"
+          canManage
+          routeEnvironmentId={empty}
+        />
+      );
+      await waitFor(() =>
+        expect(screen.queryByTestId("editor")).not.toBeInTheDocument()
+      );
+      // The list, not the unavailable notice: no id was asked for.
+      expect(
+        screen.queryByTestId("environment-permalink-unavailable")
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("Staging")).toBeInTheDocument();
+    }
+  });
+
   it("waits instead of deciding while the list is still loading", async () => {
     // `undefined` is "not here yet". Calling it unavailable would flash the
     // deleted-or-forbidden message at someone whose link is about to work.

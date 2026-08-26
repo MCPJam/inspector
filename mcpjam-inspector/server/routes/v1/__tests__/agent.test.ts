@@ -522,6 +522,78 @@ describe("agent tool surface", () => {
     executeSpy.mockRestore();
   });
 
+  it("hands the model permalinks alongside a read's rows", async () => {
+    // The system prompt tells the model to pass back a `permalinks` url
+    // verbatim. This surface returned the raw result, so on the hosted agent
+    // that rule named a field nothing produced and the model was left with
+    // bare ids — which is how it came to invent app URLs in the first place.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "srv_1", name: "Asana", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string; resource: { id: string } }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_1?project=p1"),
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("keeps the permalinks when the payload is truncated for the model", async () => {
+    // The case they matter MOST in. `capForModel` replaces an over-cap value
+    // wholesale with `{truncated, preview}`, so a permalink folded inside the
+    // payload disappeared on exactly the long listings where the link is the
+    // only thing the model can still act on.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          {
+            id: "srv_1",
+            name: "Asana",
+            projectId: "p1",
+            // Comfortably past the 24k model-output cap on its own.
+            notes: "x".repeat(30_000),
+          },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      truncated?: boolean;
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.truncated).toBe(true);
+    expect(result.permalinks?.[0]?.url).toContain("/servers/srv_1?project=p1");
+    executeSpy.mockRestore();
+  });
+
   it("returns field-addressed validation errors (not a bare 'Invalid input')", async () => {
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,

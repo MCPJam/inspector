@@ -153,6 +153,18 @@ export function isValidAgentActionId(actionId: string): boolean {
 const MAX_CREATED_RESOURCES_PER_CALL = 10;
 
 /**
+ * How many permalinks may ride alongside ONE tool result to the model.
+ *
+ * The links sit OUTSIDE `capForModel`'s budget (see the call site), so they
+ * need a bound of their own or a listing at its page limit would spend
+ * kilobytes on URLs the model will not use. Generous next to
+ * `MAX_CREATED_RESOURCES_PER_CALL` because these are read results, where
+ * "which of these rows do I open" is the actual question, and ~25 links is a
+ * small fraction of the 24k payload cap they sit beside.
+ */
+const MAX_MODEL_PERMALINKS = 25;
+
+/**
  * Operation-name prefixes that BRING SOMETHING INTO EXISTENCE.
  *
  * A prefix list rather than an explicit set: the catalog gains operations
@@ -800,11 +812,18 @@ export function buildAgentApiToolSet(opts: {
           // named a field this surface never emitted, and a read like
           // `list_project_servers` gave the model nothing but ids — the exact
           // situation that had it inventing app URLs.
-          const forModel = stripProjectSwitchingMetadata(result);
-          return capForModel(
-            permalinks.length > 0
-              ? withPermalinkEnvelope(forModel, permalinks)
-              : forModel
+          // Cap the PAYLOAD, then attach the links OUTSIDE the cap.
+          //
+          // `capForModel` replaces an over-cap value wholesale with
+          // `{truncated, preview}`, so enveloping first and capping after
+          // discarded the permalinks on exactly the results that need them
+          // most: a long listing, where the model is handed a truncated blob
+          // and the link is the only thing it can still act on.
+          const capped = capForModel(stripProjectSwitchingMetadata(result));
+          if (permalinks.length === 0) return capped;
+          return withPermalinkEnvelope(
+            capped,
+            permalinks.slice(0, MAX_MODEL_PERMALINKS)
           );
         } catch (error) {
           if (abortSignal?.aborted) {

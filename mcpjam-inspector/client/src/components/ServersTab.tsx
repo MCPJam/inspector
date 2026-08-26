@@ -601,8 +601,6 @@ interface ServersTabProps {
   routeServerId?: string | null;
   /** The plugin named by a `/servers/plugins/:pluginId` permalink, if any. */
   routePluginId?: string | null;
-  /** Called once the permalink's selection has been applied or refused. */
-  onRouteTargetSettled?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
 }
@@ -626,7 +624,6 @@ export function ServersTab({
   onProjectShared: _onProjectShared,
   routeServerId,
   routePluginId,
-  onRouteTargetSettled,
   isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
@@ -1261,8 +1258,7 @@ export function ServersTab({
             serverSnapshot: server,
           }
     );
-    onRouteTargetSettled?.();
-  }, [routeServerName, projectServers, onRouteTargetSettled]);
+  }, [routeServerName, projectServers]);
 
 
   /**
