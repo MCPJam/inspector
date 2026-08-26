@@ -366,14 +366,23 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends model quota; the Evaluate tab offers it explicitly.",
 
   // Host and environment administration: re-wires the execution surface.
-  list_hosts: "Host administration has its own tab.",
-  get_host: "Host administration has its own tab.",
-  create_host: "Host creation re-wires the execution surface.",
-  update_host: "Host config changes affect every later run.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative action.",
-  duplicate_host: "Host administration has its own tab.",
+  // Clients stay OUT of the in-app toolset, and this is the one surface where
+  // that did not change. The Clients tab and the WebMCP `ui_*_client` tools own
+  // this surface: the person is already looking at the editor, with undo, a
+  // diff and the whole config in front of them. A chat tool that edits the
+  // client the chat itself is running on would be a worse version of the thing
+  // on screen. The MCP catalog and the agent registry are different — there is
+  // no editor there to defer to.
+  list_clients: "Client administration has its own tab.",
+  get_client: "Client administration has its own tab.",
+  create_client: "Client creation re-wires the execution surface.",
+  update_client:
+    "Client config changes affect every later run, and the Clients tab (plus the WebMCP client tools) is the surface that owns them in-app.",
+  delete_client:
+    "Irreversible and rotates every client config that referenced it.",
+  set_client_servers:
+    "Re-wiring a client's server set is an administrative action.",
+  duplicate_client: "Client administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
   get_project_environment_capabilities:
     "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
