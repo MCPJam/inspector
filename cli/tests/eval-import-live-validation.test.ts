@@ -508,23 +508,23 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
       method === "POST"
     ) {
       batchBodies.push(body);
-      const created = (
-        body.cases as Array<{ id?: string; title: string }>
-      ).map((testCase, index) => {
-        const declaredId = testCase.id ?? `minted_${index}`;
-        casesByDeclaredId.set(declaredId, {
-          id: `row_${declaredId}`,
-          declaredId,
-          title: testCase.title,
-        });
-        return {
-          index,
-          id: `row_${declaredId}`,
-          declaredId,
-          title: testCase.title,
-          replayed: false,
-        };
-      });
+      const created = (body.cases as Array<{ id?: string; title: string }>).map(
+        (testCase, index) => {
+          const declaredId = testCase.id ?? `minted_${index}`;
+          casesByDeclaredId.set(declaredId, {
+            id: `row_${declaredId}`,
+            declaredId,
+            title: testCase.title,
+          });
+          return {
+            index,
+            id: `row_${declaredId}`,
+            declaredId,
+            title: testCase.title,
+            replayed: false,
+          };
+        }
+      );
       json({ created, failed: [], duplicatePolicy: "block" }, 201);
       return;
     }
@@ -976,10 +976,7 @@ describe("eval run --file validates before it writes", () => {
         // fact about the import, not about the claim being made for it.
         assert.equal(rewritten.import?.sourceCaseKey, "upstream/refunds/gone");
         assert.match(String(rewritten.import?.note), /render_gone/);
-        assert.match(
-          String(rewritten.import?.note),
-          /Previous claim: exact/
-        );
+        assert.match(String(rewritten.import?.note), /Previous claim: exact/);
         assert.ok(String(rewritten.import?.note).length <= 2000);
         // The resolvable case keeps the converter's own claim, untouched.
         const kept = authored.find((entry) => entry.id === "c_render")!;
@@ -1239,7 +1236,10 @@ describe("eval run --file --allow-approximated", () => {
           )
         );
         assert.equal(run.result.exitCode, 2, run.stdout);
-        assert.match(run.stdout + run.stderr, /not among the cases this run executes/);
+        assert.match(
+          run.stdout + run.stderr,
+          /not among the cases this run executes/
+        );
         assert.deepEqual(fixture.runBodies, []);
       });
     } finally {
@@ -1271,12 +1271,7 @@ describe("eval run --file --allow-approximated", () => {
     ],
     [
       "a blank reason",
-      [
-        "--allow-approximated",
-        "c_approx",
-        "--approval-reason",
-        "   ",
-      ],
+      ["--allow-approximated", "c_approx", "--approval-reason", "   "],
       /must be 1-500 characters/,
     ],
   ] as const) {

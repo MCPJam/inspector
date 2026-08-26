@@ -845,10 +845,7 @@ export function RunDetailView({
           Fetched canonically rather than derived from the suite's current
           cases: those get edited after runs finish, and recomputing would let
           an edit rewrite what a finished run is shown to have decided. */}
-      <ImportEvidenceCard
-        eligibility={runImportEligibility}
-        className="mb-4"
-      />
+      <ImportEvidenceCard eligibility={runImportEligibility} className="mb-4" />
 
       {!hideCiMetadata &&
         (selectedRunDetails.ciMetadata?.branch ||

@@ -91,10 +91,11 @@ export function ImportEvidenceCard({
       ) : null}
 
       {eligibility.approvedApproximationReceipts.length > 0 ? (
-        <div className="mt-2 space-y-1.5" data-testid="import-approval-receipts">
-          <p className="font-medium text-foreground">
-            Approved approximations
-          </p>
+        <div
+          className="mt-2 space-y-1.5"
+          data-testid="import-approval-receipts"
+        >
+          <p className="font-medium text-foreground">Approved approximations</p>
           {eligibility.approvedApproximationReceipts.map((receipt) => (
             <div
               key={receipt.testCaseId}
