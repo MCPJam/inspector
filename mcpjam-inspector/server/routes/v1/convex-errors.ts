@@ -123,6 +123,35 @@ export interface TranslateConvexWriteErrorOptions {
  * backend's internal error shape, and spreading it would publish whatever it
  * gains next without anyone deciding to.
  */
+/**
+ * The current value a compare-and-set precondition disagreed with.
+ *
+ * Forwarded so a 409 is RECOVERABLE without a second round-trip: a caller that
+ * sent a stale `expectedConfigId` gets the live one back and can decide whether
+ * to re-read and retry. Copied key by key rather than spread, for the same
+ * reason as `billingDetails` — the payload is the backend's internal error
+ * shape, and spreading it would publish whatever it gains next without anyone
+ * deciding to.
+ *
+ * `currentImpact` is a small object of counts rather than a scalar, and it is
+ * forwarded whole: an agent proposal that conflicted on impact needs to know
+ * WHICH consumer count moved to describe the edit honestly the second time.
+ */
+function preconditionDetails(
+  data: Record<string, unknown> | null | undefined
+): Record<string, unknown> | undefined {
+  const payload = data?.data;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+  const source = payload as Record<string, unknown>;
+  const details: Record<string, unknown> = {};
+  for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
+    if (source[key] !== undefined) details[key] = source[key];
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
 function billingDetails(
   data: Record<string, unknown> | null | undefined
 ): Record<string, unknown> | undefined {
@@ -423,7 +452,8 @@ export function translateConvexWriteError(
     return new WebRouteError(
       409,
       ErrorCode.CONFLICT,
-      structuredMessage ?? conflictMessage
+      structuredMessage ?? conflictMessage,
+      preconditionDetails(data as Record<string, unknown> | null)
     );
   }
   if (code === "VALIDATION") {
@@ -491,11 +521,7 @@ export function translateConvexWriteError(
   // prose pattern claimed.
   const proseData = (error as { data?: unknown } | null)?.data;
   if (typeof proseData === "string" && proseData.trim().length > 0) {
-    return new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      proseData.trim()
-    );
+    return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, proseData.trim());
   }
 
   // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────

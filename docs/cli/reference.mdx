@@ -456,9 +456,35 @@ The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `un
 
 ---
 
-## `cloud hosts` commands
+## `cloud clients` commands
 
-Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+Manage the clients saved in your hosted MCPJam projects — the named, reusable
+configurations that define how MCPJam connects to and talks to your MCP servers.
+All `clients` commands require an `sk_` API key (via `--api-key` or the
+`MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+`mcpjam cloud hosts …` still works as a command alias, and every command accepts
+`--host` as a deprecated spelling of `--client`. Passing both `--client` and
+`--host` is a usage error rather than a silent precedence rule.
+
+### Editing safely: `configId` and `expectedConfigId`
+
+A client's config is immutable and content-addressed: `configId` identifies the
+exact settings, so the same id means byte-identical settings. Every config edit
+takes the `configId` you last read as `expectedConfigId`, and a rename takes the
+`name` you last read as `expectedName`. If someone else edited the client since
+you read it, the write is refused with a `409` naming the current value instead
+of silently reverting their edit.
+
+The loop is always the same:
+
+```bash
+mcpjam cloud clients get --client "Claude"        # note configId + name
+mcpjam cloud clients update --client "Claude" \
+  --set temperature=0.2 --expected-config-id hc_01J8...
+```
+
+On a conflict, re-run `get` and retry with the fresh value.
 
 ### Shared platform flags
 
@@ -467,51 +493,115 @@ Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands requ
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `cloud hosts templates`
+### `cloud clients templates`
 
-List the built-in host templates usable with `mcpjam cloud hosts create --template`. No additional flags.
+List the built-in templates usable with `mcpjam cloud clients create --template`. No additional flags.
 
-### `cloud hosts list`
+### `cloud clients list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `cloud hosts get`
+Clients that exist only as the private backing of a User Testing scenario are
+omitted, matching the Clients tab.
+
+### `cloud clients get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `cloud hosts create`
+Returns the resolved config, the `configId` every edit takes, and `impact` — the
+live environments, scenario attachments and active legacy journeys a config edit
+would follow.
+
+### `cloud clients create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--name <name>` | Yes | Display name for the new host |
+| `--name <name>` | Yes | Display name for the new client |
 | `--project <id-or-name>` | No | Project name or ID |
-| `--template <id>` | No | Built-in template ID (see `hosts templates`), e.g. `claude`, `chatgpt`, `cursor` |
+| `--template <id>` | No | Built-in template ID (see `clients templates`), e.g. `claude`, `chatgpt`, `cursor` |
 | `--theme <theme>` | No | Theme for the seeded config: `light` or `dark` (template only) |
-| `--file <path>` | No | Host config v2 JSON file (or `-` for stdin) |
-| `--json <json>` | No | Inline host config v2 JSON (or `@file`, or `-`) |
+| `--file <path>` | No | Client config v2 JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline client config v2 JSON (or `@file`, or `-`) |
 
 Provide either `--template` or `--file`/`--json`, not both.
 
-### `cloud hosts update`
+### `cloud clients update`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
-| `--name <name>` | No | New display name |
-| `--file <path>` | No | Replacement host config v2 JSON (or `-` for stdin) |
-| `--json <json>` | No | Inline replacement host config v2 JSON (or `@file`, or `-`) |
+| `--name <name>` | No | New display name (requires `--expected-name`) |
+| `--expected-name <name>` | With `--name` | The `name` you last read |
+| `--expected-config-id <id>` | With any config edit | The `configId` you last read |
+| `--set <key=value>` | No | Set one field. Repeatable |
+| `--unset <key>` | No | Clear an optional field, or reset a required one to its default. Repeatable |
+| `--file <path>` | No | Replacement client config v2 JSON (or `-` for stdin) |
+| `--json <json>` | No | Inline replacement client config v2 JSON (or `@file`, or `-`) |
 
-### `cloud hosts delete`
+Use either `--set`/`--unset` or `--file`/`--json`, not both. Prefer `--set`: a
+whole-config replacement composed from a stale read reverts anything that landed
+in between.
+
+#### `--set` field types
+
+Values are parsed by the FIELD, never guessed from what the value looks like —
+so `--set systemPrompt='{"a":1}'` sets that literal string, and a
+`--set temperature=0.2x` typo fails locally instead of reaching the API as a
+string.
+
+| Field | Value | `--unset` |
+|-------|-------|-----------|
+| `modelId` | string | Not allowed — a client cannot be edited into one that pins no model |
+| `systemPrompt` | string | Resets to `""` |
+| `temperature` | number | Resets to `0.7` |
+| `requireToolApproval` | `true` \| `false` | Resets to `false` |
+| `connectionDefaults` | JSON object | Resets to the platform defaults |
+| `respectToolVisibility` | `true` \| `false` | Clears |
+| `progressiveToolDiscovery` | `true` \| `false` | Clears |
+| `harness` | string (`claude-code` \| `codex`) | Clears |
+| `computer` | JSON object | Clears |
+| `builtInToolIds` | JSON array | Clears |
+| `skillSelection` | JSON object | Clears |
+| `modelVisibleMcpToolResults` | JSON object | Clears |
+| `mcpToolResultImageRendering` | JSON object | Clears |
+| `mcpProfile` | JSON object | Clears |
+| `hostCapabilitiesOverride` | JSON object | Clears |
+| `chatUiOverride` | JSON object | Clears |
+
+Object-valued fields are whole-object replacements, not merges. To change a deep
+knob, read the client, overlay the sub-object, and send the whole object back.
+
+### `cloud clients servers`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--server-ids <id,...>` | Yes | Comma-separated required server IDs |
+| `--expected-config-id <id>` | Yes | The `configId` you last read |
+| `--optional-server-ids <id,...>` | No | Comma-separated optional server IDs |
+| `--project <id-or-name>` | No | Project name or ID |
+
+This REPLACES the server set: every server you leave out is detached.
+
+### `cloud clients duplicate`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--name <name>` | No | Name for the new client |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud clients delete`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ---

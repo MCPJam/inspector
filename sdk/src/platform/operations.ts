@@ -114,6 +114,9 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -234,7 +237,7 @@ function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
   }
   const timeoutId = setTimeout(
     () => controller.abort(),
-    DISCLOSURE_FETCH_TIMEOUT_MS,
+    DISCLOSURE_FETCH_TIMEOUT_MS
   );
   const onCallerAbort = () => controller.abort(callerSignal!.reason);
   callerSignal?.addEventListener("abort", onCallerAbort);
@@ -407,7 +410,7 @@ export const listProjectsOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     const page = await client.listProjects(
       { organizationId: input.organizationId },
-      { signal },
+      { signal }
     );
     const resolution = resolveProject(page.items);
     return {
@@ -426,7 +429,7 @@ const createProjectInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Organization to create the project in, from list_organizations. Defaults to the caller's own organization.",
+      "Organization to create the project in, from list_organizations. Defaults to the caller's own organization."
     ),
   icon: z.string().optional(),
   visibility: z.enum(["public", "private"]).optional(),
@@ -462,7 +465,7 @@ const updateProjectInput = z
       value.description !== undefined ||
       value.icon !== undefined ||
       value.visibility !== undefined,
-    { message: "Provide at least one project field to update." },
+    { message: "Provide at least one project field to update." }
   );
 export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
@@ -480,7 +483,7 @@ export const updateProjectOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const { project: _selector, ...body } = input;
     return client.updateProject({ projectId: project.id, body }, { signal });
@@ -506,7 +509,7 @@ export const deleteProjectOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.deleteProject({ projectId: project.id }, { signal });
   },
@@ -543,11 +546,11 @@ export const listProjectServersOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -571,17 +574,17 @@ export const showServersOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return buildShowServersPayload({
       doctor: (args) =>
         client.doctorServer(
           { projectId: args.projectId, serverId: args.serverId },
-          { signal: args.signal },
+          { signal: args.signal }
         ),
       project,
       projects: sortedProjects,
@@ -595,7 +598,7 @@ export const showServersOperation: PlatformOperation<
 async function resolveProjectOrThrow(
   client: PlatformApiClient,
   selector: string | undefined,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<{ project: PlatformProject; sortedProjects: PlatformProject[] }> {
   const page = await client.listProjects({}, { signal });
   const resolution = resolveProject(page.items, selector);
@@ -620,7 +623,7 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
   items: T[],
   selector: string,
   kind: string,
-  scope: string,
+  scope: string
 ): T {
   const trimmedSelector = selector.trim();
   const idMatch = items.find((item) => item.id === trimmedSelector);
@@ -630,7 +633,7 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
 
   const normalizedSelector = trimmedSelector.toLocaleLowerCase();
   const nameMatches = items.filter(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector,
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
   );
 
   if (nameMatches.length === 1) {
@@ -640,22 +643,22 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
   if (nameMatches.length > 1) {
     throw resolutionError(
       `${kind} name "${trimmedSelector}" is ambiguous in ${scope}. Use one of these IDs: ${formatResourceList(
-        nameMatches,
-      )}.`,
+        nameMatches
+      )}.`
     );
   }
 
   throw resolutionError(
     items.length > 0
       ? `${kind} "${trimmedSelector}" was not found in ${scope}. Available: ${formatResourceList(
-          items,
+          items
         )}.`
-      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`,
+      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`
   );
 }
 
 function formatResourceList(
-  items: Array<{ id: string; name?: string | null }>,
+  items: Array<{ id: string; name?: string | null }>
 ): string {
   return items
     .map((item) => `${item.name ?? "(unnamed)"} (id: ${item.id})`)
@@ -676,7 +679,7 @@ function toSelectedProjectInfo(project: PlatformProject): SelectedProjectInfo {
 
 function toOtherProjects(
   sortedProjects: PlatformProject[],
-  selectedId: string,
+  selectedId: string
 ): ProjectInfo[] {
   return sortedProjects
     .filter((candidate) => candidate.id !== selectedId)
@@ -715,17 +718,17 @@ async function resolveLiveServer(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformProjectServer> {
   const page = await client.listProjectServers(
     { projectId: project.id },
-    { signal },
+    { signal }
   );
   const server = resolveByIdOrName(
     page.items,
     selector,
     "Server",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
   if (server.transportType === "stdio" || !server.url) {
     throw resolutionError(
@@ -733,7 +736,7 @@ async function resolveLiveServer(
         server.transportType === "stdio"
           ? "stdio servers are not supported on the hosted platform"
           : "it has no URL"
-      }.`,
+      }.`
     );
   }
   return server;
@@ -763,17 +766,17 @@ export const diagnoseServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const report = await client.doctorServer(
       { projectId: project.id, serverId: server.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -797,17 +800,17 @@ export const validateServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     return client.validateServer(
       { projectId: project.id, serverId: server.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -826,17 +829,17 @@ export const exportServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     return client.exportServer(
       { projectId: project.id, serverId: server.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -863,19 +866,19 @@ async function runServerListing(
   context: PlatformOperationContext,
   list: (
     scope: { projectId: string; serverId: string },
-    body: Record<string, unknown>,
-  ) => Promise<PlatformPage<Record<string, unknown>>>,
+    body: Record<string, unknown>
+  ) => Promise<PlatformPage<Record<string, unknown>>>
 ): Promise<ServerPagedResult> {
   const { client, signal } = context;
   const { project } = await resolveProjectOrThrow(
     client,
     input.project,
-    signal,
+    signal
   );
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {},
+    input.cursor ? { cursor: input.cursor } : {}
   );
   return {
     project: toSelectedProjectInfo(project),
@@ -899,8 +902,8 @@ export const listServerToolsOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerTools(
         { ...scope, body },
-        { signal: context.signal },
-      ),
+        { signal: context.signal }
+      )
     );
   },
 };
@@ -919,8 +922,8 @@ export const listServerPromptsOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerPrompts(
         { ...scope, body },
-        { signal: context.signal },
-      ),
+        { signal: context.signal }
+      )
     );
   },
 };
@@ -939,8 +942,8 @@ export const listServerResourcesOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerResources(
         { ...scope, body },
-        { signal: context.signal },
-      ),
+        { signal: context.signal }
+      )
     );
   },
 };
@@ -971,7 +974,7 @@ const renderServerWidgetInput = serverScopedInput.extend({
     .trim()
     .min(1)
     .describe(
-      "The MCP App tool to render. It must declare a `ui://` UI resource; a tool that does not is refused rather than run.",
+      "The MCP App tool to render. It must declare a `ui://` UI resource; a tool that does not is refused rather than run."
     ),
   parameters: z
     .record(z.string(), z.unknown())
@@ -981,19 +984,19 @@ const renderServerWidgetInput = serverScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Return the widget as an accessibility tree with addressable elements. DEFAULT TRUE — it is the cheap, readable answer.",
+      "Return the widget as an accessibility tree with addressable elements. DEFAULT TRUE — it is the cheap, readable answer."
     ),
   includeScreenshot: z
     .boolean()
     .optional()
     .describe(
-      "Also return a base64 image. DEFAULT FALSE: it is by far the largest field this returns, and a caller that cannot see images pays for it anyway.",
+      "Also return a base64 image. DEFAULT FALSE: it is by far the largest field this returns, and a caller that cannot see images pays for it anyway."
     ),
   injectOpenAiCompat: z
     .boolean()
     .optional()
     .describe(
-      "Mount with the OpenAI Apps compatibility shims instead of the spec-default MCP-UI bridge.",
+      "Mount with the OpenAI Apps compatibility shims instead of the spec-default MCP-UI bridge."
     ),
   viewport: z
     .object({
@@ -1035,9 +1038,14 @@ export const renderServerWidgetOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
-    const server = await resolveLiveServer(client, project, input.server, signal);
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
     const render = await client.renderServerWidget(
       {
         projectId: project.id,
@@ -1057,7 +1065,7 @@ export const renderServerWidgetOperation: PlatformOperation<
           ...(input.viewport ? { viewport: input.viewport } : {}),
         },
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1087,13 +1095,13 @@ export const callServerToolOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const result = await client.callServerTool(
       {
@@ -1104,7 +1112,7 @@ export const callServerToolOperation: PlatformOperation<
           parameters: input.parameters ?? {},
         },
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1148,13 +1156,13 @@ export const getServerPromptOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const result = await client.getServerPrompt(
       {
@@ -1165,7 +1173,7 @@ export const getServerPromptOperation: PlatformOperation<
           ...(input.arguments ? { arguments: input.arguments } : {}),
         },
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1205,13 +1213,13 @@ export const readServerResourceOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const result = await client.readServerResource(
       {
@@ -1219,7 +1227,7 @@ export const readServerResourceOperation: PlatformOperation<
         serverId: server.id,
         body: { uri: input.uri },
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1269,13 +1277,13 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const scope = { projectId: project.id, serverId: server.id };
 
@@ -1286,7 +1294,7 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
         { ...scope, body: cursor ? { cursor } : {} },
-        { signal },
+        { signal }
       );
       rawTools.push(...result.items);
       cursor = result.nextCursor;
@@ -1309,8 +1317,8 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       async (uri) =>
         (await client.readServerResource(
           { ...scope, body: { uri } },
-          { signal },
-        )) as ReadResourceResult,
+          { signal }
+        )) as ReadResourceResult
     );
 
     // `toolsTruncated` makes the engine demote any `works` to `unknown` and add
@@ -1384,7 +1392,7 @@ const startReadinessInput = serverScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it.",
+      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it."
     ),
   idempotencyKey: z
     .string()
@@ -1393,7 +1401,7 @@ const startReadinessInput = serverScopedInput.extend({
     .max(200)
     .optional()
     .describe(
-      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice.",
+      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice."
     ),
 });
 
@@ -1401,7 +1409,7 @@ const startOpenAIReadinessInput = startReadinessInput.extend({
   submissionMode: z
     .enum(["mcp-only", "mcp-imported-skills"])
     .describe(
-      "REQUIRED, and never inferred: which submission shape is being graded. The two package shapes need an upload this API cannot receive — grade those with `mcpjam readiness check` locally.",
+      "REQUIRED, and never inferred: which submission shape is being graded. The two package shapes need an upload this API cannot receive — grade those with `mcpjam readiness check` locally."
     ),
 });
 
@@ -1431,7 +1439,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     // Rejects stdio and URL-less servers with a named reason, which is the
     // same refusal the route makes — better here, before a row exists.
@@ -1439,7 +1447,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const run = await client.startClaudeReadinessRun(
       {
@@ -1452,7 +1460,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1477,13 +1485,13 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const run = await client.startOpenAIReadinessRun(
       {
@@ -1497,7 +1505,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1526,11 +1534,11 @@ export const getReadinessRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.getReadinessRun(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -1583,7 +1591,7 @@ export const listReadinessRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const serverId = input.server
       ? (await resolveLiveServer(client, project, input.server, signal)).id
@@ -1595,7 +1603,7 @@ export const listReadinessRunsOperation: PlatformOperation<
         ...(serverId ? { serverId } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), runs: page.items };
   },
@@ -1619,11 +1627,11 @@ export const cancelReadinessRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.cancelReadinessRun(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1697,7 +1705,7 @@ export const getReadinessReportOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const scope = { projectId: project.id, runId: input.run };
     const [run, report] = await Promise.all([
@@ -1713,10 +1721,10 @@ export const getReadinessReportOperation: PlatformOperation<
     const all = Array.isArray(raw.findings) ? raw.findings : [];
     const ranked = [...all].sort((left, right) => {
       const leftRank = READINESS_FINDING_CLASS_ORDER.indexOf(
-        String(left.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+        String(left.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number]
       );
       const rightRank = READINESS_FINDING_CLASS_ORDER.indexOf(
-        String(right.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+        String(right.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number]
       );
       // An unknown class sorts last rather than first: a class this build does
       // not know is the one thing that must not displace a known blocker.
@@ -1782,7 +1790,7 @@ const startConformanceRunInput = serverScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface.",
+      "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface."
     ),
   idempotencyKey: z
     .string()
@@ -1791,7 +1799,7 @@ const startConformanceRunInput = serverScopedInput.extend({
     .max(200)
     .optional()
     .describe(
-      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice.",
+      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice."
     ),
   protocolVersion: z.string().trim().min(1).optional(),
   engineVersion: z.string().trim().min(1).optional(),
@@ -1820,13 +1828,13 @@ export const startConformanceRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal,
+      signal
     );
     const run = await client.startConformanceRun(
       {
@@ -1841,7 +1849,7 @@ export const startConformanceRunOperation: PlatformOperation<
           : {}),
         ...(input.engineVersion ? { engineVersion: input.engineVersion } : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1870,11 +1878,11 @@ export const getConformanceRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.getConformanceRun(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -1923,7 +1931,7 @@ export const listConformanceRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const serverId = input.server
       ? (await resolveLiveServer(client, project, input.server, signal)).id
@@ -1934,7 +1942,7 @@ export const listConformanceRunsOperation: PlatformOperation<
         ...(serverId ? { serverId } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), runs: page.items };
   },
@@ -1958,11 +1966,11 @@ export const getConformanceReportOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const report = await client.getConformanceReport(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), ...report };
   },
@@ -1980,7 +1988,7 @@ const publicMatchOptionsSchema = z
       .enum(["any", "in-order", "exact"])
       .optional()
       .describe(
-        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
+        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence."
       ),
     extraToolCalls: z
       .union([z.literal("unlimited"), z.number().int().min(0)])
@@ -2034,7 +2042,7 @@ function assertNoServerOverrideWithEnvironment(input: {
 }): void {
   if (input.environment && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override."
     );
   }
 }
@@ -2075,23 +2083,23 @@ function assertRunTargetSelectorsCoherent(input: {
       input.allAttached)
   ) {
     throw operationInputError(
-      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs.",
+      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs."
     );
   }
 
   if (input.environment && (input.environments?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either environment (one) or environments (several), not both.",
+      "Pass either environment (one) or environments (several), not both."
     );
   }
   if (input.host && (input.hosts?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either host (one) or hosts (several), not both.",
+      "Pass either host (one) or hosts (several), not both."
     );
   }
   if (hasEnvironmentAxis && hasHostAxis) {
     throw operationInputError(
-      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had.",
+      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had."
     );
   }
   if (hasEnvironmentAxis && (input.servers?.length ?? 0) > 0) {
@@ -2104,22 +2112,22 @@ function assertRunTargetSelectorsCoherent(input: {
     // was told the suite "has no environments at all" about a suite that has
     // the named one attached.
     throw operationInputError(
-      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override."
     );
   }
   if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override.",
+      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override."
     );
   }
   if (input.allAttached && (hasEnvironmentAxis || hasHostAxis)) {
     throw operationInputError(
-      "Pass allAttached or name targets explicitly, not both — 'every attached target' and 'these ones' cannot both be meant, and guessing would either skip a run you asked for or start one you did not.",
+      "Pass allAttached or name targets explicitly, not both — 'every attached target' and 'these ones' cannot both be meant, and guessing would either skip a run you asked for or start one you did not."
     );
   }
   if (input.allAttached && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass allAttached or servers, not both — a server override replaces the suite's selection for one run and has no fan-out.",
+      "Pass allAttached or servers, not both — a server override replaces the suite's selection for one run and has no fan-out."
     );
   }
 }
@@ -2148,23 +2156,23 @@ function targetRequiredMessage(
     attachedEnvironments: RunTarget[];
     attachedHosts: RunTarget[];
   },
-  opts: { readOnly?: boolean } = {},
+  opts: { readOnly?: boolean } = {}
 ): string {
   const parts: string[] = [];
   if (plan.attachedEnvironments.length > 0) {
     parts.push(
       `environments: ${plan.attachedEnvironments
         .map((target) =>
-          target.name ? `"${target.name}" (${target.id})` : target.id,
+          target.name ? `"${target.name}" (${target.id})` : target.id
         )
-        .join(", ")}`,
+        .join(", ")}`
     );
   }
   if (plan.attachedHosts.length > 0) {
     parts.push(
       `hosts: ${plan.attachedHosts
         .map((target) => `"${target.name}" (${target.id})`)
-        .join(", ")}`,
+        .join(", ")}`
     );
   }
   const lead = opts.readOnly
@@ -2202,7 +2210,7 @@ async function resolveSuiteEnvironmentTargets(
   suite: PlatformEvalSuite,
   detail: PlatformEvalSuiteDetail | undefined,
   selectors: string[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<Array<{ id: string; name?: string }>> {
   if (selectors.length === 0) return [];
   const attached = detail?.environmentIds ?? [];
@@ -2212,7 +2220,7 @@ async function resolveSuiteEnvironmentTargets(
       client,
       project,
       selector,
-      signal,
+      signal
     );
     if (!attached.includes(environment.id)) {
       throw operationInputError(
@@ -2222,7 +2230,7 @@ async function resolveSuiteEnvironmentTargets(
             }", which has no environments at all. Attach it with set_eval_suite_environments first.`
           : `Environment "${selector}" is not attached to suite "${
               suite.name ?? suite.id
-            }". Attached environment IDs: ${attached.join(", ")}.`,
+            }". Attached environment IDs: ${attached.join(", ")}.`
       );
     }
     resolved.push({
@@ -2244,19 +2252,19 @@ async function environmentNamesFor(
   client: PlatformApiClient,
   project: PlatformProject,
   environmentIds: string[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<Map<string, string>> {
   if (environmentIds.length === 0) return new Map();
   try {
     const page = await client.listEnvironments(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     const wanted = new Set(environmentIds);
     return new Map(
       page.items
         .filter((environment) => wanted.has(environment.id) && environment.name)
-        .map((environment) => [environment.id, environment.name]),
+        .map((environment) => [environment.id, environment.name])
     );
   } catch {
     return new Map();
@@ -2269,7 +2277,7 @@ async function environmentNamesFor(
 function resolveSuiteHostTargets(
   suite: PlatformEvalSuite,
   detail: PlatformEvalSuiteDetail | undefined,
-  selectors: string[],
+  selectors: string[]
 ): RunTargetHost[] {
   if (selectors.length === 0) return [];
   const hosts = detail?.hosts ?? [];
@@ -2277,7 +2285,7 @@ function resolveSuiteHostTargets(
     throw operationInputError(
       `Suite "${
         suite.name ?? suite.id
-      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`,
+      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`
     );
   }
   return selectors.map((selector) =>
@@ -2285,8 +2293,8 @@ function resolveSuiteHostTargets(
       hosts,
       selector,
       "Suite host",
-      `suite "${suite.name ?? suite.id}"`,
-    ),
+      `suite "${suite.name ?? suite.id}"`
+    )
   );
 }
 
@@ -2303,7 +2311,7 @@ function runKnobBody(
     idempotencyKey?: string;
     sourceHash?: string;
   },
-  caseIds: string[] | undefined,
+  caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
     ...(input.repetitions !== undefined || input.iterations !== undefined
@@ -2356,7 +2364,10 @@ export function expandComposeModelChoices(stack: {
   includeClientDefault?: boolean;
 }): Array<{ modelId: string | undefined }> {
   const explicit = [
-    ...new Set([...(stack.models ?? []), ...(stack.model ? [stack.model] : [])]),
+    ...new Set([
+      ...(stack.models ?? []),
+      ...(stack.model ? [stack.model] : []),
+    ]),
   ];
   const includeDefault =
     explicit.length === 0 ? true : stack.includeClientDefault === true;
@@ -2376,19 +2387,19 @@ export function expandComposeModelChoices(stack: {
  */
 function composedCellsNote(
   cells: ReadonlyArray<{ id: string; created: boolean; modelId?: string }>,
-  attached: boolean,
+  attached: boolean
 ): string {
   const cellNote = cells
     .map(
       (cell) =>
         `${cell.id}${cell.created ? " (created)" : " (reused)"}${
           cell.modelId ? ` · ${cell.modelId}` : ""
-        }`,
+        }`
     )
     .join(", ");
-  return `(The composed environment${cells.length === 1 ? "" : "s"} ${
-    cellNote
-  } ${
+  return `(The composed environment${
+    cells.length === 1 ? "" : "s"
+  } ${cellNote} ${
     attached ? "were attached to the suite" : "were minted without attaching"
   }; retrying is safe — it will reuse them.)`;
 }
@@ -2428,7 +2439,7 @@ async function composeRunEnvironment(
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
-  options: { attach: boolean } = { attach: true },
+  options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
   const choices = expandComposeModelChoices(stack);
   const cells: ComposedCell[] = [];
@@ -2437,11 +2448,11 @@ async function composeRunEnvironment(
       client,
       project,
       { ...stack, model: choice.modelId },
-      signal,
+      signal
     );
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
-      { signal },
+      { signal }
     );
     cells.push({
       id: ensured.environment.id,
@@ -2454,13 +2465,18 @@ async function composeRunEnvironment(
   if (options.attach) {
     const detail = await client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal },
+      { signal }
     );
     const existing = new Set(detail.environmentIds ?? []);
     const union = new Set([...existing, ...cells.map((cell) => cell.id)]);
     if (union.size > 10) {
       throw operationInputError(
-        `Attaching these composed cells would grow the suite to ${union.size} environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally. ${composedCellsNote(cells, false)}`,
+        `Attaching these composed cells would grow the suite to ${
+          union.size
+        } environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally. ${composedCellsNote(
+          cells,
+          false
+        )}`
       );
     }
     for (const cell of cells) {
@@ -2471,7 +2487,7 @@ async function composeRunEnvironment(
             suiteId: suite.id,
             environmentId: cell.id,
           },
-          { signal },
+          { signal }
         );
         attached = attached || attachment.attached === true;
       } catch (error) {
@@ -2483,7 +2499,7 @@ async function composeRunEnvironment(
         if (error instanceof Error) {
           error.message = `${error.message} ${composedCellsNote(
             cells,
-            attached,
+            attached
           )}`;
         }
         throw error;
@@ -2526,12 +2542,12 @@ async function composeRunEnvironment(
 async function probeComposeCapabilities(
   client: PlatformApiClient,
   projectId: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<{ ephemeralLaunch: boolean; modelOverrides: boolean }> {
   try {
     const capabilities = await client.getEnvironmentCapabilities(
       { projectId },
-      { signal },
+      { signal }
     );
     return {
       ephemeralLaunch: capabilities.ephemeralEnvironmentLaunch === true,
@@ -2568,22 +2584,22 @@ function composeLaunchPolicy(input: {
     // MCP and in-app agent all take THIS path, so putting it here is what makes
     // the three agree with the web composer, which already refuses.
     throw operationInputError(
-      "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models.",
+      "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models."
     );
   }
   if (input.choiceCount > 1 && input.refreshSnapshot) {
     throw operationInputError(
-      "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+      "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it."
     );
   }
   if (input.choiceCount > 1 && !input.ephemeralOk && !input.saveTargets) {
     throw operationInputError(
-      "This MCPJam server cannot launch a multi-model compose without attaching the environments. Upgrade the backend (ephemeralEnvironmentLaunch) or pass --save-targets / saveTargets to attach them instead.",
+      "This MCPJam server cannot launch a multi-model compose without attaching the environments. Upgrade the backend (ephemeralEnvironmentLaunch) or pass --save-targets / saveTargets to attach them instead."
     );
   }
   if (input.choiceCount > 10) {
     throw operationInputError(
-      `1 client × ${input.choiceCount} model choices = ${input.choiceCount} targets; limit 10.`,
+      `1 client × ${input.choiceCount} model choices = ${input.choiceCount} targets; limit 10.`
     );
   }
   const attach =
@@ -2627,7 +2643,7 @@ function isAbortError(error: unknown): boolean {
  */
 async function createEvalRunOrReportCompose<T>(
   composed: ComposedRunEnvironment | undefined,
-  launch: () => Promise<T>,
+  launch: () => Promise<T>
 ): Promise<T> {
   if (!composed) return launch();
   try {
@@ -2636,7 +2652,7 @@ async function createEvalRunOrReportCompose<T>(
     const cells = composed.report.environments ?? [composed.report.environment];
     const note = composedCellsNote(
       cells,
-      composed.report.attachment.attached === true,
+      composed.report.attachment.attached === true
     );
     if (error instanceof PlatformApiError) {
       throw new PlatformApiError(`${error.message} ${note}`, error.code, {
@@ -2677,7 +2693,7 @@ async function createEvalRunGroupOrExplain(
   client: PlatformApiClient,
   projectId: string,
   body: Record<string, unknown>,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformEvalRunGroupCreated> {
   try {
     return await client.createEvalRunGroup({ projectId, body }, { signal });
@@ -2697,7 +2713,7 @@ async function createEvalRunGroupOrExplain(
       throw new PlatformApiError(
         "This MCPJam server is too old for grouped eval-run launches. Run the targets one at a time (name a single environment or host per call) until it is upgraded.",
         "NOT_FOUND",
-        { status: 404 },
+        { status: 404 }
       );
     }
     throw error;
@@ -2724,11 +2740,11 @@ export const listEvalSuitesOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listEvalSuites(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2777,12 +2793,12 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const page = await client.listEvalSuiteRuns(
       { projectId: project.id, suiteId: suite.id, limit: input.limit },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2816,7 +2832,7 @@ const composeRunTargetInput = z
       .trim()
       .min(1)
       .describe(
-        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with."
       ),
     serverGroup: z
       .string()
@@ -2824,34 +2840,32 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+        "Standalone server group to pin (by ID). Omit to use the host's own servers."
       ),
     model: z
       .string()
       .trim()
       .min(1)
       .optional()
-      .describe(
-        "Singular alias for `models`. Prefer `models` for a matrix.",
-      ),
+      .describe("Singular alias for `models`. Prefer `models` for a matrix."),
     models: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe(
-        "Explicit model overrides. Each id mints one override cell. Combined with `includeClientDefault` this is the model axis. Replaces the client default unless `includeClientDefault` is true.",
+        "Explicit model overrides. Each id mints one override cell. Combined with `includeClientDefault` this is the model axis. Replaces the client default unless `includeClientDefault` is true."
       ),
     includeClientDefault: z
       .boolean()
       .optional()
       .describe(
-        "Also mint an inherit cell that uses the host's pinned model. Default false when `models` is set; implied true when no models are named.",
+        "Also mint an inherit cell that uses the host's pinned model. Default false when `models` is set; implied true when no models are named."
       ),
     saveTargets: z
       .boolean()
       .optional()
       .describe(
-        "Attach the minted cells to the suite (append, capped at 10). Default is ephemeral: mint and launch without mutating suite attachments.",
+        "Attach the minted cells to the suite (append, capped at 10). Default is ephemeral: mint and launch without mutating suite attachments."
       ),
     computer: z
       .string()
@@ -2859,7 +2873,7 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared.",
+        "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared."
       ),
     skills: z
       .object({
@@ -2875,7 +2889,7 @@ const composeRunTargetInput = z
       .describe("Plugin VERSION IDs to pin for the composed stack."),
   })
   .describe(
-    "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached.",
+    "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
 
 const RUN_KNOB_FIELDS = {
@@ -2886,7 +2900,7 @@ const RUN_KNOB_FIELDS = {
     .max(10)
     .optional()
     .describe(
-      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
     ),
   iterations: z
     .number()
@@ -2895,7 +2909,7 @@ const RUN_KNOB_FIELDS = {
     .max(10)
     .optional()
     .describe(
-      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs."
     ),
   notes: z
     .string()
@@ -2909,18 +2923,18 @@ const RUN_KNOB_FIELDS = {
     .max(100)
     .optional()
     .describe(
-      "Pass threshold for this run as a percentage (0-100), overriding the suite's own criterion.",
+      "Pass threshold for this run as a percentage (0-100), overriding the suite's own criterion."
     ),
   matchOptions: publicMatchOptionsSchema
     .optional()
     .describe(
-      "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases.",
+      "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases."
     ),
   excludeSkills: z
     .boolean()
     .optional()
     .describe(
-      "Run the 'without skills' arm of an A/B comparison: NO skills are pinned from any channel and the run is labelled as excluded, rather than merely being skill-free. Scoped to skill delivery — a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed.",
+      "Run the 'without skills' arm of an A/B comparison: NO skills are pinned from any channel and the run is labelled as excluded, rather than merely being skill-free. Scoped to skill delivery — a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed."
     ),
   idempotencyKey: z
     .string()
@@ -2929,84 +2943,84 @@ const RUN_KNOB_FIELDS = {
     .max(256)
     .optional()
     .describe(
-      "Retry-safety key. Repeating a call with the same key returns the run it already started instead of starting (and billing) a second one. On a multi-target launch the key covers the whole group: a retry returns the same group and the same runs.",
+      "Retry-safety key. Repeating a call with the same key returns the run it already started instead of starting (and billing) a second one. On a multi-target launch the key covers the whole group: a retry returns the same group and the same runs."
     ),
   sourceHash: z
     .string()
     .regex(
       /^[a-f0-9]{64}$/,
-      "sourceHash must be a 64-character lowercase SHA-256 hex digest",
+      "sourceHash must be a 64-character lowercase SHA-256 hex digest"
     )
     .optional()
     .describe(
-      "SHA-256 hex of the suite-file bytes that launched this run. Set by `eval run --file`; a UI or API launch that did not come from a file omits it.",
+      "SHA-256 hex of the suite-file bytes that launched this run. Set by `eval run --file`; a UI or API launch that did not come from a file omits it."
     ),
 } as const;
 
 const runEvalSuiteInput = z
   .object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  servers: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .optional()
-    .describe(
-      "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted.",
-    ),
-  environment: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
-  environments: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .optional()
-    .describe(
-      "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
-    ),
-  host: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(
-      "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`.",
-    ),
-  hosts: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .optional()
-    .describe(
-      "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error.",
-    ),
-  allAttached: z
-    .boolean()
-    .optional()
-    .describe(
-      "Run EVERY attached environment (or, when the suite has none, every attached host), one run per target, grouped under a single launch. THIS LAUNCHES MULTIPLE PAID RUNS — one per target, each consuming credits. Cannot be combined with naming targets explicitly: 'all of them' and 'these ones' cannot both be meant.",
-    ),
-  cases: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .optional()
-    .describe(
-      "Run only these cases (titles or IDs) instead of the whole suite. The suite itself is untouched.",
-    ),
-  refreshSnapshot: z
-    .boolean()
-    .optional()
-    .describe(
-      "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
-    ),
-  compose: composeRunTargetInput.optional(),
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    servers: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
+      ),
+    environment: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+    environments: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error."
+      ),
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`."
+      ),
+    hosts: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error."
+      ),
+    allAttached: z
+      .boolean()
+      .optional()
+      .describe(
+        "Run EVERY attached environment (or, when the suite has none, every attached host), one run per target, grouped under a single launch. THIS LAUNCHES MULTIPLE PAID RUNS — one per target, each consuming credits. Cannot be combined with naming targets explicitly: 'all of them' and 'these ones' cannot both be meant."
+      ),
+    cases: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Run only these cases (titles or IDs) instead of the whole suite. The suite itself is untouched."
+      ),
+    refreshSnapshot: z
+      .boolean()
+      .optional()
+      .describe(
+        "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant."
+      ),
+    compose: composeRunTargetInput.optional(),
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
@@ -3014,7 +3028,8 @@ const runEvalSuiteInput = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["repetitions"],
-        message: "Use either repetitions or the deprecated iterations alias, not both.",
+        message:
+          "Use either repetitions or the deprecated iterations alias, not both.",
       });
     }
   });
@@ -3121,7 +3136,10 @@ export const runEvalSuiteOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal, onDisclosure, onDisclosureUnavailable }) {
+  async execute(
+    input,
+    { client, signal, onDisclosure, onDisclosureUnavailable }
+  ) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3131,7 +3149,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
 
@@ -3149,7 +3167,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     // and the error would say nothing about it.
     const caseIds = input.cases
       ? (await resolveCases(client, project, suite, input.cases, signal)).map(
-          (testCase) => testCase.id,
+          (testCase) => testCase.id
         )
       : undefined;
 
@@ -3166,14 +3184,14 @@ export const runEvalSuiteOperation: PlatformOperation<
       const capabilities = await probeComposeCapabilities(
         client,
         project.id,
-        signal,
+        signal
       );
       const policy = composeLaunchPolicy({
         choiceCount: composeChoices.length,
         saveTargets: input.compose.saveTargets === true,
         ephemeralOk: capabilities.ephemeralLaunch,
         explicitModels: composeChoices.some(
-          (choice) => choice.modelId !== undefined,
+          (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
         ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
@@ -3188,7 +3206,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           suite,
           input.compose,
           signal,
-          { attach: composeAttach },
+          { attach: composeAttach }
         )
       : undefined;
 
@@ -3203,7 +3221,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         ? undefined
         : await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
-            { signal },
+            { signal }
           );
 
     const selectedEnvironments = await resolveSuiteEnvironmentTargets(
@@ -3212,12 +3230,12 @@ export const runEvalSuiteOperation: PlatformOperation<
       suite,
       detail,
       input.environment ? [input.environment] : input.environments ?? [],
-      signal,
+      signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? [],
+      input.host ? [input.host] : input.hosts ?? []
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -3229,7 +3247,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       client,
       project,
       detail?.environmentIds ?? [],
-      signal,
+      signal
     );
 
     // A composed stack IS the target set: one cell → a single launch, N
@@ -3274,7 +3292,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     }
     if (plan.kind === "group" && input.refreshSnapshot) {
       throw operationInputError(
-        "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+        "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it."
       );
     }
 
@@ -3350,11 +3368,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-                ? { environmentIds: disclosureEnvironmentIds }
-                : {}),
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
-          { signal: disclosureBound.signal },
+          { signal: disclosureBound.signal }
         );
       } catch (error) {
         disclosure = undefined;
@@ -3383,7 +3401,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       // "attempted, failed" rather than rendering nothing gets the chance to
       // here. Still never blocks or fails the launch.
       invokeDisclosureCallback(() =>
-        onDisclosureUnavailable?.(disclosureFailureReason!),
+        onDisclosureUnavailable?.(disclosureFailureReason!)
       );
     }
 
@@ -3410,8 +3428,8 @@ export const runEvalSuiteOperation: PlatformOperation<
               ...knobs,
             },
           },
-          { signal },
-        ),
+          { signal }
+        )
       );
       const servers =
         overrideServers?.map((server) => ({
@@ -3462,17 +3480,17 @@ export const runEvalSuiteOperation: PlatformOperation<
           targets: plan.targets.map((target) =>
             target.kind === "environment"
               ? { environmentId: target.id }
-              : { namedHostId: target.id },
+              : { namedHostId: target.id }
           ),
           ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
           ...knobs,
         },
-        signal,
-      ),
+        signal
+      )
     );
 
     const nameById = new Map(
-      plan.targets.map((target) => [target.id, target.name]),
+      plan.targets.map((target) => [target.id, target.name])
     );
     const targets: RunEvalTargetResult[] = group.targets.map((entry) => {
       const id = entry.target.namedHostId ?? entry.target.environmentId ?? "";
@@ -3515,7 +3533,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     });
     const firstStarted = targets.find(
       (target): target is Extract<RunEvalTargetResult, { status: "started" }> =>
-        target.status === "started",
+        target.status === "started"
     );
     return {
       project: projectInfo,
@@ -3546,53 +3564,56 @@ export const runEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const runEvalCaseInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  case: z
-    .string()
-    .trim()
-    .min(1)
-    .describe("The test case to run, by id or title, within the suite."),
-  servers: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .optional()
-    .describe(
-      "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with.",
-    ),
-  environment: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
-  host: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(
-      "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
-    ),
-  compose: composeRunTargetInput.optional(),
-  repetitions: RUN_KNOB_FIELDS.repetitions,
-  iterations: RUN_KNOB_FIELDS.iterations,
-  idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
-}).superRefine((input, ctx) => {
-  if (input.repetitions !== undefined && input.iterations !== undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["repetitions"],
-      message: "Use either repetitions or the deprecated iterations alias, not both.",
-    });
-  }
-});
+const runEvalCaseInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    case: z
+      .string()
+      .trim()
+      .min(1)
+      .describe("The test case to run, by id or title, within the suite."),
+    servers: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with."
+      ),
+    environment: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`."
+      ),
+    compose: composeRunTargetInput.optional(),
+    repetitions: RUN_KNOB_FIELDS.repetitions,
+    iterations: RUN_KNOB_FIELDS.iterations,
+    idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
+  })
+  .superRefine((input, ctx) => {
+    if (input.repetitions !== undefined && input.iterations !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repetitions"],
+        message:
+          "Use either repetitions or the deprecated iterations alias, not both.",
+      });
+    }
+  });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
 
@@ -3644,7 +3665,7 @@ export const runEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -3652,7 +3673,7 @@ export const runEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal,
+      signal
     );
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
@@ -3662,7 +3683,7 @@ export const runEvalCaseOperation: PlatformOperation<
       : [];
     if (composeChoices.length > 1) {
       throw operationInputError(
-        "`run_eval_case` accepts only one compose model — its receipt is a single run. Use `run_eval_suite` / `eval run` for a client × model matrix.",
+        "`run_eval_case` accepts only one compose model — its receipt is a single run. Use `run_eval_suite` / `eval run` for a client × model matrix."
       );
     }
     let composeAttach = false;
@@ -3671,14 +3692,14 @@ export const runEvalCaseOperation: PlatformOperation<
       const capabilities = await probeComposeCapabilities(
         client,
         project.id,
-        signal,
+        signal
       );
       const policy = composeLaunchPolicy({
         choiceCount: composeChoices.length,
         saveTargets: input.compose.saveTargets === true,
         ephemeralOk: capabilities.ephemeralLaunch,
         explicitModels: composeChoices.some(
-          (choice) => choice.modelId !== undefined,
+          (choice) => choice.modelId !== undefined
         ),
         modelOverridesOk: capabilities.modelOverrides,
       });
@@ -3692,7 +3713,7 @@ export const runEvalCaseOperation: PlatformOperation<
           suite,
           input.compose,
           signal,
-          { attach: composeAttach },
+          { attach: composeAttach }
         )
       : undefined;
     const environment = input.environment
@@ -3700,7 +3721,7 @@ export const runEvalCaseOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal,
+          signal
         )
       : undefined;
     // The suite detail is read ONLY when a host was named — a case run is
@@ -3711,9 +3732,9 @@ export const runEvalCaseOperation: PlatformOperation<
           suite,
           await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
-            { signal },
+            { signal }
           ),
-          [input.host],
+          [input.host]
         )[0]!
       : undefined;
     const created = await createEvalRunOrReportCompose(composed, () =>
@@ -3734,7 +3755,8 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.repetitions !== undefined || input.iterations !== undefined
+            ...(input.repetitions !== undefined ||
+            input.iterations !== undefined
               ? { iterationOverride: input.repetitions ?? input.iterations }
               : {}),
             ...(input.idempotencyKey
@@ -3742,8 +3764,8 @@ export const runEvalCaseOperation: PlatformOperation<
               : {}),
           },
         },
-        { signal },
-      ),
+        { signal }
+      )
     );
     const servers =
       overrideServers?.map((server) => ({
@@ -3839,7 +3861,7 @@ const evalCaseInput = z.object({
     .array(stepInputSchema)
     .min(1)
     .describe(
-      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls.",
+      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
     ),
   expectedOutput: z
     .string()
@@ -3886,7 +3908,7 @@ const evalCaseInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Per-case provider override; defaults to the suite-level provider.",
+      "Per-case provider override; defaults to the suite-level provider."
     ),
 });
 
@@ -3910,14 +3932,14 @@ const createEvalSuiteInput = z.strictObject({
     .array(z.string().trim().min(1))
     .min(1)
     .describe(
-      "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted.",
+      "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted."
     ),
   model: z
     .string()
     .trim()
     .min(1)
     .describe(
-      'Suite-level default model applied to every case, e.g. "anthropic/claude-haiku-4.5". Use a hosted model id, or a provider-prefixed id with the matching provider.',
+      'Suite-level default model applied to every case, e.g. "anthropic/claude-haiku-4.5". Use a hosted model id, or a provider-prefixed id with the matching provider.'
     ),
   provider: z
     .string()
@@ -3925,7 +3947,7 @@ const createEvalSuiteInput = z.strictObject({
     .min(1)
     .optional()
     .describe(
-      "Suite-level default provider. Optional when the model id is provider-prefixed (the provider is derived from the first path segment).",
+      "Suite-level default provider. Optional when the model id is provider-prefixed (the provider is derived from the first path segment)."
     ),
   cases: z
     .array(evalCaseInput)
@@ -3960,13 +3982,13 @@ export const createEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const servers = await resolveRunServers(
       client,
       project,
       input.servers,
-      signal,
+      signal
     );
     const created = await client.createEvalSuite(
       {
@@ -3983,7 +4005,7 @@ export const createEvalSuiteOperation: PlatformOperation<
           tests: input.cases,
         },
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -4009,7 +4031,7 @@ const publicCheckSchema = z
   .object({ type: z.string().trim().min(1) })
   .passthrough()
   .describe(
-    "A deterministic check; `type` is the check kind (e.g. responseContains, toolCalledWith) and remaining fields depend on it.",
+    "A deterministic check; `type` is the check kind (e.g. responseContains, toolCalledWith) and remaining fields depend on it."
   );
 
 const publicCheckOverrideSchema = z
@@ -4037,7 +4059,7 @@ const caseFieldsShape = {
     .min(1)
     .optional()
     .describe(
-      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided.",
+      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided."
     ),
   expectedOutput: z
     .string()
@@ -4069,7 +4091,7 @@ const caseFieldsShape = {
 
 /** Build the public case body forwarded to the route (drops undefined keys). */
 function buildCaseBody(
-  input: Record<string, unknown>,
+  input: Record<string, unknown>
 ): Record<string, unknown> {
   const keys = Object.keys(caseFieldsShape);
   const body: Record<string, unknown> = {};
@@ -4090,12 +4112,12 @@ function buildCaseBody(
 const declaredCaseIdField = opaqueIdSchema
   .optional()
   .describe(
-    "Stable declared id for the case (e.g. from a suite file). Minted for you when omitted.",
+    "Stable declared id for the case (e.g. from a suite file). Minted for you when omitted."
   );
 
 /** `buildCaseBody` plus the create-only declared id. */
 function buildCreateCaseBody(
-  input: Record<string, unknown>,
+  input: Record<string, unknown>
 ): Record<string, unknown> {
   const body = buildCaseBody(input);
   if (input.id !== undefined) body.id = input.id;
@@ -4127,12 +4149,12 @@ export const getEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4150,7 +4172,7 @@ const getEvalRunDisclosureInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Narrow the disclosure to these cases (titles or IDs) instead of the whole suite — the same subset a run selects with `cases`.",
+      "Narrow the disclosure to these cases (titles or IDs) instead of the whole suite — the same subset a run selects with `cases`."
     ),
   environment: z
     .string()
@@ -4163,7 +4185,7 @@ const getEvalRunDisclosureInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+      "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error."
     ),
   host: z
     .string()
@@ -4171,7 +4193,7 @@ const getEvalRunDisclosureInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "An attached host (name or ID) to disclose for, mirroring a `host` run launch — the engine and sandbox facts come from that host's own config. Pass either a host or an environment, never both: a run targets one axis, and an environment already resolves a host.",
+      "An attached host (name or ID) to disclose for, mirroring a `host` run launch — the engine and sandbox facts come from that host's own config. Pass either a host or an environment, never both: a run targets one axis, and an environment already resolves a host."
     ),
 });
 export type GetEvalRunDisclosureInput = z.infer<
@@ -4197,25 +4219,25 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const caseIds = input.cases
       ? (await resolveCases(client, project, suite, input.cases, signal)).map(
-          (testCase) => testCase.id,
+          (testCase) => testCase.id
         )
       : undefined;
     const detail = await client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal },
+      { signal }
     );
     const selectedEnvironments = await resolveSuiteEnvironmentTargets(
       client,
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
-      signal,
+      input.environment ? [input.environment] : input.environments ?? [],
+      signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
     // exactly-one-attached-environment auto-select — so a bare call (no
@@ -4228,7 +4250,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       client,
       project,
       detail.environmentIds ?? [],
-      signal,
+      signal
     );
     // `attachedHosts` IS included in this plan, and since G4c a caller can
     // actually SATISFY a host-axis ambiguity: `host` names one, exactly as
@@ -4241,7 +4263,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : [],
+      input.host ? [input.host] : []
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -4262,7 +4284,9 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       // `allAttached`. The enumeration now names attached HOSTS too, which is
       // what makes this refusal actionable on the host axis rather than a
       // dead end.
-      throw operationInputError(targetRequiredMessage(plan, { readOnly: true }));
+      throw operationInputError(
+        targetRequiredMessage(plan, { readOnly: true })
+      );
     }
     // ONE PLAN, ONE DISCLOSURE. A multi-target GROUP containing a host cannot
     // be expressed as one query: `getRunDisclosure` answers for a single
@@ -4278,7 +4302,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       plan.targets.some((target) => target.kind === "host")
     ) {
       throw operationInputError(
-        "Disclosure covers ONE launch plan, and this resolves to several targets including a host — the contract answers per plan, so a multi-target group spanning hosts has no single engine or model set to disclose. Disclose one target at a time with host or environment.",
+        "Disclosure covers ONE launch plan, and this resolves to several targets including a host — the contract answers per plan, so a multi-target group spanning hosts has no single engine or model set to disclose. Disclose one target at a time with host or environment."
       );
     }
     const disclosureEnvironmentIds =
@@ -4301,11 +4325,11 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-            ? { environmentIds: disclosureEnvironmentIds }
-            : {}),
+          ? { environmentIds: disclosureEnvironmentIds }
+          : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4328,18 +4352,18 @@ const updateEvalSuiteInput = z.strictObject({
         .array(z.string().trim().min(1))
         .optional()
         .describe(
-          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone.",
+          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
         ),
       computerEnvironment: z
         .union([z.string().trim().min(1), z.null()])
         .optional()
         .describe(
-          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image.",
+          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
         ),
     })
     .optional()
     .describe(
-      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved.",
+      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
     ),
   executionConfig: z
     .object({
@@ -4354,7 +4378,7 @@ const updateEvalSuiteInput = z.strictObject({
       z.object({
         host: z.string().trim().min(1).describe("Host name or ID."),
         servers: z.array(z.string().trim().min(1)).optional(),
-      }),
+      })
     )
     .optional()
     .describe("Host attachments (replace-all)."),
@@ -4365,7 +4389,7 @@ const updateEvalSuiteInput = z.strictObject({
         .union([z.number().int().min(1).max(10), z.null()])
         .optional()
         .describe(
-          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor.",
+          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
         ),
       // Nullable to CLEAR suite defaults (vs omit to leave untouched).
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
@@ -4376,14 +4400,14 @@ const updateEvalSuiteInput = z.strictObject({
             .boolean()
             .optional()
             .describe(
-              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen.",
+              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
             ),
           model: z.string().trim().min(1).optional(),
           autoRun: z
             .boolean()
             .optional()
             .describe(
-              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run.",
+              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
             ),
           threshold: z
             .number()
@@ -4391,7 +4415,7 @@ const updateEvalSuiteInput = z.strictObject({
             .max(1)
             .optional()
             .describe(
-              "Advisory pass threshold, 0–1 (passed = score >= threshold).",
+              "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
         })
         .optional(),
@@ -4414,7 +4438,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const body: Record<string, unknown> = {};
@@ -4430,7 +4454,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
     }
     return client.updateEvalSuite(
       { projectId: project.id, suiteId: suite.id, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4460,12 +4484,12 @@ export const deleteEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4486,7 +4510,7 @@ const setEvalSuiteScheduleInput = z.object({
     .max(10080)
     .optional()
     .describe(
-      "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted.",
+      "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted."
     ),
   environment: z
     .string()
@@ -4494,7 +4518,7 @@ const setEvalSuiteScheduleInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project environment name or ID the scheduled runs launch. A schedule fires exactly one run, so an environment-based suite pins exactly one of its attached environments — required when several are attached, defaulted when one is. Only valid with enabled: true.",
+      "Project environment name or ID the scheduled runs launch. A schedule fires exactly one run, so an environment-based suite pins exactly one of its attached environments — required when several are attached, defaulted when one is. Only valid with enabled: true."
     ),
 });
 export type SetEvalSuiteScheduleInput = z.infer<
@@ -4517,13 +4541,13 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
     // of letting the caller believe they repointed the schedule.
     if (input.environment && !input.enabled) {
       throw operationInputError(
-        "environment only applies when enabling a schedule — disabling preserves the existing pin. Re-send with enabled: true to repoint it.",
+        "environment only applies when enabling a schedule — disabling preserves the existing pin. Re-send with enabled: true to repoint it."
       );
     }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const environment = input.environment
@@ -4531,7 +4555,7 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal,
+          signal
         )
       : undefined;
     return client.setEvalSuiteSchedule(
@@ -4546,7 +4570,7 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
           ...(environment ? { environmentId: environment.id } : {}),
         },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4562,7 +4586,7 @@ const setEvalSuiteEnvironmentsInput = z.object({
   environments: z
     .union([z.array(z.string().trim().min(1)).min(1), z.null()])
     .describe(
-      "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null.",
+      "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null."
     ),
 });
 export type SetEvalSuiteEnvironmentsInput = z.infer<
@@ -4583,7 +4607,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     let environmentIds: string[] | null = null;
@@ -4597,7 +4621,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
       // rejection.
       const page = await client.listEnvironments(
         { projectId: project.id },
-        { signal },
+        { signal }
       );
       const resolved: PlatformEnvironment[] = [];
       for (const selector of input.environments) {
@@ -4607,8 +4631,8 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
               page.items,
               selector,
               "Project environment",
-              `project "${project.name}"`,
-            ),
+              `project "${project.name}"`
+            )
           );
           continue;
         } catch (error) {
@@ -4625,7 +4649,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
           try {
             byId = await client.getEnvironment(
               { projectId: project.id, environmentId: trimmed },
-              { signal },
+              { signal }
             );
           } catch (lookupError) {
             if (signal?.aborted || isAbortError(lookupError)) {
@@ -4655,7 +4679,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
         const selector = input.environments![index]!;
         if (previous !== undefined) {
           throw operationInputError(
-            `"${previous}" and "${selector}" both refer to the environment "${environment.name}" (id: ${environment.id}). List each environment once.`,
+            `"${previous}" and "${selector}" both refer to the environment "${environment.name}" (id: ${environment.id}). List each environment once.`
           );
         }
         seen.set(environment.id, selector);
@@ -4668,7 +4692,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
         suiteId: suite.id,
         body: { environmentIds },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4698,12 +4722,12 @@ export const listEvalCasesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.listEvalCases(
       { projectId: project.id, suiteId: suite.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4733,7 +4757,7 @@ export const getEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -4741,11 +4765,11 @@ export const getEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal,
+      signal
     );
     return client.getEvalCase(
       { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4778,7 +4802,7 @@ export const createEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.createEvalCase(
@@ -4787,7 +4811,7 @@ export const createEvalCaseOperation: PlatformOperation<
         suiteId: suite.id,
         body: buildCreateCaseBody(input),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4806,18 +4830,18 @@ const createEvalCasesInput = z.object({
         ...caseFieldsShape,
         title: z.string().trim().min(1).describe("Short case label."),
         id: declaredCaseIdField,
-      }),
+      })
     )
     .min(1)
     .max(MAX_BATCH_CREATE_CASES)
     .describe(
-      `The cases to author, up to ${MAX_BATCH_CREATE_CASES} per call. Split a larger set into several calls.`,
+      `The cases to author, up to ${MAX_BATCH_CREATE_CASES} per call. Split a larger set into several calls.`
     ),
   duplicatePolicy: z
     .enum(["block", "warn", "create_anyway"])
     .optional()
     .describe(
-      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`.",
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`."
     ),
   overrideReason: z
     .string()
@@ -4825,7 +4849,7 @@ const createEvalCasesInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Why authoring a duplicate is intended. Recorded on the case's revision.",
+      "Why authoring a duplicate is intended. Recorded on the case's revision."
     ),
 });
 export type CreateEvalCasesInput = z.infer<typeof createEvalCasesInput>;
@@ -4863,13 +4887,13 @@ export const createEvalCasesOperation: PlatformOperation<
         "VALIDATION_ERROR",
         // Client-synthesized: no request was made, so quoting a server status
         // would misreport what happened.
-        { status: 0 },
+        { status: 0 }
       );
     }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.createEvalCases(
@@ -4878,7 +4902,7 @@ export const createEvalCasesOperation: PlatformOperation<
         suiteId: suite.id,
         body: {
           cases: input.cases.map((testCase) =>
-            buildCreateCaseBody(testCase as Record<string, unknown>),
+            buildCreateCaseBody(testCase as Record<string, unknown>)
           ),
           ...(input.duplicatePolicy
             ? { duplicatePolicy: input.duplicatePolicy }
@@ -4888,7 +4912,7 @@ export const createEvalCasesOperation: PlatformOperation<
             : {}),
         },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4920,7 +4944,7 @@ export const updateEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -4928,7 +4952,7 @@ export const updateEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal,
+      signal
     );
     return client.updateEvalCase(
       {
@@ -4937,7 +4961,7 @@ export const updateEvalCaseOperation: PlatformOperation<
         caseId: testCase.id,
         body: buildCaseBody(input),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4968,7 +4992,7 @@ export const deleteEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -4976,11 +5000,11 @@ export const deleteEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal,
+      signal
     );
     return client.deleteEvalCase(
       { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -4997,13 +5021,13 @@ const generateEvalCasesInput = z.object({
     .enum(["normal", "negative"])
     .optional()
     .describe(
-      "normal = mixed positive/negative cases; negative = only negative. Defaults to normal.",
+      "normal = mixed positive/negative cases; negative = only negative. Defaults to normal."
     ),
   servers: z
     .array(z.string().trim().min(1))
     .optional()
     .describe(
-      "Server names/IDs to discover tools from; defaults to the suite's selection.",
+      "Server names/IDs to discover tools from; defaults to the suite's selection."
     ),
   environment: z
     .string()
@@ -5055,13 +5079,13 @@ const generateEvalCasesInput = z.object({
     })
     .optional()
     .describe(
-      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side.",
+      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side."
     ),
   varyUserStyles: z
     .boolean()
     .optional()
     .describe(
-      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them.",
+      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them."
     ),
   idempotencyKey: z
     .string()
@@ -5070,7 +5094,7 @@ const generateEvalCasesInput = z.object({
     .max(256)
     .optional()
     .describe(
-      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created.",
+      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created."
     ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
@@ -5091,7 +5115,7 @@ export const generateEvalCasesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     // Resolve server name/id selectors to project server IDs before sending —
@@ -5105,7 +5129,7 @@ export const generateEvalCasesOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal,
+          signal
         )
       : undefined;
     return client.generateEvalCases(
@@ -5137,7 +5161,7 @@ export const generateEvalCasesOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      },
+      }
     );
   },
 };
@@ -5149,7 +5173,7 @@ const evalRunScopedInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs.",
+      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
     ),
 });
 
@@ -5174,11 +5198,11 @@ export const getEvalRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.getEvalRun(
       { projectId: project.id, runId: input.runId },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -5191,7 +5215,7 @@ const compareEvalRunInput = evalRunScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite. Mutually exclusive with baseCommitSha.",
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite. Mutually exclusive with baseCommitSha."
     ),
   baseCommitSha: z
     .string()
@@ -5199,7 +5223,7 @@ const compareEvalRunInput = evalRunScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary BASELINE_NOT_FOUND 404 — an incomplete comparison, not a regression. When the SHA matched more than one eligible run, or the bounded lookup saturated, the response reports matchCount and matchCountTruncated; an absent matchCount means the match was unambiguous.",
+      "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary BASELINE_NOT_FOUND 404 — an incomplete comparison, not a regression. When the SHA matched more than one eligible run, or the bounded lookup saturated, the response reports matchCount and matchCountTruncated; an absent matchCount means the match was unambiguous."
     ),
 });
 
@@ -5224,7 +5248,7 @@ export const compareEvalRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const compare = await client.compareEvalRun(
       {
@@ -5233,7 +5257,7 @@ export const compareEvalRunOperation: PlatformOperation<
         baseRunId: input.baseRunId,
         baseCommitSha: input.baseCommitSha,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), compare };
   },
@@ -5277,7 +5301,7 @@ export const listEvalRunIterationsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listEvalRunIterations(
       {
@@ -5286,7 +5310,7 @@ export const listEvalRunIterationsOperation: PlatformOperation<
         cursor: input.cursor,
         limit: input.limit,
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -5330,7 +5354,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const trace = await client.getEvalIterationTrace(
       {
@@ -5338,7 +5362,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
         runId: input.runId,
         iterationId: input.iterationId,
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -5368,11 +5392,11 @@ export const cancelEvalRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.cancelEvalRun(
       { projectId: project.id, runId: input.runId },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -5394,13 +5418,13 @@ const waiveEvalGateInput = evalRunScopedInput.extend({
   reason: z
     .string()
     .describe(
-      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`,
+      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`
     ),
   // A number, but the range is the platform's to refuse — see `reason`.
   expiresAt: z
     .number()
     .describe(
-      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing.",
+      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing."
     ),
 });
 
@@ -5437,7 +5461,7 @@ export const waiveEvalGateOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.createGateWaiver(
       {
@@ -5446,7 +5470,7 @@ export const waiveEvalGateOperation: PlatformOperation<
         reason: input.reason,
         expiresAt: input.expiresAt,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), ...result };
   },
@@ -5472,11 +5496,11 @@ export const getEvalGateWaiverOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const { waiver } = await client.getGateWaiver(
       { projectId: project.id, runId: input.runId },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -5492,7 +5516,7 @@ const revokeEvalGateWaiverInput = evalRunScopedInput.extend({
     .trim()
     .min(1)
     .describe(
-      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver.",
+      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver."
     ),
 });
 
@@ -5522,7 +5546,7 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.revokeGateWaiver(
       {
@@ -5530,7 +5554,7 @@ export const revokeEvalGateWaiverOperation: PlatformOperation<
         runId: input.runId,
         waiverId: input.waiverId,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), ...result };
   },
@@ -5545,7 +5569,7 @@ const requestEvalRunJudgeInput = evalRunScopedInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so turning the judge on for the suite does not reach an already-recorded run.",
+      "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so turning the judge on for the suite does not reach an already-recorded run."
     ),
   model: z
     .string()
@@ -5583,7 +5607,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const judge = await client.requestEvalRunJudge(
       {
@@ -5596,7 +5620,7 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
           ? { threshold: input.threshold }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), judge };
   },
@@ -5614,7 +5638,7 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
   const organizationId = project.organizationId;
   if (!organizationId) {
     throw operationInputError(
-      `Project "${project.name}" does not belong to an organization, and GitHub Checks is configured per organization. Move the suite to a project in an organization, or connect the repository from the app.`,
+      `Project "${project.name}" does not belong to an organization, and GitHub Checks is configured per organization. Move the suite to a project in an organization, or connect the repository from the app.`
     );
   }
   return organizationId;
@@ -5640,7 +5664,7 @@ const listEvalCheckReposInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project name or ID. Only used to select the ORGANIZATION whose connected repositories are listed.",
+      "Project name or ID. Only used to select the ORGANIZATION whose connected repositories are listed."
     ),
 });
 export type ListEvalCheckReposInput = z.infer<typeof listEvalCheckReposInput>;
@@ -5664,11 +5688,11 @@ export const listEvalCheckReposOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const checks = await client.listEvalCheckRepos(
       { organizationId: checkRepoOrganizationOrThrow(project) },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), checks };
   },
@@ -5687,12 +5711,12 @@ const connectEvalCheckRepoInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Repository as owner/repo. Must be one list_eval_check_repos reports as connectable — the MCPJam GitHub App has to be installed on it.",
+      "Repository as owner/repo. Must be one list_eval_check_repos reports as connectable — the MCPJam GitHub App has to be installed on it."
     ),
   outagePolicy: z
     .enum(["fail_open", "fail_closed"])
     .describe(
-      "What the pull-request check reports when MCPJam cannot conclude: fail_open passes it, fail_closed fails it. Required — ask the user which they want rather than choosing for them; fail_closed blocks merges during an MCPJam outage, fail_open lets an unverified change through.",
+      "What the pull-request check reports when MCPJam cannot conclude: fail_open passes it, fail_closed fails it. Required — ask the user which they want rather than choosing for them; fail_closed blocks merges during an MCPJam outage, fail_open lets an unverified change through."
     ),
 });
 export type ConnectEvalCheckRepoInput = z.infer<
@@ -5722,7 +5746,7 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     // BEFORE the suite lookup: a project with no organization can never
     // connect, so spending a round trip to resolve a suite first only delays
@@ -5737,7 +5761,7 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
         repo: input.repo,
         outagePolicy: input.outagePolicy,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), check };
   },
@@ -5774,7 +5798,7 @@ export const getEvalRunStepsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.getEvalRunSteps(
       {
@@ -5782,7 +5806,7 @@ export const getEvalRunStepsOperation: PlatformOperation<
         runId: input.runId,
         iterationId: input.iterationId,
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -5797,17 +5821,17 @@ async function resolveSuite(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformEvalSuite> {
   const page = await client.listEvalSuites(
     { projectId: project.id },
-    { signal },
+    { signal }
   );
   return resolveByIdOrName(
     page.items,
     selector,
     "Eval suite",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -5825,11 +5849,11 @@ async function resolveCases(
   project: PlatformProject,
   suite: PlatformEvalSuite,
   selectors: string[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformEvalCase[]> {
   const page = await client.listEvalCases(
     { projectId: project.id, suiteId: suite.id },
-    { signal },
+    { signal }
   );
   const items = page.items.map((testCase) => ({
     ...testCase,
@@ -5841,7 +5865,7 @@ async function resolveCases(
       items,
       selector,
       "Eval case",
-      `suite "${suite.name ?? suite.id}"`,
+      `suite "${suite.name ?? suite.id}"`
     );
     resolved.set(testCase.id, testCase);
   }
@@ -5855,14 +5879,14 @@ async function resolveCase(
   project: PlatformProject,
   suite: PlatformEvalSuite,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformEvalCase> {
   const [testCase] = await resolveCases(
     client,
     project,
     suite,
     [selector],
-    signal,
+    signal
   );
   return testCase!;
 }
@@ -5880,11 +5904,11 @@ async function resolveRunServers(
   client: PlatformApiClient,
   project: PlatformProject,
   selectors: string[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformProjectServer[]> {
   const page = await client.listProjectServers(
     { projectId: project.id },
-    { signal },
+    { signal }
   );
 
   const resolved = new Map<string, PlatformProjectServer>();
@@ -5893,7 +5917,7 @@ async function resolveRunServers(
       page.items,
       selector,
       "Server",
-      `project "${project.name}"`,
+      `project "${project.name}"`
     );
     // Fail deterministically here rather than downstream at run creation:
     // the hosted runner can never connect to these.
@@ -5903,7 +5927,7 @@ async function resolveRunServers(
           server.transportType === "stdio"
             ? "stdio servers are not supported on the hosted platform"
             : "it has no URL"
-        }. Select an HTTP server instead.`,
+        }. Select an HTTP server instead.`
       );
     }
     resolved.set(server.id, server);
@@ -5928,7 +5952,7 @@ const createTunnelInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel (its URL is overwritten and stdio records are converted to HTTP).",
+      "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel (its URL is overwritten and stdio records are converted to HTTP)."
     ),
 });
 
@@ -5953,11 +5977,11 @@ export const createTunnelOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const grant = await client.createTunnel(
       { projectId: project.id, name: input.name },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), grant };
   },
@@ -5975,7 +5999,7 @@ const closeTunnelInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Server ID whose tunnel to revoke, as returned by create_tunnel.",
+      "Server ID whose tunnel to revoke, as returned by create_tunnel."
     ),
 });
 
@@ -6001,11 +6025,11 @@ export const closeTunnelOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.closeTunnel(
       { projectId: project.id, serverId: input.serverId },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -6037,11 +6061,11 @@ export const listScenariosOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listScenarios(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -6082,21 +6106,21 @@ export const getScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listScenarios(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     const match = resolveByIdOrName(
       page.items,
       input.scenario,
       "Scenario",
-      `project "${project.name}"`,
+      `project "${project.name}"`
     );
     const scenario = await client.getScenario(
       { projectId: project.id, scenarioId: match.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), scenario };
   },
@@ -6109,7 +6133,7 @@ const listChatSessionsInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional project filter (name or ID). When omitted, lists sessions across all accessible projects.",
+      "Optional project filter (name or ID). When omitted, lists sessions across all accessible projects."
     ),
   status: z
     .string()
@@ -6166,7 +6190,7 @@ export const listChatSessionsOperation: PlatformOperation<
         limit: input.limit,
         before: input.cursor,
       },
-      { signal },
+      { signal }
     );
     return {
       ...(project ? { project: toSelectedProjectInfo(project) } : {}),
@@ -6196,7 +6220,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .max(200)
     .describe(
-      "REQUIRED, and must be STABLE for the intent behind this turn — not a fresh id per attempt. This call spends model credits; with a stable key a timed-out retry replays the completed turn instead of running and billing it again.",
+      "REQUIRED, and must be STABLE for the intent behind this turn — not a fresh id per attempt. This call spends model credits; with a stable key a timed-out retry replays the completed turn instead of running and billing it again."
     ),
   message: z
     .string()
@@ -6209,7 +6233,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project name or ID. Required to START a session; ignored when continuing one, which takes its project from the session.",
+      "Project name or ID. Required to START a session; ignored when continuing one, which takes its project from the session."
     ),
   sessionId: z
     .string()
@@ -6217,7 +6241,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Continue this session. Omit to start a new one. Use the sessionId a previous turn returned.",
+      "Continue this session. Omit to start a new one. Use the sessionId a previous turn returned."
     ),
   modelId: z
     .string()
@@ -6225,7 +6249,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.',
+      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
     ),
   environmentId: z
     .string()
@@ -6233,7 +6257,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Run against this project environment's servers. Mutually exclusive with serverIds. First turn only.",
+      "Run against this project environment's servers. Mutually exclusive with serverIds. First turn only."
     ),
   serverIds: z
     .array(z.string().trim().min(1))
@@ -6241,7 +6265,7 @@ const sendChatMessageInput = z.object({
     .max(20)
     .optional()
     .describe(
-      "Run against these project servers. Mutually exclusive with environmentId. First turn only.",
+      "Run against these project servers. Mutually exclusive with environmentId. First turn only."
     ),
   systemPrompt: z.string().max(8000).optional().describe("First turn only."),
   temperature: z
@@ -6261,21 +6285,21 @@ const sendChatMessageInput = z.object({
     .enum(["read_only", "auto"])
     .optional()
     .describe(
-      'Default "read_only": only tools the server annotated readOnlyHint:true are advertised. "auto" advertises everything and MAY CAUSE REAL SIDE EFFECTS through arbitrary third-party tools. The hint is server-asserted, so read_only is a policy, not a guarantee. First turn only.',
+      'Default "read_only": only tools the server annotated readOnlyHint:true are advertised. "auto" advertises everything and MAY CAUSE REAL SIDE EFFECTS through arbitrary third-party tools. The hint is server-asserted, so read_only is a policy, not a guarantee. First turn only.'
     ),
   allowedServerIds: z
     .array(z.string().trim().min(1))
     .max(20)
     .optional()
     .describe(
-      "Narrow THIS TURN to a subset of the target's servers. An EMPTY array narrows to none and is rejected — omit the field to use the whole target. Per-turn, not pinned: re-send it on every turn you want narrowed. The response reports advertisedToolCount/excludedToolCount so the effective surface is never a guess.",
+      "Narrow THIS TURN to a subset of the target's servers. An EMPTY array narrows to none and is rejected — omit the field to use the whole target. Per-turn, not pinned: re-send it on every turn you want narrowed. The response reports advertisedToolCount/excludedToolCount so the effective surface is never a guess."
     ),
   allowedTools: z
     .array(z.string().trim().min(1))
     .max(100)
     .optional()
     .describe(
-      "Advertise only these tool names, for THIS TURN. An EMPTY array advertises no tools at all — the same request as maxToolCalls:0. Per-turn, not pinned: re-send it on every turn you want narrowed.",
+      "Advertise only these tool names, for THIS TURN. An EMPTY array advertises no tools at all — the same request as maxToolCalls:0. Per-turn, not pinned: re-send it on every turn you want narrowed."
     ),
   maxToolCalls: z
     .number()
@@ -6284,7 +6308,7 @@ const sendChatMessageInput = z.object({
     .max(16)
     .optional()
     .describe(
-      "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). 0 advertises no tools at all. Per-turn.",
+      "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). 0 advertises no tools at all. Per-turn."
     ),
 });
 
@@ -6338,7 +6362,7 @@ export const sendChatMessageOperation: PlatformOperation<
           ? { maxToolCalls: input.maxToolCalls }
           : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -6348,14 +6372,16 @@ const getChatSessionInput = z.object({
     .string()
     .trim()
     .min(1)
-    .describe("The session id returned by send_chat_message or list_chat_sessions."),
+    .describe(
+      "The session id returned by send_chat_message or list_chat_sessions."
+    ),
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(
-      "Optional project scope. When given, a session in another project answers as not found.",
+      "Optional project scope. When given, a session in another project answers as not found."
     ),
   afterMessageIndex: z
     .number()
@@ -6363,7 +6389,7 @@ const getChatSessionInput = z.object({
     .min(0)
     .optional()
     .describe(
-      "Start the window at this ABSOLUTE transcript index — the same index trace spans reference.",
+      "Start the window at this ABSOLUTE transcript index — the same index trace spans reference."
     ),
   limit: z.number().int().min(1).max(200).optional(),
 });
@@ -6383,7 +6409,8 @@ export const getChatSessionOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     const projectSelector = input.project?.trim();
     const projectId = projectSelector
-      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
+          .id
       : undefined;
     return client.getChatSession(
       {
@@ -6394,7 +6421,7 @@ export const getChatSessionOperation: PlatformOperation<
           : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -6407,14 +6434,16 @@ const getChatSessionTraceInput = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe("Return exactly this turn. Mutually exclusive with afterPromptIndex."),
+    .describe(
+      "Return exactly this turn. Mutually exclusive with afterPromptIndex."
+    ),
   afterPromptIndex: z
     .number()
     .int()
     .min(0)
     .optional()
     .describe(
-      "Page forward from this turn index. Mutually exclusive with turnId.",
+      "Page forward from this turn index. Mutually exclusive with turnId."
     ),
   limit: z
     .number()
@@ -6427,7 +6456,7 @@ const getChatSessionTraceInput = z.object({
     .boolean()
     .optional()
     .describe(
-      "Set false for cheap per-turn summaries (no span payloads) when deciding which turn to pull.",
+      "Set false for cheap per-turn summaries (no span payloads) when deciding which turn to pull."
     ),
 });
 
@@ -6446,7 +6475,8 @@ export const getChatSessionTraceOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     const projectSelector = input.project?.trim();
     const projectId = projectSelector
-      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
+          .id
       : undefined;
     return client.getChatSessionTrace(
       {
@@ -6461,7 +6491,7 @@ export const getChatSessionTraceOperation: PlatformOperation<
           ? { includeSpans: input.includeSpans }
           : {}),
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -6478,7 +6508,7 @@ const searchSessionsInput = z.object({
     .enum(["titles", "transcripts"])
     .optional()
     .describe(
-      "What to search. 'titles' (default) matches session titles and first messages across the whole corpus; 'transcripts' matches what was actually said inside conversations.",
+      "What to search. 'titles' (default) matches session titles and first messages across the whole corpus; 'transcripts' matches what was actually said inside conversations."
     ),
   project: z
     .string()
@@ -6491,7 +6521,7 @@ const searchSessionsInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Restrict to these session surfaces. Omit to search all available surfaces.",
+      "Restrict to these session surfaces. Omit to search all available surfaces."
     ),
   status: z
     .enum(["active", "archived"])
@@ -6509,7 +6539,7 @@ const searchSessionsInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Opaque pagination cursor from a previous response. Page with the same query and scope you opened with.",
+      "Opaque pagination cursor from a previous response. Page with the same query and scope you opened with."
     ),
 });
 
@@ -6544,14 +6574,14 @@ export const searchSessionsOperation: PlatformOperation<
     const query = input.query?.trim() ?? "";
     if (query.length === 0) {
       throw operationInputError(
-        "query is required — search_sessions searches, it does not list.",
+        "query is required — search_sessions searches, it does not list."
       );
     }
 
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const requestedScope = input.scope ?? "titles";
     const page = await client.listSessions(
@@ -6564,7 +6594,7 @@ export const searchSessionsOperation: PlatformOperation<
         limit: input.limit,
         cursor: input.cursor,
       },
-      { signal },
+      { signal }
     );
 
     // FAIL CLOSED on version skew. A backend that predates `scope` ignores the
@@ -6580,7 +6610,7 @@ export const searchSessionsOperation: PlatformOperation<
         // `status: 0` like every other client-synthesized error: the request
         // itself returned 200, so quoting a server status would misreport
         // what happened.
-        { status: 0 },
+        { status: 0 }
       );
     }
 
@@ -6593,48 +6623,88 @@ export const searchSessionsOperation: PlatformOperation<
   },
 };
 
-// ── Hosts ──────────────────────────────────────────────────────────────────
+// ── Clients ─────────────────────────────────────────────────────────────────
+//
+// A **Client** is the product noun: a named, reusable configuration that
+// defines how MCPJam connects to and talks to your MCP servers.
+//
+// Every config-affecting write here is COMPARE-AND-SET. `expectedConfigId` is
+// the `configId` the caller last read; because the config is content-addressed,
+// the same id means byte-identical settings, so this is a precise "I composed
+// my edit against exactly this" claim rather than a revision counter's "nothing
+// happened since". A rename takes a SEPARATE `expectedName` token, because a
+// rename does not rotate the config and config identity is therefore blind to
+// a concurrent one.
+//
+// The deprecated `*_host` operations at the end of this section keep their old
+// names, inputs and DTOs for existing embedders. They are NOT in
+// `ALL_OPERATIONS`, so no registered surface can mint a proposal or a tool
+// under an old name.
 
-const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+const CLIENT_SELECTOR_DESCRIPTION = "Client name or ID.";
 
-async function resolveHost(
+const EXPECTED_CONFIG_ID_DESCRIPTION =
+  "The `configId` you last read for this client (from get_client). Required for any config edit: if the client changed since, the write is rejected with a conflict instead of overwriting the other edit — re-read and retry.";
+
+const EXPECTED_NAME_DESCRIPTION =
+  "The `name` you last read for this client (from get_client). Required whenever you send `name`: a rename does not change the config, so `expectedConfigId` cannot detect a concurrent rename.";
+
+const EXPECTED_IMPACT_DESCRIPTION =
+  "The `impact` you last read for this client. Optional, and checked transactionally when sent: if a consumer was added or removed since, the write conflicts rather than affecting more than you were told it would.";
+
+const clientImpactSchema = z.object({
+  liveEnvironmentCount: z.number().int().min(0),
+  scenarioAttachmentCount: z.number().int().min(0),
+  activeLegacyJourneyCount: z.number().int().min(0),
+});
+
+/**
+ * Resolve a client selector to its detail.
+ *
+ * Delegates the name/ID question to `getClient`, which the canonical route
+ * answers server-side. The old `resolveHost` listed the project's clients and
+ * scanned them here, which meant this file owned a second opinion about
+ * ambiguity and about which rows are eligible — and no opinion at all about the
+ * private User Testing backing rows the server hides.
+ */
+async function resolveClient(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
-): Promise<PlatformHost> {
-  const page = await client.listHosts({ projectId: project.id }, { signal });
-  return resolveByIdOrName(
-    page.items,
-    selector,
-    "Host",
-    `project "${project.name}"`,
+  signal: AbortSignal | undefined
+): Promise<PlatformClientDetail> {
+  return client.getClient(
+    { projectId: project.id, client: selector },
+    { signal }
   );
 }
 
-export type ListHostsResult = {
+export type ListClientsResult = {
   project: SelectedProjectInfo;
-  items: PlatformHost[];
+  items: PlatformClient[];
   otherProjects: ProjectInfo[];
 };
 
-export const listHostsOperation: PlatformOperation<
+export const listClientsOperation: PlatformOperation<
   ProjectScopedInput,
-  ListHostsResult
+  ListClientsResult
 > = {
-  name: "list_hosts",
-  title: "List MCPJam hosts",
+  name: "list_clients",
+  title: "List MCPJam clients",
   description:
-    "List the hosts saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+    "List the clients saved in an MCPJam project — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns each client's `configId`, which every write takes as a concurrency token. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
-    const page = await client.listHosts({ projectId: project.id }, { signal });
+    const page = await client.listClients(
+      { projectId: project.id },
+      { signal }
+    );
     return {
       project: toSelectedProjectInfo(project),
       items: page.items,
@@ -6643,42 +6713,38 @@ export const listHostsOperation: PlatformOperation<
   },
 };
 
-const getHostInput = z.object({
+const getClientInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
 });
-export type GetHostInput = z.infer<typeof getHostInput>;
+export type GetClientInput = z.infer<typeof getClientInput>;
 
-export const getHostOperation: PlatformOperation<
-  GetHostInput,
-  PlatformHostDetail
+export const getClientOperation: PlatformOperation<
+  GetClientInput,
+  PlatformClientDetail
 > = {
-  name: "get_host",
-  title: "Show an MCPJam host",
+  name: "get_client",
+  title: "Show an MCPJam client",
   description:
-    "Show one host's full settings, including its resolved host config (model, capabilities, host context).",
+    "Show one client's full settings: its resolved config (model, capabilities, host context), its `configId` — the token every edit must echo back as `expectedConfigId` — and `impact`, the live environments, scenario attachments and active legacy journeys a config edit would follow. Call this before any edit.",
   readOnly: true,
-  inputSchema: getHostInput,
+  inputSchema: getClientInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
-    const host = await resolveHost(client, project, input.host, signal);
-    return client.getHost(
-      { projectId: project.id, hostId: host.id },
-      { signal },
-    );
+    return resolveClient(client, project, input.client, signal);
   },
 };
 
-const createHostInput = z
+const createClientInput = z
   .object({
     project: z
       .string()
@@ -6686,24 +6752,24 @@ const createHostInput = z
       .min(1)
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
-    name: z.string().trim().min(1).describe("Display name for the new host."),
+    name: z.string().trim().min(1).describe("Display name for the new client."),
     template: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor).",
+        "Built-in template to seed the client config from (e.g. claude, chatgpt, cursor)."
       ),
     theme: z
       .enum(["light", "dark"])
       .optional()
-      .describe("Theme stamped into the seeded host config (template only)."),
+      .describe("Theme stamped into the seeded config (template only)."),
     config: z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
+        "Full client config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`."
       ),
   })
   // ONE `superRefine`, shaped exactly like the route's, because the route's 400
@@ -6737,23 +6803,27 @@ const createHostInput = z
       });
     }
   });
-export type CreateHostInput = z.infer<typeof createHostInput>;
+export type CreateClientInput = z.infer<typeof createClientInput>;
 
-export const createHostOperation: PlatformOperation<
-  CreateHostInput,
-  PlatformHostDetail
+export const createClientOperation: PlatformOperation<
+  CreateClientInput,
+  PlatformClientDetail
 > = {
-  name: "create_host",
-  title: "Create an MCPJam host",
+  name: "create_client",
+  title: "Create an MCPJam client",
   description:
-    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
+    "Create a client in a project, either from a built-in template (`template`, optional `theme`) or from a full config (`config`, which must pin a non-empty `modelId`). Returns the created client. Purely additive — nothing that exists is changed.",
   readOnly: false,
-  inputSchema: createHostInput,
+  // ADDITIVE. Nothing that exists is overwritten or removed, so the honest
+  // annotation is the non-destructive one — and it is what separates this from
+  // update_client, which replaces settings that are currently in force.
+  risk: "none",
+  inputSchema: createClientInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -6761,7 +6831,498 @@ export const createHostOperation: PlatformOperation<
       if (input.theme) body.theme = input.theme;
     }
     if (input.config) body.config = input.config;
-    return client.createHost({ projectId: project.id, body }, { signal });
+    return client.createClient({ projectId: project.id, body }, { signal });
+  },
+};
+
+/**
+ * The PARTIAL edit block, mirroring the route's `set` schema field for field.
+ *
+ * Absent means keep. `null` means "make it go away" — a required field resets
+ * to its canonical default, an optional one clears to absent — and `modelId`
+ * accepts neither `null` nor a blank string, because a client that pins a model
+ * must not be editable into one that doesn't.
+ *
+ * Object-valued fields are WHOLE-OBJECT replacements. To change a deep knob
+ * (say `mcpProfile.apps.sandbox.csp.mode`), read the client, overlay that
+ * sub-object on what `get_client` returned, and send the whole object back.
+ */
+const clientFieldSet = z
+  .object({
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Model the client pins. Value only — there is no null, and a blank string is refused."
+      ),
+    systemPrompt: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('null resets to the default: "".'),
+    temperature: z
+      .number()
+      .finite()
+      .nullable()
+      .optional()
+      .describe("null resets to the default: 0.7."),
+    requireToolApproval: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null resets to the default: false."),
+    connectionDefaults: z
+      .object({
+        headers: z.record(z.string(), z.string()),
+        requestTimeout: z.number().finite(),
+      })
+      .nullable()
+      .optional()
+      .describe(
+        "Whole-object replacement. null resets to the platform defaults."
+      ),
+    respectToolVisibility: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null clears the host-level opt-in."),
+    progressiveToolDiscovery: z
+      .boolean()
+      .nullable()
+      .optional()
+      .describe("null clears the host-level opt-in."),
+    harness: z
+      .enum(["claude-code", "codex"])
+      .nullable()
+      .optional()
+      .describe(
+        "Execution runtime. null clears it (back to emulated). Setting one needs the matching feature flag; clearing never does."
+      ),
+    computer: z
+      .object({
+        kind: z.literal("personal"),
+        toolset: z.literal("bash").optional(),
+        workdir: z.string().optional(),
+      })
+      .nullable()
+      .optional()
+      .describe("null detaches the computer."),
+    builtInToolIds: z
+      .array(z.string().trim().min(1))
+      .nullable()
+      .optional()
+      .describe("Whole-list replacement. null clears it."),
+    skillSelection: z
+      .union([
+        z.object({ mode: z.literal("all-visible") }),
+        z.object({
+          mode: z.literal("explicit"),
+          skillIds: z.array(z.string().trim().min(1)),
+        }),
+      ])
+      .nullable()
+      .optional()
+      .describe("null clears the selection policy."),
+    modelVisibleMcpToolResults: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    mcpToolResultImageRendering: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    mcpProfile: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    hostCapabilitiesOverride: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+    chatUiOverride: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional()
+      .describe("Whole-object replacement. null clears it."),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "`set` must name at least one field to change.",
+  });
+
+const updateClientInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the client."),
+    expectedName: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(EXPECTED_NAME_DESCRIPTION),
+    expectedConfigId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(EXPECTED_CONFIG_ID_DESCRIPTION),
+    expectedImpact: clientImpactSchema
+      .optional()
+      .describe(EXPECTED_IMPACT_DESCRIPTION),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "Whole-config replacement. Prefer `set` — a full round-trip composed from a stale read reverts whatever landed in between."
+      ),
+    set: clientFieldSet
+      .optional()
+      .describe(
+        "Named fields to change, applied over the client's current config inside the write transaction."
+      ),
+  })
+  // Mirrors the route's 400s exactly, so an agent is refused by the schema with
+  // the same sentence the route would have used rather than discovering the
+  // rule from a failed call.
+  .superRefine((value, ctx) => {
+    if (value.config !== undefined && value.set !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Provide either `config` (whole-config replacement) or `set` (named fields), not both.",
+      });
+      return;
+    }
+    if (
+      value.config === undefined &&
+      value.set === undefined &&
+      value.name === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide at least one of `name`, `config`, or `set` to edit.",
+      });
+      return;
+    }
+    if (
+      (value.config !== undefined || value.set !== undefined) &&
+      value.expectedConfigId === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expectedConfigId"],
+        message:
+          "`expectedConfigId` is required for a config edit: call get_client and send back the `configId` it returned.",
+      });
+    }
+    if (value.name !== undefined && value.expectedName === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expectedName"],
+        message:
+          "`expectedName` is required for a rename: call get_client and send back the `name` it returned.",
+      });
+    }
+  });
+export type UpdateClientInput = z.infer<typeof updateClientInput>;
+
+export const updateClientOperation: PlatformOperation<
+  UpdateClientInput,
+  PlatformClientDetail
+> = {
+  name: "update_client",
+  title: "Update an MCPJam client",
+  description:
+    "Edit a client's display name and/or its config. Use `set` to change named fields (absent keeps, null resets or clears); `config` replaces the whole config. Requires `expectedConfigId` for a config edit and `expectedName` for a rename — call get_client first, echo those values back, and on a conflict re-read and retry. An edit that resolves to byte-identical settings writes nothing.",
+  readOnly: false,
+  // OVERWRITE, so `destructive` — the taxonomy is "removes or invalidates
+  // something that existed", and replacing a live setting does exactly that.
+  // Not because it is unrecoverable in the way a delete is: the previous config
+  // row survives in the version trail. But there is no public restore
+  // operation today, so calling this reversible on an agent surface would be a
+  // promise nothing here can keep.
+  risk: "destructive",
+  inputSchema: updateClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const body: Record<string, unknown> = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.expectedName !== undefined)
+      body.expectedName = input.expectedName;
+    if (input.expectedConfigId !== undefined) {
+      body.expectedConfigId = input.expectedConfigId;
+    }
+    if (input.expectedImpact !== undefined) {
+      body.expectedImpact = input.expectedImpact;
+    }
+    if (input.config !== undefined) body.config = input.config;
+    if (input.set !== undefined) body.set = input.set;
+    return client.updateClient(
+      { projectId: project.id, client: input.client, body },
+      { signal }
+    );
+  },
+};
+
+const deleteClientInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+});
+export type DeleteClientInput = z.infer<typeof deleteClientInput>;
+
+export const deleteClientOperation: PlatformOperation<
+  DeleteClientInput,
+  PlatformClientDeleted
+> = {
+  name: "delete_client",
+  title: "Delete an MCPJam client",
+  description:
+    "Permanently delete a client from a project. This cannot be undone.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: deleteClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.deleteClient(
+      {
+        projectId: project.id,
+        client: input.client,
+        // The v1 delete contract is bodyless — the route rejects any field.
+        body: {},
+      },
+      { signal }
+    );
+  },
+};
+
+const setClientServersInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+  serverIds: z.array(z.string().trim().min(1)).describe("Required server IDs."),
+  optionalServerIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe("Optional server IDs enabled for this client."),
+  expectedConfigId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(EXPECTED_CONFIG_ID_DESCRIPTION),
+  expectedImpact: clientImpactSchema
+    .optional()
+    .describe(EXPECTED_IMPACT_DESCRIPTION),
+});
+export type SetClientServersInput = z.infer<typeof setClientServersInput>;
+
+export const setClientServersOperation: PlatformOperation<
+  SetClientServersInput,
+  PlatformClientDetail
+> = {
+  name: "set_client_servers",
+  title: "Set an MCPJam client's servers",
+  description:
+    "Replace the required and optional saved-server attachments for a client. This is a REPLACEMENT, not an addition — servers you omit are detached. Requires `expectedConfigId` from get_client, so two concurrent server changes cannot silently lose one.",
+  readOnly: false,
+  // Same reasoning as update_client, and more plainly: a replacement list
+  // DETACHES every server it omits.
+  risk: "destructive",
+  inputSchema: setClientServersInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.setClientServers(
+      {
+        projectId: project.id,
+        client: input.client,
+        serverIds: input.serverIds,
+        optionalServerIds: input.optionalServerIds,
+        expectedConfigId: input.expectedConfigId,
+        ...(input.expectedImpact
+          ? { expectedImpact: input.expectedImpact }
+          : {}),
+      },
+      { signal }
+    );
+  },
+};
+
+const duplicateClientInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  client: z.string().trim().min(1).describe(CLIENT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).optional().describe("Name for the copy."),
+});
+export type DuplicateClientInput = z.infer<typeof duplicateClientInput>;
+
+export const duplicateClientOperation: PlatformOperation<
+  DuplicateClientInput,
+  PlatformClientDetail
+> = {
+  name: "duplicate_client",
+  title: "Duplicate an MCPJam client",
+  description:
+    "Create a new client carrying the selected client's current config. The source is untouched.",
+  readOnly: false,
+  // ADDITIVE, like create_client: it mints a row and changes nothing existing.
+  risk: "none",
+  inputSchema: duplicateClientInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.duplicateClient(
+      { projectId: project.id, client: input.client, name: input.name },
+      { signal }
+    );
+  },
+};
+
+// ── Hosts (deprecated compatibility operations) ──────────────────────────────
+//
+// Kept executable, with their old names, inputs and `PlatformHost*` DTOs, for
+// embedders holding a reference to one. They are deliberately ABSENT from
+// `ALL_OPERATIONS`, which is what every registered surface partitions: the MCP
+// catalog, the agent registry, the in-app toolset and the CLI bindings can
+// therefore never advertise an old name, and no proposal row can ever persist
+// under one.
+//
+// Each still calls the deprecated `/hosts` route rather than delegating to its
+// client sibling, because the two routes return different shapes and a delegate
+// would change what an existing caller receives.
+
+/** @deprecated Use {@link listClientsOperation}. */
+export type ListHostsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformHost[];
+  otherProjects: ProjectInfo[];
+};
+
+/** @deprecated Use {@link listClientsOperation}. */
+export const listHostsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListHostsResult
+> = {
+  name: "list_hosts",
+  title: "List MCPJam hosts",
+  description:
+    "Deprecated: use list_clients. Lists the clients saved in an MCPJam project under their old name and DTO.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listHosts({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+/**
+ * Resolve a host selector the OLD way — list and scan.
+ *
+ * Retained only for the deprecated operations below, which must keep behaving
+ * exactly as they did. The canonical operations resolve server-side; see
+ * `resolveClient`.
+ */
+async function resolveHost(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformHost> {
+  const page = await client.listHosts({ projectId: project.id }, { signal });
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Host",
+    `project "${project.name}"`
+  );
+}
+
+const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+
+const getHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+});
+/** @deprecated Use {@link GetClientInput}. */
+export type GetHostInput = z.infer<typeof getHostInput>;
+
+/** @deprecated Use {@link getClientOperation}. */
+export const getHostOperation: PlatformOperation<
+  GetHostInput,
+  PlatformHostDetail
+> = {
+  name: "get_host",
+  title: "Show an MCPJam host",
+  description:
+    "Deprecated: use get_client, which also returns the `configId` every edit takes and the impact a config edit would follow.",
+  readOnly: true,
+  inputSchema: getHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal }
+    );
   },
 };
 
@@ -6788,8 +7349,10 @@ const updateHostInput = z
   .refine((value) => value.name !== undefined || value.config !== undefined, {
     message: "Provide at least one of `name` or `config` to update.",
   });
+/** @deprecated Use {@link UpdateClientInput}. */
 export type UpdateHostInput = z.infer<typeof updateHostInput>;
 
+/** @deprecated Use {@link updateClientOperation}, which is compare-and-set. */
 export const updateHostOperation: PlatformOperation<
   UpdateHostInput,
   PlatformHostDetail
@@ -6797,14 +7360,15 @@ export const updateHostOperation: PlatformOperation<
   name: "update_host",
   title: "Update an MCPJam host",
   description:
-    "Edit a host's display name and/or its host config. Only the fields you pass change.",
+    "Deprecated: use update_client, which supports partial `set` edits and requires a concurrency token. This one replaces the whole config with no token, so it can silently revert a concurrent edit.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: updateHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const host = await resolveHost(client, project, input.host, signal);
     const body: Record<string, unknown> = {};
@@ -6812,8 +7376,71 @@ export const updateHostOperation: PlatformOperation<
     if (input.config !== undefined) body.config = input.config;
     return client.updateHost(
       { projectId: project.id, hostId: host.id, body },
-      { signal },
+      { signal }
     );
+  },
+};
+
+const createHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).describe("Display name for the new host."),
+    template: z.string().trim().min(1).optional(),
+    theme: z.enum(["light", "dark"]).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    const modelId = hasConfig ? value.config!.modelId : undefined;
+    if (hasConfig && !(typeof modelId === "string" && modelId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
+  });
+/** @deprecated Use {@link CreateClientInput}. */
+export type CreateHostInput = z.infer<typeof createHostInput>;
+
+/** @deprecated Use {@link createClientOperation}. */
+export const createHostOperation: PlatformOperation<
+  CreateHostInput,
+  PlatformHostDetail
+> = {
+  name: "create_host",
+  title: "Create an MCPJam host",
+  description: "Deprecated: use create_client.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: createHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.template) {
+      body.template = input.template;
+      if (input.theme) body.theme = input.theme;
+    }
+    if (input.config) body.config = input.config;
+    return client.createHost({ projectId: project.id, body }, { signal });
   },
 };
 
@@ -6826,33 +7453,30 @@ const deleteHostInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
 });
+/** @deprecated Use {@link DeleteClientInput}. */
 export type DeleteHostInput = z.infer<typeof deleteHostInput>;
 
+/** @deprecated Use {@link deleteClientOperation}. */
 export const deleteHostOperation: PlatformOperation<
   DeleteHostInput,
   PlatformHostDeleted
 > = {
   name: "delete_host",
   title: "Delete an MCPJam host",
-  description:
-    "Permanently delete a host from a project. This cannot be undone.",
+  description: "Deprecated: use delete_client. This cannot be undone.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: deleteHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.deleteHost(
-      {
-        projectId: project.id,
-        hostId: host.id,
-        // The v1 delete contract is bodyless — the route rejects any field.
-        body: {},
-      },
-      { signal },
+      { projectId: project.id, hostId: host.id, body: {} },
+      { signal }
     );
   },
 };
@@ -6871,8 +7495,10 @@ const setHostServersInput = z.object({
     .optional()
     .describe("Optional server IDs enabled for this host."),
 });
+/** @deprecated Use {@link SetClientServersInput}. */
 export type SetHostServersInput = z.infer<typeof setHostServersInput>;
 
+/** @deprecated Use {@link setClientServersOperation}. */
 export const setHostServersOperation: PlatformOperation<
   SetHostServersInput,
   PlatformHostDetail
@@ -6880,14 +7506,15 @@ export const setHostServersOperation: PlatformOperation<
   name: "set_host_servers",
   title: "Set an MCPJam host's servers",
   description:
-    "Replace the required and optional saved-server attachments for a host.",
+    "Deprecated: use set_client_servers, which requires a concurrency token.",
   readOnly: false,
+  risk: "destructive",
   inputSchema: setHostServersInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const host = await resolveHost(client, project, input.host, signal);
     await client.setHostServers(
@@ -6897,11 +7524,11 @@ export const setHostServersOperation: PlatformOperation<
         serverIds: input.serverIds,
         optionalServerIds: input.optionalServerIds,
       },
-      { signal },
+      { signal }
     );
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -6916,27 +7543,30 @@ const duplicateHostInput = z.object({
   host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
   name: z.string().trim().min(1).optional().describe("Name for the copy."),
 });
+/** @deprecated Use {@link DuplicateClientInput}. */
 export type DuplicateHostInput = z.infer<typeof duplicateHostInput>;
 
+/** @deprecated Use {@link duplicateClientOperation}. */
 export const duplicateHostOperation: PlatformOperation<
   DuplicateHostInput,
   PlatformHostDetail
 > = {
   name: "duplicate_host",
   title: "Duplicate an MCPJam host",
-  description: "Create a new host with the selected host's current config.",
+  description: "Deprecated: use duplicate_client.",
   readOnly: false,
+  risk: "none",
   inputSchema: duplicateHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.duplicateHost(
       { projectId: project.id, hostId: host.id, name: input.name },
-      { signal },
+      { signal }
     );
   },
 };
@@ -6978,7 +7608,7 @@ async function resolveEnvironmentSelector(
   project: PlatformProject,
   selector: string,
   signal: AbortSignal | undefined,
-  prefer: "live" | "archived" = "live",
+  prefer: "live" | "archived" = "live"
 ): Promise<PlatformEnvironment> {
   const trimmedSelector = selector.trim();
   // Ad-hoc rows are list-hidden. GET /environments/:id serves them, so an
@@ -6988,7 +7618,7 @@ async function resolveEnvironmentSelector(
     try {
       const byId = await client.getEnvironment(
         { projectId: project.id, environmentId: trimmedSelector },
-        { signal },
+        { signal }
       );
       return {
         ...byId,
@@ -7010,24 +7640,24 @@ async function resolveEnvironmentSelector(
   }
   const page = await client.listEnvironments(
     { projectId: project.id, includeArchived: true },
-    { signal },
+    { signal }
   );
   const idMatch = page.items.find((item) => item.id === trimmedSelector);
   if (idMatch) {
     return idMatch;
   }
   const preferred = page.items.filter(
-    (item) => item.archived === (prefer === "archived"),
+    (item) => item.archived === (prefer === "archived")
   );
   const normalizedSelector = trimmedSelector.toLocaleLowerCase();
   const preferredHasName = preferred.some(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector,
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
   );
   return resolveByIdOrName(
     preferredHasName ? preferred : page.items,
     selector,
     "Project environment",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -7042,7 +7672,7 @@ const listEnvironmentsInput = z.object({
     .boolean()
     .optional()
     .describe(
-      "Include archived environments. Off by default; turn it on to find an environment to restore.",
+      "Include archived environments. Off by default; turn it on to find an environment to restore."
     ),
 });
 export type ListEnvironmentsInput = z.infer<typeof listEnvironmentsInput>;
@@ -7067,7 +7697,7 @@ export const listEnvironmentsOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listEnvironments(
       {
@@ -7076,7 +7706,7 @@ export const listEnvironmentsOperation: PlatformOperation<
           ? { includeArchived: input.includeArchived }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7117,13 +7747,13 @@ export const getEnvironmentCapabilitiesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return {
       project: toSelectedProjectInfo(project),
       capabilities: await client.getEnvironmentCapabilities(
         { projectId: project.id },
-        { signal },
+        { signal }
       ),
     };
   },
@@ -7158,17 +7788,17 @@ export const getEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal,
+      signal
     );
     return client.getEnvironment(
       { projectId: project.id, environmentId: environment.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7187,17 +7817,17 @@ export const resolveEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal,
+      signal
     );
     return client.resolveEnvironment(
       { projectId: project.id, environmentId: environment.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7209,18 +7839,18 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned.",
+        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
       ),
   })
   .describe(
-    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'.",
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
   );
 
 const pluginVersionIdsInput = z
   .array(z.string().trim().min(1))
   .min(1)
   .describe(
-    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files.",
+    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
   );
 
 const createEnvironmentInput = z.object({
@@ -7235,7 +7865,7 @@ const createEnvironmentInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Display name for the new environment. Must be unique among the project's live (non-archived) environments.",
+      "Display name for the new environment. Must be unique among the project's live (non-archived) environments."
     ),
   description: z
     .string()
@@ -7252,7 +7882,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional standalone server group to pin. Omit to fall back to the host config's own servers.",
+      "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
     ),
   modelId: z
     .string()
@@ -7260,7 +7890,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").',
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").'
     ),
   skillSelection: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
@@ -7270,7 +7900,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first.",
+      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first."
     ),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
@@ -7289,7 +7919,7 @@ export const createEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.createEnvironment(
       {
@@ -7315,7 +7945,7 @@ export const createEnvironmentOperation: PlatformOperation<
             : {}),
         },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7342,7 +7972,7 @@ const composeStackFields = {
     .trim()
     .min(1)
     .describe(
-      "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+      "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with."
     ),
   serverGroup: z
     .string()
@@ -7350,7 +7980,7 @@ const composeStackFields = {
     .min(1)
     .optional()
     .describe(
-      "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+      "Standalone server group to pin (by ID). Omit to use the host's own servers."
     ),
   model: z
     .string()
@@ -7358,7 +7988,7 @@ const composeStackFields = {
     .min(1)
     .optional()
     .describe(
-      "Model to run instead of the host's pinned one. Stored verbatim — pass exactly the id the provider request should carry.",
+      "Model to run instead of the host's pinned one. Stored verbatim — pass exactly the id the provider request should carry."
     ),
   computer: z
     .string()
@@ -7366,7 +7996,7 @@ const composeStackFields = {
     .min(1)
     .optional()
     .describe(
-      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first.",
+      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first."
     ),
   skills: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
@@ -7410,7 +8040,7 @@ async function resolveComposeStack(
     skills?: { mode: "explicit"; skillIds: string[] };
     pluginVersionIds?: string[];
   },
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformAdhocEnvironmentBody> {
   const host = await resolveHost(client, project, stack.host, signal);
   const image = stack.computer
@@ -7443,12 +8073,12 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const body = await resolveComposeStack(client, project, input, signal);
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7470,7 +8100,7 @@ const nameEnvironmentInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by).",
+      "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by)."
     ),
   expectedRevision: z
     .number()
@@ -7482,7 +8112,7 @@ const nameEnvironmentInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Display name for the promoted environment. Must be unique among the project's live environments.",
+      "Display name for the promoted environment. Must be unique among the project's live environments."
     ),
   description: z
     .string()
@@ -7506,7 +8136,7 @@ export const nameEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.nameEnvironment(
       {
@@ -7523,7 +8153,7 @@ export const nameEnvironmentOperation: PlatformOperation<
             : {}),
         },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7564,7 +8194,7 @@ const updateEnvironmentInput = z
       .nullable()
       .optional()
       .describe(
-        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged.",
+        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
       ),
     modelId: z
       .string()
@@ -7573,19 +8203,19 @@ const updateEnvironmentInput = z
       .nullable()
       .optional()
       .describe(
-        "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear.",
+        "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
       ),
     skillSelection: skillSelectionInput
       .nullable()
       .optional()
       .describe(
-        "New pinned skill selection, or null to clear it. Omit to leave unchanged.",
+        "New pinned skill selection, or null to clear it. Omit to leave unchanged."
       ),
     pluginVersionIds: pluginVersionIdsInput
       .nullable()
       .optional()
       .describe(
-        "New pinned plugin versions, or null to clear them. Omit to leave unchanged.",
+        "New pinned plugin versions, or null to clear them. Omit to leave unchanged."
       ),
     sandboxImageId: z
       .string()
@@ -7594,7 +8224,7 @@ const updateEnvironmentInput = z
       .nullable()
       .optional()
       .describe(
-        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged.",
+        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged."
       ),
   })
   .refine(
@@ -7610,7 +8240,7 @@ const updateEnvironmentInput = z
     {
       message:
         "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
-    },
+    }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
 
@@ -7628,13 +8258,13 @@ export const updateEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal,
+      signal
     );
     // `!== undefined` (never truthiness) so an explicit null is forwarded as a
     // CLEAR while an omitted field stays absent and is left unchanged.
@@ -7655,7 +8285,7 @@ export const updateEnvironmentOperation: PlatformOperation<
       body.sandboxImageId = input.sandboxImageId;
     return client.updateEnvironment(
       { projectId: project.id, environmentId: environment.id, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7695,13 +8325,13 @@ export const archiveEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal,
+      signal
     );
     return client.archiveEnvironment(
       {
@@ -7709,7 +8339,7 @@ export const archiveEnvironmentOperation: PlatformOperation<
         environmentId: environment.id,
         expectedRevision: input.expectedRevision,
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7728,7 +8358,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     // Restore is the one operation whose target is archived by definition, so
     // a name shared with a live environment must resolve to the archived one.
@@ -7737,7 +8367,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
       project,
       input.environment,
       signal,
-      "archived",
+      "archived"
     );
     return client.restoreEnvironment(
       {
@@ -7745,7 +8375,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
         environmentId: environment.id,
         expectedRevision: input.expectedRevision,
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7785,11 +8415,11 @@ export const listProjectPluginsOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listProjectPlugins(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -7805,7 +8435,7 @@ const getPluginVersionInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`.",
+      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`."
     ),
 });
 export type GetPluginVersionInput = z.infer<typeof getPluginVersionInput>;
@@ -7823,7 +8453,7 @@ export const getPluginVersionOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     return client.getPluginVersion(
       { pluginVersionId: input.pluginVersionId },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7836,14 +8466,14 @@ async function resolveImage(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformImage> {
   const page = await client.listImages({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Sandbox image",
-    `project "${project.name}"`,
+    `project "${project.name}"`
   );
 }
 
@@ -7878,7 +8508,7 @@ export const listImagesOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listImages({ projectId: project.id }, { signal });
     return {
@@ -7903,12 +8533,12 @@ export const getImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.getImage(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7929,7 +8559,7 @@ const createImageInput = z.object({
     .string()
     .min(1)
     .describe(
-      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest.",
+      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest."
     ),
 });
 export type CreateImageInput = z.infer<typeof createImageInput>;
@@ -7948,14 +8578,14 @@ export const createImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.createImage(
       {
         projectId: project.id,
         body: { name: input.name, blueprint: input.blueprint },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -7985,7 +8615,7 @@ const updateImageInput = z
     (value) => value.name !== undefined || value.blueprint !== undefined,
     {
       message: "Provide at least one of `name` or `blueprint` to update.",
-    },
+    }
   );
 export type UpdateImageInput = z.infer<typeof updateImageInput>;
 
@@ -8003,7 +8633,7 @@ export const updateImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     const body: { name?: string; blueprint?: string } = {};
@@ -8011,7 +8641,7 @@ export const updateImageOperation: PlatformOperation<
     if (input.blueprint !== undefined) body.blueprint = input.blueprint;
     return client.updateImage(
       { projectId: project.id, imageId: image.id, body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8043,11 +8673,11 @@ export const validateImageBlueprintOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.validateImageBlueprint(
       { projectId: project.id, body: { blueprint: input.blueprint } },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8066,12 +8696,12 @@ export const buildImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.buildImage(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8096,12 +8726,12 @@ export const listImageBuildsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     const page = await client.listImageBuilds(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -8125,12 +8755,12 @@ export const promoteImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.promoteImage(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8149,12 +8779,12 @@ export const useImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.useImage(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8173,7 +8803,7 @@ export const resetComputerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.resetComputer({ projectId: project.id }, { signal });
   },
@@ -8193,12 +8823,12 @@ export const deleteImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.deleteImage(
       { projectId: project.id, imageId: image.id },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8258,11 +8888,11 @@ export const createProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.createProjectServer(
       { projectId: project.id, body: input.body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8285,11 +8915,11 @@ export const getProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.getProjectServer(
       { projectId: project.id, serverId: input.serverId },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8310,11 +8940,11 @@ export const updateProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.updateProjectServer(
       { projectId: project.id, serverId: input.serverId, body: input.body },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8332,11 +8962,11 @@ export const deleteProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.deleteProjectServer(
       { projectId: project.id, serverId: input.serverId },
-      { signal },
+      { signal }
     );
   },
 };
@@ -8390,11 +9020,11 @@ export const listJourneysOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listJourneys(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -8442,7 +9072,7 @@ export const listJourneyRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listJourneyRuns(
       {
@@ -8451,7 +9081,7 @@ export const listJourneyRunsOperation: PlatformOperation<
         ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -8491,11 +9121,11 @@ export const getJourneyRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.getJourneyRun(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -8534,7 +9164,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listJourneyRunSessions(
       {
@@ -8543,7 +9173,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
         ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -8575,7 +9205,7 @@ const launchJourneyRunInput = z.object({
     .max(200)
     .optional()
     .describe(
-      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run.",
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
     ),
   waveId: z
     .string()
@@ -8588,7 +9218,7 @@ const launchJourneyRunInput = z.object({
     .array(z.string().trim().min(1))
     .optional()
     .describe(
-      "Fan out across these project environments instead of the journey's authored targets.",
+      "Fan out across these project environments instead of the journey's authored targets."
     ),
 });
 export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
@@ -8613,7 +9243,7 @@ export const launchJourneyRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.launchJourneyRun(
       {
@@ -8629,7 +9259,7 @@ export const launchJourneyRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      },
+      }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -8650,11 +9280,11 @@ export const cancelJourneyRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const run = await client.cancelJourneyRun(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -8682,7 +9312,7 @@ const scenarioSelectorInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Project environment id to publish (or unpublish). One scenario per environment.",
+      "Project environment id to publish (or unpublish). One scenario per environment."
     ),
 });
 // Create-time overrides, forwarded to the publish IN THE SAME CALL — without
@@ -8696,20 +9326,20 @@ const publishScenarioInput = scenarioSelectorInput.extend({
     .max(200)
     .optional()
     .describe(
-      "Scenario name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_user_testing_scenario).",
+      "Scenario name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_user_testing_scenario)."
     ),
   description: z
     .string()
     .max(2000)
     .optional()
     .describe(
-      "Scenario description. CREATE-TIME ONLY — ignored on a republish.",
+      "Scenario description. CREATE-TIME ONLY — ignored on a republish."
     ),
   mode: z
     .enum(["project_members", "invited_only", "anyone_with_link"])
     .optional()
     .describe(
-      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing scenario's mode with update_user_testing_scenario.",
+      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing scenario's mode with update_user_testing_scenario."
     ),
 });
 export type PublishScenarioInput = z.infer<typeof publishScenarioInput>;
@@ -8741,7 +9371,7 @@ export const publishScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const { overridesIgnored, ...scenario } = await client.publishScenario(
       {
@@ -8753,7 +9383,7 @@ export const publishScenarioOperation: PlatformOperation<
           : {}),
         ...(input.mode !== undefined ? { mode: input.mode } : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -8785,11 +9415,11 @@ export const unpublishScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.unpublishScenario(
       { projectId: project.id, environmentId: input.environment },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -8820,7 +9450,7 @@ function requireExactlyOneGrounding(input: {
     (input.serverAttachmentId === undefined)
   ) {
     throw operationInputError(
-      "Provide exactly one of environmentId or serverAttachmentId to ground the drafts.",
+      "Provide exactly one of environmentId or serverAttachmentId to ground the drafts."
     );
   }
 }
@@ -8834,7 +9464,7 @@ function requireConfigPair(input: {
     (input.maxTurns === undefined)
   ) {
     throw operationInputError(
-      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream.",
+      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream."
     );
   }
 }
@@ -8885,11 +9515,11 @@ export const listPersonasOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listPersonas(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), items: page.items };
   },
@@ -8914,11 +9544,11 @@ export const getPersonaOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const persona = await client.getPersona(
       { projectId: project.id, personaId: input.persona },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
   },
@@ -8943,7 +9573,7 @@ const createPersonaInput = z.object({
     .max(2000)
     .optional()
     .describe(
-      "How they behave: what they know, what they will not tolerate, how they phrase things. This is what makes a persona produce a realistic session rather than a compliant one.",
+      "How they behave: what they know, what they will not tolerate, how they phrase things. This is what makes a persona produce a realistic session rather than a compliant one."
     ),
   idempotencyKey: z
     .string()
@@ -8952,7 +9582,7 @@ const createPersonaInput = z.object({
     .max(200)
     .optional()
     .describe(
-      "Retry key. Pass one: the server replays it BEFORE uniquifying the slug, so a retry without it leaves a second near-identical persona named '…-2' rather than the one you already made.",
+      "Retry key. Pass one: the server replays it BEFORE uniquifying the slug, so a retry without it leaves a second near-identical persona named '…-2' rather than the one you already made."
     ),
 });
 
@@ -8977,7 +9607,7 @@ export const createPersonaOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const persona = await client.createPersona(
       {
@@ -8991,7 +9621,7 @@ export const createPersonaOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      },
+      }
     );
     return { project: toSelectedProjectInfo(project), persona };
   },
@@ -9021,7 +9651,7 @@ export const updatePersonaOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const persona = await client.updatePersona(
       {
@@ -9031,7 +9661,7 @@ export const updatePersonaOperation: PlatformOperation<
         ...(input.role !== undefined ? { role: input.role } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
   },
@@ -9058,11 +9688,11 @@ export const deletePersonaOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const persona = await client.deletePersona(
       { projectId: project.id, personaId: input.persona },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), persona };
   },
@@ -9098,11 +9728,11 @@ export const getJourneyOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const journey = await client.getJourney(
       { projectId: project.id, journeyId: input.journey },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), journey };
   },
@@ -9121,7 +9751,7 @@ const createJourneyInput = z.object({
     .min(1)
     .max(4000)
     .describe(
-      "What the persona is trying to accomplish. Drives the whole run.",
+      "What the persona is trying to accomplish. Drives the whole run."
     ),
   persona: z.string().trim().min(1).describe("Persona id to run as."),
   name: z.string().trim().min(1).max(200).optional(),
@@ -9142,7 +9772,7 @@ const createJourneyInput = z.object({
     .min(1)
     .max(100)
     .describe(
-      "Sessions per target. TOTAL sessions = targets x this, and the total is what spends.",
+      "Sessions per target. TOTAL sessions = targets x this, and the total is what spends."
     ),
   maxTurns: z.number().int().min(1).max(200),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
@@ -9169,7 +9799,7 @@ export const createJourneyOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const journey = await client.createJourney(
       {
@@ -9189,7 +9819,7 @@ export const createJourneyOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      },
+      }
     );
     return { project: toSelectedProjectInfo(project), journey };
   },
@@ -9225,7 +9855,7 @@ export const updateJourneyOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const journey = await client.updateJourney(
       {
@@ -9241,7 +9871,7 @@ export const updateJourneyOperation: PlatformOperation<
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), journey };
   },
@@ -9268,11 +9898,11 @@ export const archiveJourneyOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const journey = await client.archiveJourney(
       { projectId: project.id, journeyId: input.journey },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), journey };
   },
@@ -9308,7 +9938,7 @@ export const listSwarmsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listSwarms({ projectId: project.id }, { signal });
     return { project: toSelectedProjectInfo(project), items: page.items };
@@ -9334,11 +9964,11 @@ export const getSwarmOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const swarm = await client.getSwarm(
       { projectId: project.id, swarmId: input.swarm },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), swarm };
   },
@@ -9380,7 +10010,7 @@ export const createSwarmOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const swarm = await client.createSwarm(
       {
@@ -9400,7 +10030,7 @@ export const createSwarmOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      },
+      }
     );
     return { project: toSelectedProjectInfo(project), swarm };
   },
@@ -9435,7 +10065,7 @@ export const updateSwarmOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const swarm = await client.updateSwarm(
       {
@@ -9453,7 +10083,7 @@ export const updateSwarmOperation: PlatformOperation<
           : {}),
         ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), swarm };
   },
@@ -9480,11 +10110,11 @@ export const archiveSwarmOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const swarm = await client.archiveSwarm(
       { projectId: project.id, swarmId: input.swarm },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), swarm };
   },
@@ -9556,7 +10186,7 @@ export const generatePersonasOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const drafts = await client.generatePersonas(
       {
@@ -9576,7 +10206,7 @@ export const generatePersonasOperation: PlatformOperation<
           ? { existingPersonas: input.existingPersonas }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), drafts };
   },
@@ -9590,7 +10220,7 @@ const generateJourneysInput = generationGroundingInput.extend({
       notes: z.string().optional(),
     })
     .describe(
-      "The persona to draft journeys for, BY VALUE — it does not have to exist yet.",
+      "The persona to draft journeys for, BY VALUE — it does not have to exist yet."
     ),
 });
 
@@ -9616,7 +10246,7 @@ export const generateJourneysOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const drafts = await client.generateJourneys(
       {
@@ -9631,7 +10261,7 @@ export const generateJourneysOperation: PlatformOperation<
           ? { journeyCount: input.journeyCount }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), drafts };
   },
@@ -9659,11 +10289,11 @@ export const getSwarmOverviewOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const overview = await client.getSwarmOverview(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), overview };
   },
@@ -9691,11 +10321,11 @@ export const getJourneyRunScorecardOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const scorecard = await client.getJourneyRunScorecard(
       { projectId: project.id, runId: input.run },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), scorecard };
   },
@@ -9721,11 +10351,11 @@ export const listSwarmFindingsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listSwarmFindings(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), items: page.items };
   },
@@ -9762,11 +10392,11 @@ export const dismissSwarmFindingOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const finding = await client.dismissSwarmFinding(
       { projectId: project.id, findingId: input.finding },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), finding };
   },
@@ -9789,11 +10419,11 @@ export const undismissSwarmFindingOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const finding = await client.undismissSwarmFinding(
       { projectId: project.id, findingId: input.finding },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), finding };
   },
@@ -9833,11 +10463,11 @@ export const getWaveInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const insights = await client.getWaveInsights(
       { projectId: project.id, waveId: input.wave },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), insights };
   },
@@ -9848,7 +10478,7 @@ const requestWaveInsightsInput = waveSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this.",
+      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this."
     ),
 });
 
@@ -9873,7 +10503,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const request = await client.requestWaveInsights(
       {
@@ -9881,7 +10511,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
         waveId: input.wave,
         ...(input.force ? { force: true } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), request };
   },
@@ -9908,11 +10538,11 @@ export const cancelWaveInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const canceled = await client.cancelWaveInsights(
       { projectId: project.id, waveId: input.wave },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), canceled };
   },
@@ -9940,11 +10570,11 @@ export const getCapabilitiesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const capabilities = await client.getCapabilities(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), capabilities };
   },
@@ -9997,11 +10627,11 @@ export const getUserTestingScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const scenario = await client.getUserTestingScenario(
       { projectId: project.id, scenarioId: input.scenario },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), scenario };
   },
@@ -10014,7 +10644,7 @@ const updateUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
     .enum(["project_members", "invited_only", "anyone_with_link"])
     .optional()
     .describe(
-      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected.",
+      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected."
     ),
 });
 
@@ -10046,13 +10676,13 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
       (input.name !== undefined || input.description !== undefined)
     ) {
       throw operationInputError(
-        "Send `mode` on its own: identity and exposure are separate operations upstream.",
+        "Send `mode` on its own: identity and exposure are separate operations upstream."
       );
     }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const scenario = await client.updateUserTestingScenario(
       {
@@ -10064,7 +10694,7 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
           : {}),
         ...(input.mode !== undefined ? { mode: input.mode } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), scenario };
   },
@@ -10103,7 +10733,7 @@ export const listUserTestingSessionsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listUserTestingSessions(
       {
@@ -10112,7 +10742,7 @@ export const listUserTestingSessionsOperation: PlatformOperation<
         ...(input.cursor ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -10150,7 +10780,7 @@ export const getUserTestingSessionOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const session = await client.getUserTestingSession(
       {
@@ -10160,7 +10790,7 @@ export const getUserTestingSessionOperation: PlatformOperation<
         ...(input.cursor ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), session };
   },
@@ -10197,7 +10827,7 @@ export const getUserTestingMetricsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const metrics = await client.getUserTestingMetrics(
       {
@@ -10205,7 +10835,7 @@ export const getUserTestingMetricsOperation: PlatformOperation<
         scenarioId: input.scenario,
         ...(input.population ? { population: input.population } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), metrics };
   },
@@ -10233,11 +10863,11 @@ export const getUserTestingUsageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const usage = await client.getUserTestingUsage(
       { projectId: project.id, scenarioId: input.scenario },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), usage };
   },
@@ -10265,11 +10895,11 @@ export const listUserTestingFindingsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listUserTestingFindings(
       { projectId: project.id, scenarioId: input.scenario },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), items: page.items };
   },
@@ -10297,11 +10927,11 @@ export const getUserTestingSignalsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const signals = await client.getUserTestingSignals(
       { projectId: project.id, scenarioId: input.scenario },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), signals };
   },
@@ -10337,7 +10967,7 @@ export const getUserTestingInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const insights = await client.getUserTestingInsights(
       {
@@ -10345,7 +10975,7 @@ export const getUserTestingInsightsOperation: PlatformOperation<
         scenarioId: input.scenario,
         windowId: input.window,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), insights };
   },
@@ -10357,9 +10987,9 @@ const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
       .boolean()
       .optional()
       .describe(
-        "Regenerate over a window that already has insights. Spends again.",
+        "Regenerate over a window that already has insights. Spends again."
       ),
-  },
+  }
 );
 
 export type RequestUserTestingInsightsInput = z.infer<
@@ -10385,7 +11015,7 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const request = await client.requestUserTestingInsights(
       {
@@ -10393,7 +11023,7 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
         scenarioId: input.scenario,
         ...(input.force ? { force: true } : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), request };
   },
@@ -10422,7 +11052,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const canceled = await client.cancelUserTestingInsights(
       {
@@ -10430,7 +11060,7 @@ export const cancelUserTestingInsightsOperation: PlatformOperation<
         scenarioId: input.scenario,
         windowId: input.window,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), canceled };
   },
@@ -10463,7 +11093,7 @@ export const dismissUserTestingFindingOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const finding = await client.dismissUserTestingFinding(
       {
@@ -10471,7 +11101,7 @@ export const dismissUserTestingFindingOperation: PlatformOperation<
         scenarioId: input.scenario,
         findingId: input.finding,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), finding };
   },
@@ -10494,7 +11124,7 @@ export const undismissUserTestingFindingOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const finding = await client.undismissUserTestingFinding(
       {
@@ -10502,7 +11132,7 @@ export const undismissUserTestingFindingOperation: PlatformOperation<
         scenarioId: input.scenario,
         findingId: input.finding,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), finding };
   },
@@ -10547,7 +11177,7 @@ export const setUserTestingGuestExecutionOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const { project: _project, scenario, ...guestExecution } = input;
     const result = await client.setUserTestingGuestExecution(
@@ -10556,7 +11186,7 @@ export const setUserTestingGuestExecutionOperation: PlatformOperation<
         scenarioId: scenario,
         guestExecution,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -10585,11 +11215,11 @@ export const rotateUserTestingLinkOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.rotateUserTestingLink(
       { projectId: project.id, scenarioId: input.scenario },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -10601,7 +11231,7 @@ const upsertUserTestingMemberInput = userTestingScenarioSelectorInput.extend({
     .boolean()
     .optional()
     .describe(
-      "Off by default — adding someone is not the same as telling them.",
+      "Off by default — adding someone is not the same as telling them."
     ),
 });
 
@@ -10628,7 +11258,7 @@ export const upsertUserTestingMemberOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.upsertUserTestingMember(
       {
@@ -10639,7 +11269,7 @@ export const upsertUserTestingMemberOperation: PlatformOperation<
           ? { sendInviteEmail: input.sendInviteEmail }
           : {}),
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -10673,7 +11303,7 @@ export const removeUserTestingMemberOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.removeUserTestingMember(
       {
@@ -10681,7 +11311,7 @@ export const removeUserTestingMemberOperation: PlatformOperation<
         scenarioId: input.scenario,
         member: input.member,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -10715,7 +11345,7 @@ export const rebindUserTestingScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const result = await client.rebindUserTestingScenario(
       {
@@ -10723,7 +11353,7 @@ export const rebindUserTestingScenarioOperation: PlatformOperation<
         scenarioId: input.scenario,
         environmentId: input.environmentId,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -10748,7 +11378,7 @@ const connectProjectServerInput = z.object({
           return false;
         }
       },
-      { message: "Must be an http:// or https:// URL." },
+      { message: "Must be an http:// or https:// URL." }
     )
     .describe("The MCP server URL to connect (http or https)."),
   project: z
@@ -10757,7 +11387,7 @@ const connectProjectServerInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project name or id. Omit to let the person choose in the browser — this never defaults to a project on their behalf.",
+      "Project name or id. Omit to let the person choose in the browser — this never defaults to a project on their behalf."
     ),
   serverId: z
     .string()
@@ -10765,7 +11395,7 @@ const connectProjectServerInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Disambiguates when the project already has several saved servers on this URL. Supply one of the ids from an AMBIGUOUS_SERVER error.",
+      "Disambiguates when the project already has several saved servers on this URL. Supply one of the ids from an AMBIGUOUS_SERVER error."
     ),
   name: z
     .string()
@@ -10773,7 +11403,7 @@ const connectProjectServerInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Name for the server if a new one is created. Ignored when an existing server is reused.",
+      "Name for the server if a new one is created. Ignored when an existing server is reused."
     ),
   reauthorize: z
     .boolean()
@@ -10834,7 +11464,7 @@ export const connectProjectServerOperation: PlatformOperation<
       const { project } = await resolveProjectOrThrow(
         client,
         input.project,
-        signal,
+        signal
       );
       projectId = project.id;
     }
@@ -10849,7 +11479,7 @@ export const connectProjectServerOperation: PlatformOperation<
           reauthorize: input.reauthorize,
         },
       },
-      { signal },
+      { signal }
     );
   },
 };
@@ -10874,7 +11504,7 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     return await client.getServerConnection(
       { connectionRequestId: input.connectionRequestId },
-      { signal },
+      { signal }
     );
   },
 };
@@ -10916,7 +11546,7 @@ export const getShareSettingsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const settings = await client.getShareSettings(
       {
@@ -10924,7 +11554,7 @@ export const getShareSettingsOperation: PlatformOperation<
         resourceType: input.resourceType,
         resourceId: input.resourceId,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), settings };
   },
@@ -10956,7 +11586,7 @@ export const setShareModeOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const settings = await client.setShareMode(
       {
@@ -10966,7 +11596,7 @@ export const setShareModeOperation: PlatformOperation<
         mode: input.mode,
         allowGuestAccess: input.allowGuestAccess,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), settings };
   },
@@ -10993,7 +11623,7 @@ export const rotateShareLinkOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const settings = await client.rotateShareLink(
       {
@@ -11001,7 +11631,7 @@ export const rotateShareLinkOperation: PlatformOperation<
         resourceType: input.resourceType,
         resourceId: input.resourceId,
       },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), settings };
   },
@@ -11017,7 +11647,7 @@ async function nextStepsForInstall(
   projectId: string,
   serverId: string,
   outcome: PlatformRegistryInstallResult["outcome"],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<PlatformRegistryInstallResult["nextSteps"]> {
   const nextSteps: PlatformRegistryInstallResult["nextSteps"] = {
     connectionStatusOp: CONNECTION_STATUS_OP,
@@ -11031,12 +11661,12 @@ async function nextStepsForInstall(
   try {
     const server = await client.getProjectServer(
       { projectId, serverId },
-      { signal },
+      { signal }
     );
     if (!server.useOAuth || !server.url) return nextSteps;
     const connection = await client.createServerConnection(
       { body: { url: server.url, projectId, serverId } },
-      { signal },
+      { signal }
     );
     if (connection.handoffUrl) {
       nextSteps.connectLinkUrl = connection.handoffUrl;
@@ -11099,7 +11729,7 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     return client.searchRegistryDirectory(
       { ...input, source: input.source ?? "all" },
-      { signal },
+      { signal }
     );
   },
 };
@@ -11142,12 +11772,12 @@ export const getRegistryDirectoryServerOperation: PlatformOperation<
     if (input.catalogServerId) {
       return client.getRegistryDirectoryServer(
         { catalogServerId: input.catalogServerId },
-        { signal },
+        { signal }
       );
     }
     return client.getRegistryDirectoryServer(
       { name: input.name!, source: input.source },
-      { signal },
+      { signal }
     );
   },
 };
@@ -11189,11 +11819,11 @@ export const listRegistryServersOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listRegistryServers(
       { projectId: project.id, scope: input.scope ?? "all" },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), items: page.items };
   },
@@ -11213,11 +11843,11 @@ export const listRegistryConnectionsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const page = await client.listRegistryConnections(
       { projectId: project.id },
-      { signal },
+      { signal }
     );
     return { project: toSelectedProjectInfo(project), items: page.items };
   },
@@ -11258,7 +11888,7 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
             return false;
           }
         },
-        { message: "Must be an http:// or https:// URL." },
+        { message: "Must be an http:// or https:// URL." }
       )
       .optional(),
     expectedContentHash: z
@@ -11272,7 +11902,7 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const installed = await client.installRegistryDirectoryServer(
       {
@@ -11281,7 +11911,7 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
         endpointUrl: input.endpointUrl,
         expectedContentHash: input.expectedContentHash,
       },
-      { signal },
+      { signal }
     );
     return {
       ...installed,
@@ -11290,7 +11920,7 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
         project.id,
         installed.serverId,
         installed.outcome,
-        signal,
+        signal
       ),
     };
   },
@@ -11331,13 +11961,13 @@ export const installRegistryServerOperation: PlatformOperation<
             return false;
           }
         },
-        { message: "Must be an http:// or https:// URL." },
+        { message: "Must be an http:// or https:// URL." }
       )
       .optional()
       .describe(
         "Display-only: the card's endpoint, resolved at proposal time so the " +
           "approver can see it. The install always uses the card's own " +
-          "transport; this field never chooses the endpoint.",
+          "transport; this field never chooses the endpoint."
       ),
     expectedUpdatedAt: z
       .number()
@@ -11349,7 +11979,7 @@ export const installRegistryServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     const installed = await client.installRegistryServer(
       {
@@ -11357,7 +11987,7 @@ export const installRegistryServerOperation: PlatformOperation<
         registryServerId: input.registryServerId,
         expectedUpdatedAt: input.expectedUpdatedAt,
       },
-      { signal },
+      { signal }
     );
     return {
       ...installed,
@@ -11366,7 +11996,7 @@ export const installRegistryServerOperation: PlatformOperation<
         project.id,
         installed.serverId,
         installed.outcome,
-        signal,
+        signal
       ),
     };
   },
@@ -11395,11 +12025,11 @@ export const uninstallRegistryServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal,
+      signal
     );
     return client.uninstallRegistryServer(
       { projectId: project.id, registryServerId: input.registryServerId },
-      { signal },
+      { signal }
     );
   },
 };
@@ -11484,13 +12114,17 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   cancelJourneyRunOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
-  listHostsOperation,
-  getHostOperation,
-  createHostOperation,
-  updateHostOperation,
-  deleteHostOperation,
-  setHostServersOperation,
-  duplicateHostOperation,
+  // Clients. The deprecated `*_host` operations are deliberately NOT here —
+  // see the note above them: every registered surface partitions this list, so
+  // leaving them out is what guarantees no old name can be advertised or
+  // persisted.
+  listClientsOperation,
+  getClientOperation,
+  createClientOperation,
+  updateClientOperation,
+  deleteClientOperation,
+  setClientServersOperation,
+  duplicateClientOperation,
   listEnvironmentsOperation,
   getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,

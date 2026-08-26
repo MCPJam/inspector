@@ -73,14 +73,17 @@ import {
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
-  getHostOperation,
+  createClientOperation,
+  getClientOperation,
   getServerPromptOperation,
   listEnvironmentsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
-  listHostsOperation,
+  listClientsOperation,
+  setClientServersOperation,
+  updateClientOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
   searchRegistryDirectoryOperation,
@@ -200,7 +203,7 @@ export interface GatedProposalMeta {
    */
   resource?(
     result: unknown,
-    context: { projectId: string },
+    context: { projectId: string }
   ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
@@ -232,7 +235,7 @@ export interface GatedProposalMeta {
    */
   normalizeProposalArgs?(
     input: Record<string, unknown>,
-    context: { projectId: string; client: PlatformApiClient },
+    context: { projectId: string; client: PlatformApiClient }
   ): Promise<Record<string, unknown>>;
   /**
    * Keys `normalizeProposalArgs` MUST have pinned before the proposal may be
@@ -311,7 +314,7 @@ function describeChatMessage(input: Record<string, unknown>): string {
 /** The session a turn produced, as a linkable resource. */
 function chatSessionResource(
   result: unknown,
-  { projectId }: { projectId: string },
+  { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const sessionId = readString(result, "sessionId");
   if (!sessionId) return undefined;
@@ -319,7 +322,7 @@ function chatSessionResource(
     type: "chat_session",
     id: sessionId,
     url: `${MCPJAM_HOSTED_ORIGIN}/sessions/${encodeURIComponent(
-      sessionId,
+      sessionId
     )}?project=${encodeURIComponent(projectId)}`,
   };
 }
@@ -330,7 +333,7 @@ function chatSessionResource(
  * model-authored proposal may pass a name — hosts match against both).
  */
 function evalSuiteTarget(
-  input: Record<string, unknown>,
+  input: Record<string, unknown>
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
@@ -345,13 +348,13 @@ function evalSuiteTarget(
  */
 function evalRunResource(
   result: unknown,
-  { projectId }: { projectId: string },
+  { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
   if (!suiteId) return undefined;
   const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId,
+    suiteId
   )}`;
 
   // A GROUPED launch links to the group, not to one of its runs. The contract
@@ -400,7 +403,7 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
   if (compose && typeof compose === "object") {
     return describeComposeEvalSuiteRun(
       suite,
-      compose as Record<string, unknown>,
+      compose as Record<string, unknown>
     );
   }
   const targets = [
@@ -452,7 +455,7 @@ function describeEvalCaseRun(input: Record<string, unknown>): string {
 
 function describeComposeEvalSuiteRun(
   suite: string,
-  compose: Record<string, unknown>,
+  compose: Record<string, unknown>
 ): string {
   // Prefer the freeze-time display name. `host` is rewritten to an id so
   // approval executes the same client; without `hostLabel` the card would
@@ -477,17 +480,15 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "ephemeral when supported; otherwise attached"
-        : "without attaching them to the suite";
+      ? "ephemeral when supported; otherwise attached"
+      : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
       ` — one paid run, ${attach}`
     );
   }
-  return (
-    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
-  );
+  return `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`;
 }
 
 /**
@@ -509,7 +510,7 @@ function describeComposeEvalSuiteRun(
  */
 async function freezeEvalRunTargets(
   input: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient },
+  { projectId, client }: { projectId: string; client: PlatformApiClient }
 ): Promise<Record<string, unknown>> {
   const suiteSelector = named(input, "suite");
   if (!suiteSelector) return input;
@@ -543,7 +544,7 @@ async function freezeEvalRunTargets(
   const suite = suites.items.find(
     (candidate) =>
       candidate.id === suiteSelector ||
-      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase(),
+      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase()
   );
   if (!suite) return input;
   const detail = await client.getEvalSuite({ projectId, suiteId: suite.id });
@@ -569,7 +570,7 @@ async function freezeEvalRunTargets(
       (detail.hosts ?? []).map((host) => [
         host.name.toLocaleLowerCase(),
         host.id,
-      ]),
+      ])
     );
     const freeze = (selector: string) =>
       byName.get(selector.toLocaleLowerCase()) ?? selector;
@@ -598,7 +599,7 @@ async function freezeEvalRunTargets(
           .map((environment) => [
             (environment.name ?? "").toLocaleLowerCase(),
             environment.id,
-          ]),
+          ])
       );
     } catch {
       // Same posture as the suite lookup above: freezing is a narrowing, and a
@@ -640,7 +641,7 @@ async function freezeEvalRunTargets(
 async function freezeComposeRunTarget(
   input: Record<string, unknown>,
   compose: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient },
+  { projectId, client }: { projectId: string; client: PlatformApiClient }
 ): Promise<Record<string, unknown>> {
   const nextCompose: Record<string, unknown> = { ...compose };
   delete nextCompose.hostLabel;
@@ -652,7 +653,7 @@ async function freezeComposeRunTarget(
         page.items.find((host) => host.id === hostSelector) ??
         page.items.find(
           (host) =>
-            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase(),
+            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase()
         );
       if (match) {
         nextCompose.host = match.id;
@@ -673,7 +674,7 @@ async function freezeComposeRunTarget(
         page.items.find(
           (image) =>
             image.name?.toLocaleLowerCase() ===
-            computerSelector.toLocaleLowerCase(),
+            computerSelector.toLocaleLowerCase()
         );
       if (match) nextCompose.computer = match.id;
     } catch {
@@ -705,17 +706,115 @@ async function freezeComposeRunTarget(
  * paid run. The stored row still keeps the label so the card can render it.
  */
 export function proposalInputForIdempotency(
-  input: Record<string, unknown>,
+  input: Record<string, unknown>
 ): Record<string, unknown> {
-  const compose = input.compose;
+  // Client writes: drop the two proposal-only keys. `clientLabel` is a display
+  // name and `resolvedClientId` is a duplicate of the already-frozen `client`
+  // id kept as proof of the freeze — neither changes WHAT the approval does, so
+  // a harmless rename between redeliveries must not mint a second approval
+  // control for the same frozen action. Everything that decides the action
+  // stays in the hash: the frozen `client` id, both tokens, the `set`/`config`
+  // body, and `expectedImpact` — a changed impact IS a different action and
+  // SHOULD mint a new one.
+  const withoutClientDisplay =
+    "resolvedClientId" in input || "clientLabel" in input
+      ? (({
+          resolvedClientId: _resolved,
+          clientLabel: _label,
+          ...rest
+        }: Record<string, unknown>) => rest)(input)
+      : input;
+
+  const compose = withoutClientDisplay.compose;
   if (!compose || typeof compose !== "object" || Array.isArray(compose)) {
-    return input;
+    return withoutClientDisplay;
   }
   const { hostLabel: _dropped, ...restCompose } = compose as Record<
     string,
     unknown
   >;
-  return { ...input, compose: restCompose };
+  return { ...withoutClientDisplay, compose: restCompose };
+}
+
+/**
+ * Describe what a client edit will DO, in the approver's terms.
+ *
+ * Branches on the actual edit, because "rename" and "change the model every
+ * later turn runs on" are not the same decision and must not read the same. A
+ * rename claims nothing about execution; a config edit enumerates every durable
+ * consumer that follows it, and says so even when all three counts are zero —
+ * "this affects nothing else" is information, and omitting the sentence would
+ * read as the counts having been left out.
+ */
+function describeClientEdit(input: Record<string, unknown>): string {
+  const label =
+    named(input, "clientLabel") ?? named(input, "client") ?? "(unnamed)";
+  const bold = `**${label}**`;
+  const nextName = named(input, "name");
+  const set = input.set;
+  const hasSet = Boolean(set && typeof set === "object" && !Array.isArray(set));
+  const hasConfig = Boolean(input.config);
+
+  if (nextName && !hasSet && !hasConfig) {
+    // Deliberately silent about execution: nothing an environment or a journey
+    // resolves changes, and saying otherwise would ask for consent to an effect
+    // that does not happen.
+    return `Rename client ${bold} to **${nextName}**`;
+  }
+
+  const changes = hasConfig
+    ? "replace its whole configuration"
+    : describeFieldSet(set as Record<string, unknown>);
+  const renamePart = nextName ? ` and rename it to **${nextName}**` : "";
+  return `Edit client ${bold}: ${changes}${renamePart}. ${describeClientImpact(
+    input
+  )}`;
+}
+
+/** "set temperature to 0.2 and clear harness" — the fields, in plain words. */
+function describeFieldSet(set: Record<string, unknown>): string {
+  const parts = Object.entries(set).map(([field, value]) => {
+    if (value === null) return `clear ${field}`;
+    if (typeof value === "object") return `replace ${field}`;
+    return `set ${field} to ${JSON.stringify(value)}`;
+  });
+  if (parts.length === 0) return "change nothing";
+  if (parts.length === 1) return parts[0]!;
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * The blast-radius sentence.
+ *
+ * Reads `expectedImpact` — the SAME value the freeze injected and the backend
+ * checks — so the sentence a human agreed to and the precondition the write
+ * enforces cannot describe different worlds.
+ */
+function describeClientImpact(input: Record<string, unknown>): string {
+  const impact = input.expectedImpact;
+  const unchanged = "Past runs and pinned suite snapshots are unaffected.";
+  if (!impact || typeof impact !== "object" || Array.isArray(impact)) {
+    // No frozen impact means the mint should have been refused; say nothing
+    // that implies a count rather than inventing a reassuring one.
+    return `Future direct client and playground use follows the edit. ${unchanged}`;
+  }
+  const counts = impact as Record<string, unknown>;
+  const n = (key: string) =>
+    typeof counts[key] === "number" ? (counts[key] as number) : 0;
+  const parts = [
+    [n("liveEnvironmentCount"), "live environment"],
+    [n("scenarioAttachmentCount"), "scenario attachment"],
+    [n("activeLegacyJourneyCount"), "active legacy journey"],
+  ] as const;
+  const total = parts.reduce((sum, [count]) => sum + count, 0);
+  const listed = parts
+    .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`)
+    .join(", ");
+  const affected =
+    total === 0
+      ? "Nothing durable currently uses this client"
+      : `This will affect ${listed}`;
+  return `${affected}; future direct client and playground use also follows the edit. ${unchanged}`;
 }
 
 /** Read a string array off validated input, dropping non-strings. */
@@ -728,7 +827,7 @@ function readStringList(input: Record<string, unknown>, key: string): string[] {
 
 function readOptionalString(
   input: Record<string, unknown>,
-  key: string,
+  key: string
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -736,10 +835,99 @@ function readOptionalString(
 
 function readOptionalNumber(
   input: Record<string, unknown>,
-  key: string,
+  key: string
 ): number | undefined {
   const value = input[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * Freeze a CLIENT WRITE at proposal time: pin the target, the tokens, and what
+ * the edit affects.
+ *
+ * Three things about a client-edit proposal can change between minting it and a
+ * human clicking, and each one breaks the approval differently:
+ *
+ *   1. THE TARGET. The model may write a NAME. A rename between propose and
+ *      click would repoint the approved edit at whatever answers to that name
+ *      then — possibly a different client entirely. Resolving the selector to
+ *      an exact id makes "edit Claude" mean one row forever.
+ *   2. THE TOKENS. `expectedConfigId` / `expectedName` are what make the write
+ *      compare-and-set. Verified here against a server read, so a model that
+ *      invented a token, or echoed one from a stale read, is refused at MINT
+ *      time rather than after a human has already agreed to the edit.
+ *   3. WHAT IT AFFECTS. The approval copy quotes impact counts. If an
+ *      environment is attached between propose and click, the edit would
+ *      silently affect more than the human read. `expectedImpact` is injected
+ *      from the same detail read the copy is built from, and it is a REAL
+ *      operation field, so it reaches the backend precondition and turns that
+ *      case into a 409 requiring a fresh proposal.
+ *
+ * `clientLabel` and `resolvedClientId` are proposal-only: display and proof.
+ * Operation validation strips them at execution — they are not operation
+ * fields, and no schema accepts them.
+ *
+ * FAIL-CLOSED via `requiredFrozenKeys`. A proposal that cannot pin its target
+ * or its impact must not exist: an unpinned one would execute against a name,
+ * and one without impact would carry approval copy nothing checks. The
+ * `getClient` read is the DEFAULT one, so a private User Testing backing client
+ * is a 404 here — the agent surface never opts into those.
+ */
+export async function freezeClientWriteArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient }
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "client");
+  if (!selector) {
+    // Validated input requires it; reachable only through an upstream bug.
+    throw new Error("client write carries no client selector to pin");
+  }
+  const detail = await context.client.getClient({
+    projectId: context.projectId,
+    client: selector,
+  });
+  if (!detail?.id) {
+    throw new Error(`client "${selector}" could not be resolved to an id`);
+  }
+
+  // Verify, never substitute. A token the model did not read is not a
+  // precondition, it is a rubber stamp — freezing in whatever the server
+  // currently has would turn compare-and-set into "overwrite whatever is
+  // there", which is the exact failure the token exists to prevent.
+  const expectedConfigId = readOptionalString(input, "expectedConfigId");
+  if (
+    expectedConfigId &&
+    detail.configId &&
+    expectedConfigId !== detail.configId
+  ) {
+    throw new Error(
+      `client "${detail.name}" changed since it was read (expectedConfigId ` +
+        `${expectedConfigId}, current ${detail.configId}) — re-read it and propose again`
+    );
+  }
+  const expectedName = readOptionalString(input, "expectedName");
+  if (expectedName && expectedName !== detail.name) {
+    throw new Error(
+      `client was renamed since it was read (expectedName "${expectedName}", ` +
+        `current "${detail.name}") — re-read it and propose again`
+    );
+  }
+  if (!detail.impact) {
+    throw new Error(
+      `client "${detail.name}" did not report what an edit affects; refusing to ` +
+        "mint an approval whose description cannot be checked"
+    );
+  }
+
+  return {
+    ...input,
+    client: detail.id,
+    resolvedClientId: detail.id,
+    clientLabel: detail.name,
+    expectedImpact: detail.impact,
+  };
 }
 
 /**
@@ -759,7 +947,7 @@ function readOptionalNumber(
  */
 export async function freezeDirectoryInstallArgs(
   input: Record<string, unknown>,
-  context: { projectId: string; client: PlatformApiClient },
+  context: { projectId: string; client: PlatformApiClient }
 ): Promise<Record<string, unknown>> {
   const catalogServerId = named(input, "catalogServerId");
   if (!catalogServerId) {
@@ -769,14 +957,13 @@ export async function freezeDirectoryInstallArgs(
   const row = await context.client.getRegistryDirectoryServer({
     catalogServerId,
   });
-  const endpointUrl =
-    readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
+  const endpointUrl = readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
   const expectedContentHash =
     readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
   if (!endpointUrl || !expectedContentHash) {
     throw new Error(
       `directory row ${catalogServerId} cannot be pinned — missing ` +
-        `${endpointUrl ? "content hash" : "endpoint"}`,
+        `${endpointUrl ? "content hash" : "endpoint"}`
     );
   }
   return { ...input, endpointUrl, expectedContentHash };
@@ -789,7 +976,7 @@ export async function freezeDirectoryInstallArgs(
  */
 export async function freezeCardInstallArgs(
   input: Record<string, unknown>,
-  context: { projectId: string; client: PlatformApiClient },
+  context: { projectId: string; client: PlatformApiClient }
 ): Promise<Record<string, unknown>> {
   const registryServerId = named(input, "registryServerId");
   if (!registryServerId) {
@@ -807,14 +994,14 @@ export async function freezeCardInstallArgs(
   const card = page.items.find((item) => item.id === registryServerId);
   if (!card) {
     throw new Error(
-      `registry card ${registryServerId} is not visible to this project`,
+      `registry card ${registryServerId} is not visible to this project`
     );
   }
   const expectedUpdatedAt =
     readOptionalNumber(input, "expectedUpdatedAt") ?? card.updatedAt;
   if (expectedUpdatedAt === undefined) {
     throw new Error(
-      `registry card ${registryServerId} carries no updatedAt to pin against`,
+      `registry card ${registryServerId} carries no updatedAt to pin against`
     );
   }
   // The endpoint shown to the approver is the CARD'S own, never the model's:
@@ -850,7 +1037,7 @@ export async function freezeCardInstallArgs(
  */
 function readinessRunResource(
   result: unknown,
-  { projectId }: { projectId: string },
+  { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "run.runId") ?? readString(result, "run.id");
   if (!runId) return undefined;
@@ -874,7 +1061,7 @@ function readinessRunResource(
  */
 async function freezeConformanceServer(
   input: Record<string, unknown>,
-  { projectId, client }: { projectId: string; client: PlatformApiClient },
+  { projectId, client }: { projectId: string; client: PlatformApiClient }
 ): Promise<Record<string, unknown>> {
   const selector = named(input, "server");
   if (!selector) return input;
@@ -882,7 +1069,7 @@ async function freezeConformanceServer(
   const match = page.items.find(
     (server) =>
       server.id === selector ||
-      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase()
   );
   if (!match) return input;
   return { ...input, server: match.id };
@@ -890,7 +1077,7 @@ async function freezeConformanceServer(
 
 export function conformanceRunResource(
   result: unknown,
-  { projectId }: { projectId: string },
+  { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const runId =
     readString(result, "run.runId") ??
@@ -908,7 +1095,7 @@ export function conformanceRunResource(
 
 function journeyRunResource(
   result: unknown,
-  { projectId }: { projectId: string },
+  { projectId }: { projectId: string }
 ): ExecutedActionResource | undefined {
   const runId = readString(result, "run.id") ?? readString(result, "runId");
   if (!runId) return undefined;
@@ -969,7 +1156,7 @@ const UNTRUSTED_SERVER_CONTENT_NOTE =
  */
 function named(
   input: Record<string, unknown>,
-  key: string,
+  key: string
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -1115,7 +1302,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   const keys = Object.keys(args).sort();
   const shown = keys.slice(0, PREVIEW_MAX_ARGS);
   const parts = shown.map(
-    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`,
+    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`
   );
   const omitted = keys.slice(PREVIEW_MAX_ARGS);
   if (omitted.length > 0) {
@@ -1127,7 +1314,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
     parts.push(
       `+${omitted.length} more: ${omitted
         .map((key) => previewIdentifier(key))
-        .join(", ")}`,
+        .join(", ")}`
     );
   }
   // The NAME is capped (inside previewIdentifier) before the whole preview
@@ -1137,7 +1324,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   // is being called with. That is exactly the state this preview exists to
   // prevent, and it is reachable by an agent choosing a long name.
   const rendered = toSafeLine(
-    `${previewIdentifier(toolName)}(${parts.join(", ")})`,
+    `${previewIdentifier(toolName)}(${parts.join(", ")})`
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -1306,7 +1493,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
       "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
-      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
+      '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
     ],
   },
   {
@@ -1341,9 +1528,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Run conformance suites on ${
-          named(input, "server") ?? "a server"
-        }`,
+        `Run conformance suites on ${named(input, "server") ?? "a server"}`,
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: () => "none",
@@ -1416,8 +1601,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
     ],
   },
-  { operation: listHostsOperation, tier: "direct" },
-  { operation: getHostOperation, tier: "direct" },
+  { operation: listClientsOperation, tier: "direct" },
+  {
+    operation: getClientOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
+    ],
+  },
   { operation: listEnvironmentsOperation, tier: "direct" },
   { operation: getEnvironmentOperation, tier: "direct" },
 
@@ -2002,6 +2193,109 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
+  // ── Client authoring ──────────────────────────────────────────────────
+  //
+  // GATED, all three, and each is an exception to what its `risk` alone would
+  // pick: `create_client` is `risk: "none"` and would otherwise be direct;
+  // `update_client` and `set_client_servers` are `risk: "destructive"` and
+  // would otherwise be excluded. The named exceptions in
+  // `agent-op-registry.test.ts` are where that is written down.
+  //
+  // The same reason covers both directions. A client IS the execution surface
+  // every later turn runs on, so a human approves changes to it — but an
+  // approval is only worth asking for if it means something, and these do:
+  // the target is frozen to an id, the tokens are verified before the proposal
+  // is minted, and the impact the card quotes is preconditioned transactionally.
+  // A consumer added between the proposal and the click makes the write
+  // conflict rather than quietly widening what was agreed to.
+  //
+  // `delete_client` and `duplicate_client` stay excluded — see EXCLUDED_FROM_AGENT.
+  {
+    operation: createClientOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const name = named(input, "name") ?? "(unnamed)";
+        const template = named(input, "template");
+        return template
+          ? `Create client **${name}** from template ${template}`
+          : `Create client **${name}** from an explicit configuration`;
+      },
+      buttonLabel: "Create it",
+      kind: "schedule",
+      // Additive: nothing that exists changes, and no credits are spent.
+      confirmSeverity: "none",
+      target: (input) => {
+        const selector = named(input, "name");
+        return selector ? { type: "client", selector } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
+    ],
+  },
+  {
+    operation: updateClientOperation,
+    tier: "gated",
+    proposal: {
+      describe: describeClientEdit,
+      buttonLabel: "Apply the edit",
+      kind: "schedule",
+      // Not `spend`: the edit costs nothing. Its hazard is that it changes what
+      // later runs execute, which the description states in counts.
+      confirmSeverity: "none",
+      // The FROZEN id where the freeze ran, so a host correlating this
+      // proposal with turn output matches the row, not the spelling.
+      target: (input) => {
+        const selector = named(input, "client");
+        return selector ? { type: "client", selector } : undefined;
+      },
+      normalizeProposalArgs: freezeClientWriteArgs,
+      // Fail-closed. Without the resolved id the approval executes against a
+      // NAME, which a rename can repoint; without the frozen impact the card's
+      // blast-radius sentence is a claim nothing checks.
+      requiredFrozenKeys: ["resolvedClientId", "expectedImpact"],
+    },
+    promptNotes: [
+      "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
+      "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",
+      "- A client edit changes what every later run of every environment, scenario and journey on it executes. Say what you are changing and what it affects before proposing it.",
+    ],
+  },
+  {
+    operation: setClientServersOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const label =
+          named(input, "clientLabel") ?? named(input, "client") ?? "(unnamed)";
+        const required = readStringList(input, "serverIds").length;
+        const optional = readStringList(input, "optionalServerIds").length;
+        const optionalNote = optional > 0 ? ` and ${optional} optional` : "";
+        return (
+          `Replace client **${label}**'s servers with ${required} required` +
+          `${optionalNote} server${
+            required === 1 && optional === 0 ? "" : "s"
+          }. ` +
+          `Servers not listed are detached. ${describeClientImpact(input)}`
+        );
+      },
+      buttonLabel: "Apply the edit",
+      kind: "schedule",
+      confirmSeverity: "none",
+      // The FROZEN id where the freeze ran, so a host correlating this
+      // proposal with turn output matches the row, not the spelling.
+      target: (input) => {
+        const selector = named(input, "client");
+        return selector ? { type: "client", selector } : undefined;
+      },
+      normalizeProposalArgs: freezeClientWriteArgs,
+      requiredFrozenKeys: ["resolvedClientId", "expectedImpact"],
+    },
+    promptNotes: [
+      "- `set_client_servers` REPLACES the server set: every server you leave out is detached. Read the current list with `get_client` first, and send `expectedConfigId` from the same read.",
+    ],
+  },
   { operation: getShareSettingsOperation, tier: "direct" },
   {
     operation: setShareModeOperation,
@@ -2095,7 +2389,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   delete_eval_case:
     "Irreversible delete; the agent proposes authoring, never destruction.",
   delete_project: "Irreversible and cascades across every project resource.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
+  delete_client:
+    "Removes the client identity every environment, journey and eval suite points at, and nothing here can put it back. The edit operations are gated rather than excluded because a preconditioned overwrite names what it replaces and leaves the client standing; a removal does neither.",
   delete_sandbox_image: "Irreversible; image lifecycle is an operator task.",
   delete_project_server:
     "Irreversible and cascades into hosts, evals and credentials.",
@@ -2110,12 +2405,13 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Covered by list_project_servers, which the agent already has.",
   update_project_server:
     "Server credentials and transport are an administrative surface.",
-  create_host:
-    "Host creation re-wires the execution surface the agent runs on.",
-  update_host: "Host config changes affect every subsequent turn.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative surface.",
-  duplicate_host: "Host administration is not a turn concern.",
+  // `create_client`, `update_client` and `set_client_servers` moved OUT of this
+  // map and into the gated block above. What used to be written here —
+  // "re-wires the execution surface", "affects every subsequent turn" — is
+  // still true; it is the reason they are gated rather than direct, not a
+  // reason they cannot be proposed at all.
+  duplicate_client:
+    "Duplicating a client is roster housekeeping, not a turn concern: nothing in a turn needs a second copy of a configuration, and `create_client` covers the case where the agent genuinely needs a new one. Available on REST, the CLI and MCP.",
   create_project_environment:
     "Environment authoring is an administrative surface.",
   update_project_environment:
@@ -2189,12 +2485,12 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>
-    entry.tier === "direct",
+    entry.tier === "direct"
 );
 
 const GATED_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "gated" }> =>
-    entry.tier === "gated",
+    entry.tier === "gated"
 );
 
 /**
@@ -2229,17 +2525,17 @@ export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<AnyPlatformOperation> =
  */
 export const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   DIRECT_ENTRIES.filter((entry) => !entry.operation.readOnly).map(
-    (entry) => entry.operation.name,
-  ),
+    (entry) => entry.operation.name
+  )
 );
 
 const GATED_BY_NAME = new Map(
-  GATED_ENTRIES.map((entry) => [entry.operation.name, entry]),
+  GATED_ENTRIES.map((entry) => [entry.operation.name, entry])
 );
 
 /** The gated entry for an operation name, or undefined if it is not gated. */
 export function gatedEntryFor(
-  operationName: string,
+  operationName: string
 ): Extract<AgentOpEntry, { tier: "gated" }> | undefined {
   return GATED_BY_NAME.get(operationName);
 }
@@ -2257,11 +2553,11 @@ export function proposalMetaFor(operationName: string): {
   kind: ProposedActionKind;
   /** Resolved per proposal — the hazard can depend on the arguments. */
   severityFor: (
-    input: Record<string, unknown>,
+    input: Record<string, unknown>
   ) => ProposedActionSeverity | undefined;
   /** What the proposal is about, when that is a nameable resource. */
   targetFor: (
-    input: Record<string, unknown>,
+    input: Record<string, unknown>
   ) => ProposedActionTarget | undefined;
   /**
    * Freeze the arguments before they are persisted, or return them unchanged.
@@ -2275,7 +2571,7 @@ export function proposalMetaFor(operationName: string): {
    */
   normalizeArgs: (
     input: Record<string, unknown>,
-    context: { projectId: string; client: PlatformApiClient },
+    context: { projectId: string; client: PlatformApiClient }
   ) => Promise<Record<string, unknown>>;
   /**
    * Canonicalize frozen input for the proposal action-id hash.
@@ -2313,7 +2609,7 @@ export function proposalMetaFor(operationName: string): {
     description: (input: Record<string, unknown>) =>
       capChars(
         toSafeLine(entry.proposal.describe(input)),
-        DESCRIPTION_TOTAL_CHARS,
+        DESCRIPTION_TOTAL_CHARS
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,
