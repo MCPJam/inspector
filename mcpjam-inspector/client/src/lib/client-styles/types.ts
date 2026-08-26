@@ -264,6 +264,24 @@ export type McpAppsCspResourceDomains = {
   media?: boolean;
 };
 
+/**
+ * Which halves of an MCP Tool Result the host relays to a widget that called
+ * a tool. Named (not inlined) because BOTH the authoring surface
+ * (`McpAppsCapabilities`) and the resolved surface
+ * (`ResolvedMcpAppsCapabilities`) carry it, and the merge function converts
+ * one into the other — inlining it twice is how they drift apart.
+ */
+export type McpAppsToolResultPolicy = {
+  structuredContent?: boolean;
+  content?: {
+    text?: boolean;
+    image?: boolean;
+    audio?: boolean;
+    resource?: boolean;
+    resourceLink?: boolean;
+  };
+};
+
 export type McpAppsCapabilities = {
   /** Allow-list of display modes advertised in HostContext. */
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
@@ -286,6 +304,13 @@ export type McpAppsCapabilities = {
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
+  /**
+   * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
+   * calls. Shares storage with the app bridge overrides but is not an
+   * `app.*` capability — it shapes the VALUE a live handler returns rather
+   * than gating whether a handler exists.
+   */
+  toolResult?: McpAppsToolResultPolicy;
   /**
    * Host policy for `ui/request-display-mode` originating from the widget.
    * SEP-1865 permits the host to decline these requests; this row exposes
@@ -346,6 +371,12 @@ export type ResolvedMcpAppsCapabilities = {
   downloadFile: boolean;
   requestTeardown: boolean;
   widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
+  /**
+   * Optional like the CSP subtype records above: absent means the host
+   * forwards the whole tool result. `mergeMcpAppsCapabilities` resolves it
+   * and `host-app-bridge` enforces it on every result relayed to a widget.
+   */
+  toolResult?: McpAppsToolResultPolicy;
 };
 
 /**
