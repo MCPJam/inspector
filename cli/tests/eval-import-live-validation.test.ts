@@ -1862,6 +1862,69 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("an ambiguous --server refuses before any write, as the launch would", async () => {
+    const fixture = await startFixture({
+      servers: [
+        { id: "srv_a", name: "GitHub" },
+        { id: "srv_b", name: "github" },
+      ],
+      toolsByServer: { GitHub: ["render_refund", "render_gone"] },
+    });
+    try {
+      // `--server` is resolved at launch by `resolveRunServers` ->
+      // `resolveByIdOrName`, which REQUIRES a unique case-insensitive name.
+      // Taking the first fold match here would validate, sync the suite and
+      // its cases, and only then have the launch reject the selector — writes
+      // left behind for a run that never started.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "GITHUB"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout + run.stderr);
+        assert.match(run.stdout + run.stderr, /matches more than one server/);
+        // The point of the refusal: nothing synced.
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an ambiguous name in the FILE's target.servers still runs", async () => {
+    const fixture = await startFixture({
+      // NEITHER matches the file's `billing` exactly, so the fold is what
+      // decides — which is the whole point of this test.
+      servers: [
+        { id: "srv_a", name: "Billing" },
+        { id: "srv_b", name: "BILLING" },
+      ],
+      toolsByServer: { Billing: ["render_refund", "render_gone"] },
+    });
+    try {
+      // The file's own `target.servers` are resolved at RUN TIME by
+      // `resolveConfiguredServerIds`, which takes the first case-insensitive
+      // match and never calls it ambiguous. Refusing here would block a run
+      // that executes perfectly well — the binding rule and the explicit
+      // `--server` rule are genuinely different, and this pins that.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file), { telemetry: telemetryDisabled })
+        );
+        assert.doesNotMatch(
+          run.stdout + run.stderr,
+          /matches more than one server/
+        );
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a host pinning a server the project lost refuses, and says so", async () => {
     const fixture = await startFixture({
       servers: [{ id: "srv_billing", name: "billing" }],

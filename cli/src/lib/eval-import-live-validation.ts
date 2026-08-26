@@ -194,11 +194,14 @@ export async function resolveValidationTargets(
     return [
       {
         label: `servers ${knobs.server.join(", ")}`,
+        // EXPLICIT: `--server` is resolved at launch by `resolveByIdOrName`,
+        // which requires a unique name. See `resolveServersByName`.
         servers: await resolveServersByName(
           client,
           params.projectId,
           knobs.server,
-          params.signal
+          params.signal,
+          "explicit"
         ),
       },
     ];
@@ -424,27 +427,58 @@ async function resolveServersByName(
   client: PlatformApiClient,
   projectId: string,
   selectors: string[],
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  /**
+   * Which of the launch's TWO server-resolution rules this call gates.
+   *
+   *   - `"binding"` — a server named by the FILE (`target.servers`, or a
+   *     host's declared set). The runtime resolves these with
+   *     `resolveConfiguredServerIds`, which takes the first case-insensitive
+   *     match and never complains about ambiguity, so this preflight must not
+   *     either: refusing here would block a run that executes fine.
+   *   - `"explicit"` — a server named on the COMMAND LINE via `--server`. The
+   *     launch resolves these with `resolveRunServers` -> `resolveByIdOrName`,
+   *     which requires a UNIQUE case-insensitive name and throws otherwise.
+   *
+   * The two genuinely differ, and collapsing them re-creates the defect this
+   * whole preflight exists to prevent — in the direction that costs the most:
+   * accepting `--server GITHUB` against project servers `GitHub` and `github`
+   * would validate, sync the suite and its cases, and only THEN have the
+   * launch reject the selector as ambiguous, leaving writes behind for a run
+   * that never started.
+   */
+  rule: "binding" | "explicit" = "binding"
 ): Promise<Array<{ id: string; name: string }>> {
   if (selectors.length === 0) return [];
   const page = await client.listProjectServers({ projectId }, { signal });
   const byId = new Map(page.items.map((server) => [server.id, server]));
   const byName = new Map(page.items.map((server) => [server.name, server]));
-  // Exact first, then folded — the order `resolveConfiguredServerIds` uses, so
-  // two servers differing only by case still resolve to the one actually named.
-  const byFoldedName = new Map<string, (typeof page.items)[number]>();
+  // Exact first, then folded — the order both runtime resolvers use.
+  const foldedMatches = new Map<string, Array<(typeof page.items)[number]>>();
   for (const server of page.items) {
     const key = foldServerName(server.name);
-    if (!byFoldedName.has(key)) byFoldedName.set(key, server);
+    const bucket = foldedMatches.get(key);
+    if (bucket) bucket.push(server);
+    else foldedMatches.set(key, [server]);
   }
   const resolvedServers: Array<{ id: string; name: string }> = [];
   for (const rawSelector of selectors) {
     const selector = rawSelector.trim();
     if (!selector) continue;
-    const hit =
-      byId.get(selector) ??
-      byName.get(selector) ??
-      byFoldedName.get(foldServerName(selector));
+    const exact = byId.get(selector) ?? byName.get(selector);
+    if (exact) {
+      resolvedServers.push({ id: exact.id, name: exact.name });
+      continue;
+    }
+    const folded = foldedMatches.get(foldServerName(selector)) ?? [];
+    if (rule === "explicit" && folded.length > 1) {
+      throw cliError(
+        "TOOL_DISCOVERY_UNAVAILABLE",
+        `Server name "${selector}" matches more than one server in this project, so the run's target could not be checked. The launch refuses an ambiguous --server too; name the server by id. Nothing was written.`,
+        IMPORT_VALIDATION_EXIT_CODE
+      );
+    }
+    const hit = folded[0];
     if (hit) resolvedServers.push({ id: hit.id, name: hit.name });
   }
   return resolvedServers;
