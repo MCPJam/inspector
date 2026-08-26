@@ -11,7 +11,10 @@ import {
   GATE_WAIVER_MAX_REASON_LENGTH,
   GATE_WAIVER_REASON_NOTICE,
 } from "../gates.js";
-import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
+import {
+  MAX_BATCH_CREATE_CASES,
+  evalSuiteFileCaseImportSchema,
+} from "../contract/suite-file.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -4495,6 +4498,25 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  // THE CONVERTER'S CLAIM, on the operation surface too.
+  //
+  // Without it Zod strips the key and `buildCaseBody` never sees it, so a
+  // converter writing through `create_eval_case` / `update_eval_case` (or
+  // `cloud eval cases create/update --json`) stores an APPROXIMATED case as a
+  // native one — and a native case needs no approval, so it runs and gates on
+  // provenance that was silently discarded on the way in. Losing the claim is
+  // strictly worse than rejecting the write.
+  //
+  // Nullable for the same reason as `matchOptions` above: an update clears the
+  // claim with `null` and leaves it untouched by omitting it. The schema is the
+  // suite file's own, so a claim means exactly the same thing however it
+  // arrives.
+  import: evalSuiteFileCaseImportSchema
+    .nullable()
+    .optional()
+    .describe(
+      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null on an update to clear it."
+    ),
 } as const;
 
 /** Build the public case body forwarded to the route (drops undefined keys). */

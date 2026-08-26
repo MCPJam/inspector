@@ -192,6 +192,49 @@ describe("eval-edit operation execution", () => {
     });
   });
 
+  it("create_eval_case carries the converter's import claim to the wire", async () => {
+    const { client, calls } = makeClient();
+    const claim = {
+      status: "approximated" as const,
+      sourceCaseKey: "promptfoo:tests[3]",
+      note: "Source asserted a regex; MCPJam asserts a substring.",
+    };
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Converted", import: claim },
+      { client }
+    );
+    const post = calls.find((c) => c.method === "POST");
+    // Dropping the claim here does not merely lose provenance: a case with no
+    // claim is a NATIVE case, and a native case needs no approval — so an
+    // approximated case would run and gate on evidence nobody reviewed.
+    expect(post?.body?.import).toEqual(claim);
+  });
+
+  it("update_eval_case forwards a claim, and null to clear one", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", import: null },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    // `null` CLEARS; omitting leaves the stored claim alone. `buildCaseBody`
+    // drops undefined and keeps null, which is exactly that distinction.
+    expect(patch?.body).toEqual({ import: null });
+  });
+
+  it("create_eval_case rejects an exact claim with no note", async () => {
+    // The contract schema is reused verbatim, so a claim means the same thing
+    // whether it arrives from a suite file or this operation — including the
+    // rule that `exact` must cite the mapping rule that earns it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: { status: "exact" },
+      }).success
+    ).toBe(false);
+  });
+
   it("get_eval_case resolves a case by title", async () => {
     const { client, calls } = makeClient();
     const result = await getEvalCaseOperation.execute(

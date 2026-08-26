@@ -465,10 +465,26 @@ async function resolveServersByName(
   for (const rawSelector of selectors) {
     const selector = rawSelector.trim();
     if (!selector) continue;
-    const exact = byId.get(selector) ?? byName.get(selector);
-    if (exact) {
-      resolvedServers.push({ id: exact.id, name: exact.name });
+    // An exact ID short-circuits under BOTH rules — every runtime resolver
+    // checks ids first, and an id is unique by construction.
+    const byIdHit = byId.get(selector);
+    if (byIdHit) {
+      resolvedServers.push({ id: byIdHit.id, name: byIdHit.name });
       continue;
+    }
+    // An exact DISPLAY NAME short-circuits only under the binding rule.
+    // `resolveByIdOrName` has no exact-name fast path: after the id check it
+    // goes straight to the folded set and refuses a name matching more than
+    // one server — so with `GitHub` and `github` both present, even the exact
+    // spelling `--server GitHub` is ambiguous at launch. Accepting it here
+    // because it matched a name exactly would sync the suite and its cases and
+    // leave the launch to reject the selector afterwards.
+    if (rule === "binding") {
+      const byNameHit = byName.get(selector);
+      if (byNameHit) {
+        resolvedServers.push({ id: byNameHit.id, name: byNameHit.name });
+        continue;
+      }
     }
     const folded = foldedMatches.get(foldServerName(selector)) ?? [];
     if (rule === "explicit" && folded.length > 1) {
@@ -500,7 +516,7 @@ async function resolveServersByName(
  * two ids differing only by case are two different servers.
  */
 function foldServerName(name: string): string {
-  return name.trim().toLowerCase();
+  return name.trim().toLocaleLowerCase();
 }
 
 /**

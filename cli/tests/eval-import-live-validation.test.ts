@@ -1894,6 +1894,69 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("an EXACT --server name is still ambiguous when another folds to it", async () => {
+    const fixture = await startFixture({
+      servers: [
+        { id: "srv_a", name: "GitHub" },
+        { id: "srv_b", name: "github" },
+      ],
+      toolsByServer: { GitHub: ["render_refund", "render_gone"] },
+    });
+    try {
+      // `resolveByIdOrName` has NO exact-name fast path: after the id check it
+      // goes straight to the folded set, so `GitHub` matches two servers and
+      // the launch refuses it — even though the spelling is exactly right.
+      // Short-circuiting on the exact name here would sync the suite and its
+      // cases and leave the launch to reject the selector afterwards.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "GitHub"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout + run.stderr);
+        assert.match(run.stdout + run.stderr, /matches more than one server/);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an exact --server ID resolves even when names collide", async () => {
+    const fixture = await startFixture({
+      // The two names FOLD together, so a name selector would be ambiguous;
+      // the id is what disambiguates. `billing` is the name the file's steps
+      // reference, so resolving by id must land on that one.
+      servers: [
+        { id: "srv_billing", name: "billing" },
+        { id: "srv_b", name: "Billing" },
+      ],
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+    });
+    try {
+      // An id is unique by construction and every runtime resolver checks ids
+      // first, so naming one is exactly how a caller escapes the ambiguity.
+      // Refusing here would leave them no way to run at all.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "srv_billing"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.doesNotMatch(
+          run.stdout + run.stderr,
+          /matches more than one server/
+        );
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("an ambiguous name in the FILE's target.servers still runs", async () => {
     const fixture = await startFixture({
       // NEITHER matches the file's `billing` exactly, so the fold is what
