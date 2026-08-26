@@ -11,6 +11,9 @@ import type {
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiverRead,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -20,6 +23,7 @@ import type {
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunDisclosure,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -1382,6 +1386,75 @@ export class PlatformApiClient {
   }
 
   /**
+   * `GET /projects/{p}/eval-suites/{id}/run-disclosure` — the pre-run
+   * disclosure for a launch plan: what happens to the run's content, keyed by
+   * the SAME destination-affecting subset `createEvalRun` uses
+   * (`caseIds`/`environmentId`/`environmentIds`). Deliberately NOT the
+   * estimator's full arg set — `iterationOverride`/`planCount` only scale
+   * volume, which is not part of this contract, and the inspector server
+   * rejects them rather than silently ignoring them.
+   *
+   * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
+   * `details.reason === "contract_unavailable"` against an inspector
+   * deployment too old to compute this — never treat a missing disclosure as
+   * "nothing to disclose". This is a GUARANTEE only when the deployment's
+   * missing-function error reaches the client unredacted (every non-production
+   * Convex environment, and a production one whose redaction the route can
+   * unambiguously identify as a missing function). Production Convex can
+   * redact that same failure to a generic "Server Error" indistinguishable
+   * from a genuine handler crash; the route disambiguates what it safely can
+   * (a caller who cannot see the suite at all still gets a 404, never this
+   * code), but an ambiguous redacted failure on a suite the caller CAN see
+   * surfaces as a 502 `SERVER_UNREACHABLE` instead — this route has no way to
+   * independently confirm "not deployed yet" over "deployed and broken" in
+   * that one case, and guessing `contract_unavailable` would risk hiding a
+   * real incident. A caller cannot rely on this code alone to detect an
+   * old deployment in production; a 502 does not imply the contract is
+   * available either.
+   */
+  getEvalRunDisclosure(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseIds?: string[];
+      environmentId?: string;
+      environmentIds?: string[];
+      /**
+       * Disclose for a HOST-axis launch — the attached host a run would be
+       * stamped with (G4c). Mutually exclusive with `environmentId`/
+       * `environmentIds`: a launch plan resolves on exactly one axis, and the
+       * route rejects the combination with a 400 rather than letting it reach
+       * the backend as an ambiguous query.
+       *
+       * `runnerCapabilities` is deliberately NOT a parameter here. The
+       * inspector route asserts it from the executing process, which is the
+       * only honest source for what that process can run; a client-supplied
+       * value could claim a harness capability the runner does not have.
+       */
+      namedHostId?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDisclosure> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/run-disclosure`,
+      {
+        query: {
+          caseIds: params.caseIds?.length ? params.caseIds.join(",") : undefined,
+          environmentId: params.environmentId,
+          environmentIds: params.environmentIds?.length
+            ? params.environmentIds.join(",")
+            : undefined,
+          host: params.namedHostId,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
    * `POST /projects/{p}/eval-suites/{id}/environments` — APPEND one
    * environment to the suite's attachments, atomically.
    *
@@ -1478,6 +1551,41 @@ export class PlatformApiClient {
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical run
+   * decision contract: the verdict, the unit its counts are in, the run's own
+   * `EvalVerdictDecision` when it has one, and one page of per-trial
+   * diagnostics.
+   *
+   * ADDITIVE, and newer than most deployments: an API that predates it answers
+   * `404`. A caller that must work against both should use the exported
+   * `readEvalRunDecisionSummary` helper, which falls back over
+   * `listEvalRunIterations` and the same contract assembler rather than
+   * creating a summary of its own.
+   *
+   * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
+   * `listEvalRunIterations` issues. The response says whether the page it
+   * returned is the whole non-passing set.
+   */
+  getEvalRunDecisionSummary(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunDecisionSummary> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
+      { query: { cursor: params.cursor, limit: params.limit } },
       options,
     );
   }
@@ -1639,6 +1747,94 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  // ── Gate waivers ──────────────────────────────────────────────────────
+  //
+  // An audited, time-boxed override of a run's gate. Three calls, and the
+  // asymmetry between them is deliberate: WAIVING is manage-tier, while
+  // READING is available to anyone who can see the run — a waiver only its
+  // grantors can see is not a visible waiver, and visibility is half the
+  // requirement.
+  //
+  // None of these decide authorization; the platform mutation owns that. The
+  // client does not pre-judge whether the caller may waive, because a client
+  // that guesses wrong either blocks a legitimate override or lets an
+  // illegitimate one look accepted until the write fails.
+
+  /**
+   * Grant a waiver over a failing run's gate.
+   *
+   * `reason` is stored UNREDACTED for the life of the suite: any surface
+   * collecting one must warn the human first (`GATE_WAIVER_REASON_NOTICE`).
+   * `expiresAt` is epoch ms, must be in the future, and is capped at 30 days
+   * out by the platform — there is no way to ask for a permanent waiver.
+   *
+   * Re-waiving an already-waived run answers `status: "conflict"` with the
+   * EXISTING waiver. That is a normal result, not an error: two active waivers
+   * over one run would make "which reason is on the check" a race.
+   */
+  createGateWaiver(
+    params: {
+      projectId: string;
+      runId: string;
+      reason: string;
+      expiresAt: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      { body: { reason: params.reason, expiresAt: params.expiresAt } },
+      options,
+    );
+  }
+
+  /**
+   * The waiver in force over a run, or `null`.
+   *
+   * `eval gate` does NOT need this — the run projection already carries
+   * `gateWaiver`, so the gating path folds a waiver in without a second round
+   * trip. This is the explicit read, for asking the question on its own.
+   */
+  getGateWaiver(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverRead> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Revoke a waiver, putting the gate back.
+   *
+   * IDEMPOTENT: revoking an already-revoked waiver answers
+   * `status: "already_revoked"` and is a SUCCESS, not an error — restamping it
+   * would rewrite who actually ended the waiver.
+   */
+  revokeGateWaiver(
+    params: { projectId: string; runId: string; waiverId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(
+        params.runId,
+      )}/gate-waivers/${encodeURIComponent(params.waiverId)}`,
       {},
       options,
     );
@@ -1905,6 +2101,14 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       baseRunId?: string;
+      /**
+       * Pin the baseline by SOURCE SHA instead of run id. Mutually exclusive
+       * with `baseRunId` — sending both is a 400. A SHA that resolves to no
+       * completed run in the suite is the ordinary BASELINE_NOT_FOUND 404, not
+       * this error: "we looked and established nothing" stays distinct from
+       * "you asked for something impossible".
+       */
+      baseCommitSha?: string;
       previewChars?: number;
     },
     options?: RequestOptions,
@@ -1917,6 +2121,7 @@ export class PlatformApiClient {
       {
         query: {
           baseRunId: params.baseRunId,
+          baseCommitSha: params.baseCommitSha,
           previewChars: params.previewChars,
         },
       },

@@ -1018,6 +1018,24 @@ describe("effectiveRunResult", () => {
     ).toBe("failed");
   });
 
+  it("reports an INCONCLUSIVE verdict verbatim instead of recomputing it", () => {
+    // Verdict policy 2's third result. The counts here would derive "passed"
+    // (2/2 at the default 100% bar), which is precisely the claim the platform
+    // declined to make: too little of the run was gradeable. The worker reports
+    // facts and the control plane maps `inconclusive` to a NEUTRAL check, so
+    // re-deriving it here is how an undecided run turns into a green check.
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        result: "inconclusive",
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      })
+    ).toBe("inconclusive");
+    // And it stays a verdict-bearing run: `inconclusive` is a result, not an
+    // abandoned run, so the worker does not raise "did not complete".
+    expect(runReachedAVerdict("completed")).toBe(true);
+  });
+
   it("never invents a pass when there is nothing to derive from", () => {
     expect(effectiveRunResult({ status: "completed" })).toBeUndefined();
     expect(effectiveRunResult(null)).toBeUndefined();

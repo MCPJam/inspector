@@ -2295,6 +2295,11 @@ describe("v1 write routes", () => {
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
         source: "api",
         notes: null,
+        // `null`, never omitted — the same convention `judges` uses below, and
+        // for the same reason: a caller must be able to tell "no waiver in
+        // force" from "an API deployment that does not report one", and an
+        // absent field collapses those into one answer.
+        gateWaiver: null,
         createdAt: 1,
         completedAt: 2,
         // Always present on the detail, so a caller can branch on

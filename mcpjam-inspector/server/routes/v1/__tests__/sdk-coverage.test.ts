@@ -171,6 +171,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
   "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
+  "get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure":
+    "getEvalRunDisclosure",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
@@ -195,8 +197,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-suites/{suiteId}/environments":
     "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/decision-summary":
+    "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
+    "createGateWaiver",
+  "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
+  "delete /projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}":
+    "revokeGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace":

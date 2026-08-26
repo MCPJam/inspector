@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
-  formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
+  renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
@@ -9,7 +10,7 @@ import { writeFileAtomic } from "./atomic-write.js";
 import { operationalError, usageError, writeResult } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 
-export type ReporterFormat = "json-summary" | "junit-xml";
+export type ReporterFormat = "json-summary" | "junit-xml" | "html";
 
 export function parseReporterFormat(
   value: string | undefined,
@@ -18,12 +19,12 @@ export function parseReporterFormat(
     return undefined;
   }
 
-  if (value === "json-summary" || value === "junit-xml") {
+  if (value === "json-summary" || value === "junit-xml" || value === "html") {
     return value;
   }
 
   throw usageError(
-    `Invalid reporter "${value}". Use "json-summary" or "junit-xml".`,
+    `Invalid reporter "${value}". Use "json-summary", "junit-xml", or "html".`,
   );
 }
 
@@ -36,17 +37,29 @@ export function writeReporterResult(
     return;
   }
 
+  if (reporter === "html") {
+    process.stdout.write(renderStructuredRunHtml(report));
+    return;
+  }
+
   writeResult(renderStructuredRunJson(report), "json");
 }
 
-/** Human-only prose, kept separate so `--format json` remains one document. */
+/**
+ * Human-only prose, kept separate so `--format json` remains one document.
+ *
+ * The SAME object the JSON reporter emits under `decisionSummary` and the HTML
+ * reporter renders, run through the canonical renderer — so the three terminals
+ * cannot disagree about the verdict, the unit its counts are in, the first
+ * failed stage, the category or the next action.
+ */
 export function writeEvalDecisionSummary(
   format: string,
-  summary: Parameters<typeof formatEvalDecisionSummary>[0] | undefined,
+  summary: Parameters<typeof formatEvalRunDecisionSummary>[0] | undefined,
   destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
 ): void {
   if (format !== "human" || !summary) return;
-  destination.write(`${formatEvalDecisionSummary(summary)}\n`);
+  destination.write(`${formatEvalRunDecisionSummary(summary)}\n`);
 }
 
 /**
@@ -89,7 +102,9 @@ export async function writeReporterArtifact(
   const body =
     reporter === "junit-xml"
       ? renderStructuredRunJUnitXml(report)
-      : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
+      : reporter === "html"
+        ? renderStructuredRunHtml(report)
+        : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
 
   try {
     return await writeFileAtomic(resolvedPath, body, { createParents: true });

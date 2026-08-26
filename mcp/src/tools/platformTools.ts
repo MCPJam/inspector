@@ -43,8 +43,10 @@ import {
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
+  getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
   ensureAdhocEnvironmentOperation,
@@ -212,6 +214,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   runEvalSuiteOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  // What a suite run would disclose (models called and where they route,
+  // which analyzers/judges can fire, retention/region) — a planning read for
+  // an unattended agent to check, or show a human, BEFORE it launches.
+  // `run_eval_suite` already fetches and returns this itself; this tool is
+  // for asking ahead of that decision, same rationale as `get_capabilities`.
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
@@ -225,6 +233,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   generateEvalCasesOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  // The waiver READ, beside the run read it explains. `get_eval_run` already
+  // carries `gateWaiver`, so withholding the dedicated read would hide nothing
+  // while making the surface incoherent — and a waiver an unattended reader
+  // cannot see is not the visible waiver the workflow exists to produce.
+  getEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -422,6 +435,18 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   // resource types and belong with the Share dialog / agent-op registry until
   // this catalog grows a dedicated share group — same decision as CLI
   // `op-bindings.ts`.
+  // The gate-waiver WRITES. Not excluded for being writes — this catalog
+  // carries cancel_eval_run, request_eval_run_judge and the case writes — but
+  // for being GOVERNANCE. Waiving overrides a human release decision, and the
+  // platform makes it manage-tier with no creator hatch precisely so whoever
+  // ran the failing evals cannot wave their own run through. An unattended
+  // caller granting itself that override is the same hole with a longer path
+  // to it, and the charter's "authorized actor" clause is what it defeats. It
+  // also publishes unredacted free text that outlives the waiver.
+  waive_eval_gate:
+    "Overriding a release gate is a governance act reserved to the manage tier, with no creator hatch, so an unattended caller must not be able to grant itself one. The waiver READ (get_eval_gate_waiver) is in the catalog.",
+  revoke_eval_gate_waiver:
+    "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
   get_share_settings:
     "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
   set_share_mode:

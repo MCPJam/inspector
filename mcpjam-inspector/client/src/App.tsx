@@ -26,6 +26,7 @@ import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
+import { EvaluateTab } from "./components/EvaluateTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
@@ -261,6 +262,7 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
+import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -268,6 +270,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
   HOST_VERIFY_TEMPLATE_PARAM,
@@ -603,6 +606,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <OrganizationsRoute />;
     case "evals":
       return <EvalsRoute />;
+    case "evaluate":
+      return <EvaluateRoute />;
     case "home":
       return <HomeRoute />;
     case "servers":
@@ -937,6 +942,14 @@ export function HostsRoute() {
 }
 
 /**
+ * How long the verify deep-link waits for a gated template's rollout flag
+ * before treating it as off. PostHog seeds no bootstrap flag values, so a
+ * blocked or unreachable relay leaves the flag `undefined` for the life of the
+ * mount — without a deadline the link would silently do nothing at all.
+ */
+export const HOST_TEMPLATE_FLAG_WAIT_MS = 5_000;
+
+/**
  * "Verify against your server" deep-link from the public caniuse surface.
  * `/hosts?template=claude` opens that client's host, creating it from the
  * template (matched by name) when the account doesn't already have one — then
@@ -975,9 +988,39 @@ function useTemplateVerifyDeepLink({
     return parseHostVerifyTabParam(window.location.search);
   }, []);
   const handledRef = useRef(false);
+  // Bounded wait for a gated template's rollout flag — see
+  // `HOST_TEMPLATE_FLAG_WAIT_MS`. Once it expires an unresolved flag is read as
+  // off, so the link fails visibly (bounce + toast) instead of silently.
+  const [flagWaitExpired, setFlagWaitExpired] = useState(false);
+
+  useEffect(() => {
+    if (!requestedTemplateId) return;
+    const timer = setTimeout(
+      () => setFlagWaitExpired(true),
+      HOST_TEMPLATE_FLAG_WAIT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [requestedTemplateId]);
 
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
+    // The template id is captured at mount, but this component stays mounted
+    // across `/hosts` ↔ `/hosts/:hostId`. If the URL no longer asks for the
+    // captured template — gone, emptied, or now naming a different one — the
+    // link is stale: acting on it would create a host or bounce the user out of
+    // the one they opened, and `replace: true` would eat the history entry that
+    // leads back to it. Compared against the captured id rather than merely
+    // tested for presence, so a template swapped mid-load can never resolve to
+    // the host the user is no longer asking for.
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get(
+        HOST_VERIFY_TEMPLATE_PARAM
+      ) !== requestedTemplateId
+    ) {
+      handledRef.current = true;
+      return;
+    }
     // Wait for the host list before deciding create-vs-open, and never mint a
     // host against an id `createHost` would reject. The projectId check is
     // stated here rather than left to `useHostList`'s loading flag: the two
@@ -996,17 +1039,16 @@ function useTemplateVerifyDeepLink({
       return;
     }
 
-    const templateEnabled =
-      requestedTemplateId === "claude-code"
-        ? claudeCodeEnabled
-        : requestedTemplateId === "codex"
-        ? codexEnabled
-        : true;
-    // These templates remain visible on caniuse.dev as reference profiles,
-    // but they are not available for new-host creation until their rollout
-    // flags are enabled. Wait for PostHog before deciding so flagged users do
-    // not get bounced during a cold load.
-    if (templateEnabled === undefined) return;
+    const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+    });
+    // Gated templates remain visible on caniuse.dev as reference profiles, but
+    // they are not available for new-host creation until their rollout flags
+    // are enabled. Wait for PostHog before deciding so flagged users do not get
+    // bounced during a cold load — but only until the deadline, so a relay that
+    // never answers ends in the disabled path instead of a silent no-op.
+    if (templateEnabled === undefined && !flagWaitExpired) return;
     if (!templateEnabled) {
       handledRef.current = true;
       navigate(routePaths.hosts, { replace: true });
@@ -1031,8 +1073,11 @@ function useTemplateVerifyDeepLink({
           replace: true,
         });
       } catch (err) {
-        // Let the user retry (e.g. via the same link) after a transient failure.
-        handledRef.current = false;
+        // Leave the latch set. This effect also re-runs when the rollout flags
+        // resolve, so releasing it here let a failed create fire again with no
+        // user gesture — duplicating a host the first attempt may have
+        // committed before it timed out. Retrying means opening the link again,
+        // which remounts this hook and clears the latch.
         toast.error(
           err instanceof Error ? err.message : "Couldn't open that client"
         );
@@ -1047,6 +1092,7 @@ function useTemplateVerifyDeepLink({
     requestedFocusTab,
     claudeCodeEnabled,
     codexEnabled,
+    flagWaitExpired,
     themeMode,
     createHost,
     navigate,
@@ -1392,6 +1438,55 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 
   return (
     <EvalsTab
+      projectId={convexProjectId}
+      ensureServersReady={ensureServersReady}
+      onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
+    />
+  );
+}
+
+/**
+ * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
+ *
+ * A separate route rather than a branch inside `EvalsRoute` so the shipped tab
+ * has no new conditional in it at all. Same `evals` billing feature: it is the
+ * same product, only redrawn. No Runs lens — the commit-keyed CI review stays
+ * on `/evals/runs`.
+ */
+export function EvaluateRoute() {
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    ensureServersReady,
+    handleContinueEvalInChat,
+    handleConnect,
+  } = useAppRouteContext();
+  const evaluateEnabled = useEvaluateEnabledState();
+
+  // The sidebar hides the nav item, but a nav filter is not a gate: `/evaluate`
+  // is a plain route, and its `navSegments` entry feeds `KNOWN_APP_TAB_SEGMENTS`
+  // so `ui_navigate` reaches it too. Bounce to the shipped tab — same product,
+  // and the flagged-out user loses nothing by landing there.
+  //
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /evaluate directly. (Same tradeoff as SessionsRoute.)
+  if (evaluateEnabled === false) {
+    return <Navigate to={routePaths.evals} replace />;
+  }
+  if (evaluateEnabled === undefined) {
+    return null;
+  }
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <EvaluateTab
       projectId={convexProjectId}
       ensureServersReady={ensureServersReady}
       onContinueInChat={handleContinueEvalInChat}
@@ -4539,7 +4634,7 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals";
+  const isEvalsTab = activeTab === "evals" || activeTab === "evaluate";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&

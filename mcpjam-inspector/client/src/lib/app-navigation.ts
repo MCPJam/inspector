@@ -110,6 +110,12 @@ export const routePaths = {
   evalsRuns: "/evals/runs",
   /** Redeem-based read-only share of an eval run. */
   evalsShared: "/evals/shared",
+  /**
+   * Evaluate (New) — the flag-gated redesign of the Evaluate tab. A sibling
+   * route, not a sub-tree of `/evals`, so the two tabs never parse each
+   * other's URLs and the original tab keeps every link it already shipped.
+   */
+  evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
 
@@ -355,6 +361,17 @@ export function buildEvalsPath(route: EvalRoute): string {
 /** Build the same typed EvalRoute in Runs mode (`/evals/runs/...`). */
 export function buildEvalsRunsPath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evalsRuns, route);
+}
+
+/**
+ * Build the same typed EvalRoute under Evaluate (New) (`/evaluate/...`).
+ *
+ * `commit-detail` has no home here — `buildEvalRoutePath` degrades it to this
+ * prefix's list, which is right: the commit lens is a Runs-mode view and stays
+ * on `/evals/runs`.
+ */
+export function buildEvaluatePath(route: EvalRoute): string {
+  return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
 /**

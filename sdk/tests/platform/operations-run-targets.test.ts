@@ -3,6 +3,7 @@ import {
   computeRunTargets,
   PlatformApiClient,
   PlatformApiError,
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
 } from "../../src/platform/index.js";
@@ -96,7 +97,61 @@ interface Fixture {
   noRunGroupEndpoint?: boolean;
   /** Model the LIVE route answering 404 for a real reason (suite deleted). */
   groupSuiteMissing?: boolean;
+  /** Model a backend that predates the disclosure contract (G4b). */
+  disclosureUnavailable?: boolean;
+  /** Model a disclosure fetch that hangs — never resolves until aborted. */
+  disclosureStalls?: boolean;
+  /** Calls observed, in order, across every route this fixture serves. */
+  callOrder?: string[];
 }
+
+const DISCLOSURE_FIXTURE: Record<string, unknown> = {
+  contractVersion: 1,
+  computedAt: 1_700_000_000_000,
+  digest: "deadbeef",
+  execution: {
+    engine: "emulated",
+    sandbox: { engaged: false, because: "no sandbox needed" },
+    locus: { known: true, hosted: false },
+    models: [],
+    modelsUnresolved: { reason: "not derivable in this fixture" },
+  },
+  analysis: [],
+  capture: {
+    captureLevel: "full",
+    reportingMode: "standard",
+    tiersImplemented: false,
+    redaction: {
+      kind: "credential-shaped",
+      module: "convex/lib/evalIngestRedaction.ts",
+      isDlp: false,
+      limitation: "not DLP",
+      appliesTo: [],
+    },
+    exportDefaults: {
+      includeContent: false,
+      ruleLocation: "convex/traceExport.ts",
+      note: "redacted by default",
+    },
+  },
+  retention: {
+    planName: "free",
+    policyDays: 30,
+    source: "plan entitlements",
+    enforced: true,
+    enforcementBlockers: [],
+    effectiveToday: "swept-after-policy-days",
+    evidentiaryClasses: [],
+    backupStatement: {
+      vendor: "Convex",
+      capturedAt: "2026-08-23",
+      sourceUrl: "https://docs.convex.dev/database/backup-restore",
+      statements: [],
+    },
+  },
+  region: { stated: false, reason: "no deployment region is derivable" },
+  subprocessors: [],
+};
 
 function makeClient(fixture: Fixture = {}) {
   const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
@@ -124,7 +179,35 @@ function makeClient(fixture: Fixture = {}) {
       }
       return Response.json(match);
     }
+    if (/\/run-disclosure$/.test(path) && method === "GET") {
+      fixture.callOrder?.push("getEvalRunDisclosure");
+      if (fixture.disclosureStalls) {
+        // Never resolves on its own — a real fetch, matching how native fetch
+        // behaves under an AbortSignal: it settles only when the signal
+        // aborts.
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = (init as RequestInit | undefined)?.signal;
+          signal?.addEventListener("abort", () => {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        });
+      }
+      if (fixture.disclosureUnavailable) {
+        return Response.json(
+          {
+            code: "FEATURE_NOT_SUPPORTED",
+            message: "This deployment predates the disclosure contract",
+            details: { reason: "contract_unavailable" },
+          },
+          { status: 422 },
+        );
+      }
+      return Response.json(DISCLOSURE_FIXTURE);
+    }
     if (/\/eval-runs$/.test(path) && method === "POST") {
+      fixture.callOrder?.push("createEvalRun");
       const body = JSON.parse(String(init?.body)) as {
         environmentId?: string;
       };
@@ -143,6 +226,7 @@ function makeClient(fixture: Fixture = {}) {
       );
     }
     if (/\/eval-run-groups$/.test(path) && method === "POST") {
+      fixture.callOrder?.push("createEvalRunGroup");
       if (fixture.noRunGroupEndpoint) {
         // A REAL route miss: the framework answers before any handler, so
         // there is no v1 error envelope — which is the only thing that
@@ -758,6 +842,489 @@ describe("run_eval_case host selection", () => {
       /\/eval-suites\/suite-1$/.test(new URL(String(target)).pathname),
     );
     expect(detailReads).toHaveLength(0);
+  });
+});
+
+describe("run_eval_suite pre-run disclosure (G4b)", () => {
+  it("fires onDisclosure before createEvalRun, and carries it on the receipt", async () => {
+    const callOrder: string[] = [];
+    const { client } = makeClient({ callOrder });
+    let received: unknown;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      {
+        client,
+        onDisclosure: (disclosure) => {
+          received = disclosure;
+        },
+      },
+    );
+    expect(callOrder).toEqual(["getEvalRunDisclosure", "createEvalRun"]);
+    expect(received).toMatchObject({ contractVersion: 1 });
+    expect(result.disclosure).toMatchObject({ contractVersion: 1 });
+  });
+
+  it("fires onDisclosure before createEvalRunGroup on a multi-target launch", async () => {
+    const callOrder: string[] = [];
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+      callOrder,
+    });
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", allAttached: true },
+      { client },
+    );
+    expect(callOrder[0]).toBe("getEvalRunDisclosure");
+    expect(callOrder).toContain("createEvalRunGroup");
+  });
+
+  it("never blocks or fails the launch when the disclosure fetch is unavailable, and fires onDisclosureUnavailable instead", async () => {
+    // BEST EFFORT: a backend that predates the contract must not turn a
+    // launch into a failure — this is a planning aid, not a gate. But an
+    // absent disclosure with NO signal at all is indistinguishable from "no
+    // disclosure feature on this build" — onDisclosureUnavailable exists so
+    // a caller can say "attempted, failed" instead of rendering nothing.
+    const { client } = makeClient({ disclosureUnavailable: true });
+    let onDisclosureCalled = false;
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      {
+        client,
+        onDisclosure: () => (onDisclosureCalled = true),
+        onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+      },
+    );
+    expect(result.outcome).toBe("started");
+    expect(result.disclosure).toBeUndefined();
+    expect(onDisclosureCalled).toBe(false);
+    expect(unavailableReason).toMatch(
+      /predates the pre-run disclosure contract/,
+    );
+  });
+
+  it("fires onDisclosureUnavailable with a timeout reason when the fetch stalls past its own budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient({ disclosureStalls: true });
+      let unavailableReason: string | undefined;
+      const resultPromise = runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(11_000);
+      const result = await resultPromise;
+      expect(result.outcome).toBe("started");
+      expect(unavailableReason).toMatch(/timed out/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("DISCLOSES a single-host launch off the frozen plan's host (G4c un-refusal)", async () => {
+    // Before G4c this skipped the fetch: the contract took no host selector,
+    // so the only query available was the suite-BASE derivation, which a host
+    // config can contradict with its own model and harness — a run could be
+    // disclosed "emulated, no sandbox" while booting a harness sandbox. The
+    // contract now takes `namedHostId`, so the frozen plan's host is
+    // forwarded and the disclosure describes what actually runs.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const disclosureSpy = vi.spyOn(client, "getEvalRunDisclosure");
+    let disclosureCalled = false;
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke" },
+      {
+        client,
+        onDisclosure: () => (disclosureCalled = true),
+        onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+      },
+    );
+    expect(result.outcome).toBe("started");
+    expect(result.disclosure).toBeDefined();
+    expect(disclosureCalled).toBe(true);
+    expect(unavailableReason).toBeUndefined();
+    expect(disclosureSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ namedHostId: "host-claude" }),
+      expect.anything(),
+    );
+  });
+
+  it("still reports a MULTI-TARGET launch spanning hosts as unavailable — one plan, one disclosure", async () => {
+    // The remaining honest absence, and for a different reason than the
+    // retired one: the contract answers for ONE launch plan (its one-axis
+    // rule refuses a host alongside an environment selector), so a group
+    // spanning hosts has no single engine or model set to disclose. Stitching
+    // N round trips into a composite would be a different contract than the
+    // audit stamp records.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [
+          { id: "host-claude", name: "Claude" },
+          { id: "host-chatgpt", name: "ChatGPT" },
+        ],
+      }),
+    });
+    const disclosureSpy = vi.spyOn(client, "getEvalRunDisclosure");
+    let disclosureCalled = false;
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", hosts: ["Claude", "ChatGPT"] },
+      {
+        client,
+        onDisclosure: () => (disclosureCalled = true),
+        onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+      },
+    );
+    expect(result.disclosure).toBeUndefined();
+    expect(disclosureCalled).toBe(false);
+    expect(unavailableReason).toMatch(/multi-target launch that includes a host/);
+    // The fetch itself must never happen — there is no single query for it.
+    expect(disclosureSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not fire onDisclosureUnavailable for a caller-initiated cancellation — that is not a disclosure failure", async () => {
+    // Every AbortError looks the same from inside the fetch, but a caller
+    // cancelling the WHOLE operation (the launch's own signal aborting) is
+    // not a "the disclosure fetch timed out" story — the launch is about to
+    // fail the same way for an unrelated reason, and mislabeling it would
+    // misdescribe that abort. Spies directly on the client method rather
+    // than relying on the fetch mock to replicate native fetch's
+    // synchronous already-aborted check, which it does not.
+    const { client } = makeClient();
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+    vi.spyOn(client, "getEvalRunDisclosure").mockRejectedValue(abortError);
+    const controller = new AbortController();
+    controller.abort(new Error("caller cancelled"));
+    let unavailableReason: string | undefined;
+    const result = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke" },
+        {
+          client,
+          signal: controller.signal,
+          onDisclosureUnavailable: (reason) => (unavailableReason = reason),
+        },
+      )
+      .catch((error: unknown) => error);
+    expect(result).toBeDefined();
+    expect(unavailableReason).toBeUndefined();
+  });
+
+  it("does not surface an unhandled rejection when an async onDisclosureUnavailable callback rejects", async () => {
+    // Same defensive contract as onDisclosure: an async callback (despite
+    // the sync-only type) must not turn its rejection into an unhandled one.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const { client } = makeClient({ disclosureUnavailable: true });
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosureUnavailable: async () => {
+            await Promise.resolve();
+            throw new Error("async callback rejection");
+          },
+        },
+      );
+      expect(result.outcome).toBe("started");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("does not surface an unhandled rejection when an async onDisclosure callback rejects", async () => {
+    // TypeScript accepts an async function for a `void`-returning callback
+    // param, so a caller awaiting inside `onDisclosure` can hand back a
+    // rejecting Promise here. That must not become an unhandled rejection,
+    // delay the launch, or erase the disclosure already fetched successfully.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const { client } = makeClient();
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        {
+          client,
+          onDisclosure: async () => {
+            await Promise.resolve();
+            throw new Error("async callback rejection");
+          },
+        },
+      );
+      expect(result.outcome).toBe("started");
+      expect(result.disclosure).toMatchObject({ contractVersion: 1 });
+      // Let the callback's own microtask queue flush before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("times out a STALLED disclosure fetch on its own budget, without aborting the launch", async () => {
+    // The bug this guards: if the disclosure fetch shared the launch's own
+    // signal/deadline, a stalled disclosure request would burn through that
+    // budget and leave the shared signal aborted by the time createEvalRun
+    // ran a moment later — turning a best-effort read into a failed launch.
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient({ disclosureStalls: true });
+      const resultPromise = runEvalSuiteOperation.execute(
+        { suite: "Smoke" },
+        { client },
+      );
+      // Past the disclosure fetch's own bound, comfortably under the
+      // client's default request timeout — only the disclosure-specific
+      // timer should have anything to fire.
+      await vi.advanceTimersByTimeAsync(11_000);
+      const result = await resultPromise;
+      expect(result.outcome).toBe("started");
+      expect(result.disclosure).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keys the disclosure to the SAME frozen target the run launches, not a re-resolution", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", environment: "Staging" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        environmentId: "env-stg",
+      }),
+      expect.anything(),
+    );
+  });
+});
+
+describe("get_eval_run_disclosure target resolution parity with run_eval_suite", () => {
+  it("auto-selects the suite's SOLE attached environment with no selector at all", async () => {
+    // Same rule `run_eval_suite` uses via computeRunTargets: a bare call on a
+    // suite with exactly one attached environment discloses THAT
+    // environment, not a suite-base derivation that could name different
+    // models than the auto-selected environment actually would.
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-stg" }),
+      expect.anything(),
+    );
+  });
+
+  it("refuses to guess with no selector when SEVERAL environments are attached", async () => {
+    // A bare launch would refuse here too (TARGET_REQUIRED) rather than pick
+    // one silently — disclosing one of several attached environments as if
+    // it were the only one would misdescribe what an equally bare launch
+    // actually does (refuse).
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(/TARGET_REQUIRED/);
+    // This operation's input schema has no host/hosts/allAttached selector,
+    // and it spends nothing (readOnly: true) — the shared run_eval_suite
+    // refusal text names all three, which would send a caller retrying with
+    // a flag this operation's own schema validation rejects.
+    const message = (error as PlatformApiError).message;
+    expect(message).not.toMatch(/allAttached/);
+    expect(message).not.toMatch(/\bhost\b/i);
+    expect(message).not.toMatch(/PAID RUN/);
+    expect(message).toMatch(/environment/);
+  });
+
+  it("still discloses when a caller names one of several attached environments", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke", environment: "Prod" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-prod" }),
+      expect.anything(),
+    );
+  });
+
+  it("AUTO-SELECTS a host-only suite's sole attached host and discloses it (G4c un-refusal)", async () => {
+    // Before G4c this refused: the backend contract took no host parameter,
+    // so the only query available was the selector-less suite-base
+    // derivation, which a host config can contradict with its own model and
+    // harness. `testSuites:getRunDisclosure` now takes `namedHostId`, so the
+    // auto-selected host is disclosed for real — the same auto-select rule
+    // `run_eval_suite` uses for a bare launch on this exact suite.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute({ suite: "Smoke" }, { client });
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        namedHostId: "host-claude",
+      }),
+      expect.anything(),
+    );
+    // ONE AXIS: never both, which the backend refuses outright.
+    expect(spy.mock.calls[0]![0]).not.toHaveProperty("environmentId");
+    expect(spy.mock.calls[0]![0]).not.toHaveProperty("environmentIds");
+  });
+
+  it("discloses the host a caller NAMES out of several attached hosts", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [
+          { id: "host-claude", name: "Claude" },
+          { id: "host-chatgpt", name: "ChatGPT" },
+        ],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke", host: "ChatGPT" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        namedHostId: "host-chatgpt",
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("refuses SEVERAL attached hosts with no selector — and the refusal now names host, which a caller can actually apply", async () => {
+    // Still `target-required` (a bare `run_eval_suite` launch refuses here
+    // too, so parity holds), but no longer a dead end: before G4c this
+    // operation had no host selector, so the refusal could only say the axis
+    // was unavailable. Now it enumerates the attached hosts and names the
+    // selector that resolves them.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [
+          { id: "host-claude", name: "Claude" },
+          { id: "host-chatgpt", name: "ChatGPT" },
+        ],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    const message = (error as PlatformApiError).message;
+    expect(message).toMatch(/TARGET_REQUIRED/);
+    expect(message).toMatch(/"Claude"/);
+    expect(message).toMatch(/"ChatGPT"/);
+    expect(message).toMatch(/\bhost\b/);
+    // readOnly: this operation spends nothing and has no `allAttached`.
+    expect(message).not.toMatch(/allAttached/);
+    expect(message).not.toMatch(/PAID RUN/);
+    // No attached environments, so `environment` is not an applicable fix.
+    expect(message).not.toMatch(/Name one with environment/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("refuses host together with environment — a plan resolves on one axis", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({
+        environmentIds: ["env-stg"],
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke", host: "Claude", environment: "Stg" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(
+      /environments or hosts, not both/,
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("refuses — not auto-selects the environment — when exactly one environment AND one host are both attached", async () => {
+    // `computeRunTargets` itself treats this as `target-required` (two total
+    // attachments across axes, see the "refuses to choose when several are
+    // attached" case in the `computeRunTargets` suite below) — a bare
+    // `run_eval_suite` launch on this exact suite would refuse the same way,
+    // so disclosure refusing too is the parity this operation exists to keep.
+    // BOTH axes are nameable here since G4c, so the refusal enumerates both
+    // and names both selectors — every fix it suggests is one a caller can
+    // actually apply.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        environmentIds: ["env-stg"],
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    const message = (error as PlatformApiError).message;
+    expect(message).toMatch(/TARGET_REQUIRED/);
+    expect(message).toMatch(/Name one with environment or host/);
+    expect(message).toMatch(/"Claude"/);
+    expect(message).toMatch(/env-stg/);
+    // readOnly wording throughout — this operation spends nothing.
+    expect(message).not.toMatch(/PAID RUN/);
+    expect(message).not.toMatch(/allAttached/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("still discloses the named environment when one environment AND one host are both attached", async () => {
+    // The same mixed suite as above, but the caller names the environment —
+    // satisfiable, since there is exactly one to name.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        environmentIds: ["env-stg"],
+        hosts: [{ id: "host-claude", name: "Claude" }],
+      }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke", environment: "env-stg" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-stg" }),
+      expect.anything(),
+    );
   });
 });
 

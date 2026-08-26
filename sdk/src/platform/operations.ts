@@ -7,7 +7,12 @@
  */
 import { z } from "zod";
 import { opaqueIdSchema } from "../contract/identity.js";
+import {
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
+} from "../gates.js";
 import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
+import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -57,6 +62,9 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformGateWaiver,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
@@ -72,6 +80,7 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
+  PlatformEvalRunDisclosure,
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
@@ -130,6 +139,159 @@ import type {
 export interface PlatformOperationContext {
   client: PlatformApiClient;
   signal?: AbortSignal;
+  /**
+   * Fired by `runEvalSuiteOperation` with the pre-run disclosure it fetched
+   * for the frozen launch plan, ONE resolution before it calls
+   * `createEvalRun`/`createEvalRunGroup` — so "what was disclosed" is
+   * literally "what will run", not a second, independently-resolved target
+   * that could drift from it. A caller that wants to show or log the
+   * disclosure passes this rather than resolving targets a second time to
+   * fetch it separately.
+   *
+   * Best-effort: a disclosure fetch failure (a backend that predates the
+   * contract, a transient error) never blocks or fails the launch — this
+   * callback simply does not fire, and the receipt's `disclosure` field is
+   * absent. Never called for `runEvalCaseOperation`, which shares no target
+   * resolution with the suite op. See `onDisclosureUnavailable` for the
+   * failure counterpart.
+   *
+   * SYNCHRONOUS BY CONTRACT — the "ONE resolution before the create call"
+   * ordering guarantee only holds for code that runs to completion before
+   * this function returns. It is not awaited: a caller who ignores the type
+   * and hands back an async function anyway gets its rejections swallowed
+   * defensively, but only its SYNCHRONOUS prefix is guaranteed to run before
+   * `createEvalRun`/`createEvalRunGroup`.
+   */
+  onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+  /**
+   * Fired INSTEAD of `onDisclosure` when the fetch for the frozen launch
+   * plan failed — a backend predating the contract, a timeout, a transient
+   * error. Still never blocks or fails the launch (the same best-effort
+   * guarantee `onDisclosure` carries); this exists so a caller can say
+   * something was ATTEMPTED and failed, rather than rendering nothing at
+   * all. An absent disclosure with no signal at all is indistinguishable
+   * from "this build has no disclosure feature" — the same failure class
+   * the backend's `executionAbsence.kind` exists to prevent one layer up.
+   *
+   * Never fired for a caller-initiated cancellation (the operation's own
+   * `signal` aborting) — that is not a disclosure failure to report, it is
+   * the whole launch being cancelled, and mislabeling it as "the disclosure
+   * fetch timed out" would misdescribe an unrelated abort. Synchronous by
+   * contract, same as `onDisclosure`.
+   */
+  onDisclosureUnavailable?: (reason: string) => void;
+}
+
+/**
+ * Ceiling on the pre-run disclosure fetch, independent of whatever deadline
+ * the caller's own signal carries.
+ *
+ * Deliberately SHORT, not generous: this fetch is awaited BEFORE
+ * `createEvalRun(Group)`, sequentially, sharing the SAME caller-supplied
+ * deadline signal (`runPlatformOperation` in the CLI creates one
+ * `AbortController` for the whole operation and threads its signal through
+ * both calls). A bound anywhere near the caller's own timeout risks the
+ * disclosure fetch alone consuming most or all of it — `boundedDisclosureSignal`
+ * still forwards a genuine caller abort into this fetch to cut it short, but
+ * by the time that forwarded abort lands, the caller's signal is ALREADY
+ * aborted, and `createEvalRun` — sharing that same signal — then fails
+ * immediately with zero chance to run, turning a best-effort read into a
+ * failed launch. A single lightweight GET to our own backend has no business
+ * needing more than a few seconds under normal conditions, so this stays
+ * short enough to leave the launch call a fair remaining share of any
+ * realistic `--timeout` (the CLI default is 30s), while still catching a
+ * genuine stall. Not a complete fix for a pathologically small caller
+ * timeout (e.g. `--timeout 500`) — that would need the operation to know its
+ * OWN remaining budget, which `PlatformOperationContext` does not carry
+ * today.
+ */
+const DISCLOSURE_FETCH_TIMEOUT_MS = 3_000;
+
+/**
+ * A signal for the best-effort disclosure fetch that is bounded by ITS OWN
+ * short timeout, so a stalled request cannot silently consume the caller's
+ * launch deadline — see the `onDisclosure` doc above. Still aborts when the
+ * caller signal does (a genuine cancellation should stop this fetch too); it
+ * just never runs the other direction, and its own timer never touches the
+ * caller's signal.
+ */
+function boundedDisclosureSignal(callerSignal: AbortSignal | undefined): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  if (callerSignal?.aborted) {
+    // Already aborted before this helper ran — e.g. propagated from an
+    // earlier best-effort lookup, or a caller-supplied pre-aborted signal.
+    // `addEventListener("abort", ...)` alone would never fire for an event
+    // that already happened, leaving the fetch to run for the full timeout.
+    // Passing the reason through keeps a caller inspecting the derived
+    // signal's `.reason` from seeing a generic AbortError in place of
+    // whatever actually caused the caller's own cancellation.
+    controller.abort(callerSignal.reason);
+    return {
+      signal: controller.signal,
+      dispose: () => {},
+    };
+  }
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    DISCLOSURE_FETCH_TIMEOUT_MS,
+  );
+  const onCallerAbort = () => controller.abort(callerSignal!.reason);
+  callerSignal?.addEventListener("abort", onCallerAbort);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+/**
+ * Invokes a `PlatformOperationContext` disclosure callback (`onDisclosure` /
+ * `onDisclosureUnavailable`) — SYNCHRONOUS by contract, never awaited, so its
+ * failure can never delay the launch that follows. This exists only as a
+ * runtime safety net for a caller who ignores the sync-only type and hands
+ * back an async function anyway (TypeScript permits it structurally): the
+ * returned value is wrapped so a later rejection is swallowed rather than
+ * surfacing as an unhandled rejection. A synchronous throw is caught the
+ * same way. Either way, only the callback's SYNCHRONOUS prefix is guaranteed
+ * to have run by the time this returns.
+ */
+function invokeDisclosureCallback(run: () => void | Promise<void>): void {
+  try {
+    void Promise.resolve(run()).catch(() => {
+      // The callback's own async failure is the caller's concern.
+    });
+  } catch {
+    // The callback's own synchronous failure is likewise the caller's
+    // concern.
+  }
+}
+
+/**
+ * A short, human-readable reason a disclosure fetch failed — for
+ * `onDisclosureUnavailable`, so a caller can say something was ATTEMPTED and
+ * failed rather than rendering nothing at all. Deliberately coarse: this is
+ * a best-effort planning aid's failure message, not a diagnostic surface.
+ */
+function disclosureUnavailableReason(error: unknown): string {
+  if (error instanceof PlatformApiError) {
+    if (
+      error.code === "FEATURE_NOT_SUPPORTED" &&
+      (error.details as Record<string, unknown> | undefined)?.reason ===
+        "contract_unavailable"
+    ) {
+      return "this deployment predates the pre-run disclosure contract";
+    }
+    return error.message;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return "the disclosure fetch timed out";
+  }
+  return "the disclosure fetch failed";
 }
 
 export const getMeOperation: PlatformOperation<
@@ -1970,12 +2132,26 @@ function assertRunTargetSelectorsCoherent(input: {
  * Named after the machine-readable code so a surface can match on it, and
  * written so the caller never has to go look the choices up: the whole failure
  * mode this replaces was an agent guessing a target because the error did not
- * say which ones existed.
+ * say which ones existed. That enumeration lives here ONCE, shared by both
+ * callers, precisely so the two cannot drift — before G4c the disclosure
+ * variant was a separate function that listed only environments, which went
+ * stale the moment that operation gained a `host` selector.
+ *
+ * `readOnly` is `getEvalRunDisclosureOperation`'s variant. It must not inherit
+ * the launch wording's "running all of them would spend more than you may have
+ * meant" / "one PAID RUN per target" — nothing it does spends anything, and
+ * telling an agent otherwise invites it to treat a free planning read as a
+ * costly one. It also has no `allAttached` selector, so naming that flag would
+ * send a caller retrying with an argument that fails validation the same way
+ * twice.
  */
-function targetRequiredMessage(plan: {
-  attachedEnvironments: RunTarget[];
-  attachedHosts: RunTarget[];
-}): string {
+function targetRequiredMessage(
+  plan: {
+    attachedEnvironments: RunTarget[];
+    attachedHosts: RunTarget[];
+  },
+  opts: { readOnly?: boolean } = {},
+): string {
   const parts: string[] = [];
   if (plan.attachedEnvironments.length > 0) {
     parts.push(
@@ -1993,11 +2169,25 @@ function targetRequiredMessage(plan: {
         .join(", ")}`,
     );
   }
-  return (
-    "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. " +
-    `Attached ${parts.join("; ")}. ` +
-    "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target)."
-  );
+  const lead = opts.readOnly
+    ? "TARGET_REQUIRED — this suite has several attached targets, so which one to disclose for is ambiguous. "
+    : "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. ";
+  // The read-only closing names ONLY the selectors that actually apply to
+  // what is attached. Naming a fix a caller cannot apply — `host` against a
+  // suite with no attached hosts — sends an agent retrying with an argument
+  // that resolves to nothing; that is the same failure the enumeration above
+  // exists to prevent, one sentence later.
+  const readOnlyWays: string[] = [];
+  if (plan.attachedEnvironments.length > 0) readOnlyWays.push("environment");
+  if (plan.attachedHosts.length > 0) readOnlyWays.push("host");
+  const closing = opts.readOnly
+    ? `Name one with ${readOnlyWays.join(" or ")}${
+        plan.attachedEnvironments.length > 0
+          ? ", or several with environments."
+          : "."
+      }`
+    : "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target).";
+  return lead + `Attached ${parts.join("; ")}. ` + closing;
 }
 
 /**
@@ -2105,6 +2295,8 @@ function resolveSuiteHostTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
+    repetitions?: number;
+    /** Deprecated alias for repetitions. */
     iterations?: number;
     notes?: string;
     minPassRate?: number;
@@ -2116,8 +2308,8 @@ function runKnobBody(
   caseIds: string[] | undefined,
 ): Record<string, unknown> {
   return {
-    ...(input.iterations !== undefined
-      ? { iterationOverride: input.iterations }
+    ...(input.repetitions !== undefined || input.iterations !== undefined
+      ? { iterationOverride: input.repetitions ?? input.iterations }
       : {}),
     ...(caseIds ? { caseIds } : {}),
     ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
@@ -2689,6 +2881,15 @@ const composeRunTargetInput = z
   );
 
 const RUN_KNOB_FIELDS = {
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Run each case this many times under verdict policy 2, overriding its saved repetitions FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+    ),
   iterations: z
     .number()
     .int()
@@ -2744,7 +2945,8 @@ const RUN_KNOB_FIELDS = {
     ),
 } as const;
 
-const runEvalSuiteInput = z.object({
+const runEvalSuiteInput = z
+  .object({
   project: z
     .string()
     .trim()
@@ -2807,8 +3009,17 @@ const runEvalSuiteInput = z.object({
       "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
     ),
   compose: composeRunTargetInput.optional(),
-  ...RUN_KNOB_FIELDS,
-});
+    ...RUN_KNOB_FIELDS,
+  })
+  .superRefine((input, ctx) => {
+    if (input.repetitions !== undefined && input.iterations !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repetitions"],
+        message: "Use either repetitions or the deprecated iterations alias, not both.",
+      });
+    }
+  });
 
 export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
 
@@ -2877,6 +3088,15 @@ export type RunEvalSuiteResult = {
   /** One entry per target, in launch order. */
   targets: RunEvalTargetResult[];
   /**
+   * The pre-run disclosure fetched for this launch's frozen target plan — the
+   * SAME resolution `onDisclosure` (see `PlatformOperationContext`) already
+   * received, carried on the receipt so a caller that only reads the return
+   * value (rather than passing a callback) still sees it. Absent when the
+   * fetch failed — a backend that predates the contract, a transient error —
+   * which never blocks the launch itself.
+   */
+  disclosure?: PlatformEvalRunDisclosure;
+  /**
    * @deprecated Mirrors of the FIRST started run, kept so callers written
    * against the single-run shape keep working. Read `targets` instead — on a
    * grouped launch these describe one run out of several.
@@ -2903,7 +3123,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   inputSchema: runEvalSuiteInput,
-  async execute(input, { client, signal }) {
+  async execute(input, { client, signal, onDisclosure, onDisclosureUnavailable }) {
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
@@ -3060,6 +3280,115 @@ export const runEvalSuiteOperation: PlatformOperation<
       );
     }
 
+    // THE ONE RESOLUTION. The plan is now frozen — this is the exact target
+    // set `createEvalRun`/`createEvalRunGroup` are about to launch below — so
+    // fetching the disclosure here, keyed off that SAME frozen plan, is what
+    // makes "what was disclosed" identical to "what will run". Deliberately
+    // NOT re-resolved from `input`'s raw selectors a second time: a second
+    // resolution could race an attachment edit and disclose a different plan
+    // than the one that launches a moment later.
+    //
+    // BEST EFFORT. A disclosure fetch failure — a backend that predates the
+    // contract, a transient network error — must never block or fail a
+    // launch: this is a planning aid, not a gate. `onDisclosure` simply does
+    // not fire, and the receipt's `disclosure` field is absent.
+    let disclosure: PlatformEvalRunDisclosure | undefined;
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
+    // A SINGLE host target is disclosed for real since G4c: the backend
+    // contract takes `namedHostId`, so the frozen plan's host is forwarded
+    // and the engine/sandbox facts come from that host's own config. Before
+    // that this skipped the fetch entirely — the only query available was the
+    // selector-less suite-BASE derivation, which a host config's own model
+    // and harness can contradict, so a host-targeted run could be disclosed
+    // "emulated, no sandbox" while it actually booted a harness sandbox.
+    //
+    // A multi-target GROUP containing a host is still not derivable, and for
+    // a DIFFERENT reason than the retired one: the contract answers for ONE
+    // launch plan (its one-axis rule refuses a host alongside an environment
+    // selector), so a group spanning hosts has no single engine or model set
+    // to disclose. N pre-launch round trips to stitch a composite would be a
+    // different contract than the audit stamp records — an honest absence
+    // beats a confident wrong answer, which is the principle this whole
+    // contract is built on.
+    //
+    // (A plan with NOTHING attached is unaffected: `plan.target` is
+    // undefined there, not host-kind, and that bare-rerun case is exactly
+    // what the suite-base derivation already answers correctly for.)
+    const disclosureHostId =
+      plan.kind === "single" && plan.target?.kind === "host"
+        ? plan.target.id
+        : undefined;
+    const isMultiTargetHostLaunch =
+      plan.kind === "group" &&
+      plan.targets.some((target) => target.kind === "host");
+    let disclosureFailureReason: string | undefined;
+    if (isMultiTargetHostLaunch) {
+      disclosureFailureReason =
+        "not derivable for a multi-target launch that includes a host — the disclosure contract answers for one launch plan, and a group spanning hosts has no single engine or model set to disclose";
+    } else {
+      // BOUNDED INDEPENDENTLY of the caller's own signal/deadline. This
+      // request is awaited BEFORE the launch, so sharing the caller's signal
+      // would let a stalled disclosure fetch burn through the launch's own
+      // timeout budget — and once that deadline fires, the shared signal is
+      // already aborted for the createEvalRun(Group) call a moment later,
+      // turning a best-effort read into a failed launch.
+      // `boundedDisclosureSignal` still aborts on a genuine caller
+      // cancellation; it just cannot itself abort anything but this one
+      // fetch.
+      const disclosureBound = boundedDisclosureSignal(signal);
+      try {
+        disclosure = await client.getEvalRunDisclosure(
+          {
+            projectId: project.id,
+            suiteId: suite.id,
+            ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+            ...(disclosureEnvironmentIds.length === 1
+              ? { environmentId: disclosureEnvironmentIds[0]! }
+              : disclosureEnvironmentIds.length > 1
+                ? { environmentIds: disclosureEnvironmentIds }
+                : {}),
+            ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
+          },
+          { signal: disclosureBound.signal },
+        );
+      } catch (error) {
+        disclosure = undefined;
+        // A caller-initiated cancellation (the launch's OWN signal aborting,
+        // forwarded through `boundedDisclosureSignal`) is not a disclosure
+        // failure — the whole operation is being cancelled, and labeling it
+        // "the disclosure fetch timed out" would misdescribe an unrelated
+        // abort right before the launch itself fails the same way.
+        disclosureFailureReason = signal?.aborted
+          ? undefined
+          : disclosureUnavailableReason(error);
+      } finally {
+        disclosureBound.dispose();
+      }
+    }
+    // OUTSIDE the fetch's try/catch on purpose: `onDisclosure`/
+    // `onDisclosureUnavailable` are caller code we do not control, and a
+    // callback that throws must not be able to erase a disclosure that was
+    // already fetched successfully — only a FETCH failure may leave
+    // `disclosure` unset.
+    if (disclosure) {
+      invokeDisclosureCallback(() => onDisclosure?.(disclosure!));
+    } else if (disclosureFailureReason) {
+      // An absent disclosure with NO signal at all is indistinguishable from
+      // "this build has no disclosure feature" — a caller that wants to say
+      // "attempted, failed" rather than rendering nothing gets the chance to
+      // here. Still never blocks or fails the launch.
+      invokeDisclosureCallback(() =>
+        onDisclosureUnavailable?.(disclosureFailureReason!),
+      );
+    }
+
     const knobs = runKnobBody(input, caseIds);
     const projectInfo = toSelectedProjectInfo(project);
     const suiteInfo = { id: suite.id, name: suite.name };
@@ -3105,6 +3434,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         outcome: "started",
         startedCount: 1,
         failedCount: 0,
+        ...(disclosure ? { disclosure } : {}),
         ...(composed ? { composed: composed.report } : {}),
         targets: [
           {
@@ -3200,6 +3530,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
+      ...(disclosure ? { disclosure } : {}),
       ...(composed ? { composed: composed.report } : {}),
       targets,
       ...(firstStarted
@@ -3252,8 +3583,17 @@ const runEvalCaseInput = z.object({
       "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
     ),
   compose: composeRunTargetInput.optional(),
+  repetitions: RUN_KNOB_FIELDS.repetitions,
   iterations: RUN_KNOB_FIELDS.iterations,
   idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
+}).superRefine((input, ctx) => {
+  if (input.repetitions !== undefined && input.iterations !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["repetitions"],
+      message: "Use either repetitions or the deprecated iterations alias, not both.",
+    });
+  }
 });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
@@ -3396,8 +3736,8 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
-            ...(input.iterations !== undefined
-              ? { iterationOverride: input.iterations }
+            ...(input.repetitions !== undefined || input.iterations !== undefined
+              ? { iterationOverride: input.repetitions ?? input.iterations }
               : {}),
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
@@ -3794,6 +4134,179 @@ export const getEvalSuiteOperation: PlatformOperation<
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+  },
+};
+
+const getEvalRunDisclosureInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cases: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Narrow the disclosure to these cases (titles or IDs) instead of the whole suite — the same subset a run selects with `cases`.",
+    ),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  environments: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached environments to disclose for, mirroring an `environments` run launch. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+    ),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "An attached host (name or ID) to disclose for, mirroring a `host` run launch — the engine and sandbox facts come from that host's own config. Pass either a host or an environment, never both: a run targets one axis, and an environment already resolves a host.",
+    ),
+});
+export type GetEvalRunDisclosureInput = z.infer<
+  typeof getEvalRunDisclosureInput
+>;
+
+export const getEvalRunDisclosureOperation: PlatformOperation<
+  GetEvalRunDisclosureInput,
+  PlatformEvalRunDisclosure
+> = {
+  name: "get_eval_run_disclosure",
+  title: "Get eval run pre-run disclosure",
+  description:
+    "What happens to a suite run's content BEFORE you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Read-only — never launches or gates a run. Keyed by the same destination-affecting subset a launch selects (cases/environment/environments/host); pass the same selectors you would pass to run_eval_suite so what this discloses is what that would run.",
+  readOnly: true,
+  inputSchema: getEvalRunDisclosureInput,
+  async execute(input, { client, signal }) {
+    assertRunTargetSelectorsCoherent({
+      environment: input.environment,
+      environments: input.environments,
+      host: input.host,
+    });
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
+        )
+      : undefined;
+    const detail = await client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+    const selectedEnvironments = await resolveSuiteEnvironmentTargets(
+      client,
+      project,
+      suite,
+      detail,
+      input.environment ? [input.environment] : (input.environments ?? []),
+      signal,
+    );
+    // SAME plan resolution `run_eval_suite` uses — including its
+    // exactly-one-attached-environment auto-select — so a bare call (no
+    // selector at all) discloses the plan a bare launch would actually run,
+    // not a suite-base derivation that could name different models. A suite
+    // with SEVERAL attached targets and no selector is ambiguous for a launch
+    // too, so it refuses the same way here rather than silently disclosing
+    // one of them.
+    const attachedEnvironmentNames = await environmentNamesFor(
+      client,
+      project,
+      detail.environmentIds ?? [],
+      signal,
+    );
+    // `attachedHosts` IS included in this plan, and since G4c a caller can
+    // actually SATISFY a host-axis ambiguity: `host` names one, exactly as
+    // `run_eval_suite`'s own selector does. Before that this operation had to
+    // refuse the host axis outright — the backend contract took no host
+    // selector, so the only query it could have sent was the selector-less
+    // suite-base derivation, which a host config's own model/harness can
+    // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
+    // the refusal is gone and the host axis is disclosed for real.
+    const selectedHosts = resolveSuiteHostTargets(
+      suite,
+      detail,
+      input.host ? [input.host] : [],
+    );
+    const plan = computeRunTargets({
+      attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
+        id,
+        ...(attachedEnvironmentNames.get(id)
+          ? { name: attachedEnvironmentNames.get(id)! }
+          : {}),
+      })),
+      attachedHosts: (detail.hosts ?? []).map((host) => ({
+        id: host.id,
+        name: host.name,
+      })),
+      selectedEnvironments,
+      selectedHosts,
+    });
+    if (plan.kind === "target-required") {
+      // `readOnly` wording: this operation spends nothing, and has no
+      // `allAttached`. The enumeration now names attached HOSTS too, which is
+      // what makes this refusal actionable on the host axis rather than a
+      // dead end.
+      throw operationInputError(targetRequiredMessage(plan, { readOnly: true }));
+    }
+    // ONE PLAN, ONE DISCLOSURE. A multi-target GROUP containing a host cannot
+    // be expressed as one query: `getRunDisclosure` answers for a single
+    // launch plan, and its one-axis rule refuses `namedHostId` alongside an
+    // environment selector — deliberately, because a fan-out across two axes
+    // has no single engine/model set to disclose. Fanning out N pre-launch
+    // round trips to stitch a composite would be a different contract than
+    // the one the audit stamp records, so this refuses with a reason that
+    // names the actual limit (multi-target), not the retired "no host
+    // selector" one.
+    if (
+      plan.kind === "group" &&
+      plan.targets.some((target) => target.kind === "host")
+    ) {
+      throw operationInputError(
+        "Disclosure covers ONE launch plan, and this resolves to several targets including a host — the contract answers per plan, so a multi-target group spanning hosts has no single engine or model set to disclose. Disclose one target at a time with host or environment.",
+      );
+    }
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
+    const disclosureHostId =
+      plan.kind === "single" && plan.target?.kind === "host"
+        ? plan.target.id
+        : undefined;
+    return client.getEvalRunDisclosure(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
+        ...(disclosureEnvironmentIds.length === 1
+          ? { environmentId: disclosureEnvironmentIds[0]! }
+          : disclosureEnvironmentIds.length > 1
+            ? { environmentIds: disclosureEnvironmentIds }
+            : {}),
+        ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
+      },
       { signal },
     );
   },
@@ -4644,21 +5157,76 @@ const evalRunScopedInput = z.object({
 
 export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
+/**
+ * Statuses at which a run has stopped changing.
+ *
+ * Mirrors the CLI's `TERMINAL_RUN_STATUSES`. A decision summary is fetched only
+ * for a terminal run: while a run is still going its verdict does not exist
+ * yet, so the extra request would buy a `notEstablished` a poller already knows
+ * from `status`.
+ */
+const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+/**
+ * The diagnostics page size this operation asks for.
+ *
+ * Small on purpose. Each diagnostic carries a six-row chain plus evidence, and
+ * a model that spent its window on page one of a 200-trial run has no room left
+ * to act on it. A caller that wants more pages the cursor.
+ */
+const DEFAULT_MCP_DIAGNOSTICS_LIMIT = 20;
+
+const getEvalRunInput = evalRunScopedInput.extend({
+  diagnosticsCursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque cursor from a previous response's decisionSummary.diagnostics.nextCursor, to read the next page of failure diagnostics.",
+    ),
+  diagnosticsLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      `Failure diagnostics per page (default ${DEFAULT_MCP_DIAGNOSTICS_LIMIT}).`,
+    ),
+});
+
+export type GetEvalRunInput = z.infer<typeof getEvalRunInput>;
+
 export type GetEvalRunResult = {
   project: SelectedProjectInfo;
   run: PlatformEvalRun;
+  /**
+   * The canonical decision summary, for a terminal run.
+   *
+   * ABSENT while the run is still going. Older API deployments are supported
+   * through the shared iteration fallback; it is absent only when both the
+   * canonical endpoint and the older iteration resource are unavailable.
+   * Fallback assembly uses the same contract assembler as the API, so it does
+   * not create a second verdict implementation.
+   */
+  decisionSummary?: PlatformEvalRunDecisionSummary;
 };
 
 export const getEvalRunOperation: PlatformOperation<
-  EvalRunScopedInput,
+  GetEvalRunInput,
   GetEvalRunResult
 > = {
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
+    "Get the status, verdict, and — once the run is terminal — its `decisionSummary`: START THERE when a run did not pass. It carries the verdict and where it came from (`verdictSource`), the counts with the population they count (`measurementUnit`: caseVariant under verdict policy v2, trial on legacy runs — never assume one), the authoritative `decision` with the exact reasons a v2 run passed, failed, or was withheld as inconclusive, and per-trial `diagnostics` giving the user-value chain, the first failed stage, the failure category, the evidence for THAT stage, and one next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable) — it is not a failure. Read authored step results (get_eval_run_steps) second and a full trace (get_eval_iteration_trace) last; you should not need to infer the chain from raw tool calls. Diagnostics are paginated: pass diagnosticsCursor to continue, and treat `diagnostics.complete: false` as a partial list, never as the full set of failures. The detail also carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
-  inputSchema: evalRunScopedInput,
+  inputSchema: getEvalRunInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
@@ -4669,7 +5237,27 @@ export const getEvalRunOperation: PlatformOperation<
       { projectId: project.id, runId: input.runId },
       { signal },
     );
-    return { project: toSelectedProjectInfo(project), run };
+    if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
+      return { project: toSelectedProjectInfo(project), run };
+    }
+    // Endpoint first, then the same shared assembler over the older iteration
+    // resource. MCP and CLI must not disagree merely because a deployment has
+    // not rolled out the additive endpoint yet.
+    const decisionSummary = await readEvalRunDecisionSummary(
+      client,
+      signal,
+      project.id,
+      run,
+      {
+        cursor: input.diagnosticsCursor,
+        limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
+      },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      run,
+      ...(decisionSummary ? { decisionSummary } : {}),
+    };
   },
 };
 
@@ -4680,7 +5268,15 @@ const compareEvalRunInput = evalRunScopedInput.extend({
     .min(1)
     .optional()
     .describe(
-      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite. Mutually exclusive with baseCommitSha.",
+    ),
+  baseCommitSha: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Source commit SHA to compare against, resolved to the completed run in this suite recorded against it. Mutually exclusive with baseRunId; sending both is a 400. A SHA matching no completed run is the ordinary BASELINE_NOT_FOUND 404 — an incomplete comparison, not a regression. When the SHA matched more than one eligible run, or the bounded lookup saturated, the response reports matchCount and matchCountTruncated; an absent matchCount means the match was unambiguous.",
     ),
 });
 
@@ -4698,7 +5294,7 @@ export const compareEvalRunOperation: PlatformOperation<
   name: "compare_eval_run",
   title: "Compare MCPJam eval runs",
   description:
-    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite, or pass baseCommitSha to pin the baseline by source SHA instead (the two are mutually exclusive). A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
   readOnly: true,
   inputSchema: compareEvalRunInput,
   async execute(input, { client, signal }) {
@@ -4712,6 +5308,7 @@ export const compareEvalRunOperation: PlatformOperation<
         projectId: project.id,
         runId: input.runId,
         baseRunId: input.baseRunId,
+        baseCommitSha: input.baseCommitSha,
       },
       { signal },
     );
@@ -4855,6 +5452,164 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+// ── Gate waivers ─────────────────────────────────────────────────────────
+//
+// The agent-facing half of the gate-waiver workflow. Every description below
+// states the two things an agent must not have to infer: that the reason is
+// stored unredacted and durable, and that a waiver never makes a failing run
+// pass — it records an override of the gate, and the run keeps its verdict.
+
+const waiveEvalGateInput = evalRunScopedInput.extend({
+  // NOT length- or emptiness-checked here, on purpose. Both refusals carry
+  // copy the platform wrote for the caller (`gate_waiver_reason_empty`,
+  // `gate_waiver_reason_too_long`), and a zod check firing first would replace
+  // that copy with a generic validation error on exactly the boundary cases
+  // where the specific message is the useful part.
+  reason: z
+    .string()
+    .describe(
+      `Why this gate is being overridden. Required, non-blank, at most ${GATE_WAIVER_MAX_REASON_LENGTH} characters, and THE RECORD of the decision. ${GATE_WAIVER_REASON_NOTICE}`,
+    ),
+  // A number, but the range is the platform's to refuse — see `reason`.
+  expiresAt: z
+    .number()
+    .describe(
+      "When the waiver lapses, as epoch milliseconds. Must be in the future and no more than 30 days out — there is no permanent waiver. When it lapses the gate and the GitHub Check Run go back to failing.",
+    ),
+});
+
+export type WaiveEvalGateInput = z.infer<typeof waiveEvalGateInput>;
+
+export type WaiveEvalGateResult = {
+  project: SelectedProjectInfo;
+  status: PlatformGateWaiverWriteResult["status"];
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+};
+
+export const waiveEvalGateOperation: PlatformOperation<
+  WaiveEvalGateInput,
+  WaiveEvalGateResult
+> = {
+  name: "waive_eval_gate",
+  title: "Waive an MCPJam eval run's gate",
+  description:
+    "Override a FAILING eval run's release gate, on the record, until an expiry you name. This does NOT make the run pass: the run keeps its failed result, and every surface that honors the waiver — the GitHub Check Run and the CLI's `eval gate` — says the gate was waived, by whom, why, and until when. Requires the manage tier; whoever launched the run gets no exception for having launched it. `reason` is stored UNREDACTED and readable by anyone who can see the suite, for as long as the suite exists — never put secrets, tokens, or customer data in it. `status: \"conflict\"` means a waiver was already in force and returns that EXISTING one rather than granting a second; it is a normal result, not a failure.",
+  readOnly: false,
+  // EXPOSURE, not `none`, even though a waiver can be revoked.
+  //
+  // Two things a revoke does not undo. The gate stops blocking a release the
+  // moment this lands, so anything that ships in the meantime has shipped. And
+  // `reason` is published UNREDACTED to everyone who can see the suite, for as
+  // long as the suite exists — revoking ends the override, it does not
+  // unpublish the text. Both halves are about what becomes reachable, which is
+  // what this class names, and `none`'s promise of "reversible and costs
+  // nothing" is false for each of them.
+  risk: "exposure",
+  inputSchema: waiveEvalGateInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.createGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        reason: input.reason,
+        expiresAt: input.expiresAt,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
+  },
+};
+
+export type GetEvalGateWaiverResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  waiver: PlatformGateWaiver | null;
+};
+
+export const getEvalGateWaiverOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalGateWaiverResult
+> = {
+  name: "get_eval_gate_waiver",
+  title: "Get an MCPJam eval run's gate waiver",
+  description:
+    "Read the waiver currently in force over an eval run's gate, or null when there is none. Available to anyone who can view the run, not only to those who can grant a waiver — a waiver its readers cannot see is not a visible one. `active: false` on a returned waiver means it has lapsed or been revoked and is no longer overriding anything.",
+  readOnly: true,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const { waiver } = await client.getGateWaiver(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      waiver,
+    };
+  },
+};
+
+const revokeEvalGateWaiverInput = evalRunScopedInput.extend({
+  waiverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Waiver ID, as returned by waive_eval_gate or get_eval_gate_waiver.",
+    ),
+});
+
+export type RevokeEvalGateWaiverInput = z.infer<
+  typeof revokeEvalGateWaiverInput
+>;
+
+export const revokeEvalGateWaiverOperation: PlatformOperation<
+  RevokeEvalGateWaiverInput,
+  WaiveEvalGateResult
+> = {
+  name: "revoke_eval_gate_waiver",
+  title: "Revoke an MCPJam eval gate waiver",
+  description:
+    "End a gate waiver early, putting the gate and the GitHub Check Run back where they were. Requires the manage tier. IDEMPOTENT: `status: \"already_revoked\"` means it had already been revoked and reports the ORIGINAL revocation rather than restamping it — that is a success, not an error, and preserves the record of who actually ended the waiver. An already-expired waiver may still be revoked; the audit trail distinguishes 'this was wrong' from 'this ran out'.",
+  readOnly: false,
+  // `none`: it destroys no record — the row and its audit event survive, and
+  // the revocation is additive — it spends nothing, and a mistaken revoke is
+  // recovered by waiving again. The gate closing is the SAFE direction.
+  //
+  // The registry still places it at `gated` rather than the `direct` this
+  // derives, and TIER_EXCEPTIONS carries the reason: re-blocking somebody
+  // else's release is a decision a person should make.
+  risk: "none",
+  inputSchema: revokeEvalGateWaiverInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.revokeGateWaiver(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        waiverId: input.waiverId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
   },
 };
 
@@ -10765,6 +11520,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   runEvalCaseOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
@@ -10781,6 +11537,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,

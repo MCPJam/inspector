@@ -1,1217 +1,272 @@
-diff --git a/.changeset/agent-playground-surface.md b/.changeset/agent-playground-surface.md
+diff --git a/.changeset/eval-baseline-commit-sha.md b/.changeset/eval-baseline-commit-sha.md
 deleted file mode 100644
-index c8cc07aa5..000000000
---- a/.changeset/agent-playground-surface.md
+index b8cc50cbc..000000000
+--- a/.changeset/eval-baseline-commit-sha.md
 +++ /dev/null
-@@ -1,44 +0,0 @@
+@@ -1,30 +0,0 @@
 ----
--"@mcpjam/inspector": minor
+-"@mcpjam/inspector": patch
+-"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
+----
+-
+-evals: pin an eval baseline by source commit SHA
+-
+-`GET /eval-runs/:runId/compare` accepts `baseCommitSha`, resolved server-side
+-to the completed run in that suite recorded against the commit. The compare
+-DTO's `baseline` gains `commit_sha` as a policy, echoes the SHA back, and
+-reports `matchCount`/`matchCountTruncated` when uniqueness could not be
+-established — an absent count means the match was unambiguous, and a truncated
+-count is a floor rather than a total.
+-
+-`mcpjam cloud eval gate` gains `--baseline-sha` and `eval compare` gains
+-`--base-sha`, each mutually exclusive with its run-id counterpart. The kind is
+-named by the flag rather than inferred: a Convex run id is an opaque string
+-with no documented format, and an abbreviated commit SHA is indistinguishable
+-from one, so a single guessing flag could silently compare against the wrong
+-run. A SHA passed to `--baseline` is rejected with a pointer to the right flag.
+-
+-Gate provenance now records the requested selector and the run it resolved to,
+-so an archived report can answer which run a commit compared against. A SHA
+-that matches no completed run remains `incomplete` (exit 3), never a
+-regression.
+-
+-Malformed baseline selections from the platform (`EVAL_COMPARE_BASELINE_CONFLICT`,
+-`EVAL_COMPARE_BASELINE_INVALID`) now answer 400 with the platform's own message
+-instead of a generic 500.
+diff --git a/.changeset/eval-gate-waivers.md b/.changeset/eval-gate-waivers.md
+deleted file mode 100644
+index eab125b7c..000000000
+--- a/.changeset/eval-gate-waivers.md
++++ /dev/null
+@@ -1,80 +0,0 @@
+----
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Add the agent Playground surface: drive a conversation from the API, CLI or MCP
--and read the telemetry it produced.
+-Gate waivers end to end (Evals v2, Lane E, step E5b).
 -
--Machine callers could already LAUNCH work that produces sessions (eval runs,
--journey runs) and read the result afterwards. None of them could do what a human
--does in the Playground: send one message, see which tools the model picked and
--what the servers actually returned, and decide the next message from that. Three
--routes are that loop, plus the metadata a participant in a conversation cannot
--see — per-tool-call latency, token usage, raw wire values.
+-An eval run's release gate can now be overridden by an authorized user, on the
+-record, until an expiry they name — and the override is visible everywhere the
+-gate is. The Lane E charter's words are "authorized actor, reason, expiry,
+-affected policy/run, visible CI/report status; no silent or permanent waiver."
+-The platform (mcpjam-backend #1141) owns the authorization, the required expiry
+-and the 30-day cap. This is the half that owns **visible**.
 -
--- `POST /v1/chat-sessions/messages` (`send_chat_message`, `mcpjam cloud sessions
--  send`) runs one turn against a project's servers and returns the reply, the
--  joined tool calls with their raw scrubbed input/output, this turn's spans, and
--  usage. Omit `sessionId` to start a session; pass the one it returns to
--  continue.
--- `GET /v1/chat-sessions/{id}` (`get_chat_session`, `cloud sessions show`)
--  returns metadata plus a bounded window of raw messages at their ABSOLUTE
--  transcript indices — the same indices spans reference.
--- `GET /v1/chat-sessions/{id}/trace` (`get_chat_session_trace`, `cloud sessions
--  trace`) returns per-turn spans, incrementally: the latest turn by default,
--  older turns by selector, summaries with `includeSpans=false`.
+-**Nothing here makes a failing run pass.** The run keeps its own `result`, and
+-the waiver is a separate record that every reader consults and reports
+-separately. Two independent computations decide this verdict — the platform
+-derives a GitHub Check Run conclusion from the persisted run, and the CLI
+-recomputes its own gate client-side from public v1 GETs — so flipping the
+-persisted result would green both with nothing saying why.
 -
--Spend safety is the design rather than a mitigation. `idempotencyKey` is
--REQUIRED, and a Convex turn lease is claimed before any model call, so a client
--timeout-and-retry replays the completed turn instead of paying twice and two
--concurrent turns on one session are refused rather than interleaved. Tool
--effects are a separate axis: `toolMode` defaults to `read_only` (only tools
--annotated `readOnlyHint: true` are advertised, a policy the host applies rather
--than a guarantee it can verify), and `auto` is documented as able to cause real
--external side effects. Configuration pins on the first turn — a continuation
--that resends it is refused rather than silently repinning — and only sessions
--this surface created may be continued through it, so an API caller can never
--append into a human's live Playground session.
+-`@mcpjam/sdk` widens the gate contract. `GateStatus` gains `waived` and
+-`GateReport` gains a `waived` outcome plus a `waiver` field; `StructuredRunVerdict`
+-gains `waived`; `StructuredCaseResult` gains `waiver`. New exports:
+-`applyGateWaiver`, `isGateWaiverInForce`, `formatGateWaiverLine`,
+-`GATE_WAIVER_REASON_NOTICE`, and the `GateWaiver` type. `waived` is deliberately
+-NOT folded into `passed`: both exit 0, but collapsing them makes the difference
+-unrecoverable one line later, which is the definition of a silent waiver.
 -
--Reads report unavailability rather than emptiness throughout: an unreadable
--transcript returns `transcriptUnavailable` with a null `messageCount`, and an
--unreadable span blob returns `spansUnavailable` instead of an empty array,
--because "made no calls" and "could not fetch" lead to opposite conclusions.
-diff --git a/.changeset/agent-widget-inspection.md b/.changeset/agent-widget-inspection.md
+-`applyGateWaiver` upgrades **only** a real `failed` outcome. `incomplete` and
+-`usage_error` are never waived — a waiver granted because the evals regressed is
+-not consent to ship on a cancelled run, a wait timeout, or a flaked fetch, and
+-turning exit 3 into exit 0 there is fail-open. The waiver is still attached in
+-every case, so an artifact names it even when it decided nothing.
+-
+-`@mcpjam/cli`'s `eval gate` reads the waiver off the run projection (no second
+-round trip) and names **who** waived, **why**, and **until when** in all four
+-outputs: the human report, `--reporter json-summary`, `--reporter junit-xml`
+-(as `<skipped>`, JUnit's own third state — it does not fail the build, and it
+-does not render as a clean green row), and `--reporter html` (its own violet
+-badge and section, neither the green of a pass nor the red of a failure). The
+-four exit codes are unchanged; `waived` joins `passed` at 0.
+-
+-The CLI re-derives the waiver's validity from `expiresAt` rather than trusting
+-the platform's `active`. A Convex query is cached against the documents it read
+-and time is not a document, so a lapsed waiver can be served as active until
+-something writes to its row — the one failure that would silently turn a
+-time-boxed waiver into a permanent one, on exactly the path this step builds.
+-
+-New subcommands `mcpjam cloud eval gate waive --run <id> --reason <text>
+---expires-in <30m|12h|7d>` and `mcpjam cloud eval gate unwaive --run <id>
+-[--waiver <id>]`. Both are manage-tier and server-enforced — the CLI does not
+-pre-judge authorization — and `waive` prints the unredacted-storage notice
+-before it accepts a reason. A bare `--expires-in 7` is rejected as ambiguous.
+-`eval gate`'s `--run` moved from a commander-required option to one this command
+-enforces itself, so the subcommands can dispatch; the exit code for a missing
+-`--run` is unchanged at `2`.
+-
+-New v1 endpoints (`POST`/`GET` `…/eval-runs/{runId}/gate-waivers`, `DELETE
+-…/gate-waivers/{waiverId}`) with strict bodies, and `EvalRun` gains `gateWaiver`
+-— `null` rather than omitted, so a caller can tell "no waiver" from "an older
+-deployment". Reading a waiver is available to anyone who can view the run, not
+-only to those who can grant one. Three agent/MCP operations: `waive_eval_gate`,
+-`get_eval_gate_waiver`, `revoke_eval_gate_waiver`.
+-
+-Two error-translation fixes in the v1 layer, both of which affect more than
+-waivers. `ConvexError({ kind: 'forbidden' })` — how the platform raises every
+-eval tier denial — carried no `code` field, so it matched no branch in
+-`translateConvexWriteError` and reached the terminal 500: a deliberate refusal
+-reported as our own bug, paged for, and handed to the caller as a generic
+-internal error. It now answers 403 with the platform's own message, still
+-honoring `adminFailureIsForbidden` for the resources that deliberately hide
+-their gate. And the five `gate_waiver_*` refusal codes are recognized as 400s
+-that forward the platform's copy verbatim, rather than falling through to a 500
+-that strips the one sentence telling the caller what to do.
+-
+-`renderStructuredRunJUnitXml` gains a `skipped` attribute, emitted only when
+-something was actually waived — never `skipped="0"`, which would be a wire
+-change on every report ever rendered in exchange for saying nothing.
+diff --git a/.changeset/eval-run-decision-summary-contract.md b/.changeset/eval-run-decision-summary-contract.md
 deleted file mode 100644
-index 3daf2516c..000000000
---- a/.changeset/agent-widget-inspection.md
+index 514c1ead3..000000000
+--- a/.changeset/eval-run-decision-summary-contract.md
 +++ /dev/null
-@@ -1,46 +0,0 @@
+@@ -1,74 +0,0 @@
+----
+-"@mcpjam/inspector": major
+-"@mcpjam/sdk": major
+-"@mcpjam/cli": major
+----
+-
+-One canonical eval run decision summary, shared by the API, Platform MCP and the CLI
+-
+-The six-stage user-value chain was eval metadata that each client interpreted for
+-itself: the API returned stage rows, the CLI counted iterations and produced its
+-own verdict, the Platform MCP server returned neither, and a model had to
+-reconstruct the chain from raw tool calls. Three readings of one run is three
+-chances to disagree about it.
+-
+-There is now one versioned contract — `evalRunDecisionSummarySchema` /
+-`EvalRunDecisionSummary` in `@mcpjam/sdk/contract`, schema version 1 — assembled
+-by a single function that the new API endpoint and every client call:
+-
+-- `GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` returns it,
+-  with bounded diagnostic pagination. Additive: every existing run and iteration
+-  response field is unchanged.
+-- `get_eval_run` returns it on `decisionSummary` for terminal runs and tells the
+-  model to read it before step results or a trace.
+-- `eval run --wait`, `eval status`, `eval gate` and `eval compare` render it, and
+-  human, JSON, JUnit and HTML now agree on the verdict, the counts and their
+-  unit, the first failed stage, the failure category, the evidence and the next
+-  action. JUnit carries it as `<system-out>` rather than dropping the chain.
+-
+-What the contract fixes, beyond having one of them:
+-
+-- **Counts say what they count.** `measurementUnit` is `caseVariant` under
+-  verdict policy v2 and `trial` on a legacy run. A 3-case suite with 5
+-  repetitions is legitimately 3 or 15, and the previous summary called both
+-  "cases".
+-- **The verdict is copied, never recomputed.** Under policy v2 the run's own
+-  `EvalVerdictDecision` is the authority; the per-trial diagnostics are evidence
+-  beneath it. The old summary derived a verdict by counting iterations, which
+-  reported a case that passed 4 of 5 trials as one pass and one failure.
+-- **`notEstablished` is a fourth verdict**, for a run that is unfinished, stopped
+-  early, or whose decision could not be read — distinct from `inconclusive`,
+-  which is a decision the validity phase reached.
+-- **Evidence belongs to the claim it supports.** Span ids, prompt indexes and
+-  reasons come from the first failed stage's row alone; the old summary unioned
+-  them across the whole chain, handing back the evidence of every stage that
+-  worked as the explanation of the one that did not.
+-- **A partial page says so.** `diagnostics.complete` and `scannedIterations`
+-  separate "nothing failed" from "we did not look".
+-- Stage, state, category and reason labels are centralized beside the contract,
+-  so human output reads `User value`, not `userValue`.
+-
+-`PlatformEvalIteration` gains an optional `caseId` — the case's SDK-declared id
+-from the iteration's frozen snapshot, beside (never merged into) the stored
+-`testCaseId`. Omitted, not nulled, when a run recorded none.
+-
+-Compatibility notes:
+-
+-- The reporter artifact's `decisionSummary` field now carries the canonical
+-  object. It previously held an unversioned per-case summary; a consumer reading
+-  `decisionSummary.passRate.percent` and `decisionSummary.cases[]` should read
+-  `counts` (with its `measurementUnit`) and `diagnostics.items[]` instead. The
+-  object now carries its own `schemaVersion`.
+-- `eval status` prints the block for any terminal run that did not pass, rather
+-  than only a failed one — `inconclusive` and undecided runs are the ones a
+-  reader can least explain unaided — and prints it above the `View:` line.
+-- `buildEvalDecisionSummary`, `buildEvalDecisionSummaryFromIterations` and
+-  `formatEvalDecisionSummary` are unchanged and still exported, now deprecated.
+-  Nothing in this repo calls them.
+-- Exit codes are untouched, including `eval gate`'s four-code contract.
+-
+-Deployment order matters: the endpoint must be live before the new SDK and CLI
+-are published. The published clients fall back to the same shared assembler over
+-`getEvalRun` + `listEvalRunIterations` when the endpoint is absent, so an older
+-or custom API deployment still gets the same object rather than a second
+-opinion about the run.
+diff --git a/.changeset/evaluate-tab-behind-a-flag.md b/.changeset/evaluate-tab-behind-a-flag.md
+deleted file mode 100644
+index 9bdb29dbb..000000000
+--- a/.changeset/evaluate-tab-behind-a-flag.md
++++ /dev/null
+@@ -1,26 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
 ----
 -
--Let agents see and drive MCP App widgets, not just read their HTML.
+-Evaluate redesign returns as its own tab at `/evaluate`, behind `evaluate-enabled`
 -
--A tool that returns a `ui://` resource is two products in one: the tool result a
--model reads, and the interface a person sees. Every machine surface could
--inspect the first half. Nothing could inspect the second — an agent debugging
--its own MCP App could fetch the widget's HTML and had no way to learn whether it
--actually rendered, what it showed, or which tools it fired.
+-The Evaluate landing page, full-page create-suite flow, and run-history suite
+-overview have now been merged into the live `/evals` tab and reverted twice. The
+-work is worth keeping; rewriting the shipped tab in place to get it is not.
 -
--**Widgets as text.** The browser harness gains `captureSnapshot()`: the widget's
--accessibility tree plus its interactive elements, returned in the *same*
--role/name/testId vocabulary the interaction steps already accept, so a caller
--reads a control and addresses it directly. This is what makes the surface usable
--by a text-only model at all — every existing way to drive a widget was
--coordinate-based (`[x, y]`), which silently assumed the caller could see pixels.
--A model handed a screenshot and no handles has nothing to click.
+-So it ships as a second tab instead. `/evaluate` is a separate route, a separate
+-surface, and a separate sidebar item shown alongside Evaluate — nothing a user
+-without the flag can reach behaves differently. The screens the redesign
+-rewrote are duplicated under `components/evaluate/` rather than refactored into
+-shared ones; the queries, mutations, run detail, and case editors are still the
+-same `components/evals/` modules, so eval behaviour cannot drift between them.
 -
--**Locally** (`/api/mcp/widget-session`), two new endpoints pair with it:
--`GET /:id/snapshot` reads the widget without consuming its interaction budget —
--looking is not acting, and a caller forced to spend steps on looking would
--interact blind to save them — and `POST /:id/scripted-step` drives it by
--role/name/testId instead of by coordinate. `POST /api/mcp/widget-render` gains
--`includeSnapshot`.
+-Three shared components take small additive changes instead of a fork:
+-`SuiteIterationsView` gains an opt-in `suiteDetailOverview` prop (off for every
+-existing caller), `EnvironmentComposer`'s `slots` prop now actually narrows the
+-strip and its servers-pill wording is overridable, and `ServerGroupPicker`
+-accepts a test id and an accessible name for its trigger. Every current caller
+-renders exactly what it rendered before.
 -
--**Hosted**, `POST /v1/projects/{p}/servers/{s}/widgets/render`
--(`render_server_widget`) calls the tool, mounts its widget in real headless
--Chromium running the production host bridge, and returns the render verdict, the
--console errors, the blocked requests, and the tree. Stateless by construction —
--connect, call, render, read, dispose in one request — which is what makes it
--safe on a plane with no session affinity; interactive sessions stay local
--because they hold a live browser in process.
--
--Its payload defaults are the reverse of the local route's, deliberately: the
--snapshot is on and the screenshot is off, because this endpoint's caller is
--usually a model, for which a base64 image it may not even be able to see is the
--most expensive possible way to say nothing.
--
--The op executes the caller's tool, so it inherits `call_server_tool`'s gating: a
--human approves it, with the arguments previewed. It annotates as destructive and
--explicitly **not** idempotent — nobody can promise that running a third party's
--tool twice is safe.
-diff --git a/.changeset/apps-tab-style-tokens.md b/.changeset/apps-tab-style-tokens.md
+-The commit-keyed CI review stays on `/evals/runs`. When the redesign replaces
+-the original, the old tab and the duplicated directory are deleted together.
+diff --git a/.changeset/protocol-pin-mismatch-error.md b/.changeset/protocol-pin-mismatch-error.md
 deleted file mode 100644
-index 602606d1e..000000000
---- a/.changeset/apps-tab-style-tokens.md
+index ee174c91e..000000000
+--- a/.changeset/protocol-pin-mismatch-error.md
 +++ /dev/null
 @@ -1,20 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
-----
--
--Show a host's MCP Apps style tokens in the Apps tab.
--
--The Apps tab gains a read-only "Style tokens" block listing the
--`hostContext.styles` payload the host hands a view on `ui/initialize` — every
--style variable with its light and dark value, grouped by family (background,
--text, border, ring, type, shape, shadow), plus the `css.fonts` string. Each row
--previews what the token drives: colors as a split light/dark swatch over a
--checkerboard so alpha reads, radius and shadow as the shape they produce, and
--type tokens as a glyph rendered in that token's own family, size or weight. Clicking a row copies `var(--token)`, the form a widget
--author pastes into their own stylesheet.
--
--Values are resolved through the same resolver the widget host uses — the
--registry preset named by `hostStyle` with the host config's persisted
--`chatUiOverride` layered on top — so a BYO host that stores its own palette
--shows its real tokens rather than the preset's, and nothing is re-declared for
--display.
-diff --git a/.changeset/caching-and-resource-depth.md b/.changeset/caching-and-resource-depth.md
-deleted file mode 100644
-index 10b979d6c..000000000
---- a/.changeset/caching-and-resource-depth.md
-+++ /dev/null
-@@ -1,42 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Grade the caching utility as shipped, not as SEP-2549 first proposed it.
--
--`modern-cacheable-result-hints` encoded an early reading: presence of `ttlMs`
--and `cacheScope` on `server/discover` plus whichever list methods the server
--advertised. The 2026-07-28 caching utility is deeper in three ways it did not
--cover.
--
--- **Six operations, not four.** The shipped list adds `resources/templates/list`
--  and `resources/read`, neither of which was ever probed — so a server could
--  omit hints on every resource read and still pass.
--- **The hint VALUES have a contract.** `ttlMs` is "an integer value in
--  milliseconds" and servers "MUST provide a `ttlMs` value that is `>= 0`";
--  `cacheScope` is exactly `"public"` or `"private"`. A fractional or negative
--  TTL passed unnoticed, and clients are told to ignore a negative one — so a
--  server sending it has silently published a different policy than it thinks.
--- **Pagination has a stability rule.** "Servers MUST apply the same
--  `cacheScope` to all response pages for a given list request." A list that
--  flips from `private` to `public` mid-walk has a client caching later pages
--  under sharing rules the server did not intend.
--
--These land as three new checks (`modern-cache-hint-coverage`,
--`modern-cache-hint-values-valid`, `modern-cache-scope-stable-across-pages`)
--rather than as a widened existing one. Widening a scored check would silently
--re-grade every server that was green under the narrower reading — exactly what
--the conformance profile exists to prevent.
--
--`ttlMs: 0` stays legal and stays an advisory (`readiness-cache-ttl-useful`);
--the schema allows it via `minimum: 0`, so a check must not fail it.
--
--SEP-2164 gains its second half. `modern-resource-read-no-empty-contents`
--asserts the separate MUST that a read of a non-existent resource never answers
--`{ contents: [] }` — ambiguous between "exists and is empty" and "does not
--exist" — which a server can violate while still returning the right `-32602` on
--another path. The spec's example also echoes the uri in `error.data`, but never
--states it as a requirement, so that is `readiness-resource-error-echoes-uri` at
--MAY strength.
--
--All four checks land in the `pending` bucket and move no score.
-diff --git a/.changeset/calm-suite-file-targets.md b/.changeset/calm-suite-file-targets.md
-deleted file mode 100644
-index 05cf7e675..000000000
---- a/.changeset/calm-suite-file-targets.md
-+++ /dev/null
-@@ -1,6 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--Keep explicit eval run targets from replacing suite-file host attachments and
--cover environment-only suite files through export and launch.
-diff --git a/.changeset/caniuse-shows-flag-gated-hosts.md b/.changeset/caniuse-shows-flag-gated-hosts.md
-deleted file mode 100644
-index 5149a7538..000000000
---- a/.changeset/caniuse-shows-flag-gated-hosts.md
-+++ /dev/null
-@@ -1,21 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Show Claude Code and Codex on the public caniuse surfaces.
--
--`claude-code-host-enabled` and `codex-host-enabled` gate the New Host template
--picker while those profiles are iterated on, and are scoped to @mcpjam.com
--users. The public caniuse pages consulted the same flags, and both hooks read
--an unresolved flag as off — so the two hosts were invisible to every anonymous
--visitor. caniuse documents what a third-party host supports, which is a
--different question from whether MCPJam will let you create one, so the gate no
--longer applies there.
--
--The signed-in Host Compare keeps it: a preset column there sits beside hosts
--you can actually create. The Compat tab and the template picker are unchanged.
--This also settles a disagreement between the two public surfaces, where the
--capability page hid only Claude Code while the compare matrix hid both.
--
--Both hosts land past the six-chip inline limit, so they appear in the compare
--matrix's "More" menu rather than the default row.
-diff --git a/.changeset/caniuse-style-variable-normalization.md b/.changeset/caniuse-style-variable-normalization.md
-deleted file mode 100644
-index 426d2035f..000000000
---- a/.changeset/caniuse-style-variable-normalization.md
-+++ /dev/null
-@@ -1,20 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Read every host's style variables the same way on the compare matrix.
--
--Hosts state the same fact in two notations: Claude sends one `light-dark(a, b)`
--string, ChatGPT and Codex send a resolved literal per theme. The Apps · Styles
--rows rendered those differently — a raw CSS function in one column against a
--stacked LIGHT/DARK pair in the next — which is precisely the comparison the
--matrix exists to make and the one it made hardest. A `light-dark(…)` value is
--now split into its two themes (on the top-level comma, so the commas inside
--`rgba(…)` don't end the first argument) and every host reads down the column in
--one grammar. The literal the host actually sends is kept on the row and shown
--on hover, and a value that cannot be split — a malformed call, a
--`color-mix(…)` — is still shown verbatim rather than guessed at.
--
--Color rows also gain a swatch over a checkerboard, so two hex strings are
--comparable at a glance and a fully transparent `…-ghost` token is
--distinguishable from an opaque white one.
-diff --git a/.changeset/chatgpt-template-default-luna.md b/.changeset/chatgpt-template-default-luna.md
-deleted file mode 100644
-index 4523a7a84..000000000
---- a/.changeset/chatgpt-template-default-luna.md
-+++ /dev/null
-@@ -1,23 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
-----
--
--Default the ChatGPT host template to GPT-5.6 Luna.
--
--The ChatGPT template pinned `openai/gpt-5-nano`, chosen back when it was the
--smallest free GPT-5 variant guests could reach without an OpenAI key. Guests
--are no longer model-curated — every hosted model is guest-allowed and the
--backend enforces spend caps instead — so the cheapest-reachable constraint no
--longer applies, and Luna is the model real ChatGPT actually runs.
--
--The Playground's first-run seed already forced Luna onto its ChatGPT column
--via a local override, so those three seeded clients looked right while every
--other way of creating a ChatGPT host — the New Host template picker, the home
--page's recommended hosts, the Compat tab, the host bar, and the CLI's
--`--template chatgpt` — still landed on nano. Moving the value into the
--template itself fixes all of them at once, and the now-redundant Playground
--override is gone.
--
--The backend host catalog is the runtime source of truth here; this ships the
--matching SDK fallback snapshot so offline and cold-start seeds agree with it.
-diff --git a/.changeset/cli-cloud-audience.md b/.changeset/cli-cloud-audience.md
-deleted file mode 100644
-index 0bf36c72f..000000000
---- a/.changeset/cli-cloud-audience.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Cloud commands print a stderr audience line (`Using MCPJam Cloud as … · … · …`) before the operation and fail immediately when no credential is configured. `--quiet` suppresses the line; machine-readable stdout stays unchanged. Hosted `readiness` does not print Cloud audience context.
-diff --git a/.changeset/cli-cloud-consolidate.md b/.changeset/cli-cloud-consolidate.md
-deleted file mode 100644
-index bb51d1f78..000000000
---- a/.changeset/cli-cloud-consolidate.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Consolidate Cloud commands: `mcpjam cloud capabilities` is now `mcpjam cloud projects capabilities`; `projects server` is no longer an alias of `projects servers`; `chat-sessions` is removed in favor of `mcpjam cloud sessions list`.
-diff --git a/.changeset/cli-cloud-credential-hoist.md b/.changeset/cli-cloud-credential-hoist.md
-deleted file mode 100644
-index 75ab688d5..000000000
---- a/.changeset/cli-cloud-credential-hoist.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Declare `--api-key` / `--api-url` once on `mcpjam cloud` so they work on either side of descendants. Local commands still reject them. Hosted `readiness` keeps leaf flags.
-diff --git a/.changeset/cli-cloud-flag-normalize.md b/.changeset/cli-cloud-flag-normalize.md
-deleted file mode 100644
-index 5cc3b3347..000000000
---- a/.changeset/cli-cloud-flag-normalize.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Normalize Cloud flags: `--org` replaces `--organization-id`; `mcpjam cloud tunnel` takes `--server` (hidden `--id` alias). Commander placeholders that accept a name or an id are `<id-or-name>`.
-diff --git a/.changeset/cli-cloud-login-account.md b/.changeset/cli-cloud-login-account.md
-deleted file mode 100644
-index 7dc4c5b98..000000000
---- a/.changeset/cli-cloud-login-account.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--`mcpjam cloud login` prints and stores optional account `email` / `plan` plus `apiUrl`. Logout warns on human stderr when `MCPJAM_API_KEY` still authenticates the CLI.
-diff --git a/.changeset/cli-cloud-namespace.md b/.changeset/cli-cloud-namespace.md
-deleted file mode 100644
-index 8144633bc..000000000
---- a/.changeset/cli-cloud-namespace.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Move account-bound commands under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). There are no compatibility aliases for the old root paths.
-diff --git a/.changeset/cli-cloud-status-diagnostics.md b/.changeset/cli-cloud-status-diagnostics.md
-deleted file mode 100644
-index e41180368..000000000
---- a/.changeset/cli-cloud-status-diagnostics.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--`mcpjam cloud status` reports credential and deployment validity in-band (`valid` / `error`) and exits 1 with a complete JSON report for invalid explicit configuration. Missing credentials stay informational. Other Cloud commands still reject those values with exit code 2.
-diff --git a/.changeset/cli-commander-help.md b/.changeset/cli-commander-help.md
-deleted file mode 100644
-index 047f85586..000000000
---- a/.changeset/cli-commander-help.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Upgrade the CLI to Commander 14 and group `--help` listings: local MCP testing vs MCPJam Cloud at the root, and Account / Workspace / Eval / Swarms under `mcpjam cloud`. Hosted `readiness` registration no longer claims to return the group. `cloud images validate` help names the Cloud image linter.
-diff --git a/.changeset/cli-docs-migration.md b/.changeset/cli-docs-migration.md
-deleted file mode 100644
-index 306d462d2..000000000
---- a/.changeset/cli-docs-migration.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Document CLI 4.0: local testing stays at the top level, account-bound commands live under `mcpjam cloud`, and `docs/cli/migration.mdx` records the command-path and flag changes. Hold Version Packages; do not publish 4.0.0 yet.
-diff --git a/.changeset/cli-eval-inspection-project.md b/.changeset/cli-eval-inspection-project.md
-deleted file mode 100644
-index 526413bb1..000000000
---- a/.changeset/cli-eval-inspection-project.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--Complete Cloud project selection for all ten `mcpjam cloud eval` run-inspection commands. `--project` is optional; omitting it uses MCPJAM_PROJECT, the nearest project link, or automatic newest-project selection, and the project field is omitted from the operation input when no explicit selector exists.
-diff --git a/.changeset/cli-local-mcp-identity.md b/.changeset/cli-local-mcp-identity.md
-deleted file mode 100644
-index de0e9be7c..000000000
---- a/.changeset/cli-local-mcp-identity.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Local `mcpjam mcp` identifies as title `MCPJam CLI` (name stays `mcpjam`) and its instructions say it is the local testing engine, not the hosted Cloud MCP.
-diff --git a/.changeset/cli-platform-primitives.md b/.changeset/cli-platform-primitives.md
-deleted file mode 100644
-index e65b3fd43..000000000
---- a/.changeset/cli-platform-primitives.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Share Cloud client construction (`buildCloudClientContext`) and bounded operation running (`runPlatformOperation`) for `projects`, `eval`, `auth`, and `tunnel`. `whoami` now honors `--timeout`. Tunnel sessions still outlive the whole-command deadline.
-diff --git a/.changeset/cli-project-link-status.md b/.changeset/cli-project-link-status.md
-deleted file mode 100644
-index 79b948fe0..000000000
---- a/.changeset/cli-project-link-status.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Add `mcpjam cloud link` and `mcpjam cloud status`. Project-scoped Cloud commands resolve `--project`, then a `--file`/`--json` input document, then `MCPJAM_PROJECT`, then `.mcpjam/project.json`, then automatic selection (most recently updated). `MCPJAM_PROJECT_ID` does not select a Cloud CLI project.
-diff --git a/.changeset/cli-project-selection-rule.md b/.changeset/cli-project-selection-rule.md
-deleted file mode 100644
-index 40804d482..000000000
---- a/.changeset/cli-project-selection-rule.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": major
-----
--
--Cloud project selection is one rule: `eval status` / `cancel` / `judge` take optional `--project` (flag, env, link, or automatic). `mcpjam cloud sessions list` is project-scoped the same way; pass `--all-projects` to list across every accessible project.
-diff --git a/.changeset/cli-tools-call-duration.md b/.changeset/cli-tools-call-duration.md
-deleted file mode 100644
-index 56bd356a3..000000000
---- a/.changeset/cli-tools-call-duration.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--`tools call` reports `_durationMs` on object-shaped JSON output — wall-clock milliseconds spent in the tool call itself, excluding connection setup, so it measures the same window as the `durationMs` returned by `POST /v1/projects/{projectId}/servers/{serverId}/tools/call`. Array and non-object results are returned unchanged. `--reporter` output keeps its own end-to-end `durationMs` and is unaffected.
-diff --git a/.changeset/conformance-four-correctness-fixes.md b/.changeset/conformance-four-correctness-fixes.md
-deleted file mode 100644
-index 7af4da5ac..000000000
---- a/.changeset/conformance-four-correctness-fixes.md
-+++ /dev/null
-@@ -1,41 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Four conformance-correctness fixes: stop scoring permitted behavior, give the
--Tasks acknowledgement a real verdict, report a wrong JSON-RPC id echo, and stop
--penalizing capabilities a server never claimed.
--
--**Advice about permitted behavior no longer costs points.** `readiness.ts` said
--of the protocol-version-header observation that it is "reported and never
--scored" — but every readiness warning deducted, so a server exercising the MAY
--that `streamable-http.mdx` grants it ("a server that supports clients
--implementing protocol versions earlier than 2025-06-18 MAY treat a request that
--omits the header as protocol version 2025-03-26") lost SHOULD points, and the
--resource-uri echo — which the spec only *illustrates* — lost MAY points.
--`MCPReadinessWarning.informational` marks both: reported, never deducted. Every
--existing warning keeps its deduction.
--
--**The Tasks acknowledgement is judged, not excused.** A missing
--`resultType: "complete"` was a warning, deferring to `wire-schema-valid` on the
--grounds that it grades `UpdateTaskResult` / `CancelTaskResult`. It does not: the
--Tasks suite runs its own runner, which installs no wire recorder and runs no
--wire check, so the update and cancel frames were observed nowhere and a missing
--required member read as a pass. It also cannot be judged from the decoded ack —
--the v2 client consumes `resultType` on the way through — so the check now reads
--the frame off the rpc log, the same move `tasks-status-payload-shape` makes.
--With a raw frame it is a violation; without one it stays advice that says why.
--
--**A wrong id echo is reported.** Ids paired via `String(a) === String(b)`, so a
--response echoing `"1"` for a request that sent `1` correlated silently. Pairing
--loosely is right — it keeps validation method-specific against a sloppy server —
--but `RequestId` admits both types, so no schema can catch the echo, and the
--tolerance was absorbing a real defect. Correlation is unchanged; the mismatch is
--now recorded and reported.
--
--**Unadvertised optional capabilities are not a coverage gap.** `prompts`,
--`resources` and `tools` are optional, and a server advertising none of them has
--no such operation to carry hints on. Counting them as unprobed forced
--`modern-cache-hint-coverage` to could-not-run, so a tools-only server looked
--unverified for declining features it never claimed. They are now reported as
--inapplicable; only an advertised capability this run could not exercise is a gap.
-diff --git a/.changeset/conformance-history-click.md b/.changeset/conformance-history-click.md
-deleted file mode 100644
-index 14a0f0209..000000000
---- a/.changeset/conformance-history-click.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop creating a new conformance history row when opening an existing run.
--
--The live panel persisted on the idle mount/reset bump, so remounting it —
--including clicking a run in history — wrote Incomplete 0s UI rows the operator
--never started.
-diff --git a/.changeset/conformance-profile.md b/.changeset/conformance-profile.md
-deleted file mode 100644
-index 3d515075c..000000000
---- a/.changeset/conformance-profile.md
-+++ /dev/null
-@@ -1,35 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": patch
--"@mcpjam/inspector": patch
-----
--
--Add a conformance PROFILE so two scores are comparable by construction.
--
--A protocol conformance result recorded `protocolVersion` and its check list and
--nothing else, which made two runs from two builds incomparable for two
--independent reasons: the denominator floats with the server's advertised
--surface, and the check inventory grows. Adding a MUST check is the right
--response to reading the spec more carefully, but it silently re-grades every
--server that was previously green — the score moved because we learned
--something, not because the server changed, and nothing in the result could
--separate those.
--
--`MCPConformanceResult.profile` now stamps which questions the run asked: the
--frozen manifest of SCORED check ids (`profileId`/`profileVersion` plus a digest
--over the manifest), the checker version, the revision judged against, and a
--slot for the wire-schema digest. A check outside the manifest still runs and
--still shows its real verdict in the report, but it lands in the new
--`ConformanceScore.pending` bucket — excluded from `applicable`, from the
--pass/fail tallies, and from the verdict. Promoting it to scored is a profile
--version bump, which is a reviewable act rather than a side effect of merging a
--check.
--
--`mcp-protocol@2026-08-21.1` is frozen at exactly today's 36 checks, so this
--release moves no score. The stamp carries its own `pendingCheckIds`, so a
--stored report partitions the same way for any reader — including a build that
--never heard of the profile version that produced it. A result without a stamp
--has no pending bucket at all, which is the pre-profile arithmetic exactly.
--
--The CLI prints the profile line under the score; `describeConformanceScore`
--names the pending count, so every surface that renders it picks that up.
-diff --git a/.changeset/d4-replay-tool-policy.md b/.changeset/d4-replay-tool-policy.md
-deleted file mode 100644
-index 5cf3549ef..000000000
---- a/.changeset/d4-replay-tool-policy.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
-----
--
--Carry an eval run's tool policy into its replays. A replay re-dials the original
--servers with the original credentials, so a replay that lost the policy executed
--for real the calls the source run blocked. The effective policy is now
--snapshotted per iteration and recovered at replay time; a source run that shows
--policy activity without a recoverable snapshot refuses to replay instead of
--running unrestricted. Also documents that `toolPolicy.allow` is an override, not
--a whitelist.
-diff --git a/.changeset/d4-tool-policy-enforcement.md b/.changeset/d4-tool-policy-enforcement.md
-deleted file mode 100644
-index 0a56d512a..000000000
---- a/.changeset/d4-tool-policy-enforcement.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
-----
--
--Enforce eval tool policies at execution time with visible-but-blocked tools,
--recording policy blocks without treating them as eval failures. Hosted
--platform-authored suites still lack the backend policy field and remain
--unsupported by the hosted CLI. Harness evals are refused at launch until D4b,
--and run summaries report the number of iterations with calls blocked by policy.
-diff --git a/.changeset/eval-d6-setup-stages.md b/.changeset/eval-d6-setup-stages.md
-deleted file mode 100644
-index 854e2f8a5..000000000
---- a/.changeset/eval-d6-setup-stages.md
-+++ /dev/null
-@@ -1,16 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--The eval user-value chain can now measure its top two stages: `connection` and `discovery`.
--
--Connect and tools-list happen once per run, above the iteration boundary where no span sink exists. Hosted runs now record a structured `setupSignals` evidence field (precedent: `toolSignals`), fold every configured target behind a `Promise.allSettled` barrier so no verdict is decided while another server is still settling, and persist synthetic `connection` / `discovery` spans for the timeline only — they never enter derivation evidence. Both phases are observed from the one `getToolsForAiSdk` call a run already makes, so no server is dialled twice.
--
--`connection: failed` requires positive evidence our own egress works (a lazy `GET ${convexHttpUrl}/health` canary, only on a theirs-shaped failure). Without that, the row stays `notMeasured` / `egressUnverified` or `setupAborted`. A completed initialize is itself the egress evidence for `discovery`. `failureCategory` stays `setup`; rates that want measured failures filter on `firstFailedStage`.
--
--The SDK path is types-only: a user-code `beforeAll` connect failure never reaches ingestion, so there is nothing to emit. Analyzer version is now 2. `noSpanChannel` stays in the vocabulary for old producers; v2 emits `noEvidenceCaptured` instead.
--
--A run-level connect failure no longer strands the run: pending iterations are written with the folded signals, re-read, retried once if still pending, and only then swept.
--
--Requires the mcpjam-backend D6 vocabulary widening (connection/discovery span categories + `connectFailed` / `toolsListFailed` / `egressUnverified`) to be **merged and promoted to production** before this inspector ships. Rollback order is inspector first, backend second.
-diff --git a/.changeset/eval-decision-summary.md b/.changeset/eval-decision-summary.md
-deleted file mode 100644
-index 2164d9493..000000000
---- a/.changeset/eval-decision-summary.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
--"@mcpjam/inspector": patch
-----
--
--Failed eval cases now carry an actionable decision summary through structured
--reports and the human CLI run output, including the first failed stage,
--bounded evidence, and a category-specific next action.
-diff --git a/.changeset/eval-import-mapping-skill.md b/.changeset/eval-import-mapping-skill.md
-deleted file mode 100644
-index dca500812..000000000
---- a/.changeset/eval-import-mapping-skill.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Add an agent-facing skill for mapping existing promptfoo, pytest, Jest, and CSV
--tests into versioned MCPJam eval suite files.
--
--The skill treats source repositories as untrusted data, requires a cited
--structural rule before an imported case can claim `exact`, disables non-exact
--cases pending review, and drives the offline `eval validate` repair loop. A
--worked promptfoo conversion and CLI regression keep its canonical output valid.
-diff --git a/.changeset/eval-iteration-read-audit.md b/.changeset/eval-iteration-read-audit.md
-deleted file mode 100644
-index 13dcf96ed..000000000
---- a/.changeset/eval-iteration-read-audit.md
-+++ /dev/null
-@@ -1,59 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Record who reads an eval iteration's trace through the public API.
--
--The two per-iteration read routes — `GET …/eval-runs/:runId/iterations/:iterationId/trace`
--and its `/steps` sibling — served a run's stored transcripts with no trace of
--who pulled them. The bulk half of that question was already answerable:
--`eval` is a first-class session source type and the OTLP export defaults to
--`direct+scenario+eval`, so eval transcripts already flow through the audited
--export path. What was missing was the caller walking a run's iterations one at
--a time, which bulk-export auditing never sees.
--
--Both routes now report the read to the platform after it resolves, and the row
--records the actor, the iteration, the run, and how much came back — never any
--part of the transcript.
--
--## Two credentials, two jobs
--
--The report carries both `INSPECTOR_SERVICE_TOKEN` and the caller's Convex
--bearer, and neither substitutes for the other. The service token authorizes the
--call: writing an audit row on someone else's behalf is privileged, and
--possession of it is what says the caller is our deployed server rather than the
--public. The bearer names the human, and the platform resolves the actor from
--it.
--
--The identity is deliberately not derived here. This server's own view of its
--caller is uneven — `mcpjamUserId` is set only on the API-key branch of the
--bearer middleware, and the eval v1 routes do not mount `optional-actor` — so
--deriving the actor at this layer would have attributed API-key reads and
--silently dropped session ones. A trail that is blank for exactly the callers
--someone is most likely asking about is worse than an empty one, because it
--looks like an answer. `getConvexBearerForRequest` already returns a bearer for
--both kinds of caller, and both carry the person's external id as `sub`, so
--forwarding it lets one platform path resolve either.
--
--## It cannot fail — or delay — your read
--
--The report is best-effort and detached. It is started after the response body
--is already resolved and is deliberately not awaited, so a platform outage, a
--slow network, or an older-than-expected deployment can neither fail the read
--nor hold it open behind our own bookkeeping; failures log once and are
--swallowed. The request also carries its own 5-second deadline, so a backend
--that accepts the connection and then stalls cannot retain the work and its
--socket indefinitely.
--
--A `/trace` read that 404s because no trace exists reports nothing at all — a
--row here means a transcript actually left the product.
--
--`/steps` behaves differently on purpose, matching the route: a missing envelope
--is not a 404 there, so its row carries a trace size only when evidence was
--really resolved, and the absence of that field is how the row says "verdicts
--only".
--
--**Deploy ordering:** the platform route this calls must be deployed first.
--Until it is, the request meets a routing 404, which logs and is discarded —
--a soft landing, not a reason the ordering does not matter, since an undeployed
--platform means no audit rows at all.
-diff --git a/.changeset/eval-run-file-sync-disabled.md b/.changeset/eval-run-file-sync-disabled.md
-deleted file mode 100644
-index 05e16cf3f..000000000
---- a/.changeset/eval-run-file-sync-disabled.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--`eval run --file` now creates and updates `disabled: true` cases so the hosted suite matches the file. Those cases stay out of the launch; only a case the file no longer declares is deleted.
-diff --git a/.changeset/eval-run-file.md b/.changeset/eval-run-file.md
-deleted file mode 100644
-index ff202bda5..000000000
---- a/.changeset/eval-run-file.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/cli": minor
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--`mcpjam cloud eval run --file` uploads a versioned suite file (declared identity, provenance, case sync) and starts a run. `eval create --file` on a suite file now points at `eval run --file`. File-owned suite export writes `suite.id` from the declared id.
--
--Case sync distinguishes the two ways a case stops running: one the file no longer declares is deleted from the hosted suite, while one the file still declares as `disabled: true` keeps its hosted history and is only left out of the launch.
-diff --git a/.changeset/eval-run-report-files.md b/.changeset/eval-run-report-files.md
-deleted file mode 100644
-index 20602c26b..000000000
---- a/.changeset/eval-run-report-files.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
-----
--"@mcpjam/cli": patch
--"@mcpjam/sdk": patch
-----
--
--Add atomic JSON and JUnit report files for completed hosted eval runs and gates.
--
--JUnit rendering now escapes the characters XML 1.0 forbids outright (most C0
--controls, unpaired surrogates) rather than emitting them verbatim. This applies
--to every structured reporter, not only the new eval one: previously a control
--character in any failure message produced a report file no JUnit parser would
--read.
-diff --git a/.changeset/eval-user-value-stage-derivation.md b/.changeset/eval-user-value-stage-derivation.md
-deleted file mode 100644
-index a51584f97..000000000
---- a/.changeset/eval-user-value-stage-derivation.md
-+++ /dev/null
-@@ -1,96 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--Every eval iteration now reports which stage of the user-value chain it reached.
--
--`@mcpjam/sdk/contract` has pinned the chain vocabulary — `connection`,
--`discovery`, `selection`, `call`, `response`, `userValue`, and the five states a
--stage can be in — since Wave 0, with nothing deriving it. This adds the
--derivation: `deriveStageResults`, a pure, deterministic, versioned function that
--turns one iteration's authored case plus whatever it captured into six stage
--rows, and persists them on `testIteration.metadata` beside the existing
--`stepResults`.
--
--## `deriveStageResults`
--
--```ts
--import { deriveStageResults } from "@mcpjam/sdk/contract";
--
--const {
--  stageResults,
--  firstFailedStage,
--  failureCategory,
--  stageAnalyzerVersion,
--} = deriveStageResults({ authored, evidence, iteration });
--```
--
--It takes the **authored case** as well as the evidence, and that is the part
--worth knowing before you use it. Without knowing what a case asserts there is no
--way to tell "this stage does not apply here" from "this stage was not measured",
--and a render probe with no model turn would report a missing `selection` verdict
--as a gap somebody is then asked to go and close. Applicability is inferred from
--what the case already declares — a case with no `prompt` step has no `selection`
--stage, a case that expects no tool call has no `call` or `response` stage.
--Nothing new is authored, and no stage can be toggled by hand.
--
--Three rules the function exists to enforce:
--
--- **Missing evidence is never a pass.** A stage reaches `passed` only when
--  something eligible was actually inspected; otherwise it is `notMeasured` with
--  a reason. A trace carrying messages but no spans — what a caller-supplied
--  `HostExecutor` produces, since spans are not part of that interface — is
--  reported as `executorEmitsNoSpans`, distinct from "the run did nothing".
--- **`notReached` is positional — over stages that measured nothing.** A stage
--  after the first failure is `notReached` when it has no verdict of its own; one
--  that WAS measured keeps it, because a run that produced a verdict for a stage
--  disproves "never ran" and the evidence is what an operator needs.
--  `firstFailedStage` already says where the chain broke. The returned rows are
--  always all six in the normative `USER_VALUE_STAGES` order; sorting them
--  silently changes which stages a failure is reported to have blocked, and
--  `stageDerivationSchema` rejects a payload that arrives re-sorted.
--- **A verdict is never re-derived from the fields behind it.** `unexpected` is
--  populated whenever an actual tool call went unmatched, but `maxExtraToolCalls`
--  defaults to `null` — extras are reported and tolerated. `selection` therefore
--  fails on extras only when the turn's own `passed` says so; when the turn
--  reports no verdict the row is `notMeasured` with `matchVerdictUnavailable`,
--  never `failed`. Without this an agentic case that calls a search tool before
--  the expected one — a passing run — reported as broken at `selection` with
--  every later stage blanked behind it.
--- **A broken grader is never a server defect.** An evaluator error makes
--  `userValue` `notMeasured` and the category `evaluator` — it is not folded into
--  `serverData` or `userValue`, and it does not launder a server failure the
--  spans already prove.
--
--A policy block is represented as `notMeasured` plus a policy reason rather than
--a failure; enforcing policy is a separate concern. Lifecycle stops
--(`setup_failed`, `cancelled`, `timed_out`, `skipped`) and failed rows that
--captured nothing at all are reported as `setup`, so harness noise does not
--inflate any server failure rate.
--
--`failureCategory` answers "why is there no good outcome", not "which stage
--failed": it can be present with `firstFailedStage` ABSENT (a setup abort is
--`setup`, a broken grader is `evaluator`, and neither has a failed row). A rate
--that wants only measured server failures must filter on `firstFailedStage`.
--
--`failureCategory: "metadata"` is deliberately never derived. It means tool names
--or schemas misled the model, which is a judgement no span carries; deriving it
--mechanically would be guessing.
--
--## What lands on an iteration
--
--`metadata.stageResults`, `metadata.firstFailedStage`,
--`metadata.failureCategory` and `metadata.stageAnalyzerVersion`, written by both
--the hosted/GitHub finalize path and the SDK result mapping. The version is
--stamped on every derivation so stored rows can be targeted for recomputation
--when the semantics change — a versioned analyzer whose version is not persisted
--cannot be selectively rebuilt.
--
--No schema change: `testIteration.metadata` is an open record and both write
--paths already carry nested values.
--
--Consumers reading `metadata` should treat these keys as server-derived and the
--`notMeasured` states as load-bearing. `notMeasured`, `notApplicable` and
--`notReached` are three different reasons there is no verdict; rendering any of
--them as a pass is the failure mode this whole contract exists to prevent.
-diff --git a/.changeset/github-bind-callback-requires-workos-user.md b/.changeset/github-bind-callback-requires-workos-user.md
-deleted file mode 100644
-index 90e6e9a96..000000000
---- a/.changeset/github-bind-callback-requires-workos-user.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Require a WorkOS user, not just Convex auth, before finishing a GitHub App installation bind. Guests are authenticated to Convex by design, so the previous gate let a guest call the member-only action and made the sign-in message unreachable.
-diff --git a/.changeset/github-bind-callback-waits-for-auth.md b/.changeset/github-bind-callback-waits-for-auth.md
-deleted file mode 100644
-index b905ba75f..000000000
---- a/.changeset/github-bind-callback-waits-for-auth.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Wait for authentication before finishing a GitHub App installation bind. GitHub's redirect is a full page load, so the Convex client had not attached a token when the callback fired its `signedInAction` — every bind failed with a bare "Server Error" and left the one-time state unconsumed.
-diff --git a/.changeset/honest-suite-file-targets.md b/.changeset/honest-suite-file-targets.md
-deleted file mode 100644
-index 9e16b64df..000000000
---- a/.changeset/honest-suite-file-targets.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/inspector": patch
--"@mcpjam/vitest": patch
-----
--
--Extend suite files with execution prompts, temperatures, host attachments, and
--environment-only targets. Preserve those fields through CLI export and file
--runs without manufacturing execution defaults, and release the Vitest adapter
--alongside the additive SDK contract.
-diff --git a/.changeset/opt-in-fixture-mode.md b/.changeset/opt-in-fixture-mode.md
-deleted file mode 100644
-index d389fc955..000000000
---- a/.changeset/opt-in-fixture-mode.md
-+++ /dev/null
-@@ -1,43 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
-----
--
--Let operators declare safe-to-execute primitives, so result-shape checks can run at all.
--
--A family of requirements is only observable on a result the server produces by
--DOING something. `tools/call` and `prompts/get` results have shapes no listing
--can show, and a tool's declared `outputSchema` binds a value that exists only
--once the tool runs. A default conformance run cannot reach any of it: nothing in
--a tool's advertised metadata says whether calling it charges a card or deletes a
--row, so a run that guessed would eventually be an outage.
--
--`inputRequiredProbe` and `logProbe` already solved this for two specific checks
--by making the operator name the tool. `fixtures` generalizes that pattern:
--
--    { "toolCalls":   [{ "toolName": "weather", "arguments": { "city": "Lisbon" } }],
--      "promptGets":  [{ "promptName": "greet",  "arguments": { "name": "Ada" } }] }
--
--CLI: `--fixture-tool <name>` / `--fixture-prompt <name>` for the common
--no-argument case, `--fixtures-file <path>` when arguments are needed (arguments
--are arbitrary JSON, and a flag syntax for them would be a parser nobody asked
--for). Suite config files accept a `fixtures` block per run. A malformed file is
--a usage error rather than a silent empty set — a fixture set that vanished would
--turn the gated checks into skips, which an operator reads as "my server does not
--support this".
--
--Two things this unlocks:
--
--- `modern-tool-output-schema-conformant` asserts the MUST that "if an output
--  schema is provided, servers MUST provide structured results that conform to
--  this schema". Judged with the same dialect-aware validator the MCP client uses
--  for tool inputs, so a tool declaring draft-07 (what `zod-to-json-schema`
--  emits by default) is graded under draft-07 rather than rejected. An `isError:
--  true` result does not bind the schema — the spec's own example of one carries
--  no `structuredContent` — so it is reported, never failed.
--- `wire-schema-valid` finally sees `CallToolResult` and `GetPromptResult`.
--  Without fixtures those shapes never appear on the wire during a run, so the
--  schema check had never once looked at them.
--
--The default is unchanged and stays that way: with no fixtures, no tool is
--called, and the gated check reports a skip naming exactly what it needs.
-diff --git a/.changeset/registry-agent-ops.md b/.changeset/registry-agent-ops.md
-deleted file mode 100644
-index 59bde3471..000000000
---- a/.changeset/registry-agent-ops.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Offer registry directory search and gated installs on Slack/Discord. Uninstall stays excluded. Install proposals freeze the endpoint URL and freshness pin so a later click cannot install a row that moved.
-diff --git a/.changeset/registry-api-v1.md b/.changeset/registry-api-v1.md
-deleted file mode 100644
-index a8607de47..000000000
---- a/.changeset/registry-api-v1.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Add Platform API client methods for the registry directory and card install surface (`searchRegistryDirectory`, `installRegistryServer`, and siblings), plus the matching v1 error-code mappings.
-diff --git a/.changeset/registry-cli.md b/.changeset/registry-cli.md
-deleted file mode 100644
-index 64f65c2f1..000000000
---- a/.changeset/registry-cli.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/cli": patch
-----
--
--Add `mcpjam registry` for directory search/show and Cloud-project install/uninstall of directory rows and curated cards.
-diff --git a/.changeset/registry-ops-catalog.md b/.changeset/registry-ops-catalog.md
-deleted file mode 100644
-index 5f0a54974..000000000
---- a/.changeset/registry-ops-catalog.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Add eight registry PlatformOperations (search/list/install/uninstall) to the shared catalog, MCP worker tools, and in-app chat toolset.
-diff --git a/.changeset/releases-2026-08-22.md b/.changeset/releases-2026-08-22.md
-deleted file mode 100644
-index c8e74d0e4..000000000
---- a/.changeset/releases-2026-08-22.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/inspector": minor
--"@mcpjam/cli": minor
--"@mcpjam/sdk": minor
-----
--
--Release the latest Inspector, CLI, and SDK updates.
-diff --git a/.changeset/releases-2026-08-23.md b/.changeset/releases-2026-08-23.md
-deleted file mode 100644
-index c8e74d0e4..000000000
---- a/.changeset/releases-2026-08-23.md
-+++ /dev/null
-@@ -1,7 +0,0 @@
-----
--"@mcpjam/inspector": minor
--"@mcpjam/cli": minor
--"@mcpjam/sdk": minor
-----
--
--Release the latest Inspector, CLI, and SDK updates.
-diff --git a/.changeset/retire-curated-registry.md b/.changeset/retire-curated-registry.md
-deleted file mode 100644
-index cf00fb3c8..000000000
---- a/.changeset/retire-curated-registry.md
-+++ /dev/null
-@@ -1,9 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Retire the hand-curated MCPJam registry catalog.
--
--The Registry tab now shows the organization shelf and the Claude/ChatGPT
--directories only. Overlap hiding is gone, so directory rows that used to sit
--behind a curated card (Asana, Linear, and the rest) are visible again.
-diff --git a/.changeset/sdk-cloud-eval-compare-path.md b/.changeset/sdk-cloud-eval-compare-path.md
-deleted file mode 100644
-index dc507cdd6..000000000
---- a/.changeset/sdk-cloud-eval-compare-path.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/sdk": patch
-----
--
--Point comparative-gate usage errors at `mcpjam cloud eval compare` instead of the removed root `mcpjam eval compare` command.
-diff --git a/.changeset/sep-2243-header-cases.md b/.changeset/sep-2243-header-cases.md
-deleted file mode 100644
-index a110c4856..000000000
---- a/.changeset/sep-2243-header-cases.md
-+++ /dev/null
-@@ -1,39 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Cover the SEP-2243 header cases the mismatch checks never reached.
--
--Our modern pool asserted three header MISMATCH rejections and nothing else, so
--two distinct requirements went untested: a required standard header that is
--absent rather than wrong, and the rule that header names are compared
--case-insensitively.
--
--`modern-missing-method-header-rejected` (MUST) omits `Mcp-Method` from an
--otherwise well-formed `server/discover` and requires HTTP 400 with JSON-RPC
--`-32020`. The spec lists a missing standard header as a validation-failure
--condition alongside a mismatched one and states the same remedy for both, so
--both halves are asserted at MUST strength, like the sibling mismatch checks.
--
--`modern-header-names-case-insensitive` (MUST accept) sends the standard headers
--under deliberately mixed casing and requires the server to answer normally. It
--works through the ordinary guarded transport because Node's fetch preserves the
--header-name casing it is handed on the wire — only `Headers` *iteration*
--lowercases, which is a red herring.
--
--The missing `MCP-Protocol-Version` case is **advice, not a check**. The same
--spec section grants an explicit escape hatch: a server supporting
--pre-2025-06-18 clients "MAY treat a request that omits the header as protocol
--version 2025-03-26". Nothing on the wire says which kind of server it is, and
--the official server SDK answers such a request normally — so a check demanding
--rejection would fail conforming servers. It is reported as
--`readiness-protocol-version-header-required` (SHOULD) instead.
--
--Optional whitespace around header values (RFC 9110 `field-line = field-name ":"
--OWS field-value OWS`) is **not** covered, on purpose. `Headers.set` normalizes
--the value before it reaches the socket, so sending OWS would need a raw-socket
--transport — which would bypass `config.fetchFn`, the SSRF guard every probe in
--this suite deliberately dials through. The gap is recorded in the check's
--docstring rather than closed by trading away a hosted-mode network guard.
--
--Both checks land in the `pending` bucket and move no score.
-diff --git a/.changeset/strict-eval-suite-op-bodies.md b/.changeset/strict-eval-suite-op-bodies.md
-deleted file mode 100644
-index 83e17beb2..000000000
---- a/.changeset/strict-eval-suite-op-bodies.md
-+++ /dev/null
-@@ -1,6 +0,0 @@
-----
 -"@mcpjam/sdk": patch
 -"@mcpjam/cli": patch
 ----
 -
--`mcpjam eval create/update --json` (and `--file`) now reject unknown top-level keys as a usage error instead of silently dropping them. The MCP `create_eval_suite` / `update_eval_suite` tools publish the same closed input shape.
-diff --git a/.changeset/tasks-scenario-depth.md b/.changeset/tasks-scenario-depth.md
-deleted file mode 100644
-index 4e3bd505b..000000000
---- a/.changeset/tasks-scenario-depth.md
-+++ /dev/null
-@@ -1,54 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
-----
+-Report a legacy protocol-version pin mismatch as a version problem instead of "the server appears to be down"
 -
--Extend the Tasks suite past "create and poll".
+-Pinning a stateful MCP protocol version (e.g. 2025-11-25) against a server that
+-answers with a different one — Slack and HubSpot both answer 2025-06-18 — failed
+-the connect with a generic 502 and "Couldn't reach the MCP server". Tools came
+-back silently empty and reconnects looked like someone else's outage rather than
+-the version setting they actually were.
 -
--The Tasks suite already ran a multi-step create/poll flow, but it only ever
--observed a task that ran to completion on its own. Six requirements the
--extension states were untested:
--
--- **`tasks-invalid-task-id-rejected`** — `tasks/get` for an id the server never
--  issued must answer `-32602`. The same rejection on `tasks/update` and
--  `tasks/cancel` is only a SHOULD, so a different code there warns rather than
--  fails. This one needs no created task, so it establishes something real even
--  on a run that could not provoke one.
--- **`tasks-status-payload-shape`** — `completed` carries `result`, `failed`
--  carries `error`, `input_required` carries `inputRequests`. Read from RAW
--  inbound frames, because the SDK's own payload schema rejects a `failed` task
--  with no `error` before any check could see it — reading the decoded task would
--  score a server green on exactly the state the check exists to catch.
--- **`tasks-cancel-ack-shape`** — `tasks/cancel` must be acknowledged with an
--  empty result. It deliberately does *not* require the task to become
--  `cancelled`: the spec says cancellation is eventually consistent and the
--  status "MAY remain working … and MAY ultimately reach a terminal status other
--  than cancelled".
--- **`tasks-input-required-update-completes`** — the `input_required →
--  tasks/update → completion` round trip, gated on a new `inputResponses` option
--  (`--input-responses` on the CLI). What a task asks for is server-defined, so
--  inventing an answer would submit arbitrary content into somebody's workflow.
--- **`tasks-ttl-integer-shape`** — `ttlMs` and `pollIntervalMs` are integer
--  milliseconds per the extension's `Task` interface. A negative value only
--  warns: the spec states no lower bound and spells "unlimited" as `null`.
--- **`tasks-undeclared-capability-names-requirements`** — a `-32021` must carry
--  `error.data.requiredCapabilities`. A client told it is missing a capability,
--  but not which one, cannot act on the error. Rides the existing undeclared
--  probe round, so it costs no extra traffic.
--
--Polling also stops as soon as a task parks on `input_required`. Such a task
--cannot advance without a client answer, so the old behavior spent the whole
--`pollTimeoutMs` arriving at the state already in hand, and every dependent check
--reported its gap seconds later than it had to.
--
--All six land in a new `mcp-tasks` conformance profile's pending bucket, so they
--report real verdicts and move no score. `mcp-tasks` is separate from
--`mcp-protocol` on purpose: a shared manifest would make a tasks addition bump
--the protocol denominator, so a server that never implemented the extension would
--see its protocol score's meaning change because we learned something about
--tasks.
--
--Not included: a `notifications/tasks` check. It needs a live
--`subscriptions/listen` SSE stream and the extension fixture never opens one;
--shipping a probe that cannot be validated against a fixture is how a conformance
--suite acquires a flaky check.
-diff --git a/.changeset/v1-tools-call-duration.md b/.changeset/v1-tools-call-duration.md
-deleted file mode 100644
-index 165907651..000000000
---- a/.changeset/v1-tools-call-duration.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--`POST /v1/projects/{projectId}/servers/{serverId}/tools/call` returns an additive `durationMs` — wall-clock milliseconds spent in the tool call itself, so an agent can read latency without a second request. A server that already returns its own top-level `durationMs` keeps it; MCPJam never overwrites the field. Non-object results (arrays, primitives, `null`) are returned unchanged.
-diff --git a/.changeset/wire-schema-validation.md b/.changeset/wire-schema-validation.md
-deleted file mode 100644
-index 611fb1e7a..000000000
---- a/.changeset/wire-schema-validation.md
-+++ /dev/null
-@@ -1,50 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Validate what the server actually sent against the spec's own JSON Schema.
--
--The 2026-07 conformance sweep compared our 36-check pool against the official
--suite across nine production connectors. The official `wire-schema-valid` found
--74 real violations on six of them — `tools/list` results missing the REQUIRED
--`cacheScope` / `resultType` / `ttlMs`, and response envelopes carrying
--`"id": null` where `RequestId` is `["string", "integer"]`. Our two hand-written
--field checks abstained on seven of nine. A hand-written check can only catch
--what its author remembered; the schema is the complete statement.
--
--`wire-schema-valid` grades every JSON-RPC message a run observed against the
--published schema for the revision being spoken. It sends no requests of its
--own — it runs last and reads what the other check families already made the
--server say, so a whole family of assertions costs zero extra traffic.
--
--Correlation is what makes it non-vacuous. `ServerResult` includes a base
--`Result` branch that requires only `resultType` and allows every other
--property, so grading a `tools/list` response against the generic message union
--accepts exactly the defect the sweep found. Responses are therefore paired to
--their request by JSON-RPC id and graded against that method's result
--definition. The method → result map is derived from each vendored document's
--own request definitions rather than typed out, so a revision that renames a
--method cannot leave a stale table behind.
--
--Supporting this, a run-wide observed-message recorder now exists at all: the
--raw check families run concurrently and each built its own requests, so
--"everything this run observed" was not a thing anywhere. It is fed at two
--non-overlapping seams — inside `rawRequest` (covering every raw probe by
--construction) and on the official Client's `baseFetch` (the only place its
--traffic is visible before the client consumes the wire-only members).
--
--All four core revisions plus the tasks extension schema are vendored verbatim
--with pinned upstream commits. Both Ajv dialects are needed: 2025-03-26 and
--2025-06-18 are draft-07, the later two 2020-12. When the tasks extension is
--negotiated, `tools/call` is graded against `anyOf: [CallToolResult,
--CreateTaskResult]`, so a server that implements the extension is not failed for
--it.
--
--The check lands in the `pending` bucket introduced with the conformance
--profile: it reports real verdicts and moves no score until a profile version
--promotes it. Node-only (Ajv compiles with `new Function`), so it is absent from
--the browser and worker entries.
--
--Also fixes the conformance mock server, which the new check caught answering a
--well-formed request's error with `id: null` — JSON-RPC 2.0 reserves that for
--requests whose id could not be detected.
+-The `ProtocolVersionPinUnsupported` path that already produces a 424, names both
+-versions, and offers "Change protocol version" only ever fired for modern
+-(2026-07-28) pins: the detector bailed out for stateful pins, and the failure
+-parser did not recognize the wording the upstream client uses when it refuses a
+-server's `initialize` reply. Both now handle it, and the message names the
+-version the server actually offered.
 diff --git a/cli/package.json b/cli/package.json
-index fd8a2e678..3a288212f 100644
+index 644e544db..27ee68c2e 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.29.0",
-+  "version": "4.0.0",
+-  "version": "4.2.0",
++  "version": "5.0.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -1219,21 +274,21 @@ index fd8a2e678..3a288212f 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^6.4.0",
-+    "@mcpjam/sdk": "^6.5.0",
+-    "@mcpjam/sdk": "^7.1.0",
++    "@mcpjam/sdk": "^8.0.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index dacbb9368..f37cd4b83 100644
+index 1895f74d2..f599a3abb 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.45.0",
-+  "version": "2.46.0",
+-  "version": "2.48.1",
++  "version": "3.0.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -1241,24 +296,24 @@ index dacbb9368..f37cd4b83 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^6.4.0",
-+    "@mcpjam/sdk": "^6.5.0",
+-    "@mcpjam/sdk": "^7.1.1",
++    "@mcpjam/sdk": "^8.0.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 70a3483db..7143a2ade 100644
+index b9ccd2381..8df55d8eb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -61,9 +61,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.29.0",
-+      "version": "4.0.0",
+-      "version": "4.2.0",
++      "version": "5.0.0",
        "dependencies": {
--        "@mcpjam/sdk": "^6.4.0",
-+        "@mcpjam/sdk": "^6.5.0",
+-        "@mcpjam/sdk": "^7.1.0",
++        "@mcpjam/sdk": "^8.0.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -1266,8 +321,8 @@ index 70a3483db..7143a2ade 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.45.0",
-+      "version": "2.46.0",
+-      "version": "2.48.1",
++      "version": "3.0.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -1275,8 +330,8 @@ index 70a3483db..7143a2ade 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^6.4.0",
-+        "@mcpjam/sdk": "^6.5.0",
+-        "@mcpjam/sdk": "^7.1.1",
++        "@mcpjam/sdk": "^8.0.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -1284,8 +339,8 @@ index 70a3483db..7143a2ade 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "6.4.0",
-+      "version": "6.5.0",
+-      "version": "7.1.1",
++      "version": "8.0.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
@@ -1293,36 +348,50 @@ index 70a3483db..7143a2ade 100644
      },
      "vitest": {
        "name": "@mcpjam/vitest",
--      "version": "0.1.1",
-+      "version": "0.1.2",
+-      "version": "0.1.3",
++      "version": "0.1.4",
        "license": "MIT",
        "dependencies": {
--        "@mcpjam/sdk": "^6.0.0"
-+        "@mcpjam/sdk": "^6.5.0"
+-        "@mcpjam/sdk": "^7.0.0"
++        "@mcpjam/sdk": "^8.0.0"
        },
        "devDependencies": {
          "tsup": "^8.3.5",
+@@ -38299,11 +38299,11 @@
+     },
+     "widget-react": {
+       "name": "@mcpjam/widget-react",
+-      "version": "0.1.8",
++      "version": "0.1.9",
+       "license": "MIT",
+       "dependencies": {
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^7.0.0",
++        "@mcpjam/sdk": "^8.0.0",
+         "@modelcontextprotocol/client": "2.0.0",
+         "@modelcontextprotocol/ext-apps": "^1.7.4",
+         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 3a5b6b448..59266077d 100644
+index 0224fdce4..5c845a6ab 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "6.4.0",
-+  "version": "6.5.0",
+-  "version": "7.1.1",
++  "version": "8.0.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
 diff --git a/vitest/package.json b/vitest/package.json
-index 8c5e6a711..ea479aef5 100644
+index 153abce1f..381ad3fdb 100644
 --- a/vitest/package.json
 +++ b/vitest/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/vitest",
--  "version": "0.1.1",
-+  "version": "0.1.2",
+-  "version": "0.1.3",
++  "version": "0.1.4",
    "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
    "license": "MIT",
    "type": "module",
@@ -1330,8 +399,29 @@ index 8c5e6a711..ea479aef5 100644
      "vitest": ">=3.2.0 <4"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^6.0.0"
-+    "@mcpjam/sdk": "^6.5.0"
+-    "@mcpjam/sdk": "^7.0.0"
++    "@mcpjam/sdk": "^8.0.0"
    },
    "devDependencies": {
      "tsup": "^8.3.5",
+diff --git a/widget-react/package.json b/widget-react/package.json
+index 816ec2fb8..beb447455 100644
+--- a/widget-react/package.json
++++ b/widget-react/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/widget-react",
+-  "version": "0.1.8",
++  "version": "0.1.9",
+   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
+   "license": "MIT",
+   "type": "module",
+@@ -34,7 +34,7 @@
+   },
+   "dependencies": {
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^7.0.0",
++    "@mcpjam/sdk": "^8.0.0",
+     "@modelcontextprotocol/client": "2.0.0",
+     "@modelcontextprotocol/ext-apps": "^1.7.4",
+     "lucide-react": "^0.525.0",

@@ -36,10 +36,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Pinned to the same version every other workflow uses. A floating "24"
+      # meant this gate workflow — the one a release requires to be green —
+      # could silently run on a different minor than the release itself.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "24.14.0"
+          cache: npm
 
       - name: Install dependencies and format
         working-directory: mcpjam-inspector

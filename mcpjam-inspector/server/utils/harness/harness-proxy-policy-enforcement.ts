@@ -25,6 +25,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import { resolveBridgeToolCallTarget } from "../../services/mcp-tool-call-target.js";
 import { isHarnessProxyPolicySealAvailable } from "./harness-proxy-policy-seal.js";
+import { getHarnessAdapter, type HarnessId } from "./registry.js";
 
 export { resolveBridgeToolCallTarget };
 
@@ -147,12 +148,26 @@ export const HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON =
  * token, or an assembled `.mcp.json` entry that ended up with a bare token) are
  * only knowable once the config is built, and are refused there —
  * `buildHarnessProxyMcpJsonFromManager`.
+ *
+ * DELIVERY-AWARE (COMP-39). The seal only exists to carry a policy OUT of this
+ * process, into a sandbox that calls the customer's server itself. That is
+ * `mcpDelivery: "native"`. A `host-executed` adapter's MCP calls never leave
+ * this process — `projectSelectedMcpServersAsHostTools` gates them in-process
+ * with the same `decideToolPolicyFromSnapshot` and the same block envelope — so
+ * a deployment with a weak or absent `COMPUTERS_TERMINAL_TOKEN_SECRET` was
+ * refusing every policied Codex eval over a token it would never mint.
+ *
+ * The harness is taken as an ID rather than a boolean precisely so no caller
+ * can forget to say which delivery it gets: the adapter is the one source of
+ * that answer, and the fail-closed native arm is untouched.
  */
 export function harnessToolPolicyLaunchRefusal(args: {
   hasToolPolicy: boolean;
-  harness: boolean;
+  /** The run's harness, or undefined for the emulated engine. */
+  harness: HarnessId | undefined;
 }): string | null {
   if (!args.hasToolPolicy || !args.harness) return null;
+  if (getHarnessAdapter(args.harness).mcpDelivery !== "native") return null;
   return isHarnessProxyPolicySealAvailable()
     ? null
     : HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON;

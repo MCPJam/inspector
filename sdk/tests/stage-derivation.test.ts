@@ -921,17 +921,28 @@ describe("honest degradation for rows that never produced a verdict", () => {
   );
 
   test("no-signals failed+traceAbsent is byte-identical to v1 (modulo version)", () => {
-    const { stageResults, firstFailedStage, failureCategory, stageAnalyzerVersion } =
-      deriveStageResults({
-        authored: modelDrivenCase,
-        evidence: { traceAbsent: true },
-        iteration: { status: "failed", error: "server not connected" },
-      });
-    // v3 added judge evidence and nothing else; the rows it emits with no
-    // judge evidence are the v1/v2 rows unchanged, which is what this pins.
-    expect(stageAnalyzerVersion).toBe(3);
+    const {
+      stageResults,
+      firstFailedStage,
+      failureCategory,
+      stageAnalyzerVersion,
+    } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: { traceAbsent: true },
+      iteration: { status: "failed", error: "server not connected" },
+    });
+    // v3 added judge evidence and v4 added metadata attribution; neither
+    // changes the rows this fixture emits with no judge/attribution evidence
+    // present, which are the v1/v2 rows unchanged — that is what this pins.
+    expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     const applicable = stageResults.filter((r) => r.state !== "notApplicable");
-    expect(applicable.map((r) => ({ stage: r.stage, state: r.state, reason: r.reason }))).toEqual(
+    expect(
+      applicable.map((r) => ({
+        stage: r.stage,
+        state: r.state,
+        reason: r.reason,
+      }))
+    ).toEqual(
       applicable.map((r) => ({
         stage: r.stage,
         state: "notMeasured",
@@ -975,10 +986,45 @@ describe("honest degradation for rows that never produced a verdict", () => {
     expect(failureCategory).toBe("setup");
   });
 
+  test("setup_failed WITH signals still names whose side refused", () => {
+    const { stageResults, firstFailedStage, failureCategory } =
+      deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          traceAbsent: true,
+          setupSignals: {
+            connection: {
+              outcome: "failed",
+              attribution: "theirs",
+              egressVerified: true,
+              spanIds: ["run-connect-s1"],
+            },
+          },
+        },
+        iteration: { status: "setup_failed", error: "connection refused" },
+      });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "failed",
+      reason: "connectFailed",
+    });
+    expect(firstFailedStage).toBe("connection");
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("setup_failed with no signals stays an unattributed abort", () => {
+    const { stageResults, firstFailedStage } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: { traceAbsent: true },
+      iteration: { status: "setup_failed", error: "server not connected" },
+    });
+    const applicable = stageResults.filter((r) => r.state !== "notApplicable");
+    expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
+    expect(firstFailedStage).toBeUndefined();
+  });
+
   test("a `failed` row with no trace is read as a setup abort", () => {
-    // `persistSetupFailedIteration` writes status "failed" because the update
-    // mutation cannot spell `setup_failed` yet — so the shape, not the status,
-    // is what identifies it.
+    // An older writer spelled a setup abort `failed`; the shape, not the
+    // status, is what identifies those rows.
     const { stageResults, firstFailedStage, failureCategory } =
       deriveStageResults({
         authored: modelDrivenCase,

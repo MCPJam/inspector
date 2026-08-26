@@ -50,7 +50,8 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    supportsSelectedMcpServers: true,
+    mcpDelivery: "native",
+    deliverMcpServers: vi.fn(async () => {}),
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     // The real adapter's MCP tool names are `mcp__<key>__<tool>`; the turn only

@@ -25,11 +25,11 @@ import {
   updateEvalSuiteOperation,
   type PlatformApiClient,
   type PlatformEvalCase,
+  type PlatformEvalRunDisclosure,
   type RunEvalSuiteInput,
   type RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError } from "./output.js";
-import { fractionToPercent } from "./eval-suite-export.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
 export const HOSTED_ITERATIONS_CAP = 10;
@@ -98,6 +98,8 @@ export function fileCaseToCreateBody(
     title: testCase.title,
     steps: testCase.steps,
     iterations: testCase.repetitions,
+    repetitions: testCase.repetitions,
+    passThreshold: testCase.passThreshold,
     ...(testCase.expectedOutput !== undefined
       ? { expectedOutput: testCase.expectedOutput }
       : {}),
@@ -121,6 +123,8 @@ export function fileCaseToUpdateBody(
     title: testCase.title,
     steps: testCase.steps,
     iterations: testCase.repetitions,
+    repetitions: testCase.repetitions,
+    passThreshold: testCase.passThreshold,
     expectedOutput: testCase.expectedOutput ?? "",
     isNegative: testCase.isNegativeTest,
     models: fileCaseModels(testCase),
@@ -147,7 +151,7 @@ function refuseUnsupportedHostedSemantics(loaded: {
   authored: {
     defaults: {
       toolPolicy?: unknown;
-      validity: {
+      validity?: {
         minEligibleTrials?: number;
         minCompletionRate?: number;
         maxEvaluatorErrorRate?: number;
@@ -161,36 +165,6 @@ function refuseUnsupportedHostedSemantics(loaded: {
       "defaults.toolPolicy is not representable on a hosted run. The platform would execute the unrestricted tool set while stamping this file's hash. Remove toolPolicy, or run the suite locally.",
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
     );
-  }
-  const validity = loaded.authored.defaults.validity;
-  if (
-    validity.minEligibleTrials !== undefined ||
-    validity.minCompletionRate !== undefined ||
-    validity.maxEvaluatorErrorRate !== undefined
-  ) {
-    throw cliError(
-      "VALIDITY_UNSUPPORTED",
-      "defaults.validity sets a gate the hosted runner does not enforce (minEligibleTrials, minCompletionRate, or maxEvaluatorErrorRate). A run could be reported as a pass or fail when the file would call it INVALID. Leave validity as {} — or run the suite locally.",
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
-    );
-  }
-}
-
-function refusePerCasePassThreshold(loaded: {
-  resolved: {
-    defaults: { passThreshold: number };
-    enabledCases: ResolvedEvalSuiteFileCase[];
-  };
-}): void {
-  const suiteThreshold = loaded.resolved.defaults.passThreshold;
-  for (const testCase of loaded.resolved.enabledCases) {
-    if (testCase.passThreshold !== suiteThreshold) {
-      throw cliError(
-        "CASE_PASS_THRESHOLD",
-        `Hosted runs grade every case against the suite's defaults.passThreshold (${suiteThreshold}); case "${testCase.id}" overrides passThreshold to ${testCase.passThreshold}. The platform has no per-case pass threshold, so this file is refused rather than graded against a different bar than it declares.`,
-        SUITE_FILE_RUN_INVALID_EXIT_CODE,
-      );
-    }
   }
 }
 
@@ -451,6 +425,8 @@ export type EvalRunFileKnobs = {
   environment?: string[];
   host?: string[];
   allTargets?: boolean;
+  repetitions?: number;
+  /** Deprecated alias for repetitions. */
   iterations?: number;
   case?: string[];
   excludeSkills?: boolean;
@@ -464,7 +440,7 @@ export type EvalRunFileKnobs = {
 
 /**
  * File-run idempotency covers the bytes AND every knob that changes what
- * launches. Same file + `--iterations 1` vs `--iterations 10` must not
+ * launches. Same file + `--repetitions 1` vs `--repetitions 10` must not
  * collapse onto one run.
  */
 export function deriveFileRunIdempotencyKey(params: {
@@ -487,7 +463,7 @@ export function deriveFileRunIdempotencyKey(params: {
       (params.fileEnvironment ? [params.fileEnvironment] : null),
     hosts: params.knobs.host ?? null,
     allTargets: params.knobs.allTargets === true,
-    iterations: params.knobs.iterations ?? null,
+    repetitions: params.knobs.repetitions ?? params.knobs.iterations ?? null,
     cases: params.knobs.case ?? null,
     excludeSkills: params.knobs.excludeSkills === true,
     refreshSnapshot: params.knobs.refreshSnapshot === true,
@@ -551,6 +527,8 @@ export async function executeEvalRunFromFile(
   context: {
     client: PlatformApiClient;
     signal: AbortSignal;
+    onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+    onDisclosureUnavailable?: (reason: string) => void;
   },
   params: {
     source: { text: string; bytes: number; buffer: Uint8Array };
@@ -580,18 +558,8 @@ export async function executeEvalRunFromFile(
   }
 
   refuseRepetitions(loaded);
-  refusePerCasePassThreshold(loaded);
   refuseEmptyEnabledSet(loaded);
   refuseUnsupportedHostedSemantics(loaded);
-
-  const passPercent = fractionToPercent(loaded.resolved.defaults.passThreshold);
-  if (passPercent === null) {
-    throw cliError(
-      "PASS_THRESHOLD",
-      `defaults.passThreshold ${loaded.resolved.defaults.passThreshold} cannot be converted to a hosted percent without losing a digit.`,
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
-    );
-  }
 
   const sourceHash = sha256HexOfBuffer(params.source.buffer);
   const authored = loaded.authored;
@@ -607,6 +575,12 @@ export async function executeEvalRunFromFile(
           : {}),
         sourceHash,
         ...(authored.provenance ? { provenance: authored.provenance } : {}),
+        verdictPolicyVersion: 2,
+        verdictPolicyDefaults: {
+          repetitions: loaded.resolved.defaults.repetitions,
+          passThreshold: loaded.resolved.defaults.passThreshold,
+          validity: loaded.resolved.defaults.validity,
+        },
         environment: {
           servers: servers.map((server) => server.name),
           ...(servers.some((server) => server.id)
@@ -629,7 +603,6 @@ export async function executeEvalRunFromFile(
             ? { temperature: authored.defaults.temperature }
             : {}),
         },
-        defaultPassCriteria: { minimumPassRate: passPercent },
       },
     },
     { signal: context.signal },
@@ -727,8 +700,8 @@ export async function executeEvalRunFromFile(
               ? { hosts: fileHosts }
           : {}),
       ...(knobs.allTargets ? { allAttached: true } : {}),
-      ...(knobs.iterations !== undefined
-        ? { iterations: knobs.iterations }
+      ...(knobs.repetitions !== undefined || knobs.iterations !== undefined
+        ? { repetitions: knobs.repetitions ?? knobs.iterations }
         : {}),
       cases: runCases,
       ...(knobs.excludeSkills ? { excludeSkills: true } : {}),
@@ -740,6 +713,11 @@ export async function executeEvalRunFromFile(
       ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
       ...(knobs.compose ? { compose: knobs.compose } : {}),
     },
-    { client: context.client, signal: context.signal },
+    {
+      client: context.client,
+      signal: context.signal,
+      onDisclosure: context.onDisclosure,
+      onDisclosureUnavailable: context.onDisclosureUnavailable,
+    },
   );
 }

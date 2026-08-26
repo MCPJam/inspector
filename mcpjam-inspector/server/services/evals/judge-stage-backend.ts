@@ -16,15 +16,21 @@
  * (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`) — the second pass never touches an
  * iteration's lifecycle.
  *
- * ONE SURFACE IS NOT DEPLOYED YET. `internalApplyJudgeStageDerivation` has its
- * HTTP route (W1) and is called for real below. The other two facts this pass
- * needs — reading a run's iterations without a user bearer, and reporting
- * outcomes to `judgeStageFanoutMutations.markFanout` — exist in the backend
- * only as internal Convex functions with NO service-token HTTP route, so they
- * are unreachable from here. Their clients are written to the expected paths
- * and shapes and will start working the moment the routes land; until then a
- * call returns `routeMissing`, which is why `dual_write` cannot be promoted on
- * this wave. Nothing at `off` or `shadow` reaches any of them.
+ * ALL THREE SURFACES ARE NOW DEPLOYED (PR 0 of the D7 plan closed the gap this
+ * docblock used to describe): `internalApplyJudgeStageDerivation`'s route
+ * shipped in Wave 1; the read (`/runs/judge-derivation-input`) and the
+ * goal-completion fanout report (`/runs/judge-stage-fanout`) shipped
+ * alongside D7. `isRouteMissing` / `ROUTE_NOT_DEPLOYED` handling is kept as a
+ * deploy-order safety net (an inspector build that runs ahead of its backend
+ * deploy), not because a gap is expected in steady state.
+ *
+ * D7 (metadata-attribution) rides the SAME read (`fetchRunForJudgeSecondPass`
+ * already returns `metadataAttributionJobId` alongside `goalCompletionJobId`)
+ * but writes and reports through its OWN pair of functions below
+ * (`applyMetadataAttributionStageDerivation` /
+ * `markMetadataAttributionStageFanout`) — its own job id, its own staleness
+ * check, its own fanout state on the run row. See the D7 plan §2/§3 for why
+ * it is a sibling judge rather than a rider on goal-completion's job id.
  */
 
 import type { ModelMessage } from "ai";
@@ -32,6 +38,7 @@ import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
+  TestStep,
 } from "@mcpjam/sdk/contract";
 import type { ToolExposureSignals } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
@@ -166,12 +173,46 @@ export type JudgeSecondPassIterationRow = {
   prompts?: PromptTraceSummary[];
   messages?: ModelMessage[];
   /**
-   * The authored case's stage-applicability inputs. NOT persisted on the
-   * iteration, so the read surface resolves it from the suite the same way the
-   * runner did — absent ⇒ this iteration gets no chain, exactly as in the
-   * first pass, rather than a guessed one.
+   * The RUN'S OWN frozen snapshot of the authored case, not a derived
+   * `StageAuthoredCase`.
+   *
+   * Stage applicability is inferred by the SDK's `buildStageAuthoredCase` — the
+   * same function the runner used on the first pass — so the backend hands back
+   * the raw case and this side derives. Mirroring that inference in Convex
+   * would put a second implementation of "what does this case assert" in the
+   * repository least able to test it against the analyzer. Absent ⇒ this
+   * iteration gets no chain, exactly as in the first pass, rather than a
+   * guessed one.
+   */
+  authoredCase?: {
+    isNegativeTest?: boolean;
+    expectedOutput?: string;
+    expectedToolCalls?: readonly unknown[];
+    successPredicates?: readonly unknown[];
+    caseType?: string;
+    steps?: readonly TestStep[];
+    promptTurns?: ReadonlyArray<{ expectedToolCalls?: readonly unknown[] }>;
+  };
+  /**
+   * The backend's OWN derived shape, still served beside the raw case for D7's
+   * consumer. Read only as a fallback when `authoredCase` is absent — a row
+   * that carries just this must still derive a chain, so the field has to stay
+   * on the contract as well as in the code that reads it.
    */
   stageCase?: StageAuthoredCase;
+  /** Snapshotted per-case options, for the `toolCalls:match` definition hash. */
+  matchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /**
+   * Whether the persisted TRACE came back in full.
+   *
+   * `false` ⇒ the backend could not serve this iteration's spans within its
+   * byte budget. The analyzer reports `traceAbsent` when handed no spans, so
+   * re-deriving here would replace a correct user-value chain with one saying
+   * nothing happened — this pass therefore posts NO stage keys for such a row.
+   * A partial chain is worse than none: none leaves the first pass's standing.
+   */
+  traceComplete?: boolean;
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
 };
@@ -179,34 +220,77 @@ export type JudgeSecondPassIterationRow = {
 export type JudgeSecondPassRunRow = {
   runId: string;
   goalCompletionJobId?: string | number;
+  /** D7's own job id — set only when its own auto-trigger fired for this run. */
+  metadataAttributionJobId?: string | number;
   gradingEngine?: { mode?: unknown };
   configSnapshot?: { gradingEngine?: { mode?: unknown } };
   iterations: JudgeSecondPassIterationRow[];
+  /**
+   * True when the run has MORE iterations than this fetch retrieved.
+   *
+   * The pass reports the set it graded, and the backend marks a fanout
+   * complete when every reported outcome succeeded — it cannot tell a fully
+   * graded run from one whose tail was never fetched. So a partial fetch must
+   * never be allowed to complete a fanout; the pass reports `failed` instead
+   * and lets the sweep re-drive it.
+   */
+  incomplete?: boolean;
 };
+
+/** Pages one fetch will follow before giving up. 200 iterations per page. */
+const MAX_DERIVATION_INPUT_PAGES = 25;
 
 /**
  * Read the run and its iterations WITHOUT a user bearer.
  *
- * NOT DEPLOYED YET — see the module docblock. The doorbell carries a run id and
- * nothing else, so the pass has to reread every fact it grades on; that read
- * needs a service-token route because the worker has no user identity to use.
+ * The doorbell carries a run id and nothing else, so the pass has to reread
+ * every fact it grades on; that read needs a service-token route because the
+ * worker has no user identity to use. GENERIC across judges: the same call
+ * returns both `goalCompletionJobId` and `metadataAttributionJobId`, so a
+ * second pass rereads once regardless of which judge(s) fired for this run.
  */
 export async function fetchRunForJudgeSecondPass(
   runId: string
 ): Promise<JudgeSecondPassRunRow> {
-  return await postJson<JudgeSecondPassRunRow>("/runs/judge-derivation-input", {
-    runId,
-  });
+  // FOLLOWS THE CURSOR. The route pages at 200 iterations, and a consumer that
+  // took only the first page would grade the head of a long run, report every
+  // outcome as applied, and let the backend mark the fanout complete — leaving
+  // the tail permanently ungraded with nothing to re-drive it. A run of 25
+  // cases at 10 repetitions already exceeds one page.
+  //
+  // Paging is an implementation detail of this port: `runJudgeSecondPass` sees
+  // one run row either way.
+  let cursor: string | undefined;
+  let head: JudgeSecondPassRunRow | undefined;
+  const iterations: JudgeSecondPassIterationRow[] = [];
+
+  for (let page = 0; page < MAX_DERIVATION_INPUT_PAGES; page += 1) {
+    const body: Record<string, unknown> = { runId };
+    if (cursor !== undefined) body.cursor = cursor;
+    const response = await postJson<
+      JudgeSecondPassRunRow & { nextCursor?: string }
+    >("/runs/judge-derivation-input", body);
+
+    head ??= response;
+    iterations.push(...(response.iterations ?? []));
+    if (response.nextCursor === undefined) {
+      return { ...head, iterations };
+    }
+    cursor = response.nextCursor;
+  }
+
+  // A run longer than the page budget. Reported rather than silently truncated
+  // — see `incomplete`.
+  return { ...(head as JudgeSecondPassRunRow), iterations, incomplete: true };
 }
 
 /**
- * Report the graded set to `judgeStageFanoutMutations.markFanout`.
+ * Report the graded set to `judgeStageFanoutMutations.markFanout`
+ * (goal-completion's fanout state).
  *
  * Only iterations this pass ACTUALLY graded are reported: the backend decides
  * completeness from the reported set, so padding it with ungraded rows would
  * mark a fanout complete that never ran.
- *
- * NOT DEPLOYED YET — see the module docblock.
  */
 export async function markJudgeStageFanout(report: {
   runId: string;
@@ -217,4 +301,57 @@ export async function markJudgeStageFanout(report: {
   return await postJson<{ outcome: string }>("/runs/judge-stage-fanout", {
     ...report,
   });
+}
+
+/**
+ * D7's allowlisted derivation body. Strictly smaller than
+ * {@link JudgeStageDerivationBody}: no `scores` / `evaluationConfig` — D7
+ * never produces a `ScoreResult` row, it only recolors an already-`failed`
+ * stage's category.
+ */
+export type MetadataAttributionStageDerivationBody = {
+  metadataAttributionJobId: string | number;
+  judgeStageDerivedAt: number;
+  stageResults?: unknown[];
+  firstFailedStage?: string;
+  failureCategory?: string;
+  stageAnalyzerVersion?: number;
+};
+
+/**
+ * `POST /internal/v1/evals/iterations/:iterationId/metadata-attribution-derivation`.
+ *
+ * Sibling of {@link applyJudgeStageDerivation}, same shared HTTP handler
+ * (one registration, two suffixes — see `convex/http.ts`), own mutation and
+ * own staleness key on the backend (`metadataAttributionJobId`, not
+ * `goalCompletionJobId`).
+ */
+export async function applyMetadataAttributionStageDerivation(
+  iterationId: string,
+  body: MetadataAttributionStageDerivationBody
+): Promise<{ outcome: JudgeDerivationOutcome; reason?: string }> {
+  return await postJson<{ outcome: JudgeDerivationOutcome; reason?: string }>(
+    `/iterations/${encodeURIComponent(iterationId)}/metadata-attribution-derivation`,
+    { ...body }
+  );
+}
+
+/**
+ * Report D7's graded set to `metadataAttributionStageFanoutMutations.markFanout`.
+ *
+ * Same "only what was actually graded" contract as
+ * {@link markJudgeStageFanout}, reported against D7's own fanout state
+ * (`metadataAttributionStageFanout` on the run row) so goal-completion's
+ * fanout is never touched by a run that only D7 graded, and vice versa.
+ */
+export async function markMetadataAttributionStageFanout(report: {
+  runId: string;
+  metadataAttributionJobId: string | number;
+  outcomes: Array<{ iterationId: string; outcome: JudgeDerivationOutcome }>;
+  failed?: boolean;
+}): Promise<{ outcome: string }> {
+  return await postJson<{ outcome: string }>(
+    "/runs/metadata-attribution-stage-fanout",
+    { ...report }
+  );
 }

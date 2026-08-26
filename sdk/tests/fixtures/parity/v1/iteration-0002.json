@@ -108,6 +108,6 @@
     ],
     "firstFailedStage": "userValue",
     "failureCategory": "userValue",
-    "stageAnalyzerVersion": 3
+    "stageAnalyzerVersion": 4
   }
 }

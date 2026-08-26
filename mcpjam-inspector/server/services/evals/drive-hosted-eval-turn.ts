@@ -191,6 +191,54 @@ export interface DriveHostedEvalTurnParams {
    * whole program exists to eliminate.
    */
   builtInTools?: RunAssistantTurnOptions["builtInTools"];
+  /**
+   * The host's MCP tool-CONSTRUCTION policies, for the HARNESS path.
+   *
+   * ## Why these are passed explicitly, like `builtInTools`
+   *
+   * On the emulated path this facade hands `runAssistantTurn` a tool set that
+   * `prepareChatV2` / `getEvalToolsForAiSdkOrThrow` already built under exactly
+   * these policies, so nothing downstream has to re-derive them. A HARNESS turn
+   * does not consume that set: `runHarnessTurn` rebuilds the model-facing MCP
+   * tools itself (`projectSelectedMcpServersAsHostTools`), because a
+   * host-executed runtime needs its own projection. It reads each policy off
+   * these fields **and nowhere else** — so omitting one does not fall back to
+   * the host's intent, it falls back to the SDK's default. That is the same
+   * silent-degradation shape `builtInTools` above is documented against:
+   * content the eval's host disabled reaches the model, an explicit visibility
+   * opt-out is ignored, and MCP Tasks drops to the no-`_meta` path, all without
+   * a single error.
+   *
+   * ## What is deliberately NOT done here
+   *
+   * The prepared/traced tool set (`tracedTools` below) is NOT handed to the
+   * harness. It is the EMULATED engine's tool set wrapped in eval-trace
+   * instrumentation; the harness path layers its own model-output projection,
+   * scope-step-up observer and policy gate over the manager's tools, and
+   * feeding it `tracedTools` would double-wrap and collide with that layering.
+   * The fix for a dropped policy is to forward the POLICY, not to reuse the
+   * prepared tools.
+   *
+   * ## Emulated evals are unchanged
+   *
+   * All three ride inside the `params.harness` gate at the `runAssistantTurn`
+   * call, for the same reason `requireToolApproval` / `projectId` /
+   * `harnessMcpProxy` already do. Two of them could not affect an emulated turn
+   * even ungated (`MCPJamHandlerOptions.respectToolVisibility` and `.tasks` are
+   * read only by `runHarnessTurn`), but `modelVisibleMcpToolResults` IS read by
+   * the emulated loop's tool-result projection — so the gate is what keeps an
+   * emulated eval byte-identical rather than an argument about read sites.
+   */
+  modelVisibleMcpToolResults?: RunAssistantTurnOptions["modelVisibleMcpToolResults"];
+  /** See {@link DriveHostedEvalTurnParams.modelVisibleMcpToolResults}. Only an
+   *  explicit `false` opts out of SEP-1865 filtering, so this is forwarded on
+   *  definedness. */
+  respectToolVisibility?: RunAssistantTurnOptions["respectToolVisibility"];
+  /** See {@link DriveHostedEvalTurnParams.modelVisibleMcpToolResults}. The run
+   *  resolves ONE seam for the whole run (`resolveToolTaskSeam`, surface
+   *  `"eval"`, bound to the run's abort signal); it is threaded here, never
+   *  re-derived per turn. */
+  tasks?: RunAssistantTurnOptions["tasks"];
   mcpClientManager: MCPClientManager;
   evalAuthContext: { kind: "user_bearer"; token: string };
   endpointPath: string;
@@ -464,6 +512,25 @@ export async function driveHostedEvalTurn(
             ...(params.builtInTools
               ? { builtInTools: params.builtInTools }
               : {}),
+            // The host's MCP tool-CONSTRUCTION policies. `runHarnessTurn`
+            // rebuilds this turn's MCP tools instead of consuming `tools`
+            // above, and reads each of these off the handler options and
+            // nowhere else — omitting one hands the harness the SDK's default,
+            // not the host's choice. Harness-gated like every field in this
+            // block: `modelVisibleMcpToolResults` is also read by the EMULATED
+            // loop, so the gate is what keeps emulated evals byte-identical.
+            // Forwarded on DEFINEDNESS — `respectToolVisibility: false` is the
+            // opt-out and a truthy check would erase it.
+            ...(params.modelVisibleMcpToolResults !== undefined
+              ? {
+                  modelVisibleMcpToolResults:
+                    params.modelVisibleMcpToolResults,
+                }
+              : {}),
+            ...(params.respectToolVisibility !== undefined
+              ? { respectToolVisibility: params.respectToolVisibility }
+              : {}),
+            ...(params.tasks !== undefined ? { tasks: params.tasks } : {}),
           }
         : {}),
       endpointPath: params.endpointPath,

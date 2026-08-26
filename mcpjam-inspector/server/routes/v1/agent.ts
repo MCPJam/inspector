@@ -152,7 +152,25 @@ function relaxProjectRequirement(schema: unknown): unknown {
   if (!asObject?.shape?.project || typeof asObject.extend !== "function") {
     return schema;
   }
-  return asObject.extend({
+  // Zod 4 keeps `superRefine` checks on the ZodObject itself. Calling
+  // `.extend()` on such an object throws because it could invalidate those
+  // checks; use `.safeExtend()` when available so the gated tool surface can
+  // advertise the same schema without turning the whole agent request into a
+  // 500. The operation's original schema is still used for execution-time
+  // validation, so its cross-field checks remain intact.
+  const extend =
+    typeof (
+      asObject as z.ZodObject<z.ZodRawShape> & {
+        safeExtend?: typeof asObject.extend;
+      }
+    ).safeExtend === "function"
+      ? (
+          asObject as z.ZodObject<z.ZodRawShape> & {
+            safeExtend: typeof asObject.extend;
+          }
+        ).safeExtend
+      : asObject.extend;
+  return extend.call(asObject, {
     project: z
       .string()
       .trim()

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -184,6 +186,38 @@ const SETUP_ABORT_ITERATION = {
 };
 
 /**
+ * A policy-v2 run the platform declined to decide, and the decision summary the
+ * endpoint serves for it — both taken from the SHARED golden corpus.
+ *
+ * Shared rather than hand-written on purpose: the corpus is what the SDK
+ * contract test and the API route test check, so a fixture copied from it keeps
+ * the CLI's rendering pinned to the object the API actually returns instead of
+ * to a lookalike only this file knows about.
+ */
+const DECISION_CORPUS = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        "../../sdk/tests/fixtures/eval-run-decision-summary-fixtures.json",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  ),
+) as {
+  cases: Array<{
+    __name: string;
+    input: { run: { verdictSummary?: unknown } };
+    expected: unknown;
+  }>;
+};
+const INCONCLUSIVE_CORPUS_CASE = DECISION_CORPUS.cases.find(
+  (row) => row.__name === "inconclusive-evaluator-errors-above-ceiling",
+)!;
+const INCONCLUSIVE_DECISION = INCONCLUSIVE_CORPUS_CASE.input.run.verdictSummary;
+const INCONCLUSIVE_DECISION_SUMMARY = INCONCLUSIVE_CORPUS_CASE.expected;
+
+/**
  * How the fixture's suite presents itself to the run ops, which read the suite
  * DETAIL to decide what a run targets.
  *
@@ -197,11 +231,88 @@ interface EvalFixtureOptions {
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
-  runCaseResult?: "passed" | "failed";
+  runCaseResult?: "passed" | "failed" | "inconclusive" | null;
   /** Non-terminal keeps `--wait` polling until its deadline. */
-  runCaseStatus?: "running" | "completed";
+  runCaseStatus?: "running" | "completed" | "cancelled" | "timed_out" | "failed";
+  /** Stamp the fixture's `run-case` as decided under verdict policy 2. */
+  runCasePolicyVersion2?: boolean;
   runCaseIterationFetchError?: boolean;
-  runOneResult?: "passed" | "failed";
+  /** Like `runCaseIterationFetchError`, but the wire code is UNAUTHORIZED. */
+  runCaseIterationFetchAuthError?: boolean;
+  runOneResult?: "passed" | "failed" | "inconclusive";
+  /** A terminal execution state distinct from the result verdict. */
+  runOneStatus?: "completed" | "cancelled";
+  /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
+  runOneIterationFetchError?: boolean;
+  /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
+  disclosureUnavailable?: boolean;
+  /**
+   * Drives `GET /eval-runs/run-1/compare` for `eval gate --baseline` /
+   * `eval compare` tests. Absent means the endpoint is never hit.
+   */
+  compare?: {
+    /** 404 with `details.reason: "BASELINE_NOT_FOUND"`, no baseline resolves. */
+    notFound?: boolean;
+    basePassed?: number;
+    baseTotal?: number;
+    comparePassed?: number;
+    compareTotal?: number;
+    /** Adds a `new_case` row, breaking the population rule. */
+    caseSetChanged?: boolean;
+    /**
+     * Baseline-match ambiguity the backend reports for a SHA lookup.
+     * `matchCount` is present ONLY when uniqueness could not be established;
+     * `truncated` marks the count a FLOOR rather than a total.
+     */
+    matchCount?: number;
+    matchCountTruncated?: boolean;
+  };
+  /**
+   * Per-target-run overrides for a grouped (`--all-targets` / `--host` x2)
+   * launch, keyed by the fixture's deterministic `run-group-<n>` id.
+   * Anything not named here defaults to `status: "completed"`,
+   * `result: "passed"` — the shape most fan-out tests do not care about.
+   */
+  groupRunOverrides?: Record<
+    string,
+    { status?: string; result?: string | null }
+  >;
+  /**
+   * `"launch"` — the launch POST (single-target `/eval-runs`, grouped
+   * `/eval-run-groups`) returns 401 UNAUTHORIZED before any run exists.
+   * `"poll"` — the launch succeeds, but `GET .../run-case` returns
+   * "running" on its FIRST call and 401 UNAUTHORIZED on every call after
+   * that, simulating a token that expired mid-wait.
+   */
+  authFailure?: "launch" | "poll";
+  /**
+   * Make the single-target launch POST (`/eval-runs`) fail with this wire
+   * error instead of succeeding — the shape a real `PlatformApiError`
+   * carries. A single-target launch throws rather than reporting a per-
+   * target failure, which is exactly the case `classifyLaunchErrorExitCode`
+   * exists to classify.
+   */
+  singleRunLaunchError?: {
+    code: string;
+    message: string;
+    status?: number;
+    details?: Record<string, unknown>;
+  };
+  /**
+   * Tear the fixture server down shortly after the single-target launch
+   * response is flushed, so the first `getEvalRun` poll fails to connect —
+   * a mid-wait NETWORK_ERROR the CLI observes after evaluation has already
+   * started.
+   */
+  closeAfterLaunch?: boolean;
+  /**
+   * Delete `process.env.MCPJAM_API_KEY` the moment the single-target launch
+   * POST is handled, simulating a credential that dies in the window
+   * between the launch preflight and the wait phase's own recheck. Only
+   * meaningful when the caller resolves its credential from that env var
+   * (no `--api-key` flag) — see `evalArgvNoKey`.
+   */
+  deleteCredentialAfterLaunch?: boolean;
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -212,6 +323,14 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   groupBodies: unknown[];
   composeBodies: unknown[];
   attachBodies: unknown[];
+  disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+    host: string | null;
+  }>;
+  /** Every path the CLI asked for, so a test can pin WHICH read happened. */
+  requests: string[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
@@ -220,6 +339,20 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   const groupBodies: unknown[] = [];
   const composeBodies: unknown[] = [];
   const attachBodies: unknown[] = [];
+  const disclosureRequests: Array<{
+    caseIds: string | null;
+    environmentId: string | null;
+    environmentIds: string | null;
+    host: string | null;
+  }> = [];
+  const requests: string[] = [];
+  const UNAUTHORIZED_BODY = JSON.stringify({
+    code: "UNAUTHORIZED",
+    message: "token expired",
+  });
+  let runCasePollCount = 0;
+  let networkFailureArmed = false;
+  const sockets = new Set<import("node:net").Socket>();
   const server: Server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) {
@@ -227,6 +360,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     }
     authHeaders.push(req.headers.authorization ?? "");
     const url = new URL(req.url ?? "/", "http://fixture");
+    requests.push(url.pathname);
     res.setHeader("content-type", "application/json");
 
     if (url.pathname === "/api/v1/projects") {
@@ -481,9 +615,127 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-1/run-disclosure" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      disclosureRequests.push({
+        caseIds: url.searchParams.get("caseIds"),
+        environmentId: url.searchParams.get("environmentId"),
+        environmentIds: url.searchParams.get("environmentIds"),
+        host: url.searchParams.get("host"),
+      });
+      if (options.disclosureUnavailable) {
+        res.statusCode = 422;
+        res.end(
+          JSON.stringify({
+            code: "FEATURE_NOT_SUPPORTED",
+            message: "This deployment predates the disclosure contract",
+            details: { reason: "contract_unavailable" },
+          }),
+        );
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          contractVersion: 1,
+          computedAt: 1_700_000_000_000,
+          digest: "deadbeef",
+          execution: {
+            engine: "emulated",
+            sandbox: { engaged: false, because: "no sandbox needed" },
+            locus: { known: true, hosted: false },
+            models: [
+              {
+                modelId: "openai/gpt-5.4-mini",
+                provider: "openai",
+                tenantEgress: "mcpjam-hosted",
+                rail: {
+                  managed: true,
+                  possibleDestinations: ["gateway", "openrouter"],
+                  outcomeIfRunNow: {
+                    destination: "gateway",
+                    observedAt: 1_700_000_000_000,
+                    volatile: true,
+                  },
+                  inputs: {
+                    mode: "auto",
+                    gatewayEligible: true,
+                    hasOpenRouterFallback: null,
+                  },
+                  ruleLocation: "convex/lib/chatProvider.ts#resolveChatProvider",
+                  authoritativePerRequestRecord: "llmUsageRecord",
+                },
+              },
+            ],
+          },
+          analysis: [
+            {
+              touchpoint: "goalCompletion",
+              label: "Goal-completion judge",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["OpenRouter (openrouter.ai)"],
+              evidenceSent: ["case prompt"],
+              fires: "explicit-request-only",
+            },
+            {
+              touchpoint: "runInsights",
+              label: "Run insights report",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["A wholly different destination"],
+              evidenceSent: ["failure signatures"],
+              fires: "auto-on-completion",
+            },
+          ],
+          capture: {
+            captureLevel: "full",
+            reportingMode: "standard",
+            tiersImplemented: false,
+            redaction: {
+              kind: "credential-shaped",
+              module: "convex/lib/evalIngestRedaction.ts",
+              isDlp: false,
+              limitation: "not DLP",
+              appliesTo: [],
+            },
+            exportDefaults: {
+              includeContent: false,
+              ruleLocation: "convex/traceExport.ts",
+              note: "redacted by default",
+            },
+          },
+          retention: {
+            planName: "free",
+            policyDays: 30,
+            source: "plan entitlements",
+            enforced: true,
+            enforcementBlockers: [],
+            effectiveToday: "swept-after-policy-days",
+            evidentiaryClasses: [],
+            backupStatement: {
+              vendor: "Convex",
+              capturedAt: "2026-08-23",
+              sourceUrl: "https://docs.convex.dev/database/backup-restore",
+              statements: [],
+            },
+          },
+          region: { stated: false, reason: "no deployment region is derivable" },
+          subprocessors: [],
+        }),
+      );
+      return;
+    }
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-run-groups" &&
       req.method === "POST"
     ) {
+      if (options.authFailure === "launch") {
+        res.statusCode = 401;
+        res.end(UNAUTHORIZED_BODY);
+        return;
+      }
       const body = raw ? JSON.parse(raw) : {};
       groupBodies.push(body);
       let started = 0;
@@ -529,6 +781,24 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs" &&
       req.method === "POST"
     ) {
+      if (options.authFailure === "launch") {
+        res.statusCode = 401;
+        res.end(UNAUTHORIZED_BODY);
+        return;
+      }
+      if (options.singleRunLaunchError) {
+        res.statusCode = options.singleRunLaunchError.status ?? 400;
+        res.end(
+          JSON.stringify({
+            code: options.singleRunLaunchError.code,
+            message: options.singleRunLaunchError.message,
+            ...(options.singleRunLaunchError.details
+              ? { details: options.singleRunLaunchError.details }
+              : {}),
+          }),
+        );
+        return;
+      }
       const body = raw ? JSON.parse(raw) : {};
       createBodies.push(body);
       runBodies.push(body);
@@ -545,28 +815,70 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
             : null,
         }),
       );
+      // Armed AFTER this response is queued, so the launch itself always
+      // succeeds — only the FOLLOWING poll request hits the failure.
+      if (options.closeAfterLaunch) {
+        networkFailureArmed = true;
+      }
+      if (options.deleteCredentialAfterLaunch) {
+        delete process.env.MCPJAM_API_KEY;
+      }
       return;
     }
     if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-case" &&
       (req.method ?? "GET") === "GET"
     ) {
-      const result = options.runCaseResult ?? "passed";
+      runCasePollCount += 1;
+      if (networkFailureArmed) {
+        // No response at all — the client sees a connection failure, not an
+        // HTTP error. Deterministic: this only fires on the poll AFTER the
+        // launch response was already queued, never on the launch itself.
+        req.socket.destroy();
+        return;
+      }
+      if (options.authFailure === "poll" && runCasePollCount > 1) {
+        res.statusCode = 401;
+        res.end(UNAUTHORIZED_BODY);
+        return;
+      }
+      const result =
+        options.authFailure === "poll"
+          ? undefined
+          : (options.runCaseResult ?? "passed");
+      const status =
+        options.authFailure === "poll"
+          ? "running"
+          : (options.runCaseStatus ?? "completed");
+      const policy2 =
+        options.runCasePolicyVersion2 || result === "inconclusive";
       res.end(
         JSON.stringify({
           id: "run-case",
           suiteId: "suite-1",
           runNumber: 4,
-          status: options.runCaseStatus ?? "completed",
-          result,
+          status,
+          result: result ?? null,
           summary:
-            result === "passed"
-              ? { total: 1, passed: 1, failed: 0, passRate: 1 }
-              : { total: 1, passed: 0, failed: 1, passRate: 0 },
+            result === "failed"
+              ? { total: 1, passed: 0, failed: 1, passRate: 0 }
+              : { total: 1, passed: 1, failed: 0, passRate: 1 },
           source: "api",
           notes: null,
           createdAt: 10,
           completedAt: 20,
+          ...(policy2
+            ? {
+                verdictPolicyVersion: 2,
+                verdictSummary: {
+                  decision: result,
+                  reasons:
+                    result === "inconclusive"
+                      ? ["completionRate below minCompletionRate"]
+                      : [],
+                },
+              }
+            : {}),
         }),
       );
       return;
@@ -586,6 +898,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         );
         return;
       }
+      if (options.runCaseIterationFetchAuthError) {
+        res.statusCode = 401;
+        res.end(UNAUTHORIZED_BODY);
+        return;
+      }
       const result = options.runCaseResult ?? "passed";
       res.end(
         JSON.stringify({
@@ -596,7 +913,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               title: "echo works",
               iterationNumber: 1,
               status: "completed",
-              result,
+              result: result === "inconclusive" ? "passed" : result,
               model: null,
               provider: null,
               startedAt: 10,
@@ -615,19 +932,25 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       );
       return;
     }
-    if (
-      url.pathname ===
-        "/api/v1/projects/proj-alpha/eval-runs/run-group-1" &&
-      (req.method ?? "GET") === "GET"
-    ) {
+    const groupRunMatch = /^\/api\/v1\/projects\/proj-alpha\/eval-runs\/(run-group-\d+)$/.exec(
+      url.pathname,
+    );
+    if (groupRunMatch && (req.method ?? "GET") === "GET") {
+      const runId = groupRunMatch[1]!;
+      const override = options.groupRunOverrides?.[runId];
+      const status = override?.status ?? "completed";
+      const result = override && "result" in override ? override.result : "passed";
       res.end(
         JSON.stringify({
-          id: "run-group-1",
+          id: runId,
           suiteId: "suite-1",
           runNumber: 5,
-          status: "completed",
-          result: "passed",
-          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+          status,
+          result,
+          summary:
+            result === "failed"
+              ? { total: 1, passed: 0, failed: 1, passRate: 0 }
+              : { total: 1, passed: 1, failed: 0, passRate: 1 },
           source: "api",
           notes: null,
           createdAt: 10,
@@ -670,22 +993,33 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
-      const result = options.runOneResult ?? "passed";
+      const status = options.runOneStatus ?? "completed";
+      // A cancelled run is an EXECUTION state, not a verdict: it carries no
+      // result at all, distinct from an inconclusive result on a completed
+      // run — both are "incomplete" gate-wise, for different reasons.
+      const result =
+        status === "cancelled" ? null : (options.runOneResult ?? "passed");
       res.end(
         JSON.stringify({
           id: "run-1",
           suiteId: "suite-1",
           runNumber: 3,
-          status: "completed",
+          status,
           result,
           summary:
-            result === "passed"
-              ? { total: 2, passed: 2, failed: 0, passRate: 1 }
-              : { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+            result === "failed"
+              ? { total: 2, passed: 1, failed: 1, passRate: 0.5 }
+              : { total: 2, passed: 2, failed: 0, passRate: 1 },
           source: "api",
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          ...(result === "inconclusive"
+            ? {
+                verdictPolicyVersion: 2,
+                verdictSummary: INCONCLUSIVE_DECISION,
+              }
+            : {}),
           judges: {
             goalCompletion: {
               status: "completed",
@@ -726,6 +1060,72 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       );
       return;
     }
+    // A run whose RUNNER died. Terminal, but its recorded counts describe the
+    // trials it happened to reach — so there is no verdict to report.
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-crashed" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "run-crashed",
+          suiteId: "suite-1",
+          runNumber: 5,
+          status: "failed",
+          result: null,
+          summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 1,
+          completedAt: 2,
+          judges: {},
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-crashed/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [FAILED_ITERATION] }));
+      return;
+    }
+    // A policy-v2 run the platform declined to decide, served by the
+    // decision-summary ENDPOINT — the primary surface, which a modern
+    // deployment answers and an older one 404s.
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-inconclusive" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "run-inconclusive",
+          suiteId: "suite-1",
+          runNumber: 6,
+          status: "completed",
+          result: "inconclusive",
+          summary: { total: 1, passed: 0, failed: 0, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 1,
+          completedAt: 2,
+          verdictPolicyVersion: 2,
+          verdictSummary: INCONCLUSIVE_DECISION,
+          judges: {},
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-inconclusive/decision-summary" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify(INCONCLUSIVE_DECISION_SUMMARY));
+      return;
+    }
     if (
       (url.pathname ===
         "/api/v1/projects/proj-alpha/eval-runs/run-failed" ||
@@ -739,7 +1139,10 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           id: setup ? "run-setup" : "run-failed",
           suiteId: "suite-1",
           runNumber: 4,
-          status: "failed",
+          // `completed` + `result: "failed"` is what a GRADED failure looks
+          // like. `status: "failed"` would mean the runner itself died, which
+          // is a different claim — see the crashed-run test below.
+          status: "completed",
           result: "failed",
           summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
           source: "api",
@@ -756,6 +1159,16 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations" &&
       (req.method ?? "GET") === "GET"
     ) {
+      if (options.runOneIterationFetchError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            code: "ITERATIONS_FETCH_FAILED",
+            message: "iteration results unavailable",
+          }),
+        );
+        return;
+      }
       const result = options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
@@ -766,7 +1179,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               title: "echo works",
               iterationNumber: 1,
               status: "completed",
-              result,
+              result: result === "inconclusive" ? "passed" : result,
               model: null,
               provider: null,
               startedAt: 1,
@@ -778,6 +1191,177 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               error: result === "failed" ? "goal completion failed" : null,
             },
           ],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/compare" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.compare?.notFound) {
+        res.statusCode = 404;
+        res.end(
+          JSON.stringify({
+            code: "NOT_FOUND",
+            message: "no baseline resolves for this run",
+            details: { reason: "BASELINE_NOT_FOUND" },
+          }),
+        );
+        return;
+      }
+      const cmp = options.compare ?? {};
+      // Mirrors the real route: the two selectors are mutually exclusive, and
+      // a SHA resolves server-side to a run id the client never sent.
+      const baseCommitSha = url.searchParams.get("baseCommitSha");
+      if (baseCommitSha !== null && url.searchParams.get("baseRunId") !== null) {
+        res.statusCode = 400;
+        res.end(
+          JSON.stringify({
+            code: "VALIDATION_ERROR",
+            message: "Pass either baseRunId or baseCommitSha, not both.",
+          }),
+        );
+        return;
+      }
+      const baseRunId =
+        url.searchParams.get("baseRunId") ??
+        (baseCommitSha !== null ? "run-resolved-from-sha" : "run-baseline");
+      // These defaults are the SAME oracle-pinned 56/70 -> 48/80 regression
+      // `eval-compare-exit-code.test.ts` checks against statsmodels, reused
+      // here rather than re-derived. They deliberately do NOT track run-1's
+      // own (tiny, 1-2 iteration) `/eval-runs/run-1` summary: the code under
+      // test never cross-checks the two summaries against each other — one
+      // feeds `reportForRun`'s threshold gate, the other feeds
+      // `evaluateBaselineComparison`'s comparative gate — and collapsing them
+      // to the same small sample would make every baseline test below
+      // "insufficient_data" instead of exercising a real regression.
+      const baseTotal = cmp.baseTotal ?? 70;
+      const compareTotal = cmp.compareTotal ?? 80;
+      const basePassed = cmp.basePassed ?? 56;
+      const comparePassed = cmp.comparePassed ?? 48;
+      const zero = {
+        base: null,
+        compare: null,
+        delta: null,
+        percentDelta: null,
+      };
+      const caseSide = (iterationId: string) => ({
+        outcome: "passed" as const,
+        iterationIds: [iterationId],
+        representativeIterationId: iterationId,
+        error: null,
+      });
+      res.end(
+        JSON.stringify({
+          suite: { id: "suite-1", name: "Smoke" },
+          baseline:
+            baseCommitSha !== null
+              ? {
+                  policy: "commit_sha",
+                  baseRunId,
+                  baseCommitSha,
+                  ...(cmp.matchCount !== undefined
+                    ? { matchCount: cmp.matchCount }
+                    : {}),
+                  ...(cmp.matchCountTruncated
+                    ? { matchCountTruncated: true }
+                    : {}),
+                }
+              : { policy: "run", baseRunId },
+          baseRun: {
+            id: baseRunId,
+            runNumber: 2,
+            result: "passed",
+            createdAt: 1,
+            completedAt: 2,
+            summary: {
+              total: baseTotal,
+              passed: basePassed,
+              failed: baseTotal - basePassed,
+              passRate: basePassed / baseTotal,
+            },
+          },
+          compareRun: {
+            id: "run-1",
+            runNumber: 3,
+            result: comparePassed === compareTotal ? "passed" : "failed",
+            createdAt: 3,
+            completedAt: 4,
+            summary: {
+              total: compareTotal,
+              passed: comparePassed,
+              failed: compareTotal - comparePassed,
+              passRate: comparePassed / compareTotal,
+            },
+          },
+          passSummary: {
+            passRatePercent: zero,
+            total: zero,
+            passed: zero,
+            failed: zero,
+          },
+          metrics: {
+            wallDurationMs: zero,
+            totalTokens: zero,
+            estimatedCostUsd: zero,
+          },
+          scoreContract: {
+            base: {
+              evaluationConfigHash: "cfg",
+              scoreIntegrity: "valid",
+              scoredIterations: baseTotal,
+              quarantinedIterations: 0,
+            },
+            compare: {
+              evaluationConfigHash: "cfg",
+              scoreIntegrity: "valid",
+              scoredIterations: compareTotal,
+              quarantinedIterations: 0,
+            },
+            evaluationConfigChanged: false,
+            scorers: [],
+          },
+          cases: cmp.caseSetChanged
+            ? [
+                {
+                  caseKey: "ck_a",
+                  title: "Case A",
+                  status: "unchanged_passed",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: caseSide("b1"),
+                  compare: caseSide("c1"),
+                },
+                {
+                  caseKey: "ck_new",
+                  title: "Case New",
+                  status: "new_case",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: {
+                    outcome: "absent",
+                    iterationIds: [],
+                    representativeIterationId: null,
+                    error: null,
+                  },
+                  compare: caseSide("c2"),
+                },
+              ]
+            : [
+                {
+                  caseKey: "ck_a",
+                  title: "Case A",
+                  status: "unchanged_passed",
+                  configChanged: false,
+                  evaluationConfigChanged: false,
+                  scoreDeltas: [],
+                  base: caseSide("b1"),
+                  compare: caseSide("c1"),
+                },
+              ],
         }),
       );
       return;
@@ -822,6 +1406,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     res.end(JSON.stringify({ code: "NOT_FOUND", message: "no route" }));
   });
 
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+
   await new Promise<void>((resolve) =>
     server.listen(0, "127.0.0.1", () => resolve()),
   );
@@ -838,10 +1427,13 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     groupBodies,
     composeBodies,
     attachBodies,
+    disclosureRequests,
+    requests,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        for (const socket of sockets) socket.destroy();
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
   };
 }
 
@@ -857,6 +1449,63 @@ function evalArgv(fixtureUrl: string, ...args: string[]): string[] {
     "--api-url",
     fixtureUrl,
   ];
+}
+
+/** Like {@link evalArgv}, but omits `--api-key` — for missing-credential tests. */
+function evalArgvNoKey(fixtureUrl: string, ...args: string[]): string[] {
+  return ["node", "mcpjam", "cloud", "eval", ...args, "--api-url", fixtureUrl];
+}
+
+/**
+ * Run one `main()` invocation with NO stored/env credential visible: no
+ * `--api-key` flag, `MCPJAM_API_KEY` unset, and `MCPJAM_AUTH_FILE` pointed at
+ * a path that does not exist. `preflightCloudCredentials` resolves through
+ * real `process.env` (not `dependencies.telemetry.env`), so this mutates and
+ * restores the actual process environment around the call — same pattern as
+ * `auth-commands.test.ts`.
+ */
+async function withNoCredential<T>(fn: () => Promise<T>): Promise<T> {
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+  const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
+  delete process.env.MCPJAM_API_KEY;
+  process.env.MCPJAM_AUTH_FILE = path.join(
+    os.tmpdir(),
+    `mcpjam-no-auth-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+  );
+  try {
+    return await fn();
+  } finally {
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
+    if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+    else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+  }
+}
+
+/**
+ * Run one `main()` invocation with a credential that starts VALID (read
+ * from `MCPJAM_API_KEY`, not a `--api-key` flag, so it can disappear
+ * mid-flight) and a safe, nonexistent `MCPJAM_AUTH_FILE` so there is no
+ * stored-login fallback masking the deletion. Pairs with
+ * `deleteCredentialAfterLaunch` on the fixture, which removes the env var
+ * the moment the launch POST is handled.
+ */
+async function withDyingCredential<T>(fn: () => Promise<T>): Promise<T> {
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+  const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
+  process.env.MCPJAM_API_KEY = "sk_test";
+  process.env.MCPJAM_AUTH_FILE = path.join(
+    os.tmpdir(),
+    `mcpjam-dying-auth-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+  );
+  try {
+    return await fn();
+  } finally {
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
+    if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+    else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+  }
 }
 
 test("eval create posts an authored suite and echoes the new suite id", async () => {
@@ -1718,11 +2367,110 @@ test("eval status renders an actionable decision summary for failed runs", async
     );
 
     assert.equal(run.result.exitCode, 0);
-    assert.match(run.stdout, /Decision summary: failed — 0\/1 cases passed/);
-    assert.match(run.stdout, /first failed stage call/);
-    assert.match(run.stdout, /next action: review the authored arguments/);
+    // The canonical contract, rendered through its labels. The count carries
+    // the population it counted — this run predates verdict policy v2, so its
+    // stored summary counts TRIALS, and saying "cases" would be a different
+    // claim about the same numbers.
+    assert.match(
+      run.stdout,
+      /Decision summary: failed \(legacy percent-threshold run\) — 0\/1 trial passed/,
+    );
+    assert.match(run.stdout, /First failed stage: Tool call/);
+    assert.match(run.stdout, /Failure category: call arguments/);
+    assert.match(
+      run.stdout,
+      /Next action: review the authored arguments against the tool input schema/,
+    );
+    // The evidence pointer names the stage it came from and where to read more.
+    assert.match(run.stdout, /Trace: \/projects\/proj-alpha\/eval-runs\/run-failed\/iterations\//);
     assert.match(run.stdout, /View: /);
     assert.equal(run.stderr.includes("Decision summary:"), false);
+    // Raw wire enums never reach a human.
+    assert.equal(run.stdout.includes("argumentMismatch"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status reports a crashed run as undecided, not as a regression", async () => {
+  // `status: "failed"` is an EXECUTION failure: the runner died, so the counts
+  // it recorded describe the trials it happened to reach rather than the run it
+  // was asked to perform. Reporting that as a verdict is fail-open, which is
+  // exactly the reading `eval gate` already refuses.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-crashed",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /Decision summary: no verdict established/);
+    assert.match(run.stdout, /Why: the run stopped before it finished/);
+    // Not a failure, and no counts: the numbers it recorded describe a decision
+    // nobody took.
+    assert.doesNotMatch(run.stdout, /Decision summary: failed/);
+    assert.doesNotMatch(run.stdout, /trials passed/);
+    // The diagnostics still render — evidence under a withheld verdict is
+    // still evidence.
+    assert.match(run.stdout, /First failed stage: Tool call/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status prefers the decision-summary endpoint when the API has one", async () => {
+  // The endpoint is the primary surface; the client-side assembly exists for
+  // deployments that predate it. Both go through the same assembler, so this
+  // pins WHICH read happened rather than what it produced.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-inconclusive",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.ok(
+      fixture.requests.some((path) =>
+        path.endsWith("/eval-runs/run-inconclusive/decision-summary"),
+      ),
+      "expected the CLI to call the decision-summary endpoint",
+    );
+    // An INCONCLUSIVE run is not a failure, and the decision's own reasons are
+    // the only place that says which validity check withheld the verdict.
+    assert.match(run.stdout, /Decision summary: inconclusive/);
+    assert.match(
+      run.stdout,
+      /Why: the evaluator failed too often for this run to describe the server/,
+    );
+    assert.doesNotMatch(run.stdout, /Decision summary: failed/);
   } finally {
     await fixture.close();
   }
@@ -1750,8 +2498,15 @@ test("eval status does not invent a stage for a setup abort", async () => {
     );
 
     assert.equal(run.result.exitCode, 0);
-    assert.match(run.stdout, /no first failed stage — did not reach the server's stages/);
-    assert.doesNotMatch(run.stdout, /first failed stage (connection|discovery|selection|call|response|userValue)/);
+    assert.match(
+      run.stdout,
+      /First failed stage: none was established — the run never reached the server's stages/,
+    );
+    // A setup abort still has a category and an action; what it does NOT have
+    // is a stage, and manufacturing one to hang the evidence link on would be a
+    // claim about where the run broke that nothing established.
+    assert.match(run.stdout, /Failure category: setup/);
+    assert.doesNotMatch(run.stdout, /Evidence at /);
   } finally {
     await fixture.close();
   }
@@ -1776,6 +2531,202 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --format json emits exactly one document, containing disclosure", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(run.stdout.trimEnd().split("\n").length, 1);
+    const parsed = JSON.parse(run.stdout);
+    assert.equal(parsed.disclosure.contractVersion, 1);
+    assert.equal(parsed.disclosure.execution.engine, "emulated");
+    assert.equal(fixture.disclosureRequests.length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints the disclosure block in human mode, before the run link", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const disclosureIndex = run.stdout.indexOf("Pre-run disclosure:");
+    const viewIndex = run.stdout.indexOf("View:");
+    assert.notEqual(disclosureIndex, -1);
+    assert.notEqual(viewIndex, -1);
+    assert.ok(disclosureIndex < viewIndex);
+    assert.match(run.stdout, /Execution: emulated/);
+    // Each firing touchpoint gets its OWN destination line — pooling them
+    // under the first touchpoint's destination would misattribute where the
+    // others' evidence goes.
+    assert.match(
+      run.stdout,
+      /Goal-completion judge.*OpenRouter \(openrouter\.ai\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report.*A wholly different destination/,
+    );
+    assert.ok(
+      !/Goal-completion judge.*A wholly different destination/.test(
+        run.stdout,
+      ),
+    );
+    // Capture/redaction facts are the human's only pre-launch view of what
+    // happens to content once it exists (the standalone disclosure command
+    // is excluded) — a consequential setting like a non-DLP redaction module
+    // must not be silently absent from the printed block.
+    assert.match(run.stdout, /Capture: full · reporting standard/);
+    assert.match(
+      run.stdout,
+      /Redaction: credential-shaped — NOT a DLP system \(not DLP\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Export defaults: excludes content \(redacted by default\)/,
+    );
+    // "fires automatically" vs "fires only if asked" are different consent
+    // stories — the fixture's goalCompletion touchpoint is
+    // explicit-request-only, runInsights is auto-on-completion, and this
+    // renderer must not flatten that distinction just because both "fire".
+    assert.match(
+      run.stdout,
+      /Goal-completion judge fires only if explicitly requested/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report fires automatically on completion/,
+    );
+    // The raw enum plus policy days beside it can read as self-contradictory
+    // for an org whose policy number isn't enforced — "kept-indefinitely
+    // (30d policy)" makes the 30 the number a reader takes away. Print the
+    // humanized claim only, matching the UI's already-correct phrasing.
+    assert.match(run.stdout, /Retention: swept after 30 day\(s\)/);
+    assert.equal(run.stdout.includes("kept-indefinitely"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --host prints a disclosure block, forwarding the host (G4c)", async () => {
+  // Before G4c a `--host` run printed NO disclosure block at all: the SDK
+  // skipped the fetch because the contract had no host selector. The human
+  // renderer never needed a change — it prints whatever comes back — so this
+  // asserts the un-refusal end to end: the host reaches the query, and the
+  // block appears for a host-targeted launch exactly as for an ordinary one.
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-claude", name: "Claude" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--host",
+            "Claude",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(fixture.disclosureRequests.length, 1);
+    assert.equal(fixture.disclosureRequests[0]?.host, "host-claude");
+    // ONE AXIS — never a host and an environment in the same query.
+    assert.equal(fixture.disclosureRequests[0]?.environmentId, null);
+    assert.equal(fixture.disclosureRequests[0]?.environmentIds, null);
+    assert.notEqual(run.stdout.indexOf("Pre-run disclosure:"), -1);
+    assert.match(run.stdout, /Execution: emulated/);
+    // WHAT WAS DISCLOSED IS WHAT RAN. Asserting only the disclosure query
+    // would still pass if the launch dropped the host or picked a different
+    // one — the exact divergence this contract exists to rule out.
+    const launched = fixture.runBodies.at(-1) as Record<string, unknown>;
+    assert.equal(launched.namedHostId, "host-claude");
+    assert.equal(launched.environmentId, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run prints a disclosure-unavailable line in human mode when the fetch fails", async () => {
+  // An absent disclosure with NO output at all is indistinguishable from "no
+  // disclosure feature on this build" — this is the failure counterpart to
+  // the happy-path block above.
+  const fixture = await startEvalFixture({ disclosureUnavailable: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(
+      run.stdout,
+      /Pre-run disclosure unavailable: this deployment predates the pre-run disclosure contract/,
+    );
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
   } finally {
     await fixture.close();
   }
@@ -1808,7 +2759,9 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     const jsonRaw = await readFile(jsonPath, "utf8");
     const json = JSON.parse(jsonRaw);
 
-    assert.equal(jsonRun.result.exitCode, 0);
+    // A run that COMPLETED having FAILED its cases is the one and only
+    // producer of exit 1 under --wait's six-code contract.
+    assert.equal(jsonRun.result.exitCode, 1);
     assert.deepEqual(
       {
         schemaVersion: json.schemaVersion,
@@ -1834,6 +2787,13 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     );
     assert.equal(json.cases[0].error, "Authorization: [REDACTED]");
     assert.equal(jsonRaw.includes("top-secret"), false);
+    // A reporter's stdout output must stay ONE parseable document: the
+    // pre-run disclosure block prints from `onDisclosure` on this same
+    // stream, and if it isn't suppressed for a reporter run it prepends
+    // "Pre-run disclosure:" prose ahead of the JSON, breaking a CI caller
+    // that parses stdout as JSON.
+    assert.equal(jsonRun.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(jsonRun.stdout);
 
     const junitRun = await captureProcessOutput(() =>
       main(
@@ -1855,13 +2815,133 @@ test("eval run --wait writes failed JSON and JUnit reports before returning", as
     );
     const junit = await readFile(junitPath, "utf8");
 
-    assert.equal(junitRun.result.exitCode, 0);
+    assert.equal(junitRun.result.exitCode, 1);
     assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
     assert.equal(junit.match(/<testcase /g)?.length, 1);
     assert.match(junit, /tests="1"/);
     assert.match(junit, /failures="1"/);
     assert.match(junit, /<failure message="Authorization: \[REDACTED\]"/);
     assert.equal(junit.includes("top-secret"), false);
+    assert.equal(junitRun.stdout.includes("Pre-run disclosure:"), false);
+    assert.match(junitRun.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --format human --reporter redirects the disclosure block to stderr, not stdout", async () => {
+  // A CI user on --reporter is the population most likely to want a record
+  // of what a run discloses, and the fetch happens regardless of whether
+  // anyone consumes it — fully suppressing the block would leave them no
+  // route to it at all. stderr keeps stdout a single parseable document
+  // while still surfacing the disclosure somewhere visible.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary",
+          "--out",
+          jsonPath,
+          "--format",
+          "human",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // A completed run with a failed verdict is the sole producer of exit 1
+    // under --wait's six-code contract (E1) — unrelated to this test's own
+    // concern (where the disclosure block gets routed).
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(run.stdout.includes("Pre-run disclosure:"), false);
+    JSON.parse(await readFile(jsonPath, "utf8"));
+    assert.match(run.stderr, /Pre-run disclosure:/);
+    assert.match(run.stderr, /Execution: emulated/);
+  } finally {
+    // A nonzero exit code otherwise leaks into `process.exitCode` for
+    // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait --reporter html writes the artifact atomically and to stdout", async () => {
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    // A completed run with a failed verdict is the sole producer of exit 1
+    // under --wait's six-code contract (E1) — unrelated to this test's own
+    // concern (whether the html reporter/artifact wiring works).
+    assert.equal(run.result.exitCode, 1);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(html, /Authorization: \[REDACTED\]/);
+    assert.equal(html.includes("top-secret"), false);
+    assert.equal(/<script/i.test(html), false);
+    // Written to the file AND stdout — `--out` and `--reporter` are two
+    // terminals for the same run.
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
+  } finally {
+    // A nonzero exit code otherwise leaks into `process.exitCode` for
+    // whichever `main()` call in this file runs last.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --reporter html without --wait is still a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /--reporter and --out require --wait\./);
   } finally {
     await fixture.close();
   }
@@ -1892,7 +2972,11 @@ test("eval run writes an error report after a completed-run reporting failure", 
     );
     const report = JSON.parse(await readFile(jsonPath, "utf8"));
 
-    assert.notEqual(run.result.exitCode, 0);
+    // The run itself passed; only its report could not be assembled — "no
+    // valid verdict OBSERVED" (5), never the verdict-failure code (1) and
+    // never an infrastructure code (4) for something the CLI observed after
+    // evaluation had already run.
+    assert.equal(run.result.exitCode, 5);
     assert.equal(report.passed, false);
     assert.equal(report.cases.length, 1);
     assert.partialDeepStrictEqual(report.cases[0], {
@@ -1903,6 +2987,46 @@ test("eval run writes an error report after a completed-run reporting failure", 
     assert.match(report.cases[0].error, /iteration results unavailable/);
     assert.equal(report.metadata.runs[0].status, "completed");
   } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run exits 3, not 5, when the report-fetch failure is auth-shaped", async () => {
+  // Same shape as the previous test, but the iteration fetch failed with a
+  // real 401 (the credential died between the terminal poll and the report
+  // fetch) rather than a generic infra error. That must read as 3 (auth),
+  // not 5 (no valid verdict observed) — a token that expired is a
+  // different, more actionable claim than "the report never assembled".
+  const fixture = await startEvalFixture({
+    runCaseIterationFetchAuthError: true,
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });
@@ -1941,7 +3065,10 @@ test("eval run writes completed cases and launch failures before a partial exit"
     );
     const report = JSON.parse(await readFile(jsonPath, "utf8"));
 
-    assert.equal(run.result.exitCode, 1);
+    // A partial fan-out whose started run PASSED is a setup defect the CLI
+    // observed directly (one target never launched) — 4, not the verdict
+    // code 1. See "Partial fan-out whose started runs all passed" in E1.
+    assert.equal(run.result.exitCode, 4);
     assert.equal(report.passed, false);
     assert.deepEqual(
       report.cases
@@ -1960,6 +3087,74 @@ test("eval run writes completed cases and launch failures before a partial exit"
         { category: "launch", passed: false, error: "host unavailable" },
       ],
     );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait explains a failed run in human format, after the receipt", async () => {
+  // Without this, a failing `--wait` printed a receipt and an exit code and
+  // nothing about WHY — the one thing the person watching CI actually needs.
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.match(run.stdout, /Decision summary:/);
+    // The receipt carries the launched run ids and must reach stdout FIRST: it
+    // is the only record of a run the caller has already paid for.
+    assert.ok(
+      run.stdout.indexOf("run-1") < run.stdout.indexOf("Decision summary:"),
+      "expected the launch receipt before the decision summary",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait --format json stays exactly one document", async () => {
+  // The summary is human-only here. A block appended to the JSON receipt would
+  // make the stream unparseable for the CI callers that read it.
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.stdout.trimEnd().split("\n").length, 1);
+    assert.doesNotThrow(() => JSON.parse(run.stdout));
   } finally {
     await fixture.close();
   }
@@ -1990,7 +3185,9 @@ test("eval run --wait still prints the launch receipt when the wait times out", 
       ),
     );
 
-    assert.equal(run.result.exitCode, 1);
+    // A wait deadline with the run still non-terminal is "no valid verdict
+    // observed" (5), not the launch/completion code (1).
+    assert.equal(run.result.exitCode, 5);
     const receipt = JSON.parse(run.stdout.trim());
     assert.equal(receipt.launch.targets[0].runId, "run-case");
     assert.deepEqual(receipt.runs, []);
@@ -2003,6 +3200,7 @@ test("eval run --wait still prints the launch receipt when the wait times out", 
     assert.equal(failure.error.code, "OPERATIONAL_ERROR");
     assert.deepEqual(failure.error.details.runIds, ["run-case"]);
   } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });
@@ -2090,6 +3288,886 @@ test("eval gate writes its JUnit report before a gate-failure exit", async () =>
     assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
     assert.match(junit, /<failure message="1\/2 iterations passed"/);
     assert.match(junit, /goal completion failed/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate prints the decision summary to stderr, keeping stdout parseable", async () => {
+  // Human-format gate output goes to stderr on purpose: `--format human` still
+  // writes ONE JSON-ish result document to stdout, and prose mixed into it is
+  // how a pipeline stops being able to parse the stream.
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--min-pass-rate-percent",
+            "100",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    assert.match(run.stderr, /Decision summary:/);
+    assert.match(run.stderr, /Diagnostics: /);
+    assert.equal(run.stdout.includes("Decision summary:"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate's own verdict is unaffected by the summary it prints", async () => {
+  // The summary EXPLAINS the run; the gate's policy decides the exit code. The
+  // failure mode this guards is the summary's verdict quietly becoming the
+  // gate's — a run the gate passes must not exit 1 because the summary
+  // described a failing trial underneath a passing case.
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--min-pass-rate-percent",
+            "10",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stderr, /Decision summary:/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --reporter html --out writes an HTML report before a gate-failure exit", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    assert.equal(run.result.exitCode, 1);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(html, /1\/2 iterations passed/);
+    assert.match(html, /goal completion failed/);
+    assert.equal(/<script/i.test(html), false);
+    // A measured gate failure — MUST stay red, not the neutral incomplete
+    // color a fetch/wait failure gets below.
+    assert.match(html, /badge-fail">failed/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// A gate that never got to evaluate (network/auth/timeout, or an unreadable
+// run) is INCOMPLETE, not a measured failure — the whole reason it exits 3
+// and not 1. `--reporter`/`--out` must still be honored on this path, and the
+// HTML verdict must render neutral, never the same red a real failure gets.
+test("eval gate --reporter html --out honors the reporter on a fetch failure, and renders it neutral", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          // No route mocks this run id: the fixture's default 404 makes
+          // `getEvalRun` throw, landing in the fetch-failure catch path.
+          "--run",
+          "run-does-not-exist",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(html, /^<!doctype html>/i);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
+    assert.match(html, /badge-neutral">inconclusive/);
+    assert.equal(html.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// `--out` and `--reporter` are two terminals for the same artifact for every
+// other reporting command (`eval run`, `eval gate`) — `eval compare` must not
+// be the one place `--out` always writes raw JSON regardless of `--reporter`.
+test("eval compare prints the compare side's decision summary to stderr", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "compare",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.match(run.stderr, /Decision summary:/);
+    // Read from the RUN DETAIL, not from the compare wire's run side. The
+    // compare projection reports 48/80 for this run and carries no `status` or
+    // `verdictSummary` at all, so a summary assembled from it would both quote
+    // the wrong population and label a policy-v2 run "legacy". The detail's own
+    // (much smaller) counts are the proof of which source was read.
+    assert.doesNotMatch(run.stderr, /\/80 trials passed/);
+    assert.match(run.stderr, /Decision summary: failed \(legacy percent-threshold run\) — 1\/2 trials passed/);
+    // One parseable document on stdout, as every `--format human` command
+    // promises.
+    assert.equal(run.stdout.includes("Decision summary:"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval compare --reporter html --out writes the reporter-selected format to the file", async () => {
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-compare-"));
+  const htmlPath = path.join(directory, "report.html");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "compare",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--reporter",
+          "html",
+          "--out",
+          htmlPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const html = await readFile(htmlPath, "utf8");
+
+    // Incomplete (no baseline), not a regression: exit code says so, and the
+    // rendered verdict must agree — neutral, never the red a real failure
+    // gets, even though `passed` is false either way.
+    assert.match(html, /^<!doctype html>/i);
+    assert.equal(/<script/i.test(html), false);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.equal(run.stdout, html);
+    assert.match(html, /badge-neutral">inconclusive/);
+    assert.equal(html.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// ── eval gate --baseline ────────────────────────────────────────────────────
+
+/** A 40-hex commit SHA, the shape CI hands `--baseline-sha`. */
+const SHA_BASELINE = "9f1a2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2";
+
+test("eval gate REDIRECTS a SHA-shaped --baseline to --baseline-sha", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "a".repeat(40),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    // SHA baselines ARE supported now — under their own flag. The shape check
+    // survives as a redirect so a caller who pastes a commit SHA into the
+    // run-id flag is told which flag to use, instead of sending a doomed run
+    // lookup that comes back as `incomplete` (exit 3) and reads as "no
+    // baseline exists".
+    assert.match(run.stderr, /--baseline-sha/);
+    // A usage error caught before parsing must never spend a request.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects a blank --baseline, e.g. an unset CI variable interpolated into the flag", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /must not be blank/);
+    // A usage error caught before parsing must never spend a request, and
+    // MUST NOT silently fall through to a threshold-only, exit-0 gate.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects using the gated run as its own baseline", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "run-1",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /cannot be its own baseline/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects a comparative tuning flag without --baseline", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-sample-size",
+          "10",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /pass --baseline/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 3 when no baseline resolves", async () => {
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "incomplete");
+    assert.match(
+      payload.gate.verdicts
+        .map((v: { message: string }) => v.message)
+        .join("; "),
+      /no baseline to compare against/,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 1 on a statistically significant regression", async () => {
+  // `run-1` passes its own (absent) threshold trivially; the baseline's
+  // 56/70 -> 48/80 is the oracle-pinned regression from `eval-compare-exit-
+  // code.test.ts`, so the merged exit code comes ENTIRELY from the
+  // comparative half.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "failed");
+    const regression = payload.gate.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression?.status, "failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline still evaluates the comparison when the run's own iterations fail to fetch", async () => {
+  // `--out` forces the iteration fetch for `run-1` itself (needed for the
+  // report), and that fetch fails. `/compare` is a SEPARATE request that
+  // does not depend on those iterations — the regression it finds must still
+  // reach exit 1, not be silently downgraded to exit 3 by an unrelated fetch
+  // hiccup on the other half of the report.
+  const fixture = await startEvalFixture({ runOneIterationFetchError: true });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-fetch-error-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "run-baseline",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1, run.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const gateCase = report.cases.find((c: { id: string }) => c.id === "gate");
+    const gates = gateCase.details.verdicts.map(
+      (v: { gate: string }) => v.gate,
+    );
+    // Both survive: the local fetch failure AND the real regression.
+    assert.ok(gates.includes("fetch"));
+    assert.ok(gates.includes("passRateRegression"));
+    const regression = gateCase.details.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression.status, "failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline: a threshold miss and a baseline regression fold into one report", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--min-pass-rate-percent",
+            "100",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stdout);
+    const gates = payload.gate.verdicts.map((v: { gate: string }) => v.gate);
+    // Both families' verdicts survive the merge — neither buries the other.
+    assert.ok(gates.includes("minimumPassRate"));
+    assert.ok(gates.includes("passRateRegression"));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha resolves a SHA end to end and gates on it", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    // The SHA resolved to a real run and the regression gate ran on it: a
+    // verdict, not a comparability excuse.
+    assert.equal(run.result.exitCode, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha records the SHA AND the run it resolved to", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          `  ${SHA_BASELINE}  `,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    // The pin says a gate records baseline run id / source SHA. BOTH: the SHA
+    // is what CI asked for, the run id is what the verdict was computed
+    // against, and an archived report needs to answer either question.
+    assert.equal(provenance.requestedBaselineKind, "commitSha");
+    // Trimmed — the padded flag value never reached the wire.
+    assert.equal(provenance.requestedBaselineCommitSha, SHA_BASELINE);
+    assert.equal(provenance.resolvedBaselineCommitSha, SHA_BASELINE);
+    assert.equal(provenance.baseRunId, "run-resolved-from-sha");
+    // Nothing ambiguous was reported, so the match is recorded as unique —
+    // and no count is invented to say so.
+    assert.equal(provenance.baselineMatchUnique, true);
+    assert.equal(provenance.baselineMatchCount, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha surfaces an AMBIGUOUS match in the report", async () => {
+  const fixture = await startEvalFixture({ compare: { matchCount: 4 } });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-ambiguous-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.baselineMatchCount, 4);
+    assert.equal(provenance.baselineMatchUnique, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline-sha: a TRUNCATED count of 1 is not recorded as unique", async () => {
+  // The case the flag exists for: a floor of 1 is not a proof of 1. Recording
+  // it as an established unique match would be a false claim, and a
+  // regression verdict rests on exactly that claim.
+  const fixture = await startEvalFixture({
+    compare: { matchCount: 1, matchCountTruncated: true },
+  });
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-sha-truncated-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.baselineMatchCount, 1);
+    // The flag travels WITH the count. Rendering the 1 alone would assert a
+    // uniqueness nobody checked.
+    assert.equal(provenance.baselineMatchCountTruncated, true);
+    assert.equal(provenance.baselineMatchUnique, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate: an UNRESOLVABLE --baseline-sha exits 3, never 1", async () => {
+  // "We looked and established nothing" must stay distinct from "the evals
+  // regressed". A mistyped SHA that exited 1 would fail a build for a
+  // regression nobody observed.
+  const fixture = await startEvalFixture({ compare: { notFound: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    assert.notEqual(run.result.exitCode, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate rejects --baseline and --baseline-sha together, before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--baseline",
+          "run-baseline",
+          "--baseline-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /mutually exclusive/);
+    // A usage error caught before parsing must never spend a request.
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval compare rejects --base-run and --base-sha together", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "compare",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--base-run",
+          "run-baseline",
+          "--base-sha",
+          SHA_BASELINE,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /mutually exclusive/);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline writes provenance into the JSON report, notRecorded included", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-")
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "run-baseline",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.requestedBaselineKind, "run");
+    assert.equal(provenance.requestedBaselineRunId, "run-baseline");
+    assert.equal(provenance.baseRunId, "run-baseline");
+    assert.equal(provenance.compareRunId, "run-1");
+    assert.equal(provenance.compatibility.caseSetChanged, false);
+    // The pin names "comparable case ids" explicitly — not just the boolean.
+    assert.deepEqual(provenance.compatibility.comparableCaseIds, ["ck_a"]);
+    assert.deepEqual(provenance.compatibility.incompatibleCases, []);
+    // Dimensions the pinned contract requires but the `/compare` wire does not
+    // carry yet must be explicit, never silently dropped.
+    assert.equal(provenance.notRecorded.modelProvider, "notRecorded");
+    assert.equal(provenance.notRecorded.hostHarness, "notRecorded");
+    assert.equal(
+      provenance.notRecorded.serverEnvironmentIdentity,
+      "notRecorded"
+    );
+    // The same provenance rides on the "gate" case row, so `--reporter
+    // junit-xml` (which has no metadata section) still carries it.
+    const gateCase = report.cases.find((c: { id: string }) => c.id === "gate");
+    assert.equal(
+      gateCase.details.baseline.notRecorded.modelProvider,
+      "notRecorded"
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline sends the TRIMMED value on the wire, not the padded one", async () => {
+  // Validation checks the trimmed value; if the raw one were forwarded
+  // instead, `baseRunId` on the wire (and so the provenance echoed back)
+  // would still carry the padding — observable proof of the bug even though
+  // this fixture's mock backend does not itself reject an unknown run id.
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "mcpjam-eval-gate-baseline-trim-"),
+  );
+  const reportPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--baseline",
+          "  run-baseline  ",
+          "--reporter",
+          "json-summary",
+          "--out",
+          reportPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 1);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const provenance = report.metadata.baselineComparison;
+    assert.equal(provenance.requestedBaselineKind, "run");
+    assert.equal(provenance.requestedBaselineRunId, "run-baseline");
+    assert.equal(provenance.baseRunId, "run-baseline");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate --baseline exits 3 when the case set changed, not 1", async () => {
+  // Same regressed pass-rate numbers as the exit-1 test above, but the case
+  // set churned — the population rule makes the whole-run rate incomparable,
+  // and that must never read as a regression.
+  const fixture = await startEvalFixture({ compare: { caseSetChanged: true } });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--wait",
+            "--baseline",
+            "run-baseline",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.gate.outcome, "incomplete");
+    const regression = payload.gate.verdicts.find(
+      (v: { gate: string }) => v.gate === "passRateRegression",
+    );
+    assert.equal(regression?.status, "non_gateable");
   } finally {
     await fixture.close();
   }
@@ -3142,6 +5220,805 @@ test("eval run rejects --compose-host together with --environment", async () => 
     assert.equal(fixture.composeBodies.length, 0);
     assert.equal(fixture.runBodies.length, 0);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate exits 3 on an INCONCLUSIVE run, not 1", async () => {
+  // Verdict policy 2 lets the platform decline to decide. The fixture's
+  // summary for it is fully PASSING, so gating the numbers would exit 0 —
+  // and a partial one would exit 1 and read as a regression. Neither is a
+  // verdict this run established.
+  const fixture = await startEvalFixture({ runOneResult: "inconclusive" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const payload = JSON.parse(run.stdout.trim());
+    assert.equal(payload.gate.outcome, "incomplete");
+    assert.equal(payload.gate.verdicts[0].status, "non_gateable");
+    assert.match(payload.gate.verdicts[0].message, /inconclusive/);
+    // The non-verdict early return still carries the canonical explanation;
+    // this is the regression guard for the gate path that used to omit it.
+    assert.equal(payload.decisionSummary.verdict, "inconclusive");
+    assert.equal(
+      payload.decisionSummary.decision.reasons[0],
+      "evaluatorErrorRateAboveMaximum",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+// Same INCONCLUSIVE-run gate outcome as above, but through the run-fetched
+// (not fetch-failed) branch of `runEvalGate`, which builds its structured
+// report separately — both branches must render the same neutral color.
+test("eval gate --reporter html renders an INCOMPLETE outcome from an inconclusive run as neutral", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "inconclusive" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.match(run.stdout, /badge-neutral">inconclusive/);
+    assert.equal(run.stdout.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// A cancelled run's `result` is `null` — not "failed", not "inconclusive" —
+// so the verdict this would compute BY DEFAULT from the run's own result
+// (were the override absent) falls through to "failed". The gate outcome is
+// "incomplete" (an execution state, not a verdict), and that must win.
+test("eval gate --reporter html renders a cancelled run's INCOMPLETE outcome as neutral, not failed", async () => {
+  const fixture = await startEvalFixture({ runOneStatus: "cancelled" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "html",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    assert.match(run.stdout, /^<!doctype html>/i);
+    assert.match(run.stdout, /badge-neutral">inconclusive/);
+    assert.equal(run.stdout.includes('badge-fail">'), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait adopts the six-code contract under verdict policy 2 (E1)", async () => {
+  // Inverse of the old sentinel: `eval run --wait` now DOES report a
+  // verdict-shaped exit code. A completed "failed" run is the sole producer
+  // of 1; an "inconclusive" run — the platform declining to decide — is
+  // "no valid verdict" (5), never 1 and never the pre-E1 0.
+  for (const [result, expectedExitCode] of [
+    ["failed", 1],
+    ["inconclusive", 5],
+  ] as const) {
+    const fixture = await startEvalFixture({
+      runCaseResult: result,
+      runCasePolicyVersion2: true,
+    });
+    try {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+            "--format",
+            "json",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+
+      assert.equal(run.result.exitCode, expectedExitCode);
+      const receipt = JSON.parse(run.stdout.trim());
+      assert.equal(receipt.runs[0].result, result);
+    } finally {
+      process.exitCode = 0;
+      await fixture.close();
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// E1 — `eval run --wait`'s six-code exit contract.
+//
+// Auth -> 3 is scoped to `--wait`: the guard tests below prove the no-wait
+// path is untouched, then every table row and merge consequence from the E1
+// charter gets its own case. `classifyLaunchErrorExitCode` and
+// `classifyWaitErrorExitCode` are unit-tested in isolation in
+// eval-run-exit-code.test.ts; these are the end-to-end wiring proof.
+// ---------------------------------------------------------------------------
+
+test("no-wait guard: a missing credential still exits 1, untouched", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await withNoCredential(() =>
+      captureProcessOutput(() =>
+        main(
+          evalArgvNoKey(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("no-wait guard: a launch-phase 401 still exits 1 with code UNAUTHORIZED", async () => {
+  const fixture = await startEvalFixture({ authFailure: "launch" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "UNAUTHORIZED");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 on a missing credential, before any network call", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await withNoCredential(() =>
+      captureProcessOutput(() =>
+        main(
+          evalArgvNoKey(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+            "--format",
+            "json",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    // Zero-credit guarantee: the fixture never saw a request at all.
+    assert.equal(fixture.runBodies.length, 0);
+    assert.equal(fixture.groupBodies.length, 0);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 when the credential dies between launch and the wait phase, receipt preserved", async () => {
+  // The launch preflight passes (credential present), the launch itself
+  // succeeds, and only THEN does the credential disappear — simulating the
+  // narrow window between the explicit launch-phase preflight and the wait
+  // phase's own internal recheck. That recheck must still land on exit 3
+  // (not whatever a bare CliError defaults to), and the launch receipt —
+  // the only record of the run id already paid for — must still reach
+  // stdout before the process exits.
+  const fixture = await startEvalFixture({
+    deleteCredentialAfterLaunch: true,
+  });
+  try {
+    const run = await withDyingCredential(() =>
+      captureProcessOutput(() =>
+        main(
+          evalArgvNoKey(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait",
+            "--format",
+            "json",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+    assert.deepEqual(receipt.runs, []);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 2 on a malformed --api-url, not the auth code", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "eval",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          "not-a-url",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 on a launch-phase UNAUTHORIZED", async () => {
+  const fixture = await startEvalFixture({ authFailure: "launch" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "UNAUTHORIZED");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 2 on a launch-phase VALIDATION_ERROR", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "VALIDATION_ERROR",
+      message: "no servers configured",
+      status: 400,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on a launch-phase INTERNAL_ERROR (fails toward infra)", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "INTERNAL_ERROR",
+      message: "backend blew up",
+      status: 500,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on billing_limit_reached — a setup failure, not auth", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "billing_limit_reached",
+      message: "out of credits",
+      status: 402,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on a billing failure the API disguised as FORBIDDEN", async () => {
+  // The v1 API's public error union has no billing member, so
+  // BILLING_LIMIT_REACHED collapses onto the wire code FORBIDDEN
+  // (routes/v1/envelope.ts's mapInternalCode) — the same code a real
+  // credential rejection carries. Only details.code tells them apart, and
+  // getting this wrong would tell CI to fix its API key when the key is
+  // fine and the org is out of runway.
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Your plan limit was reached.",
+      status: 403,
+      details: { code: "billing_limit_reached", plan: "starter" },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 on a real FORBIDDEN with no billing detail", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Not authorized for this project.",
+      status: 403,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on a total fan-out failure (zero started)", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-claude": { code: "HOST_OFFLINE", message: "host unavailable" },
+      "host-chatgpt": { code: "HOST_OFFLINE", message: "host unavailable" },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("merge: a partial fan-out with one failing run exits 1, not 4", async () => {
+  // The started sibling's real verdict failure outranks the OTHER sibling's
+  // launch failure — 1 beats 4 in the severity order.
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": { code: "HOST_OFFLINE", message: "host unavailable" },
+    },
+    groupRunOverrides: {
+      "run-group-1": { result: "failed" },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("merge: all started runs passed but one sibling's wait timed out exits 5", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupRunOverrides: {
+      "run-group-2": { status: "running" },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 5);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    assert.deepEqual(failure.error.details.runIds, ["run-group-2"]);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 3 on a mid-poll 401, with the real wire errorCode", async () => {
+  // A token that expires mid-wait: the first poll observes "running", the
+  // second observes 401. Real SCREAMING_SNAKE wire vocabulary, not the
+  // lowercase `code` key the telemetry redactor would eat.
+  const fixture = await startEvalFixture({ authFailure: "poll" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 3);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    assert.equal(failure.error.details.waitErrors[0].errorCode, "UNAUTHORIZED");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 5 on a mid-wait network failure, not 4", async () => {
+  // The evaluation had already started when the CLI lost the connection —
+  // an absence of observation, not a setup defect it can point at.
+  const fixture = await startEvalFixture({
+    runCaseStatus: "running",
+    closeAfterLaunch: true,
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 5);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 4 on a local --out write failure", async () => {
+  const fixture = await startEvalFixture();
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  // A FILE where `--out` needs a directory segment: every write under it
+  // fails with ENOTDIR, regardless of `createParents`.
+  const blockerFile = path.join(directory, "blocker");
+  await writeFile(blockerFile, "not a directory");
+  const outPath = path.join(blockerFile, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          outPath,
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 4);
+    // The receipt is the only place the launched run id survives; a local
+    // disk error must not cost the caller that id the way an early throw
+    // would.
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("merge: a local --out write failure never masks a real verdict failure", async () => {
+  // The write failure is discovered AFTER the run's own outcome is known.
+  // Per the documented severity order (1 > 3 > 4 > 5 > 0), the verdict
+  // failure must still win the exit code, even though the write failure is
+  // what actually threw.
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const blockerFile = path.join(directory, "blocker");
+  await writeFile(blockerFile, "not a directory");
+  const outPath = path.join(blockerFile, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          outPath,
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    // The receipt still reaches stdout even though --out failed.
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OUT_WRITE_FAILED");
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });
