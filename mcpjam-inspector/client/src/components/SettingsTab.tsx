@@ -10,6 +10,7 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { track } from "@/lib/analytics";
 import { Info, KeyRound } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 
 interface SettingsTabProps {
@@ -82,6 +83,7 @@ export function SettingsTab({
                 track("login_button_clicked", {
                   location: "byok_signin_gate",
                 });
+                captureAppSignInReturnPath();
                 signIn();
               }}
               size="sm"

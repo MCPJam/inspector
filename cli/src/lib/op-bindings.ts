@@ -185,13 +185,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_case: { command: "cloud eval cases run" },
 
   // ── Hosts, environments, images ─────────────────────────────────────────
-  list_hosts: { command: "cloud hosts list" },
-  get_host: { command: "cloud hosts get" },
-  create_host: { command: "cloud hosts create" },
-  update_host: { command: "cloud hosts update" },
-  delete_host: { command: "cloud hosts delete" },
-  set_host_servers: { command: "cloud hosts servers" },
-  duplicate_host: { command: "cloud hosts duplicate" },
+  // `cloud clients …`, with `cloud hosts …` kept as a command alias so existing
+  // scripts keep working. The binding names the CANONICAL path — the alias is
+  // resolvable by the same Commander tree, and pointing the binding at it would
+  // document the spelling we are moving away from.
+  list_clients: { command: "cloud clients list" },
+  get_client: { command: "cloud clients get" },
+  create_client: { command: "cloud clients create" },
+  update_client: { command: "cloud clients update" },
+  delete_client: { command: "cloud clients delete" },
+  set_client_servers: { command: "cloud clients servers" },
+  duplicate_client: { command: "cloud clients duplicate" },
   list_project_environments: { command: "cloud environments list" },
   get_project_environment_capabilities: {
     excluded:
