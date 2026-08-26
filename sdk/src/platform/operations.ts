@@ -6851,8 +6851,21 @@ export const sendChatMessageOperation: PlatformOperation<
   // destructive default would claim a safety the host cannot verify.
   mayBeDestructive: true,
   risk: "spend",
+  // `projectId` off the RESULT, not the resolved scope: a continuation skips
+  // `resolveProjectOrThrow` on purpose (see `execute`), so there is no scope
+  // receipt to fall back on and the link would be dropped after every
+  // successful continuation — silently, since a permalink that cannot be
+  // built is reported and skipped rather than thrown.
   permalink: derivePermalinks((result) =>
-    result.sessionId ? [{ type: "chat_session", id: result.sessionId }] : []
+    result.sessionId
+      ? [
+          {
+            type: "chat_session",
+            id: result.sessionId,
+            projectId: result.projectId,
+          },
+        ]
+      : []
   ),
   inputSchema: sendChatMessageInput,
   async execute(input, { client, signal, onScopeResolved }) {

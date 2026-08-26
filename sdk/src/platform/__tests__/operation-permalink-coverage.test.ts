@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { ALL_OPERATIONS } from "../operations.js";
 import {
   PLATFORM_PERMALINK_ROUTES,
+  derivePermalinksFor,
   type PlatformNoPermalinkReason,
 } from "../permalinks.js";
 
@@ -161,6 +162,34 @@ describe("every catalog operation declares a permalink policy", () => {
   it("uses the backend's own permalinks where the backend owns them", () => {
     const byName = new Map(ALL_OPERATIONS.map((op) => [op.name, op]));
     expect(byName.get("search_sessions")!.permalink.kind).toBe("response");
+  });
+
+  it("links a CONTINUED chat session, which resolves no scope of its own", () => {
+    // `send_chat_message` deliberately skips `resolveProjectOrThrow` when
+    // continuing an existing session, so there is no scope receipt and the
+    // context carries none. If the policy leaned on the receipt, every
+    // successful continuation would silently drop the session link — silently
+    // because an unbuildable permalink is reported and skipped, not thrown.
+    const byName = new Map(ALL_OPERATIONS.map((op) => [op.name, op]));
+    const operation = byName.get("send_chat_message")!;
+    const errors: unknown[] = [];
+    const permalinks = derivePermalinksFor(
+      operation as never,
+      {
+        sessionId: "cs_1",
+        turnId: "t_1",
+        projectId: "p1",
+        persisted: { outcome: "ok" },
+        origin: "api",
+      } as never,
+      { message: "hi", sessionId: "cs_1" } as never,
+      { appOrigin: "https://app.mcpjam.com" },
+      (error) => errors.push(error)
+    );
+    expect(errors).toEqual([]);
+    expect(permalinks.map((permalink) => permalink.url)).toEqual([
+      "https://app.mcpjam.com/sessions?session=cs_1&project=p1",
+    ]);
   });
 
   it("names no route that the registry does not have", () => {

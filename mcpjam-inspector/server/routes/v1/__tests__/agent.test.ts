@@ -654,6 +654,44 @@ describe("agent tool surface", () => {
     executeSpy.mockRestore();
   });
 
+  it("does not report an idempotent re-create as something the turn created", async () => {
+    // `createdResourcesFrom` keys on a NAME PREFIX so the catalog's new
+    // creates are adopted without editing that file. The cost of that rule is
+    // that an idempotent create — one that succeeds by returning the row that
+    // already existed, saying so with `created: false` — would be reported
+    // under a heading that reads "created", which is the same lie the function
+    // already refuses to tell about an edit.
+    //
+    // `publish_scenario` is the operation the flag was written for and it is
+    // excluded from this surface entirely (who may talk to your servers is a
+    // human call), so this drives the guard through a create-prefixed op that
+    // IS on the surface. The model still sees the permalink either way; only
+    // the host's created-resource block is withheld.
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke", created: false },
+        servers: [],
+      } as never);
+    const created: CreatedResource[] = [];
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created,
+    });
+    const tool = tools[createEvalSuiteOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute(VALID_CREATE_INPUT, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(created).toEqual([]);
+    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    executeSpy.mockRestore();
+  });
+
   it("still returns the read when the permalink policy cannot read it", async () => {
     // A policy reads a shape (`result.items.map`). A null result throws inside
     // it. Deriving a link is a convenience on top of the read; it must never

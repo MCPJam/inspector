@@ -217,6 +217,31 @@ function permalinksFor(
 }
 
 /**
+ * True when the result SAYS this resource already existed.
+ *
+ * `publish_scenario` is idempotent: republishing an already-published
+ * environment succeeds and returns the existing scenario with
+ * `created: false`. The `publish_` prefix would otherwise report it as
+ * something this turn brought into existence — contradicting both the
+ * response the model just read and the `createdResources` contract the host
+ * renders under a "created" heading.
+ *
+ * Keyed on the resource id rather than a per-operation name check, so any
+ * other idempotent create that adopts the same `created` flag on its payload
+ * is covered on arrival. Absent flag means "created", which is what every
+ * non-idempotent create returns.
+ */
+function alreadyExisted(result: unknown, resourceId: string): boolean {
+  if (!result || typeof result !== "object") return false;
+  for (const value of Object.values(result as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const row = value as { id?: unknown; created?: unknown };
+    if (row.id === resourceId && row.created === false) return true;
+  }
+  return false;
+}
+
+/**
  * The subset of those links that names a resource the turn BROUGHT INTO EXISTENCE.
  *
  * CREATES only, not every write. A read's rows are not "created" — a
@@ -248,6 +273,7 @@ function createdResourcesFrom(
   // just created by name as often as by id.
   const suiteName = (result as { suite?: { name?: string } })?.suite?.name;
   return permalinks
+    .filter((permalink) => !alreadyExisted(result, permalink.resource.id))
     .slice(0, MAX_CREATED_RESOURCES_PER_CALL)
     .map((permalink) => ({
       type: permalink.resource.type,
