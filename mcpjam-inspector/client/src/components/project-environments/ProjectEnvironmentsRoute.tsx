@@ -15,8 +15,8 @@ import { Badge } from "@mcpjam/design-system/badge";
 import {
   buildProjectEnvironmentPath,
   buildUserTestingScenarioPath,
+  navigateApp,
   routePaths,
-  useAppNavigate,
 } from "@/lib/app-navigation";
 import {
   permalinkUnavailableMessage,
@@ -202,7 +202,12 @@ export function ProjectEnvironmentsRoute({
   // Selection → route, so the address bar always names what is on screen and
   // Back leaves the detail instead of leaving the surface. `replace` because
   // clicking through a list is not navigation history anyone wants to walk.
-  const navigate = useAppNavigate();
+  //
+  // `navigateApp` rather than `useAppNavigate()`: the hook reads react-router's
+  // navigation CONTEXT, and this screen's component tests render it without a
+  // Router. The imperative form goes through the router ref and degrades to
+  // `window.history` when there is none, so a test that never asserts on the
+  // URL is unaffected instead of failing to mount.
   useEffect(() => {
     if (flagEnabled !== true) return;
     const current = routeEnvironmentId?.trim() ?? null;
@@ -212,14 +217,13 @@ export function ProjectEnvironmentsRoute({
     // good or bad — rewriting the URL then would erase the target before it
     // could be honored.
     if (shown === null && routeState.kind === "loading") return;
-    navigate(buildProjectEnvironmentPath(shown), { replace: true });
+    navigateApp(buildProjectEnvironmentPath(shown), { replace: true });
   }, [
     flagEnabled,
     creating,
     selected,
     routeEnvironmentId,
     routeState.kind,
-    navigate,
   ]);
 
   // Only the seed/draft consumed FOR THE CURRENT project may reach the form.
@@ -276,7 +280,7 @@ export function ProjectEnvironmentsRoute({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate(routePaths.environments)}
+            onClick={() => navigateApp(routePaths.environments)}
           >
             Back to environments
           </Button>

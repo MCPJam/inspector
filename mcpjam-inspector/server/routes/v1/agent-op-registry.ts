@@ -147,7 +147,10 @@ import type {
   ProposedActionSeverity,
   ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
-import type { PlatformApiClient } from "@mcpjam/sdk/platform";
+import {
+  derivePermalinksFor,
+  type PlatformApiClient,
+} from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
@@ -186,19 +189,6 @@ export interface GatedProposalMeta {
   confirmSeverity?:
     | ProposedActionSeverity
     | ((input: Record<string, unknown>) => ProposedActionSeverity | undefined);
-  /**
-   * What the executed action produced, when it produced something linkable.
-   *
-   * Built HERE rather than by the host, because building it needs the
-   * operation's result shape — and a host that knew every result shape would
-   * silently start linking to nothing the moment one changed. Absent means the
-   * action produces nothing to look at (a cancellation), which is different
-   * from "the host could not work out a link".
-   */
-  resource?(
-    result: unknown,
-    context: { projectId: string },
-  ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
    * resource. Lets a host correlate the proposal with other turn output —
@@ -305,22 +295,6 @@ function describeChatMessage(input: Record<string, unknown>): string {
     .join(" · ");
 }
 
-/** The session a turn produced, as a linkable resource. */
-function chatSessionResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const sessionId = readString(result, "sessionId");
-  if (!sessionId) return undefined;
-  return {
-    type: "chat_session",
-    id: sessionId,
-    url: `${MCPJAM_HOSTED_ORIGIN}/sessions/${encodeURIComponent(
-      sessionId,
-    )}?project=${encodeURIComponent(projectId)}`,
-  };
-}
-
 /**
  * The suite both run-ops are ABOUT, in the validated input's own selector
  * vocabulary (the server's post-create offer passes the suite id; a
@@ -331,48 +305,6 @@ function evalSuiteTarget(
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
-}
-
-/**
- * The run both run-ops produce, as a linkable resource.
- *
- * `?project=` makes the link self-describing: eval routes carry no project
- * segment, so without it the app renders whatever project the viewer's picker
- * was parked on — an empty state for everyone but the author.
- */
-function evalRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const suiteId =
-    readString(result, "suite.id") ?? readString(result, "suiteId");
-  if (!suiteId) return undefined;
-  const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId,
-  )}`;
-
-  // A GROUPED launch links to the group, not to one of its runs. The contract
-  // carries a single resource, and linking to the first run would hide the
-  // fact that a sibling failed — the one thing the approver most needs to see
-  // after approving N paid runs.
-  const runGroupId = readString(result, "runGroupId");
-  if (runGroupId) {
-    return {
-      type: "eval_run_group",
-      id: runGroupId,
-      url: `${suiteUrl}?view=runs&project=${encodeURIComponent(projectId)}`,
-    };
-  }
-
-  const runId = readString(result, "runId");
-  if (!runId) return undefined;
-  return {
-    type: "eval_run",
-    id: runId,
-    url:
-      `${suiteUrl}/runs/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
-  };
 }
 
 /**
@@ -837,31 +769,6 @@ export async function freezeCardInstallArgs(
  * one changed.
  */
 /**
- * The /conformance section a finished readiness run is read on.
- *
- * The EXACT run id travels in the link, not just the page. The section can
- * rediscover "the newest run for this server" when it has nothing better, but
- * that is the wrong run for somebody following a link about a specific one —
- * two runs started minutes apart would send an approver to the other one's
- * verdict.
- */
-function readinessRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const runId = readString(result, "run.runId") ?? readString(result, "run.id");
-  if (!runId) return undefined;
-  return {
-    type: "readiness_run",
-    id: runId,
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/conformance` +
-      `?project=${encodeURIComponent(projectId)}` +
-      `&readinessRun=${encodeURIComponent(runId)}`,
-  };
-}
-
-/**
  * Resolve a server selector to its stable project server id.
  *
  * A name is a pointer: rename or reuse between proposal and approval would
@@ -885,40 +792,49 @@ async function freezeConformanceServer(
   return { ...input, server: match.id };
 }
 
-export function conformanceRunResource(
+/**
+ * What an executed action produced, when it produced something linkable.
+ *
+ * Delegates to the OPERATION's own permalink policy rather than to a builder
+ * kept here. This registry used to carry five of those — one each for chat
+ * sessions, eval runs, readiness runs, conformance runs and journey runs — and
+ * three separate places assembled the same eval-run URL by string
+ * concatenation. Each copy had to remember `?project=`, and each was one
+ * result-shape change away from linking to nothing. Now the catalog declares
+ * where a result can be opened, exactly once, and every surface reads that.
+ *
+ * FIRST permalink only: `ExecutedActionResource` carries one resource by
+ * contract, and the policies order theirs so the first is the thing the action
+ * produced (a run, not its suite). An operation whose policy says `none`
+ * returns undefined here, which is the honest "nothing to look at" the
+ * contract already meant.
+ */
+export function executedActionResource(
+  operation: AnyPlatformOperation,
   result: unknown,
-  { projectId }: { projectId: string },
+  input: unknown,
+  context: { projectId: string },
 ): ExecutedActionResource | undefined {
-  const runId =
-    readString(result, "run.runId") ??
-    readString(result, "run.id") ??
-    readString(result, "runId");
-  if (!runId) return undefined;
+  const [permalink] = derivePermalinksFor(
+    operation,
+    result,
+    input,
+    {
+      appOrigin: MCPJAM_HOSTED_ORIGIN,
+      resolvedScope: { projectId: context.projectId },
+    },
+    (error, operationName) => {
+      logger.warn("[v1/agent] could not build a permalink", {
+        operation: operationName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
+  if (!permalink) return undefined;
   return {
-    type: "conformance_run",
-    id: runId,
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/conformance/runs/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
-  };
-}
-
-function journeyRunResource(
-  result: unknown,
-  { projectId }: { projectId: string },
-): ExecutedActionResource | undefined {
-  const runId = readString(result, "run.id") ?? readString(result, "runId");
-  if (!runId) return undefined;
-  return {
-    type: "journey_run",
-    id: runId,
-    // `/swarms/<runId>` — the client routes on the FIRST segment after
-    // `/swarms/` (App.tsx takes `.split("/")[0]` as the run id), so a
-    // `/swarms/runs/<id>` link resolves to a run named literally "runs" and
-    // dead-links the approver.
-    url:
-      `${MCPJAM_HOSTED_ORIGIN}/swarms/${encodeURIComponent(runId)}` +
-      `?project=${encodeURIComponent(projectId)}`,
+    type: permalink.resource.type,
+    id: permalink.resource.id,
+    url: permalink.url,
   };
 }
 
@@ -1293,7 +1209,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         (input as { includeLlmObservations?: boolean }).includeLlmObservations
           ? "spend"
           : "none",
-      resource: readinessRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1320,7 +1235,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         (input as { includeLlmObservations?: boolean }).includeLlmObservations
           ? "spend"
           : "none",
-      resource: readinessRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1344,7 +1258,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: () => "none",
-      resource: conformanceRunResource,
       target: (input) => {
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
@@ -1464,7 +1377,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // side-effect warning is carried in the describe line where the
       // approver actually reads it.
       confirmSeverity: "spend",
-      resource: chatSessionResource,
     },
   },
   {
@@ -1488,7 +1400,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // the schedule entry below decides per argument), so the two are
       // deliberately separate fields that happen to agree here.
       confirmSeverity: "spend",
-      resource: evalRunResource,
       target: evalSuiteTarget,
       normalizeProposalArgs: freezeEvalRunTargets,
     },
@@ -1501,7 +1412,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: "spend",
-      resource: evalRunResource,
       target: evalSuiteTarget,
       // Same freeze as the suite run, and for the same reasons. This operation
       // takes the full `compose` input, so without it `compose.host` and
@@ -1766,7 +1676,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Launch it",
       kind: "start",
       confirmSeverity: "spend",
-      resource: journeyRunResource,
       target: (input) => {
         const journey = named(input, "journey");
         return journey ? { type: "journey", selector: journey } : undefined;

@@ -69,6 +69,28 @@ function trimOrigin(value) {
 }
 
 /**
+ * The app URL for one eval run, matching what `@mcpjam/sdk/platform`'s
+ * `buildAppPermalink` mints for `eval_run`.
+ *
+ * MIRRORED, NOT IMPORTED — the same trade `run-evidence.js` documents:
+ * surface-core has zero dependencies on purpose so a bot can vendor it. The
+ * `?project=` is the load-bearing part: eval routes carry no project segment,
+ * so without it the link opens whichever project the reader last selected.
+ *
+ * @param {{ appUrl: string, projectId: string }} config
+ * @param {string} suiteId
+ * @param {string} runId
+ */
+function runUrlFor(config, suiteId, runId) {
+	const url = new URL(
+		`/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}`,
+		config.appUrl,
+	);
+	url.searchParams.set("project", config.projectId);
+	return url.toString();
+}
+
+/**
  * Create the API client for one surface. The transport knows only the
  * injected wire config; rendering and platform names never enter this file.
  * @param {{surfaceKind?:string, routePrefix?:string, conversationField?:string, authHeaderName?:string, identityHeaders?:(ctx:any)=>Record<string,string>, getConfig?:(ctx:any,overrides?:any)=>any, baseUrl?:string, fetchImpl?:typeof fetch}} [options]
@@ -275,8 +297,13 @@ export function createApiClient(options = {}) {
 						url: String(payload.resource.url),
 					}
 				: null;
-		// Legacy synthesis, kept ONLY as the mixed-version fallback: a bot
-		// deployed ahead of the server would otherwise lose the run link.
+		// The run's own ids still travel — a caller decides whether to WATCH a
+		// run from these — but no URL is synthesised from them any more. The
+		// server derives every executed action's link from the operation
+		// catalog's permalink policy, so `resource.url` is now present for
+		// anything linkable; a synthesised twin would only differ from it when
+		// one of them was wrong, and this one could not know the project scope
+		// the operation actually resolved.
 		const runId = typeof result?.runId === "string" ? result.runId : null;
 		const suiteId =
 			typeof result?.suiteId === "string"
@@ -297,11 +324,7 @@ export function createApiClient(options = {}) {
 			kind: typeof payload?.kind === "string" ? payload.kind : null,
 			resource,
 			result,
-			runUrl:
-				resource?.url ??
-				(runId && suiteId
-					? `${config.appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(config.projectId)}`
-					: null),
+			runUrl: resource?.url ?? null,
 		};
 	}
 
@@ -332,7 +355,13 @@ export function createApiClient(options = {}) {
 		return {
 			runId,
 			suiteId,
-			url: `${config.appUrl}/evals/suite/${encodeURIComponent(suiteId)}/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(config.projectId)}`,
+			// Built through `URL`, not concatenation, so segments stay encoded and
+			// the project scope cannot be dropped. Unlike `executeAction` above
+			// this route is plain REST (`POST /eval-runs`) and mints no permalink
+			// of its own yet; when it does, this reads it instead. surface-core
+			// deliberately depends on nothing, so it cannot call the SDK builder
+			// — the shape it produces is pinned by the test below.
+			url: runUrlFor(config, suiteId, runId),
 		};
 	}
 

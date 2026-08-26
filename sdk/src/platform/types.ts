@@ -1272,18 +1272,6 @@ export interface PlatformEvalStep {
 export interface PlatformEvalCase {
   id: string;
   /**
-   * The suite this case belongs to.
-   *
-   * OPTIONAL on the wire — the REST projection has never sent it — but always
-   * present on a case returned through a platform OPERATION, which stamps it
-   * on the way out. Without it `/evals/suite/:suiteId/test/:testId` cannot be
-   * composed from the response at all: the case knows its own id and nothing
-   * about its parent, and a link site would have to re-resolve the suite it
-   * was just handed. Additive, so a reader built against the older shape is
-   * unaffected.
-   */
-  suiteId?: string;
-  /**
    * The case's effective DECLARED id — what it answers to in a suite file, an
    * import, or a CLI argument. Absent on cases authored before declared
    * identity existed. Distinct from `id`, which is the platform row id the
@@ -1337,18 +1325,6 @@ export interface PlatformEvalCaseBatchCreated {
   index: number;
   /** Platform id — what the per-case routes take as their path parameter. */
   id: string;
-  /**
-   * The suite this case belongs to.
-   *
-   * OPTIONAL on the wire — the REST projection has never sent it — but always
-   * present on a case returned through a platform OPERATION, which stamps it
-   * on the way out. Without it `/evals/suite/:suiteId/test/:testId` cannot be
-   * composed from the response at all: the case knows its own id and nothing
-   * about its parent, and a link site would have to re-resolve the suite it
-   * was just handed. Additive, so a reader built against the older shape is
-   * unaffected.
-   */
-  suiteId?: string;
   /** The effective declared id. On a replay this is the STORED case's. */
   declaredId?: string;
   title: string;

@@ -58,6 +58,7 @@ import type {
   PlatformConformanceRunReceipt,
   PlatformReadinessStageResult,
   PlatformEvalCase,
+  PlatformEvalCaseBatchCreated,
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
@@ -724,6 +725,34 @@ function reportResolvedScope(
   }
 }
 
+
+/**
+ * A case as an OPERATION returns it: the wire projection plus the suite the
+ * operation resolved to reach it.
+ *
+ * NOT on `PlatformEvalCase` itself. That type mirrors the REST `EvalCase`
+ * schema field for field (the openapi parity test enforces it), and the route
+ * does not send a suite id — the OPERATION knows it because it just resolved
+ * the caller's `suite` selector. Stamping it here keeps the wire contract
+ * honest while giving the permalink policy the parent it needs: a case's route
+ * is `/evals/suite/:suiteId/test/:testId`, and without the suite there is no
+ * link to build, only a wrong one.
+ */
+export type PlatformEvalCaseWithSuite = PlatformEvalCase & { suiteId: string };
+
+/** `create_eval_cases`, with each created row's suite stamped on. */
+export type CreateEvalCasesResult = Omit<
+  PlatformEvalCaseBatchResult,
+  "created"
+> & {
+  created: Array<PlatformEvalCaseBatchCreated & { suiteId: string }>;
+};
+
+/** `generate_eval_cases`, with each generated case's suite stamped on. */
+export type GenerateEvalCasesResult = Omit<
+  PlatformEvalCasesGenerated,
+  "created"
+> & { created: PlatformEvalCaseWithSuite[] };
 
 /**
  * Stamp the suite a case-shaped payload belongs to.
@@ -5042,7 +5071,7 @@ export type ListEvalCasesInput = z.infer<typeof listEvalCasesInput>;
 
 export const listEvalCasesOperation: PlatformOperation<
   ListEvalCasesInput,
-  PlatformPage<PlatformEvalCase>
+  PlatformPage<PlatformEvalCaseWithSuite>
 > = {
   name: "list_eval_cases",
   title: "List MCPJam eval cases",
@@ -5084,7 +5113,7 @@ export type GetEvalCaseInput = z.infer<typeof getEvalCaseInput>;
 
 export const getEvalCaseOperation: PlatformOperation<
   GetEvalCaseInput,
-  PlatformEvalCase
+  PlatformEvalCaseWithSuite
 > = {
   name: "get_eval_case",
   title: "Get MCPJam eval case",
@@ -5131,7 +5160,7 @@ export type CreateEvalCaseInput = z.infer<typeof createEvalCaseInput>;
 
 export const createEvalCaseOperation: PlatformOperation<
   CreateEvalCaseInput,
-  PlatformEvalCase
+  PlatformEvalCaseWithSuite
 > = {
   name: "create_eval_case",
   title: "Create MCPJam eval case",
@@ -5200,7 +5229,7 @@ export type CreateEvalCasesInput = z.infer<typeof createEvalCasesInput>;
 
 export const createEvalCasesOperation: PlatformOperation<
   CreateEvalCasesInput,
-  PlatformEvalCaseBatchResult
+  CreateEvalCasesResult
 > = {
   name: "create_eval_cases",
   title: "Create MCPJam eval cases",
@@ -5282,7 +5311,7 @@ export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
 
 export const updateEvalCaseOperation: PlatformOperation<
   UpdateEvalCaseInput,
-  PlatformEvalCase
+  PlatformEvalCaseWithSuite
 > = {
   name: "update_eval_case",
   title: "Update MCPJam eval case",
@@ -5454,7 +5483,7 @@ export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
 export const generateEvalCasesOperation: PlatformOperation<
   GenerateEvalCasesInput,
-  PlatformEvalCasesGenerated
+  GenerateEvalCasesResult
 > = {
   name: "generate_eval_cases",
   risk: "spend",

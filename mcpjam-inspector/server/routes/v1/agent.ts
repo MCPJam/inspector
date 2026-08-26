@@ -59,7 +59,9 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
   createEvalSuiteOperation,
+  derivePermalinksFor,
   runEvalSuiteOperation,
+  type PlatformResourceType,
 } from "@mcpjam/sdk/platform";
 import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
 import {
@@ -113,7 +115,18 @@ export {
 } from "./agent-op-registry.js";
 
 export type CreatedResource = {
-  type: "eval_suite";
+  /**
+   * The permalink registry's resource type.
+   *
+   * Widened from the literal `"eval_suite"` when created resources started
+   * coming from the shared permalink policies: a launch produces an
+   * `eval_run`, an install a `project_server`, and a host that only knew one
+   * type would have dropped them. `PlatformResourceType` rather than `string`
+   * so the value is still one the app can route — hosts render an unknown
+   * type through their generic link block, which is the point of carrying the
+   * type at all.
+   */
+  type: PlatformResourceType;
   id: string;
   name?: string;
   url: string;
@@ -127,13 +140,65 @@ export function isValidAgentActionId(actionId: string): boolean {
   return typeof actionId === "string" && actionId.length > 0 && actionId.length <= MAX_AGENT_ACTION_ID_LENGTH;
 }
 
-function suiteUrl(suiteId: string, projectId: string): string {
-  // `?project=` makes the link self-describing: eval routes carry no project
-  // segment, so without it the app renders whatever project the viewer's
-  // picker was parked on (an empty state for everyone but the author).
-  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId
-  )}?project=${encodeURIComponent(projectId)}`;
+/**
+ * How many linkable resources ONE tool call may contribute to the turn's
+ * `createdResources`.
+ *
+ * A batch create (`create_eval_cases` accepts many at once) would otherwise
+ * put dozens of link blocks in a Slack reply. Ten is the same ceiling the
+ * MCP worker's text fallback uses, so the two surfaces truncate alike.
+ */
+const MAX_CREATED_RESOURCES_PER_CALL = 10;
+
+/**
+ * The resources one WRITE produced, as links the host can render.
+ *
+ * Read off the operation's own permalink policy rather than a name check for
+ * `create_eval_suite` and a hand-built URL. Two things follow: an operation
+ * added later contributes its links without touching this file, and the URL
+ * agrees with the one the MCP worker, the CLI and the approval path hand out,
+ * because all four ask the same builder.
+ *
+ * Writes only. A read's rows are not "created", and a `list_project_servers`
+ * turn that reported twenty created resources would be describing the project,
+ * not what it did.
+ */
+function createdResourcesFor(
+  operation: AnyPlatformOperation,
+  result: unknown,
+  input: unknown,
+  projectId: string
+): CreatedResource[] {
+  if (operation.readOnly) return [];
+  const permalinks = derivePermalinksFor(
+    operation,
+    result,
+    input,
+    {
+      appOrigin: MCPJAM_HOSTED_ORIGIN,
+      resolvedScope: { projectId },
+    },
+    (error, operationName) => {
+      logger.warn("[v1/agent] could not build a created-resource link", {
+        operation: operationName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  );
+  // The NAME matters beyond display: `offerRunsForCreatedSuites` matches a
+  // model-authored `suite` argument against it, and a model names a suite it
+  // just created by name as often as by id.
+  const suiteName = (result as { suite?: { name?: string } })?.suite?.name;
+  return permalinks
+    .slice(0, MAX_CREATED_RESOURCES_PER_CALL)
+    .map((permalink) => ({
+      type: permalink.resource.type,
+      id: permalink.resource.id,
+      ...(permalink.resource.type === "eval_suite" && suiteName
+        ? { name: suiteName }
+        : {}),
+      url: permalink.url,
+    }));
 }
 
 const PROJECT_SCOPE_ERROR =
@@ -673,18 +738,14 @@ export function buildAgentApiToolSet(opts: {
             client,
             signal: abortSignal,
           });
-          if (operation.name === createEvalSuiteOperation.name) {
-            const suite = (result as { suite?: { id?: string; name?: string } })
-              ?.suite;
-            if (suite?.id) {
-              opts.created.push({
-                type: "eval_suite",
-                id: suite.id,
-                ...(suite.name ? { name: suite.name } : {}),
-                url: suiteUrl(suite.id, opts.projectId),
-              });
-            }
-          }
+          opts.created.push(
+            ...createdResourcesFor(
+              operation,
+              result,
+              parsed.data,
+              opts.projectId
+            )
+          );
           return capForModel(stripProjectSwitchingMetadata(result));
         } catch (error) {
           if (abortSignal?.aborted) {
@@ -743,6 +804,7 @@ const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
+  "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",

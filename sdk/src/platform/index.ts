@@ -22,6 +22,12 @@ export {
   type PlatformApiClientOptions,
 } from "./client.js";
 
+export type {
+  CreateEvalCasesResult,
+  GenerateEvalCasesResult,
+  PlatformEvalCaseWithSuite,
+} from "./operations.js";
+
 export {
   DEFAULT_MCPJAM_APP_ORIGIN,
   PLATFORM_PERMALINK_ROUTES,
