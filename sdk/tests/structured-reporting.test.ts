@@ -101,12 +101,8 @@ describe("renderStructuredRunJson", () => {
   });
 
   it("carries an optional decision summary through telemetry redaction", () => {
-    const decisionSummary = {
-      verdict: "failed" as const,
-      passRate: { total: 1, passed: 0, failed: 1, percent: 0 },
-      iterationWalkComplete: true,
-      cases: [],
-    };
+    const decisionSummary = corpusCase("measured-failure-at-every-stage")
+      .expected as EvalRunDecisionSummary;
     const report: StructuredRunReport = {
       schemaVersion: 1,
       kind: "eval",
@@ -576,6 +572,56 @@ describe("renderStructuredRunHtml", () => {
 });
 
 describe("buildEvalRunReport", () => {
+  it("uses the canonical case-variant verdict for mixed repetitions", () => {
+    const row = decisionCorpus.cases.find(
+      (entry) => entry.__name === "mixed-repetitions-case-passes-by-threshold"
+    )! as (typeof decisionCorpus.cases)[number] & {
+      input: {
+        projectId: string;
+        run: PlatformEvalRun;
+        iterations: PlatformEvalIteration[];
+      };
+    };
+    const summary = row.expected as EvalRunDecisionSummary;
+    const report = buildEvalRunReport(
+      [
+        {
+          run: row.input.run,
+          iterations: row.input.iterations,
+          iterationsComplete: true,
+        },
+      ],
+      { decisionSummary: summary }
+    );
+
+    // Two failed trials are diagnostics beneath one case variant that the
+    // platform decided passed. They must not manufacture a second report
+    // verdict or a JUnit failure.
+    expect(report).toMatchObject({
+      passed: true,
+      verdict: "passed",
+      decisionSummary: summary,
+    });
+    expect(report.cases).toEqual([]);
+    expect(renderStructuredRunJUnitXml(report)).toContain('failures="0"');
+    expect(renderStructuredRunHtml(report)).toContain('badge-pass">passed');
+  });
+
+  it("renders notEstablished as neutral in a structured report", () => {
+    const summary = corpusCase("non-terminal-run-is-notEstablished")
+      .expected as EvalRunDecisionSummary;
+    const report = buildEvalRunReport([], { decisionSummary: summary });
+
+    expect(report).toMatchObject({
+      passed: false,
+      verdict: "notEstablished",
+      decisionSummary: summary,
+    });
+    const junit = renderStructuredRunJUnitXml(report);
+    expect(junit).toContain('failures="0"');
+    expect(junit).toContain('skipped="1"');
+  });
+
   it("honors an explicit verdict override instead of computing one from inputs", () => {
     // A gate/compare report's `inputs` describe the underlying eval run, not
     // the gate's own outcome — a run can pass while its gate is

@@ -76,6 +76,12 @@ function makeClient(
       }
       return Response.json(SUMMARY);
     }
+    if (
+      url.pathname ===
+      "/api/v1/projects/project-1/eval-runs/run-1/iterations"
+    ) {
+      return Response.json({ items: [] });
+    }
     return Response.json(
       { error: { code: "NOT_FOUND", message: url.pathname } },
       { status: 404 }
@@ -119,14 +125,23 @@ describe("get_eval_run — decision summary", () => {
     expect(summaryCalls(fetchMock)).toHaveLength(0);
   });
 
-  it("still returns the run when the endpoint is absent", async () => {
+  it("falls back to the shared assembler when the endpoint is absent", async () => {
     const { client } = makeClient({ summaryStatus: 404 });
     const result = await getEvalRunOperation.execute(
       { project: "project-1", runId: "run-1" },
       { client }
     );
     expect(result.run.id).toBe("run-1");
-    expect(result.decisionSummary).toBeUndefined();
+    expect(result.decisionSummary).toMatchObject({
+      runId: "run-1",
+      verdict: "failed",
+      verdictSource: "legacy",
+      diagnostics: {
+        items: [],
+        complete: true,
+        scannedIterations: 0,
+      },
+    });
   });
 
   it("asks for a small diagnostics page by default", async () => {

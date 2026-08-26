@@ -23603,37 +23603,68 @@
         }
       },
       "EvalRunDecisionCounts": {
-        "type": "object",
         "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under verdict policy v2 the counts are case-execution VARIANTS (repetitions are trials inside one, not members of it), and on a legacy run they are trials. A 3-case suite with 5 repetitions is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the legacy run recorded it \u2014 absence stays absence rather than defaulting to zero.",
-        "required": [
-          "measurementUnit"
-        ],
-        "properties": {
-          "measurementUnit": {
-            "type": "string",
-            "enum": [
-              "caseVariant",
-              "trial"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "measurementUnit",
+              "total",
+              "passed",
+              "failed",
+              "inconclusive"
+            ],
+            "properties": {
+              "measurementUnit": {
+                "type": "string",
+                "const": "caseVariant"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inconclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "`caseVariant` only. A legacy run has no such bucket."
+              }
+            },
+            "additionalProperties": false
           },
-          "total": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "passed": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "failed": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "inconclusive": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "`caseVariant` only. A legacy run has no such bucket."
+          {
+            "type": "object",
+            "required": [
+              "measurementUnit"
+            ],
+            "properties": {
+              "measurementUnit": {
+                "type": "string",
+                "const": "trial"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
           }
-        }
+        ]
       },
       "EvalRunDecisionUndecided": {
         "type": "object",
@@ -23659,74 +23690,126 @@
         }
       },
       "EvalRunDecisionChain": {
-        "type": "object",
         "description": "Whether this trial's user-value chain can be believed. `verified` \u2014 the stored derivation validated, and ONLY this state carries `stages`, `firstFailedStage` or `failureCategory`. `unverified` \u2014 a derivation was stored and did not validate; the chain and both claims derived from it are withheld, because they are assertions ABOUT rows that did not validate. `absent` \u2014 no derivation was stored at all, which is a different fact from one that was rejected.",
-        "required": [
-          "status"
-        ],
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "verified",
-              "unverified",
-              "absent"
-            ]
-          },
-          "stages": {
-            "type": "array",
-            "description": "Always six rows, in chain order. `verified` only.",
-            "items": {
-              "$ref": "#/components/schemas/StageResultRow"
-            }
-          },
-          "firstFailedStage": {
-            "type": "string",
-            "enum": [
-              "connection",
-              "discovery",
-              "selection",
-              "call",
-              "response",
-              "userValue"
-            ]
-          },
-          "failureCategory": {
-            "type": "string",
-            "enum": [
-              "setup",
-              "metadata",
-              "selection",
-              "arguments",
-              "serverData",
-              "userValue",
-              "evaluator"
-            ],
-            "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error \u2014 both are real answers about a run that never reached a stage."
-          },
-          "analyzerVersion": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "analyzerVersionAhead": {
+        "oneOf": [
+          {
             "type": "object",
-            "description": "Present when the rows came from an analyzer NEWER than the reader knows. Flagged, never rejected: blanking the chain every time the platform ships ahead of a pinned client would be worse than showing it with a caveat.",
             "required": [
-              "reported",
-              "known"
+              "status",
+              "stages",
+              "analyzerVersion"
             ],
             "properties": {
-              "reported": {
+              "status": {
+                "type": "string",
+                "const": "verified"
+              },
+              "stages": {
+                "type": "array",
+                "description": "Always six rows, in chain order. `verified` only.",
+                "items": {
+                  "$ref": "#/components/schemas/StageResultRow"
+                }
+              },
+              "firstFailedStage": {
+                "type": "string",
+                "enum": [
+                  "connection",
+                  "discovery",
+                  "selection",
+                  "call",
+                  "response",
+                  "userValue"
+                ]
+              },
+              "failureCategory": {
+                "type": "string",
+                "enum": [
+                  "setup",
+                  "metadata",
+                  "selection",
+                  "arguments",
+                  "serverData",
+                  "userValue",
+                  "evaluator"
+                ],
+                "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error \u2014 both are real answers about a run that never reached a stage."
+              },
+              "analyzerVersion": {
                 "type": "integer",
                 "minimum": 0
               },
-              "known": {
+              "analyzerVersionAhead": {
+                "type": "object",
+                "description": "Present when the rows came from an analyzer NEWER than the reader knows. Flagged, never rejected: blanking the chain every time the platform ships ahead of a pinned client would be worse than showing it with a caveat.",
+                "required": [
+                  "reported",
+                  "known"
+                ],
+                "properties": {
+                  "reported": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "known": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unverified"
+              },
+              "analyzerVersion": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "analyzerVersionAhead": {
+                "type": "object",
+                "required": [
+                  "reported",
+                  "known"
+                ],
+                "properties": {
+                  "reported": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "known": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
               }
-            }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "absent"
+              }
+            },
+            "additionalProperties": false
           }
-        }
+        ]
       },
       "EvalRunDecisionEvidence": {
         "type": "object",

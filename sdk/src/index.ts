@@ -430,6 +430,7 @@ export {
   formatEvalDecisionSummary,
   formatEvalRunDecisionSummary,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  readEvalRunDecisionSummary,
 } from "./eval-decision-summary.js";
 /**
  * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.

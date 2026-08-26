@@ -23,29 +23,20 @@
  *
  * ── It never fails a command ─────────────────────────────────────────────────
  *
- * A decision summary is a diagnostic. An API that predates the endpoint answers
- * 404, and a network hiccup answers worse; neither says anything about the run
- * being gated. So every path here resolves to `undefined` rather than throwing,
- * and the caller's existing verdict and exit code are untouched.
+ * A decision summary is a diagnostic. An API that predates the endpoint falls
+ * back to the older iteration resource, and a network hiccup answers worse;
+ * neither says anything about the run being gated. So every path here resolves
+ * to `undefined` rather than throwing, and the caller's existing verdict and
+ * exit code are untouched.
  */
 
 import {
   buildEvalRunDecisionSummary,
+  readEvalRunDecisionSummary as readSharedEvalRunDecisionSummary,
   type EvalRunDecisionSummary,
 } from "@mcpjam/sdk";
 import type { PlatformApiClient, PlatformEvalRun } from "@mcpjam/sdk/platform";
-import {
-  fetchAllIterations,
-  type FetchedIterations,
-} from "./eval-iterations.js";
-
-/** The largest diagnostics page the endpoint will return. */
-const DECISION_SUMMARY_PAGE_LIMIT = 200;
-
-type DecisionSummaryClient = Pick<
-  PlatformApiClient,
-  "getEvalRunDecisionSummary" | "listEvalRunIterations"
->;
+import type { FetchedIterations } from "./eval-iterations.js";
 
 /**
  * Assemble the summary from an iteration walk this command already performed.
@@ -76,31 +67,15 @@ export function decisionSummaryFromIterations(input: {
  * different opinion about the run.
  */
 export async function readEvalRunDecisionSummary(
-  client: DecisionSummaryClient,
+  client: Pick<
+    PlatformApiClient,
+    "getEvalRunDecisionSummary" | "listEvalRunIterations"
+  >,
   signal: AbortSignal,
   projectId: string,
   run: PlatformEvalRun
 ): Promise<EvalRunDecisionSummary | undefined> {
-  try {
-    return await client.getEvalRunDecisionSummary(
-      { projectId, runId: run.id, limit: DECISION_SUMMARY_PAGE_LIMIT },
-      { signal }
-    );
-  } catch {
-    // Deliberately not narrowed to 404. Whatever went wrong, the fallback is
-    // the same and it is cheap; narrowing here would turn a transient failure
-    // into a missing diagnostic for no gain.
-  }
-
-  try {
-    const iterations = await fetchAllIterations(
-      client,
-      signal,
-      projectId,
-      run.id
-    );
-    return decisionSummaryFromIterations({ projectId, run, iterations });
-  } catch {
-    return undefined;
-  }
+  return readSharedEvalRunDecisionSummary(client, signal, projectId, run, {
+    limit: 200,
+  });
 }

@@ -1,7 +1,7 @@
 ---
-"@mcpjam/inspector": minor
-"@mcpjam/sdk": minor
-"@mcpjam/cli": minor
+"@mcpjam/inspector": major
+"@mcpjam/sdk": major
+"@mcpjam/cli": major
 ---
 
 One canonical eval run decision summary, shared by the API, Platform MCP and the CLI

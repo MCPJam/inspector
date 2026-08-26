@@ -12,6 +12,7 @@ import {
   GATE_WAIVER_REASON_NOTICE,
 } from "../gates.js";
 import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
+import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -5207,11 +5208,11 @@ export type GetEvalRunResult = {
   /**
    * The canonical decision summary, for a terminal run.
    *
-   * ABSENT while the run is still going, and absent on an API deployment that
-   * predates the endpoint. Never synthesized locally: a summary assembled from a
-   * different reading of the same run is the drift this contract removes, so
-   * "the server could not give me one" is reported as absence rather than
-   * papered over.
+   * ABSENT while the run is still going. Older API deployments are supported
+   * through the shared iteration fallback; it is absent only when both the
+   * canonical endpoint and the older iteration resource are unavailable.
+   * Fallback assembly uses the same contract assembler as the API, so it does
+   * not create a second verdict implementation.
    */
   decisionSummary?: PlatformEvalRunDecisionSummary;
 };
@@ -5239,22 +5240,19 @@ export const getEvalRunOperation: PlatformOperation<
     if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
       return { project: toSelectedProjectInfo(project), run };
     }
-    // Best-effort: an API deployment that predates the endpoint answers 404,
-    // and the run itself is the resource here. Returning the run without a
-    // summary is a smaller loss than failing a read that succeeded.
-    const decisionSummary = await client
-      .getEvalRunDecisionSummary(
-        {
-          projectId: project.id,
-          runId: input.runId,
-          ...(input.diagnosticsCursor
-            ? { cursor: input.diagnosticsCursor }
-            : {}),
-          limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
-        },
-        { signal },
-      )
-      .catch(() => undefined);
+    // Endpoint first, then the same shared assembler over the older iteration
+    // resource. MCP and CLI must not disagree merely because a deployment has
+    // not rolled out the additive endpoint yet.
+    const decisionSummary = await readEvalRunDecisionSummary(
+      client,
+      signal,
+      project.id,
+      run,
+      {
+        cursor: input.diagnosticsCursor,
+        limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
+      },
+    );
     return {
       project: toSelectedProjectInfo(project),
       run,

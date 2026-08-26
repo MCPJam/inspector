@@ -49,6 +49,10 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import type { PlatformApiClient } from "./platform/client.js";
+
+const DECISION_SUMMARY_FALLBACK_PAGE_LIMIT = 200;
+const DECISION_SUMMARY_FALLBACK_MAX_PAGES = 100;
 
 /**
  * The operator action for one failure category, and the words used when no
@@ -435,6 +439,78 @@ export function buildEvalRunDecisionSummary(input: {
     iterations: input.iterations,
     page: input.page,
   });
+}
+
+/**
+ * Read the canonical summary with one compatibility path for older API
+ * deployments.
+ *
+ * The endpoint is preferred because it can return a bounded diagnostic page.
+ * If it is absent, the fallback walks the same iteration resource and hands
+ * the rows to the same shared assembler. An opaque cursor cannot be replayed
+ * locally, so a cursored request returns no fallback rather than silently
+ * returning the wrong page.
+ */
+export async function readEvalRunDecisionSummary(
+  client: Pick<
+    PlatformApiClient,
+    "getEvalRunDecisionSummary" | "listEvalRunIterations"
+  >,
+  signal: AbortSignal | undefined,
+  projectId: string,
+  run: PlatformEvalRun,
+  options: { cursor?: string; limit?: number } = {}
+): Promise<EvalRunDecisionSummary | undefined> {
+  try {
+    return await client.getEvalRunDecisionSummary(
+      {
+        projectId,
+        runId: run.id,
+        ...(options.cursor ? { cursor: options.cursor } : {}),
+        limit: options.limit ?? DECISION_SUMMARY_FALLBACK_PAGE_LIMIT,
+      },
+      { signal }
+    );
+  } catch {
+    if (options.cursor !== undefined || signal?.aborted) return undefined;
+  }
+
+  try {
+    const items: PlatformEvalIteration[] = [];
+    let cursor: string | undefined;
+    let nextCursor: string | undefined;
+    for (let page = 0; page < DECISION_SUMMARY_FALLBACK_MAX_PAGES; page += 1) {
+      const result = await client.listEvalRunIterations(
+        {
+          projectId,
+          runId: run.id,
+          ...(cursor ? { cursor } : {}),
+          limit: DECISION_SUMMARY_FALLBACK_PAGE_LIMIT,
+        },
+        { signal }
+      );
+      items.push(...result.items);
+      if (!result.nextCursor) {
+        return buildEvalRunDecisionSummary({
+          projectId,
+          run,
+          iterations: items,
+          page: { complete: true },
+        });
+      }
+      nextCursor = result.nextCursor;
+      cursor = result.nextCursor;
+    }
+
+    return buildEvalRunDecisionSummary({
+      projectId,
+      run,
+      iterations: items,
+      page: { complete: false, ...(nextCursor ? { nextCursor } : {}) },
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 // ── the human renderer ───────────────────────────────────────────────────────

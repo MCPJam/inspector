@@ -114,6 +114,7 @@ export type StructuredRunVerdict =
   | "passed"
   | "failed"
   | "inconclusive"
+  | "notEstablished"
   | /**
      * A measured failure an authorized human overrode. Its own value rather
      * than `passed`, because the two are not the same claim and only one of
@@ -176,43 +177,59 @@ export function buildEvalRunReport(
   } = {}
 ): StructuredRunReport {
   const cases = [...(options.cases ?? [])];
+  // Legacy summaries count trials, so the existing one-testcase-per-case
+  // projection remains an honest presentation of that same population. A
+  // policy-v2 summary counts case variants instead; regrouping its trial rows
+  // would manufacture a second verdict (and can turn a threshold-passing
+  // variant with a failed repetition into a report failure).
 
   for (const input of inputs) {
-    const byCase = new Map<string, PlatformEvalIteration[]>();
-    for (const iteration of input.iterations) {
-      const key = evalCaseKey(iteration);
-      const existing = byCase.get(key);
-      if (existing) existing.push(iteration);
-      else byCase.set(key, [iteration]);
-    }
+    // Once the canonical summary is present, its decision and diagnostics are
+    // the source of truth. Re-grouping repetitions here would create a second
+    // verdict engine: a case variant can pass its threshold while one of its
+    // trial rows failed. The canonical object already carries those rows under
+    // `diagnostics`; keeping them out of StructuredCaseResult prevents JSON,
+    // JUnit and HTML from turning evidence into a contradictory failure.
+    const summaryAppliesToRun = options.decisionSummary?.runId === input.run.id;
+    const canProjectLegacyIterations =
+      !summaryAppliesToRun || options.decisionSummary?.verdictSource === "legacy";
+    if (canProjectLegacyIterations) {
+      const byCase = new Map<string, PlatformEvalIteration[]>();
+      for (const iteration of input.iterations) {
+        const key = evalCaseKey(iteration);
+        const existing = byCase.get(key);
+        if (existing) existing.push(iteration);
+        else byCase.set(key, [iteration]);
+      }
 
-    for (const [caseKey, iterations] of byCase) {
-      const first = iterations[0];
-      const passed = iterations.every(
-        (iteration) => iteration.result === "passed"
-      );
-      const durationMs = iterations.reduce(
-        (total, iteration) => total + (iteration.durationMs ?? 0),
-        0
-      );
-      cases.push({
-        id: `${input.run.id}:${caseKey}`,
-        title: first.title ?? first.testCaseId ?? first.id,
-        category: "eval",
-        passed,
-        ...(durationMs > 0 ? { durationMs } : {}),
-        ...(passed ? {} : { error: evalCaseFailure(iterations) }),
-        details: {
-          runId: input.run.id,
-          iterations: iterations.map((iteration) => ({
-            id: iteration.id,
-            iterationNumber: iteration.iterationNumber,
-            status: iteration.status,
-            result: iteration.result,
-            error: iteration.error,
-          })),
-        },
-      });
+      for (const [caseKey, iterations] of byCase) {
+        const first = iterations[0];
+        const passed = iterations.every(
+          (iteration) => iteration.result === "passed"
+        );
+        const durationMs = iterations.reduce(
+          (total, iteration) => total + (iteration.durationMs ?? 0),
+          0
+        );
+        cases.push({
+          id: `${input.run.id}:${caseKey}`,
+          title: first.title ?? first.testCaseId ?? first.id,
+          category: "eval",
+          passed,
+          ...(durationMs > 0 ? { durationMs } : {}),
+          ...(passed ? {} : { error: evalCaseFailure(iterations) }),
+          details: {
+            runId: input.run.id,
+            iterations: iterations.map((iteration) => ({
+              id: iteration.id,
+              iterationNumber: iteration.iterationNumber,
+              status: iteration.status,
+              result: iteration.result,
+              error: iteration.error,
+            })),
+          },
+        });
+      }
     }
 
     if (!input.iterationsComplete || input.iterationError) {
@@ -229,6 +246,7 @@ export function buildEvalRunReport(
     }
 
     if (
+      !summaryAppliesToRun &&
       input.run.result !== "passed" &&
       input.run.result !== "inconclusive" &&
       !cases.some(
@@ -245,7 +263,7 @@ export function buildEvalRunReport(
     }
   }
 
-  const passed =
+  const computedPassed =
     inputs.length > 0 &&
     inputs.every(
       (input) =>
@@ -255,15 +273,28 @@ export function buildEvalRunReport(
     ) &&
     cases.every((entry) => entry.passed);
 
+  const verdict: StructuredRunVerdict | undefined =
+    options.verdict ??
+    options.decisionSummary?.verdict ??
+    (inputs.length > 0
+      ? structuredEvalVerdict(inputs, computedPassed)
+      : undefined);
+  // passed is a compatibility boolean, while verdict carries the
+  // three-way (plus not-established) decision. When either canonical source
+  // is present, never let trial rows or diagnostic cases override it.
+  const passed =
+    options.verdict !== undefined
+      ? options.verdict === "passed" || options.verdict === "waived"
+      : options.decisionSummary !== undefined
+      ? options.decisionSummary.verdict === "passed" &&
+        cases.every((entry) => entry.passed)
+      : computedPassed;
+
   return {
     schemaVersion: 1,
     kind: "eval-run",
     passed,
-    ...(options.verdict !== undefined
-      ? { verdict: options.verdict }
-      : inputs.length > 0
-      ? { verdict: structuredEvalVerdict(inputs, passed) }
-      : {}),
+    ...(verdict !== undefined ? { verdict } : {}),
     summary: summarizeStructuredCases(cases),
     cases,
     durationMs: evalRunDurationMs(inputs.map((input) => input.run)),
@@ -376,10 +407,23 @@ export function renderStructuredRunJUnitXml(
   const effectiveCases =
     redactedReport.cases.length > 0
       ? redactedReport.cases
-      : [createSyntheticCase(redactedReport.kind, redactedReport.passed)];
+      : [
+          createSyntheticCase(
+            redactedReport.kind,
+            redactedReport.passed,
+            redactedReport.verdict
+          ),
+        ];
 
+  const neutralReport =
+    redactedReport.verdict === "inconclusive" ||
+    redactedReport.verdict === "notEstablished";
   const tests = effectiveCases.length;
-  const failures = effectiveCases.filter((entry) => !entry.passed).length;
+  const failures = effectiveCases.filter(
+    (entry) =>
+      !entry.passed &&
+      !(neutralReport && entry.classification === "informational")
+  ).length;
   // Declared on the suite as well as marked on the case: a parser that only
   // reads the attributes must still be able to see that something here was
   // overridden rather than run clean.
@@ -389,13 +433,21 @@ export function renderStructuredRunJUnitXml(
   // appears on every report ever rendered would be a wire change for every
   // existing consumer in exchange for saying nothing. A parser that finds it
   // absent reads zero, which is the fact.
-  const skippedCount = effectiveCases.filter((entry) => entry.waiver).length;
+  const skippedCount = effectiveCases.filter(
+    (entry) =>
+      entry.waiver ||
+      (neutralReport &&
+        !entry.passed &&
+        entry.classification === "informational")
+  ).length;
   const skipped = skippedCount > 0 ? ` skipped="${skippedCount}"` : "";
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const suiteName = escapeXml(redactedReport.kind);
 
   const casesXml = effectiveCases
-    .map((caseResult) => renderJUnitTestCase(redactedReport.kind, caseResult))
+    .map((caseResult) =>
+      renderJUnitTestCase(redactedReport.kind, caseResult, neutralReport)
+    )
     .join("\n");
 
   // The decision summary as `<system-out>` on the suite.
@@ -500,7 +552,11 @@ type StructuredRunHtmlStatus = "pass" | "fail" | "neutral" | "waived";
 function reportHtmlStatus(
   report: StructuredRunReport
 ): StructuredRunHtmlStatus {
-  if (report.verdict === "inconclusive") return "neutral";
+  if (
+    report.verdict === "inconclusive" ||
+    report.verdict === "notEstablished"
+  )
+    return "neutral";
   if (report.verdict === "passed") return "pass";
   if (report.verdict === "failed") return "fail";
   // Its own colour, not green and not red. Green would be the silent waiver
@@ -948,8 +1004,26 @@ function updateBucket(bucket: StructuredSummaryBucket, passed: boolean): void {
 
 function createSyntheticCase(
   kind: string,
-  passed: boolean
+  passed: boolean,
+  verdict?: StructuredRunVerdict
 ): StructuredCaseResult {
+  if (
+    !passed &&
+    (verdict === "inconclusive" || verdict === "notEstablished")
+  ) {
+    return {
+      id: `${kind}:not-measured`,
+      title: verdict === "notEstablished" ? "not-established" : "inconclusive",
+      category: "validation",
+      passed: false,
+      classification: "informational",
+      error:
+        verdict === "notEstablished"
+          ? "No verdict was established."
+          : "The run was inconclusive; no regression was established.",
+    };
+  }
+
   if (!passed) {
     return {
       id: `${kind}:failed`,
@@ -992,7 +1066,8 @@ function createSyntheticCase(
 
 function renderJUnitTestCase(
   kind: string,
-  caseResult: StructuredCaseResult
+  caseResult: StructuredCaseResult,
+  neutralReport: boolean
 ): string {
   const testcaseName = escapeXml(caseResult.title);
   const testcaseClassname = escapeXml(resolveJUnitClassname(kind, caseResult));
@@ -1016,6 +1091,20 @@ function renderJUnitTestCase(
 
   if (caseResult.passed) {
     return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}"/>`;
+  }
+
+  // Informational failures are diagnostic state, not product regressions.
+  // JUnit's skipped element is the only portable third state, and keeping it
+  // out of the suite's failures count makes the XML agree with an
+  // inconclusive/not-established canonical decision.
+  if (neutralReport && caseResult.classification === "informational") {
+    const skippedMessage = escapeXml(caseResult.error ?? "Not measured");
+    const skippedBody = caseResult.details
+      ? escapeXml(JSON.stringify(caseResult.details))
+      : "";
+    return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">
+      <skipped message="${skippedMessage}">${skippedBody}</skipped>
+    </testcase>`;
   }
 
   const failureMessage = escapeXml(caseResult.error ?? "Check failed");

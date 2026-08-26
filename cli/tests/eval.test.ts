@@ -1014,6 +1014,12 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          ...(result === "inconclusive"
+            ? {
+                verdictPolicyVersion: 2,
+                verdictSummary: INCONCLUSIVE_DECISION,
+              }
+            : {}),
           judges: {
             goalCompletion: {
               status: "completed",
@@ -5248,6 +5254,13 @@ test("eval gate exits 3 on an INCONCLUSIVE run, not 1", async () => {
     assert.equal(payload.gate.outcome, "incomplete");
     assert.equal(payload.gate.verdicts[0].status, "non_gateable");
     assert.match(payload.gate.verdicts[0].message, /inconclusive/);
+    // The non-verdict early return still carries the canonical explanation;
+    // this is the regression guard for the gate path that used to omit it.
+    assert.equal(payload.decisionSummary.verdict, "inconclusive");
+    assert.equal(
+      payload.decisionSummary.decision.reasons[0],
+      "evaluatorErrorRateAboveMaximum",
+    );
   } finally {
     await fixture.close();
   }

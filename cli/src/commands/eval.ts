@@ -1215,6 +1215,12 @@ async function runEvalGate(
             // Without --wait, a still-running run would otherwise be gated on
             // its PARTIAL summary — a confident verdict about an unfinished
             // run. Undecidable, not failed.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1227,12 +1233,19 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           if (Date.now() >= deadline) {
             // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
             // pass. Reported as incomplete so it can never read as a
             // regression.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1245,6 +1258,7 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -1276,6 +1290,19 @@ async function runEvalGate(
           isNonVerdictRunStatus(run.status) ||
           isNonVerdictRunResult(run.result)
         ) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run
+                );
           // Cancelled / timed out: the run has not told us the server
           // regressed, it has told us nothing. Same for a policy-2
           // `inconclusive` result, where the platform itself declined to
@@ -1311,13 +1338,11 @@ async function runEvalGate(
             run,
             iterations,
           });
-        } else if (globalOptions.format === "human" && !reporter) {
+        } else {
           // The most common gate — `--min-pass-rate-percent` — is decided off
-          // the run's own summary and needs no iteration walk, so without this
-          // the gate a human runs most often is also the one that never
-          // explains itself. One bounded read, only on the path where a person
-          // is reading the output; `--format json` and every reporter artifact
-          // are untouched, and this can never fail the gate.
+          // the run's own summary and needs no iteration walk. Read the
+          // canonical object for every output mode so JSON and reporter
+          // artifacts cannot silently omit it.
           decisionSummary = await readEvalRunDecisionSummary(
             client,
             signal,
@@ -1500,7 +1525,16 @@ async function runEvalGate(
   if (reporter && structured) {
     writeReporterResult(reporter, structured);
   } else {
-    writeResult({ gate: report, exitCode }, globalOptions.format);
+    writeResult(
+      globalOptions.format === "json"
+        ? {
+            gate: report,
+            exitCode,
+            ...(decisionSummary ? { decisionSummary } : {}),
+          }
+        : { gate: report, exitCode },
+      globalOptions.format
+    );
   }
   if (globalOptions.format === "human" && !reporter) {
     process.stderr.write(`${formatGateReport(report)}\n`);
@@ -3013,6 +3047,7 @@ export function registerEvalCommands(program: Command): void {
             // would label a report about N runs with the decision of one.
             const soloSummary =
               globalOptions.format === "human" &&
+              result.targets.length === 1 &&
               runs.length === 1 &&
               TERMINAL_RUN_STATUSES.has(runs[0]!.status)
                 ? await readEvalRunDecisionSummary(
@@ -3077,6 +3112,7 @@ export function registerEvalCommands(program: Command): void {
           // walk failed — a summary built from an empty iteration list would
           // report zero failures for a run nobody managed to read.
           const solo =
+            result.targets.length === 1 &&
             runs.length === 1 && reportInputs.length === 1
               ? reportInputs[0]!
               : undefined;
@@ -3263,19 +3299,15 @@ export function registerEvalCommands(program: Command): void {
           // clean pass is skipped: there is nothing to diagnose, and the extra
           // read would buy a block of "0 non-passing" noise.
           //
-          // `readEvalRunDecisionSummary` never throws — an optional diagnostic
-          // must not turn a successful status request into a failure.
+          // `getEvalRunOperation` already uses the endpoint-first, shared
+          // fallback reader. Reuse that exact object instead of doing a second
+          // network read (and, on old deployments, a second iteration walk).
           if (
             globalOptions.format === "human" &&
             TERMINAL_RUN_STATUSES.has(result.run.status) &&
             result.run.result !== "passed"
           ) {
-            decisionSummary = await readEvalRunDecisionSummary(
-              context.client,
-              context.signal,
-              result.project.id,
-              result.run
-            );
+            decisionSummary = result.decisionSummary;
           }
           return result;
         },
@@ -3284,7 +3316,19 @@ export function registerEvalCommands(program: Command): void {
           quiet: globalOptions.quiet,
         }
       );
-      writeResult(result, globalOptions.format);
+      // The wire-shaped result is useful in JSON, but human output must not
+      // leak raw decision enums (for example `argumentMismatch`) before the
+      // label-aware summary below. The operation still returns the canonical
+      // object verbatim for MCP/JSON consumers; this only removes the duplicate
+      // machine payload from the human terminal.
+      const resultForOutput =
+        globalOptions.format === "human"
+          ? (() => {
+              const { decisionSummary: _decisionSummary, ...humanResult } = result;
+              return humanResult;
+            })()
+          : result;
+      writeResult(resultForOutput, globalOptions.format);
       writeJudgeSummary(globalOptions.format, result.run.judges);
       // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
       // it is the one thing a reader acts on after reading the rest, and a

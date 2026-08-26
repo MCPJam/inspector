@@ -1562,10 +1562,10 @@ export class PlatformApiClient {
    * diagnostics.
    *
    * ADDITIVE, and newer than most deployments: an API that predates it answers
-   * `404`. A caller that must work against both should fall back to
-   * `assembleEvalRunDecisionSummary` over `getEvalRun` + `listEvalRunIterations`
-   * rather than to a summary of its own — the fallback produces the SAME object
-   * from the same inputs, and a hand-rolled one would not.
+   * `404`. A caller that must work against both should use the exported
+   * `readEvalRunDecisionSummary` helper, which falls back over
+   * `listEvalRunIterations` and the same contract assembler rather than
+   * creating a summary of its own.
    *
    * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
    * `listEvalRunIterations` issues. The response says whether the page it
