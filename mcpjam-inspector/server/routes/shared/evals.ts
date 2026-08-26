@@ -408,6 +408,37 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   skillsOverride: z.literal("exclude").optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
+   *
+   * Claim-only in both directions: the caller supplies an id and a reason, and
+   * the backend derives the approver from the authenticated launcher, stamps
+   * the time, and FREEZES the resulting decision into the run's own case
+   * snapshot. A caller-supplied approver would file one person's approval
+   * under another's name and a caller-supplied timestamp could be backdated
+   * past the edit that invalidated the claim, so neither is representable
+   * here.
+   *
+   * Nothing about this persists on the case. The next run of the same
+   * approximation needs a new approval — that is the difference between
+   * approving a RUN and accepting a CASE, and the whole reason there is no
+   * second concept.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently, and a silently-stripped approval
+   * would be reported to the caller as a backend policy refusal.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict()
+    )
+    .min(1)
+    .optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -1896,6 +1927,7 @@ export async function prepareEvalRun(
     skillsOverride,
     ephemeralEnvironment,
     toolPolicy,
+    importApprovals,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2092,6 +2124,12 @@ export async function prepareEvalRun(
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+    // Named explicitly, like every other field in this call: `startSuiteRun-
+    // WithRecorder` reconstructs the mutation args from its own parameters,
+    // so a field nobody destructures here is a field the backend never sees —
+    // and an approval that never arrives is reported to the caller as the
+    // backend refusing a run they did approve.
+    ...(importApprovals?.length ? { importApprovals } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
