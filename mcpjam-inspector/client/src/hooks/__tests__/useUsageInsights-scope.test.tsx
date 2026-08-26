@@ -156,6 +156,31 @@ describe("useUsageInsights scope routing", () => {
       rebuildFns.get("chatSessions:rebuildScenarioInsights"),
     ).toHaveBeenCalledWith({ scenarioId: "cb-1", force: true });
   });
+
+  // The knobs are the whole point of ClusterTuningControl: drop the tuning
+  // branch of the pick and a tuned rebuild silently falls back to defaults.
+  it("rebuild() forwards the tuning knobs the caller asked for", async () => {
+    const rebuildFns = new Map<string, ReturnType<typeof vi.fn>>();
+    mockUseMutation.mockImplementation((name: string) => {
+      const fn = rebuildFns.get(name) ?? vi.fn().mockResolvedValue({});
+      rebuildFns.set(name, fn);
+      return fn;
+    });
+
+    const scenario = renderHook(() =>
+      useUsageInsights({ sourceId: "cb-1", filters: EMPTY_USAGE_FILTER }),
+    );
+    await scenario.result.current.rebuild({
+      tuning: { maxClusters: 12, minSeparation: 0.4, linkThreshold: 0.25 },
+    });
+
+    expect(
+      rebuildFns.get("chatSessions:rebuildScenarioInsights"),
+    ).toHaveBeenCalledWith({
+      scenarioId: "cb-1",
+      tuning: { maxClusters: 12, minSeparation: 0.4, linkThreshold: 0.25 },
+    });
+  });
 });
 
 describe("useGoalOutcomeDrilldown scope routing", () => {
