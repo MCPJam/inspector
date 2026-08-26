@@ -178,6 +178,61 @@ describe("discoverOpenAIImportedSkills", () => {
     });
   });
 
+  it("parses frontmatter with real YAML, so a conforming server is not flagged", async () => {
+    // REGRESSION: this ran through `parseYamlLite`, the deliberately-small
+    // subset parser, while `checkFrontmatterDrift` compares the union of keys
+    // on canonical JSON. Two divergences turned CONFORMING servers into
+    // FRONTMATTER_AGREES violations: a nested map became `""`, and a block
+    // scalar lost the trailing newline YAML preserves.
+    const markdown = [
+      "---",
+      "name: forecast",
+      "description: |",
+      "  Look up a forecast",
+      "  for any city.",
+      "metadata:",
+      "  author: acme",
+      "---",
+      "",
+      "Body.",
+    ].join("\n");
+    const skillUri = "skill://forecast/SKILL.md";
+    const declared = {
+      name: "forecast",
+      description: "Look up a forecast\nfor any city.\n",
+      metadata: { author: "acme" },
+    };
+    const entry = {
+      uri: skillUri,
+      frontmatter: declared,
+      resources: [
+        {
+          uri: skillUri,
+          digest: `sha256:${await sha256HexOfText(markdown)}`,
+          size: new TextEncoder().encode(markdown).length,
+        },
+      ],
+    };
+    const { url } = await start((method, params) => {
+      if (method === "skills/list") return { skills: [entry] };
+      if (method === "skills/get") return { skill: entry };
+      if (method === "resources/read" && params.uri === skillUri) {
+        return { contents: [{ uri: skillUri, text: markdown }] };
+      }
+      return {};
+    });
+
+    const evidence = await discoverOpenAIImportedSkills({
+      enteredUrl: url,
+      fetchFn: fetch,
+    });
+    const [skill] = evidence.skills;
+    // Structurally equal to what the server declared — which is exactly what
+    // the drift check compares, so it now agrees instead of reporting a
+    // violation the server did not commit.
+    expect(skill.frontmatter).toEqual(declared);
+  });
+
   it("records a digest that disagrees with the listing rather than trusting it", async () => {
     // The whole point of fetching: the declared digest is a claim, and this is
     // where it stops being taken at face value.

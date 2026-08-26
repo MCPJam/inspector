@@ -36,8 +36,10 @@ import {
   type DirectoryRedirectHop,
   type PrmDiscoveryResult,
 } from "../directory-readiness/discovery.js";
-import { sha256HexOfBytes } from "../mcp-client-manager/skills-integrity.js";
-import { parseYamlLite, splitFrontmatter } from "../plugin-bundle/skill.js";
+import {
+  sha256HexOfBytes,
+  splitSkillMarkdown,
+} from "../mcp-client-manager/skills-integrity.js";
 import {
   OPENAI_DOMAIN_VERIFICATION_PATH,
   OPENAI_MCP_SKILL_LIMITS,
@@ -530,12 +532,18 @@ function recordFetchedMarkdown(
   const markdown = parseFetchedMarkdown(skill, content);
   return sha256HexOfBytes(content.bytes).then((digest) => {
     skill.observedDigest = digest;
-    const split = splitFrontmatter(markdown);
-    if (split) {
-      const parsed = parseYamlLite(split.frontmatter);
-      // `tooDeep` is an ARRAY of paths, so an empty array is the successful parse.
-      if (parsed.tooDeep.length === 0) skill.frontmatter = parsed.data;
-    }
+    // The REAL YAML parser, not `parseYamlLite`. This value is compared against
+    // the server's advertised frontmatter by `checkFrontmatterDrift`, which
+    // diffs the union of keys on canonical JSON — so any place the lite
+    // subset parser disagrees with YAML becomes a reported violation against a
+    // CONFORMING server. Both divergences are easy to hit: a nested map
+    // (`metadata:\n  author: acme`) becomes `""`, and a `description: |` block
+    // loses the trailing newline YAML preserves.
+    //
+    // `splitSkillMarkdown` is the same function the host re-parses with, which
+    // is the only parser this comparison can be correct against.
+    const parsed = splitSkillMarkdown(markdown).frontmatter;
+    if (parsed) skill.frontmatter = parsed;
   });
 }
 
@@ -559,7 +567,11 @@ async function fetchCurrentSepSkillBody(
     skill.declaredPageCount = pageResources.length;
   }
 
-  const markdownCall = await callJsonRpc(options, id + 1, "resources/read", {
+  // A SEPARATE id space, not `id + 1`. Callers allocate `200 + index` for the
+  // `skills/get`, so `id + 1` made skill N's read collide with skill N+1's
+  // get — breaking `callJsonRpc`'s stated invariant that ids increment across
+  // a run, and tripping any server that rejects a reused request id.
+  const markdownCall = await callJsonRpc(options, id + 1000, "resources/read", {
     uri,
   });
   if (!markdownCall.document) {

@@ -44,7 +44,11 @@ export interface ServerSkillSummary {
    * so the distinction exists for the reader of a refusal, not for layout.
    */
   unloadable?: {
-    reason: "no_resources" | "dynamic_resources";
+    reason:
+      | "no_resources"
+      | "dynamic_resources"
+      | "too_many_resources"
+      | "too_large";
     message: string;
   };
 }

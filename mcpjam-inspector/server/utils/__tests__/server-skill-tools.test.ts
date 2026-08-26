@@ -53,6 +53,8 @@ async function makeManager(
     tamper?: boolean;
     /** Omit `resources` from the entry entirely. */
     noResources?: boolean;
+    /** Serve a SKILL.md body far larger than a model turn should carry. */
+    hugeBody?: boolean;
     /** Also answer reads for this unlisted URI. */
     serveUnlisted?: string;
     /** Answer `skills/get` for this URI with an entry carrying a DIFFERENT uri. */
@@ -69,8 +71,11 @@ async function makeManager(
     >;
   } = {}
 ) {
+  const bodyMarkdown = options.hugeBody
+    ? `${MARKDOWN}${"x".repeat(200 * 1024)}`
+    : MARKDOWN;
   const markdownDigest = `sha256:${await sha256(
-    options.tamper ? `${MARKDOWN}tampered` : MARKDOWN
+    options.tamper ? `${bodyMarkdown}tampered` : bodyMarkdown
   )}`;
   const fileDigest = `sha256:${await sha256(FILE_TEXT)}`;
   const entry = {
@@ -170,7 +175,7 @@ async function makeManager(
     readResource: vi.fn(async (_serverId: string, params: { uri: string }) => {
       calls.push(`resources/read:${params.uri}`);
       if (params.uri === SKILL_URI) {
-        return { contents: [{ uri: params.uri, text: MARKDOWN }] };
+        return { contents: [{ uri: params.uri, text: bodyMarkdown }] };
       }
       if (params.uri === FILE_URI) {
         return { contents: [{ uri: params.uri, text: FILE_TEXT }] };
@@ -713,6 +718,34 @@ describe("withServerSkills — file reads", () => {
       )
     );
     expect(read).toContain("print('refund')");
+  });
+
+  it("refuses to inject a verified skill that is too large for a turn", async () => {
+    // The verification cap had to rise to the SEP's 16 MiB per-skill budget so
+    // a conforming skill can be verified at all. That is a DIFFERENT limit from
+    // how many bytes belong in a prompt: without a separate cap, a 16 MiB
+    // SKILL.md would be digest-verified and then pasted wholesale into a chat
+    // turn. Refused, not truncated — a clipped skill is instructions that end
+    // mid-sentence, and the model cannot tell that from a skill that said less.
+    const manager = await makeManager({ hugeBody: true });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
+    const out = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(out).toContain("too_large_for_prompt");
+    // The refusal states both numbers in bytes, and does NOT carry the body.
+    expect(out).toContain("204828");
+    expect(out).toContain("131072");
+    expect(out).not.toContain("xxxxxxxxxx");
   });
 
   it("refuses an UNLISTED file even when the server would serve it", async () => {

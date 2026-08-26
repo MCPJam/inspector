@@ -312,7 +312,13 @@ export function checkManifestLimits(
     }
     total += resource.size;
   }
-  if (complete && total > MAX_SKILL_TOTAL_BYTES) {
+  // The partial sum is a FLOOR, so it can still trip the limit. Gating this on
+  // `complete` made the budget inert for exactly the servers that are the norm
+  // today — the draft's `size` is new, and a server omitting it on a single one
+  // of 512 entries would have disabled the whole-skill budget. A total that is
+  // already over the limit is over it whether or not more entries were
+  // measured.
+  if (total > MAX_SKILL_TOTAL_BYTES) {
     return {
       ok: false,
       reason: "too_large",

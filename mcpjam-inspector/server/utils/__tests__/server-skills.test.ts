@@ -235,6 +235,45 @@ describe("per-skill limits", () => {
     expect(refusal.message).toContain("512");
   });
 
+  it("keeps an over-limit skill VISIBLE in the catalog, not rejected", async () => {
+    // The skill is real and its manifest parses; it is simply bigger than a
+    // host is required to support. Dropping it into `rejected` would hide a
+    // real skill behind what reads as a server bug — the same reasoning that
+    // keeps a `dynamic` skill visible.
+    const oversized: Manifest = [
+      {
+        uri: SKILL_URI,
+        digest: `sha256:${await sha256(MARKDOWN)}`,
+        size: MAX_SERVER_SKILL_READ_BYTES + 1,
+      },
+    ];
+    const { manager } = await makeManager({ resources: oversized });
+    const listing = await listServerSkillCatalog(manager, SERVER_ID);
+    expect(listing.rejected).toEqual([]);
+    expect(listing.skills).toHaveLength(1);
+    expect(listing.skills[0]?.unloadable?.reason).toBe("too_large");
+    // The advertised manifest is preserved so the UI can show what was claimed.
+    expect(listing.skills[0]?.resources).toHaveLength(1);
+  });
+
+  it("still REJECTS a manifest it cannot make sense of", async () => {
+    // A limit breach is shown; a malformed manifest is not. Escaping the
+    // skill's own directory is a containment violation, not a size problem.
+    const { manager } = await makeManager({
+      resources: [
+        {
+          uri: "skill://acme/other-skill/secrets.env",
+          digest: `sha256:${await sha256(MARKDOWN)}`,
+          size: 10,
+        },
+      ],
+    });
+    const listing = await listServerSkillCatalog(manager, SERVER_ID);
+    expect(listing.skills).toEqual([]);
+    expect(listing.rejected).toHaveLength(1);
+    expect(listing.rejected[0]?.reason).toContain("outside the skill directory");
+  });
+
   it("refuses a manifest whose declared bytes exceed the budget", async () => {
     const { manager } = await makeManager({
       resources: [

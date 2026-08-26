@@ -108,8 +108,12 @@ const ALL: OpenAICheckDefinition[] = [
 
 function comparableDigest(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  // `lower` in BOTH branches. Returning the original in the fallback meant a
+  // server declaring a bare uppercase hex digest never matched the
+  // always-lowercase `observedDigest`, and was reported as a mismatch for a
+  // difference in case alone.
   const lower = value.toLowerCase();
-  return lower.startsWith("sha256:") ? lower.slice("sha256:".length) : value;
+  return lower.startsWith("sha256:") ? lower.slice("sha256:".length) : lower;
 }
 
 export interface OpenAISkillsCheckInput {

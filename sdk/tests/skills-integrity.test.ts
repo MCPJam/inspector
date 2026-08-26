@@ -591,10 +591,24 @@ describe("checkManifestLimits", () => {
     });
   });
 
-  it("does not refuse an over-budget manifest it cannot fully measure", () => {
-    expect(
-      checkManifestLimits([ref(0, MAX_SKILL_TOTAL_BYTES), ref(1)]).ok
-    ).toBe(true);
+  it("still refuses when the MEASURED bytes alone exceed the budget", () => {
+    // A partial sum is a floor. Requiring every entry to carry `size` before
+    // enforcing the total made the budget inert for the servers that are the
+    // norm today, and let one unmeasured entry among 512 switch it off.
+    const check = checkManifestLimits([
+      ref(0, MAX_SKILL_TOTAL_BYTES + 1),
+      ref(1),
+    ]);
+    expect(check.ok).toBe(false);
+    expect(check.ok === false && check.reason).toBe("too_large");
+  });
+
+  it("accepts a partial sum that is within the budget", () => {
+    // Under the limit, an unmeasured entry proves nothing either way, so the
+    // skill loads and the reported budget stays `undefined`.
+    const check = checkManifestLimits([ref(0, MAX_SKILL_TOTAL_BYTES), ref(1)]);
+    expect(check.ok).toBe(true);
+    expect(check.ok === true && check.totalBytes).toBeUndefined();
   });
 });
 

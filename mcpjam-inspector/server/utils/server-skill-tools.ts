@@ -58,7 +58,11 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
-import { sha256HexOfText, canonicalSkillJson } from "@mcpjam/sdk";
+import {
+  sha256HexOfText,
+  canonicalSkillJson,
+  enumeratedResources,
+} from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
@@ -138,6 +142,46 @@ export async function manifestApprovalHash(
  * two copies of the text would drift the moment one is edited.
  */
 export const serverSkillBanner = buildServerSkillBanner;
+
+/**
+ * The cap on skill content this wrapper will put into a MODEL TURN.
+ *
+ * Distinct from the verification cap in `server-skills.ts`, and deliberately
+ * so. That one had to rise to the SEP's 16 MiB per-skill budget, because a host
+ * MUST be able to verify a conforming skill of that size. This one governs
+ * something else entirely: how many bytes are pasted into a prompt.
+ *
+ * Without it, raising the verification cap silently raised the prompt cap with
+ * it — a server serving a 16 MiB SKILL.md would have had it digest-verified and
+ * then injected wholesale into a chat turn (roughly four million tokens). 128
+ * KiB is the limit that applied before the re-sync, so this restores the
+ * previous prompt-facing behaviour rather than inventing a new one.
+ *
+ * REFUSED, never truncated. A silently clipped skill is a skill whose
+ * instructions end mid-sentence, and the model cannot tell that from a skill
+ * that simply said less.
+ */
+export const MAX_SERVER_SKILL_PROMPT_BYTES = 128 * 1024;
+
+/**
+ * Returns the text, or a refusal naming both numbers when it is too large for
+ * a turn.
+ */
+function withinPromptBudget(
+  text: string,
+  what: string
+): { ok: true; text: string } | { ok: false; error: string } {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= MAX_SERVER_SKILL_PROMPT_BYTES) return { ok: true, text };
+  return {
+    ok: false,
+    error:
+      `Error (too_large_for_prompt): ${what} is ${bytes} bytes, over the ` +
+      `${MAX_SERVER_SKILL_PROMPT_BYTES}-byte limit for content placed in a ` +
+      `model turn. It verified correctly; MCPJam declines to inject it rather ` +
+      `than truncate it into instructions that end mid-sentence.`,
+  };
+}
 
 /** Renders a refusal as a tool result the model (and the user) can act on. */
 function refusalText(error: unknown): string {
@@ -315,7 +359,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
         resources: target.entry.resources,
       };
       return {
-        hash: await manifestApprovalHash(entry.resources ?? []),
+        hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
         entry,
       };
     }
@@ -328,7 +372,13 @@ export function withServerSkills<T extends Record<string, unknown>>(
         target.uri
       );
       return {
-        hash: await manifestApprovalHash(entry.resources ?? []),
+        // `enumeratedResources`, NOT `entry.resources ?? []`. This is the one
+        // call site holding a RAW `SkillEntry`, whose `resources` may be the
+        // string `"dynamic"` — which `??` does not filter, so it would spread
+        // into seven characters and hash a constant, meaningless digest set for
+        // every dynamic skill. The load is refused downstream either way, but
+        // an approval must never bind to a hash that means nothing.
+        hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
         entry,
       };
     } catch {
@@ -390,8 +440,9 @@ export function withServerSkills<T extends Record<string, unknown>>(
     input: LoadSkillInput,
     target: Target
   ): Promise<{ binding?: ManifestBinding; error?: string }> {
-    // An unloadable skill is refused by `execute` a few lines later with the
-    // specific `no_resources` reason, which is more useful than this one.
+    // An unloadable skill is refused by `execute` a few lines later with its
+    // specific reason (`no_resources` or `dynamic_resources`), which is more
+    // useful than this one.
     if (target.kind === "server-ref" && target.entry.unloadable) {
       return {};
     }
@@ -539,7 +590,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // rejects the unlisted URI before a resource read, but returning that
     // integrity error is more useful than pretending no approval was bound.
     approvedFileManifests.set(fileApprovalKey(input), {
-      hash: await manifestApprovalHash(entry.resources ?? []),
+      hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
       entry,
     });
     return true;
@@ -661,16 +712,26 @@ export function withServerSkills<T extends Record<string, unknown>>(
 
         if (target.kind === "server-ref") {
           if (target.entry.unloadable) {
-            return `Error (no_resources): ${target.entry.unloadable.message}`;
+            // The REASON, not a hardcoded `no_resources`. A server declaring
+            // `"resources": "dynamic"` otherwise surfaced as
+            // `Error (no_resources): This skill generates its content per
+            // request…` — the exact collapse the separate kind exists to
+            // prevent.
+            return `Error (${target.entry.unloadable.reason}): ${target.entry.unloadable.message}`;
           }
           const loaded = await loadEntry(target.entry);
           if (typeof loaded === "string") return loaded;
+          const budgeted = withinPromptBudget(
+            loaded.content,
+            `Skill "${target.entry.ref}"`
+          );
+          if (!budgeted.ok) return budgeted.error;
           return (
             serverSkillBanner({
               ref: target.entry.ref,
               serverLabel: target.entry.serverLabel,
               skillUri: target.entry.skillUri,
-            }) + loaded.content
+            }) + budgeted.text
           );
         }
 
@@ -683,12 +744,17 @@ export function withServerSkills<T extends Record<string, unknown>>(
             uri: target.uri,
             entry: approval.binding?.entry,
           });
+          const budgeted = withinPromptBudget(
+            loaded.content,
+            `Skill "${loaded.skillUri}"`
+          );
+          if (!budgeted.ok) return budgeted.error;
           return (
             serverSkillBanner({
               ref: `${provider?.serverSlug ?? target.serverId}/${loaded.name}`,
               serverLabel: provider?.serverLabel ?? target.serverId,
               skillUri: loaded.skillUri,
-            }) + loaded.content
+            }) + budgeted.text
           );
         } catch (error) {
           return refusalText(error);
@@ -766,7 +832,9 @@ export function withServerSkills<T extends Record<string, unknown>>(
             entry: approvedEntry,
             resourceUri,
           });
-          return `# ${file.uri}\n\n${file.text}`;
+          const budgeted = withinPromptBudget(file.text, `"${file.uri}"`);
+          if (!budgeted.ok) return budgeted.error;
+          return `# ${file.uri}\n\n${budgeted.text}`;
         } catch (error) {
           return refusalText(error);
         }

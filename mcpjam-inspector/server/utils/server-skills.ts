@@ -76,7 +76,11 @@ export interface ServerSkillSummary {
   resources: Array<{ uri: string; digest: string; size?: number }>;
   /** Present ⇒ live-only: discoverable and refused for loading. */
   unloadable?: {
-    reason: "no_resources" | "dynamic_resources";
+    reason:
+      | "no_resources"
+      | "dynamic_resources"
+      | "too_many_resources"
+      | "too_large";
     message: string;
   };
 }
@@ -388,6 +392,29 @@ function toSummary(
     dynamic ? undefined : enumeratedResources(entry)
   );
   if (!manifest.ok) {
+    // A LIMIT breach is not a malformed manifest. The skill is real, its
+    // manifest parses, and a user should see it in the catalog for the same
+    // reason a `dynamic` one is shown — dropping it into `rejected` hides a
+    // real skill behind what reads as a server bug. Only a manifest we cannot
+    // make sense of is rejected outright.
+    if (manifest.kind !== undefined) {
+      const advertised = enumeratedResources(entry) ?? [];
+      return {
+        ok: true,
+        skill: {
+          serverId,
+          skillUri: entry.uri,
+          name,
+          description,
+          frontmatter,
+          resources: advertised,
+          unloadable: {
+            reason: manifest.kind,
+            message: `This skill exceeds what a host is required to support: its ${manifest.reason}. MCPJam declines to load it.`,
+          },
+        },
+      };
+    }
     return { ok: false, reason: manifest.reason };
   }
   const resources = manifest.resources;
