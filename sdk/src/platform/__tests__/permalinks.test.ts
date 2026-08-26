@@ -394,3 +394,44 @@ describe("the adapter envelope", () => {
     expect(text.startsWith("Open server: ")).toBe(true);
   });
 });
+
+describe("the receipt covers a result that stops carrying its project", () => {
+  it("still mints a scoped link when `result.project` is gone", async () => {
+    // Not hypothetical: the approval path executes an operation and derives
+    // the link from whatever it returned. A policy that read `result.project`
+    // and found nothing used to produce no link at all, silently, on the one
+    // path where a human is waiting to be told where their approved action
+    // went. The receipt is what the operation itself reported.
+    const operation = {
+      name: "run_eval_suite",
+      permalink: {
+        kind: "derive" as const,
+        resources: (result: { project?: { id: string }; runId: string }) => [
+          {
+            type: "eval_run" as const,
+            id: result.runId,
+            parent: { type: "eval_suite" as const, id: "s_1" },
+            projectId: result.project?.id,
+          },
+        ],
+      },
+      async execute(
+        _input: Record<string, never>,
+        context: { onScopeResolved?: (scope: { projectId: string }) => void },
+      ) {
+        context.onScopeResolved?.({ projectId: PROJECT });
+        return { runId: "run_1" };
+      },
+    };
+
+    const { permalinks } = await runOperationWithPermalinks(
+      operation,
+      {},
+      {},
+      { appOrigin: ORIGIN },
+    );
+    expect(permalinks[0]!.url).toBe(
+      `${ORIGIN}/evals/suite/s_1/runs/run_1?project=${PROJECT}`,
+    );
+  });
+});

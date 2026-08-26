@@ -473,6 +473,12 @@ export function buildAppPermalink(
  * Ref first: a cross-project listing's rows each name their own project, and
  * the receipt (one project, whichever the operation resolved) would relabel
  * every row with it.
+ *
+ * The receipt is the fallback rather than the source precisely because a
+ * policy reads its project off the RESULT, and a result shape can change
+ * under it. When it does — a field renamed, an older backend omitting the
+ * echo — the receipt still knows which project the operation resolved, so the
+ * link degrades to correct instead of to absent.
  */
 export function permalinkProjectId(
   resource: PlatformResourceRef,

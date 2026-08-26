@@ -609,7 +609,7 @@ export const listProjectServersOperation: PlatformOperation<
     result.items.map((server) => ({
       type: "project_server" as const,
       id: server.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
       label: `Open ${server.name}`,
     })),
   ),
@@ -644,7 +644,7 @@ export const showServersOperation: PlatformOperation<
     result.servers.map((server) => ({
       type: "project_server" as const,
       id: server.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
       label: `Open ${server.name}`,
     })),
   ),
@@ -792,7 +792,7 @@ function serverRef(result: {
   return {
     type: "project_server",
     id: result.server.id,
-    projectId: result.project.id,
+    projectId: result.project?.id,
     label: `Open ${result.server.name}`,
   };
 }
@@ -1017,7 +1017,7 @@ export const diagnoseServerOperation: PlatformOperation<
     {
       type: "project_server",
       id: result.server.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: serverScopedInput,
@@ -1815,7 +1815,7 @@ export const getReadinessRunOperation: PlatformOperation<
     {
       type: "readiness_run",
       id: result.run.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: readinessRunScopedInput,
@@ -1878,7 +1878,7 @@ export const listReadinessRunsOperation: PlatformOperation<
     result.runs.map((run) => ({
       type: "readiness_run" as const,
       id: run.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     })),
   ),
   inputSchema: listReadinessRunsInput,
@@ -1998,7 +1998,7 @@ export const getReadinessReportOperation: PlatformOperation<
     {
       type: "readiness_run",
       id: result.runId,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: readinessRunScopedInput,
@@ -2183,7 +2183,7 @@ export const getConformanceRunOperation: PlatformOperation<
     {
       type: "conformance_run",
       id: result.run.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: conformanceRunScopedInput,
@@ -2242,7 +2242,7 @@ export const listConformanceRunsOperation: PlatformOperation<
     result.runs.map((run) => ({
       type: "conformance_run" as const,
       id: run.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     })),
   ),
   inputSchema: listConformanceRunsInput,
@@ -2283,7 +2283,7 @@ export const getConformanceReportOperation: PlatformOperation<
     {
       type: "conformance_run",
       id: result.runId,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: conformanceRunScopedInput,
@@ -3055,7 +3055,7 @@ export const listEvalSuitesOperation: PlatformOperation<
     result.items.map((suite) => ({
       type: "eval_suite" as const,
       id: suite.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
       ...(suite.name ? { label: `Open ${suite.name}` } : {}),
     })),
   ),
@@ -3113,7 +3113,7 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((run) =>
-      evalRunRef(run.id, result.suite.id, result.project.id),
+      evalRunRef(run.id, result.suite.id, result.project?.id),
     ),
   ),
   inputSchema: evalSuiteScopedInput,
@@ -3473,17 +3473,17 @@ export const runEvalSuiteOperation: PlatformOperation<
           type: "eval_run_group",
           id: result.runGroupId,
           parent: { type: "eval_suite", id: result.suite.id },
-          projectId: result.project.id,
+          projectId: result.project?.id,
         },
       ];
     }
     return result.runId
-      ? [evalRunRef(result.runId, result.suite.id, result.project.id)]
+      ? [evalRunRef(result.runId, result.suite.id, result.project?.id)]
       : [
           {
             type: "eval_suite",
             id: result.suite.id,
-            projectId: result.project.id,
+            projectId: result.project?.id,
           },
         ];
   }),
@@ -4004,7 +4004,7 @@ export const runEvalCaseOperation: PlatformOperation<
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => [
-    evalRunRef(result.runId, result.suite.id, result.project.id),
+    evalRunRef(result.runId, result.suite.id, result.project?.id),
   ]),
   inputSchema: runEvalCaseInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -4327,7 +4327,7 @@ export const createEvalSuiteOperation: PlatformOperation<
     {
       type: "eval_suite",
       id: result.suite.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: createEvalSuiteInput,
@@ -5584,7 +5584,7 @@ export const getEvalRunOperation: PlatformOperation<
     "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
-    evalRunRef(result.run.id, result.run.suiteId, result.project.id),
+    evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
   ]),
   inputSchema: evalRunScopedInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -6306,7 +6306,7 @@ export const listScenariosOperation: PlatformOperation<
     result.items.map((scenario) => ({
       type: "user_testing_scenario" as const,
       id: scenario.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
       label: `Open ${scenario.name}`,
     })),
   ),
@@ -6358,7 +6358,7 @@ export const getScenarioOperation: PlatformOperation<
     {
       type: "user_testing_scenario",
       id: result.scenario.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: scenarioScopedInput,
@@ -6956,7 +6956,7 @@ export const listHostsOperation: PlatformOperation<
     result.items.map((host) => ({
       type: "host" as const,
       id: host.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
       label: `Open ${host.name}`,
     })),
   ),
@@ -9159,7 +9159,7 @@ export const publishScenarioOperation: PlatformOperation<
     {
       type: "user_testing_scenario",
       id: result.scenario.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: publishScenarioInput,
@@ -10152,7 +10152,7 @@ export const getJourneyRunScorecardOperation: PlatformOperation<
     {
       type: "journey_run",
       id: result.scorecard.runId,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: journeyRunSelectorInput,
@@ -10304,7 +10304,7 @@ export const getWaveInsightsOperation: PlatformOperation<
     {
       type: "journey_run",
       id: result.insights.waveId,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: waveSelectorInput,
@@ -10477,7 +10477,7 @@ export const getUserTestingScenarioOperation: PlatformOperation<
     {
       type: "user_testing_scenario",
       id: result.scenario.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: userTestingScenarioSelectorInput,
@@ -10527,7 +10527,7 @@ export const updateUserTestingScenarioOperation: PlatformOperation<
     {
       type: "user_testing_scenario",
       id: result.scenario.id,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     },
   ]),
   inputSchema: updateUserTestingScenarioInput,
@@ -10595,7 +10595,7 @@ export const listUserTestingSessionsOperation: PlatformOperation<
     result.items.map((session) => ({
       type: "chat_session" as const,
       id: session.chatSessionId,
-      projectId: result.project.id,
+      projectId: result.project?.id,
     })),
   ),
   inputSchema: listUserTestingSessionsInput,
@@ -10650,7 +10650,7 @@ export const getUserTestingSessionOperation: PlatformOperation<
           {
             type: "chat_session" as const,
             id: result.session.chatSessionId,
-            projectId: result.project.id,
+            projectId: result.project?.id,
           },
         ]
       : [],
