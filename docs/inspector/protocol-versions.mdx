@@ -24,7 +24,7 @@ flowchart LR
     Pin["You select<br/>a specific version"] -->|stored as that literal| Exact["That version, exactly<br/>no fallback"]
 ```
 
-**Automatic** is stored as the selection policy `"auto"` — it is not a wire literal and is never sent to the server. At connect time the SDK negotiates the era with the server rather than announcing a specific version up front. Picking any other option stores that exact version literal and pins the connection to that single revision.
+**Automatic** is stored as the selection policy `"auto"` — it is not a wire literal and is never sent to the server. At connect time the SDK negotiates the era with the server rather than announcing a specific version up front. Picking any other option stores that exact version literal and pins the connection to that single revision. A pinned version is exact: it never falls back to the legacy `initialize` handshake the way Automatic does.
 
 When Automatic falls back to the legacy `initialize` handshake, it respects the client's **Supported protocol versions** list (if set). The SDK negotiates only within that list and rejects a server that counter-offers a version outside it. If no list is set, the SDK's built-in defaults apply. Choose an explicit version pin when you want strict, list-independent control.
 
@@ -89,7 +89,6 @@ MCPJam's 2026-07-28 client is a **preview** of a finalized protocol revision. A 
 - `subscriptions/listen` (long-lived notification stream)
 - Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](/inspector/tools-prompts-resources#multi-round-input-mcp-2026-07-28-input_required))
 - Resumption tokens
-- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
 For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the 2026 client behaves like the legacy one.
 </Accordion>
@@ -132,7 +131,7 @@ That transport column describes **explicit pins**, not Automatic. Automatic nego
   />
 </Frame>
 
-1. Open the **Clients** tab.
+1. Open the **Connect** tab.
 2. Pick the Client you want to edit (or create a new one).
 3. Open the **MCP Protocol** tab.
 4. In the **Protocol version** dropdown, pick a version:
