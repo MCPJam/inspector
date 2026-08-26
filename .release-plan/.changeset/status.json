@@ -4,11 +4,55 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        }
+      ],
+      "summary": "evals: pin an eval baseline by source commit SHA\n\n`GET /eval-runs/:runId/compare` accepts `baseCommitSha`, resolved server-side\nto the completed run in that suite recorded against the commit. The compare\nDTO's `baseline` gains `commit_sha` as a policy, echoes the SHA back, and\nreports `matchCount`/`matchCountTruncated` when uniqueness could not be\nestablished — an absent count means the match was unambiguous, and a truncated\ncount is a floor rather than a total.\n\n`mcpjam cloud eval gate` gains `--baseline-sha` and `eval compare` gains\n`--base-sha`, each mutually exclusive with its run-id counterpart. The kind is\nnamed by the flag rather than inferred: a Convex run id is an opaque string\nwith no documented format, and an abbreviated commit SHA is indistinguishable\nfrom one, so a single guessing flag could silently compare against the wrong\nrun. A SHA passed to `--baseline` is rejected with a pointer to the right flag.\n\nGate provenance now records the requested selector and the run it resolved to,\nso an archived report can answer which run a commit compared against. A SHA\nthat matches no completed run remains `incomplete` (exit 3), never a\nregression.\n\nMalformed baseline selections from the platform (`EVAL_COMPARE_BASELINE_CONFLICT`,\n`EVAL_COMPARE_BASELINE_INVALID`) now answer 400 with the platform's own message\ninstead of a generic 500.",
+      "id": "eval-baseline-commit-sha"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "Codex hosts can now use the host's selected MCP servers.\n\nThe Codex CLI does not make an MCP server's tools model-callable in the mode the\nSDK drives (`codex exec --experimental-json`) — the handshake completes and\n`tools/list` answers, but nothing becomes callable (openai/codex#19425). Writing\n`~/.codex/config.toml` merges cleanly and is a silent no-op, so MCPJam does not\nwrite it. Instead, each selected server's tools are enumerated at turn start and\nhanded to the agent as **host-executed** tools, which the harness bridge relays\nback out of the sandbox and MCPJam executes in-process against the already\nauthorized `MCPClientManager`.\n\nThe adapter's `supportsSelectedMcpServers: boolean` is replaced by\n`mcpDelivery: \"native\" | \"host-executed\"`, a discriminated union in which only\nthe native arm may carry `deliverMcpServers` — so the two paths are mutually\nexclusive by construction and the model can never see the same MCP tool twice.\nProjected tools are named `mcp__<server>__<tool>`, exactly as Claude Code names\nthem, so traces and eval assertions attribute identically across the two\nharnesses. The `mcp-servers` pre-flight refusal (which blocked every Codex host\nwith a server attached, and therefore every Codex eval suite) is gone; a Codex\nhost that requires tool approval is still refused, because Codex cannot pause a\nhost-executed tool.\n\nWhat the model sees is the tool's own **model-facing projection**, not the raw\nMCP result. The harness host-tool loop submits whatever `execute()` returns and\nnever calls `toModelOutput`, so a projected MCP App tool would have shipped its\nclient-only `_meta` and `structuredContent` straight into the model's context —\ntoken cost and context leakage for a payload a harness cannot render at all —\nand would have bypassed the host's `modelVisibleMcpToolResults` policy. The\nrelay now carries the projection while the raw result is kept for the UI, the\ntrace and the transcript, so a Codex turn still shows what the server actually\nreturned.\n\nThe projection also runs under the **host's own tool-construction options**, not\nthe SDK's defaults. `getToolsForAiSdk` states outright that it will not read a\nhost config itself, so anything the caller does not pass is not defaulted — it is\ngone, and a Codex turn was projecting results under a `modelVisibleMcpToolResults`\npolicy the host never chose. `respectToolVisibility` (SEP-1865 app-only tools)\nand the resolved MCP Tasks seam were dropped the same way, which made two\nhost-level policies mean something different on host-executed delivery than on\nevery other engine. All three now travel through one shared builder that the\nemulated engine and both eval runners use as well, so a surface that forgets a\nfield forgets it in one visible place rather than silently at its own call site;\nwith nothing set it still answers \"no options\", so a default turn's tools are\nbyte-identical. `needsApproval` is deliberately not in that set on this path:\nhost-executed approval is enforced by the harness agent's own `toolApproval` map\n(and refused outright for a runtime that cannot pause), while the AI SDK flag is\nread only by the emulated loop — passing it would add a second, inert approval\ndeclaration that reads like enforcement.\n\nHosted **evals** reach that projection with the same policies as chat. The eval\nrunner drives its turns through its own facade rather than the chat routes, and\nthat facade forwarded none of the three — so a hosted Codex eval built its MCP\ntools under the SDK's defaults even though the run's own host had chosen\notherwise, and the run measured a configuration that never existed. All three\nnow travel from the run's resolved host policy and its single MCP Tasks seam\ndown to the projection. Emulated evals are untouched: the fields ride the\nfacade's existing harness gate, and the two the emulated engine never reads\ncould not have moved it anyway.\n\nScope step-up (SEP-2350) is carried on this path too. A host-executed call never\ntouches the signed proxy that extracts an `insufficient_scope` challenge on the\nnative path, so the projected tools observe it in-process with the same shared\nextractor and publish into the same turn-level bridge. A hosted-OAuth server that\nneeds a step-up therefore pauses a Codex turn and offers re-authorization, rather\nthan reporting an ordinary tool failure to the model. The turn correlates a\nchallenge to its tool call by `toolCallId` when the publisher has one, falling\nback to the (server, tool, input) tuple only for the proxy, which has no id to\ngive — two identical calls in one turn used to resume the first, whichever one\nactually failed.\n\n`toolPolicy` admission is delivery-aware. It used to refuse any policied harness\nrun on a deployment that could not seal the policy into a proxy token, which\nwrongly refused every policied Codex eval on a deployment whose terminal secret\nwas merely too short — host-executed delivery mints no such token and enforces\nthe snapshot in-process. Native delivery still fails closed exactly as before.\n\nTool-approval refusals no longer depend on whether MCP servers happen to be\nselected. The pre-flight and the in-turn backstop now ask one shared helper, so a\nruntime that cannot pause on its own native tools is refused under\n`requireToolApproval` either way — closing a gap where an eval or synthetic run\n(which skips the pre-flight) could execute host-executed built-ins unapproved.\n\nThe host editor now tells the truth about which of these knobs bite. **Respect tool\nvisibility** is editable on a Codex host, because host-executed delivery honors it;\nit stays gray on Claude Code, whose CLI lists tools from inside the sandbox through\na proxy that relays `tools/list` unmodified. Crucially, the editor no longer\n*declares* that per harness — a hardcoded `enforced: true` is a promise about\nserver behavior that nothing keeps in sync, and it went stale the same day this\nprojection started reading the knob. Which mode a harness uses is now stated once,\nin a module the client and the runtime registry both read, and every\ntool-construction-time control is derived from it, so changing a harness's delivery\nmoves the runtime and the editor's claim about it in one edit. A test asserts the\nregistry's adapters and that declaration can never disagree.\n\nThe two tool-approval notes were corrected while auditing the same table. Both said\n\"not enforced yet\", which describes the one outcome that never happens: a harness\nhost requiring approval is **refused** — before streaming on the chat routes, and by\nan in-turn backstop everywhere else — rather than run unapproved. They now say so.\n\nFidelity caveat: this is not equivalent to Claude Code's native MCP client. The\nbridge injects each tool's description into the prompt and the model invokes\nthem through a CLI shim, so tool-selection behavior differs from a native MCP\nclient, and the tools run on MCPJam's server rather than in the sandbox. Tool\nschemas are read once per turn — there is no `tools/list_changed` subscription.",
-      "id": "codex-harness-host-executed-mcp"
+      "summary": "Gate waivers end to end (Evals v2, Lane E, step E5b).\n\nAn eval run's release gate can now be overridden by an authorized user, on the\nrecord, until an expiry they name — and the override is visible everywhere the\ngate is. The Lane E charter's words are \"authorized actor, reason, expiry,\naffected policy/run, visible CI/report status; no silent or permanent waiver.\"\nThe platform (mcpjam-backend #1141) owns the authorization, the required expiry\nand the 30-day cap. This is the half that owns **visible**.\n\n**Nothing here makes a failing run pass.** The run keeps its own `result`, and\nthe waiver is a separate record that every reader consults and reports\nseparately. Two independent computations decide this verdict — the platform\nderives a GitHub Check Run conclusion from the persisted run, and the CLI\nrecomputes its own gate client-side from public v1 GETs — so flipping the\npersisted result would green both with nothing saying why.\n\n`@mcpjam/sdk` widens the gate contract. `GateStatus` gains `waived` and\n`GateReport` gains a `waived` outcome plus a `waiver` field; `StructuredRunVerdict`\ngains `waived`; `StructuredCaseResult` gains `waiver`. New exports:\n`applyGateWaiver`, `isGateWaiverInForce`, `formatGateWaiverLine`,\n`GATE_WAIVER_REASON_NOTICE`, and the `GateWaiver` type. `waived` is deliberately\nNOT folded into `passed`: both exit 0, but collapsing them makes the difference\nunrecoverable one line later, which is the definition of a silent waiver.\n\n`applyGateWaiver` upgrades **only** a real `failed` outcome. `incomplete` and\n`usage_error` are never waived — a waiver granted because the evals regressed is\nnot consent to ship on a cancelled run, a wait timeout, or a flaked fetch, and\nturning exit 3 into exit 0 there is fail-open. The waiver is still attached in\nevery case, so an artifact names it even when it decided nothing.\n\n`@mcpjam/cli`'s `eval gate` reads the waiver off the run projection (no second\nround trip) and names **who** waived, **why**, and **until when** in all four\noutputs: the human report, `--reporter json-summary`, `--reporter junit-xml`\n(as `<skipped>`, JUnit's own third state — it does not fail the build, and it\ndoes not render as a clean green row), and `--reporter html` (its own violet\nbadge and section, neither the green of a pass nor the red of a failure). The\nfour exit codes are unchanged; `waived` joins `passed` at 0.\n\nThe CLI re-derives the waiver's validity from `expiresAt` rather than trusting\nthe platform's `active`. A Convex query is cached against the documents it read\nand time is not a document, so a lapsed waiver can be served as active until\nsomething writes to its row — the one failure that would silently turn a\ntime-boxed waiver into a permanent one, on exactly the path this step builds.\n\nNew subcommands `mcpjam cloud eval gate waive --run <id> --reason <text>\n--expires-in <30m|12h|7d>` and `mcpjam cloud eval gate unwaive --run <id>\n[--waiver <id>]`. Both are manage-tier and server-enforced — the CLI does not\npre-judge authorization — and `waive` prints the unredacted-storage notice\nbefore it accepts a reason. A bare `--expires-in 7` is rejected as ambiguous.\n`eval gate`'s `--run` moved from a commander-required option to one this command\nenforces itself, so the subcommands can dispatch; the exit code for a missing\n`--run` is unchanged at `2`.\n\nNew v1 endpoints (`POST`/`GET` `…/eval-runs/{runId}/gate-waivers`, `DELETE\n…/gate-waivers/{waiverId}`) with strict bodies, and `EvalRun` gains `gateWaiver`\n— `null` rather than omitted, so a caller can tell \"no waiver\" from \"an older\ndeployment\". Reading a waiver is available to anyone who can view the run, not\nonly to those who can grant one. Three agent/MCP operations: `waive_eval_gate`,\n`get_eval_gate_waiver`, `revoke_eval_gate_waiver`.\n\nTwo error-translation fixes in the v1 layer, both of which affect more than\nwaivers. `ConvexError({ kind: 'forbidden' })` — how the platform raises every\neval tier denial — carried no `code` field, so it matched no branch in\n`translateConvexWriteError` and reached the terminal 500: a deliberate refusal\nreported as our own bug, paged for, and handed to the caller as a generic\ninternal error. It now answers 403 with the platform's own message, still\nhonoring `adminFailureIsForbidden` for the resources that deliberately hide\ntheir gate. And the five `gate_waiver_*` refusal codes are recognized as 400s\nthat forward the platform's copy verbatim, rather than falling through to a 500\nthat strips the one sentence telling the caller what to do.\n\n`renderStructuredRunJUnitXml` gains a `skipped` attribute, emitted only when\nsomething was actually waived — never `skipped=\"0\"`, which would be a wire\nchange on every report ever rendered in exchange for saying nothing.",
+      "id": "eval-gate-waivers"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "major"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "major"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "major"
+        }
+      ],
+      "summary": "One canonical eval run decision summary, shared by the API, Platform MCP and the CLI\n\nThe six-stage user-value chain was eval metadata that each client interpreted for\nitself: the API returned stage rows, the CLI counted iterations and produced its\nown verdict, the Platform MCP server returned neither, and a model had to\nreconstruct the chain from raw tool calls. Three readings of one run is three\nchances to disagree about it.\n\nThere is now one versioned contract — `evalRunDecisionSummarySchema` /\n`EvalRunDecisionSummary` in `@mcpjam/sdk/contract`, schema version 1 — assembled\nby a single function that the new API endpoint and every client call:\n\n- `GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` returns it,\n  with bounded diagnostic pagination. Additive: every existing run and iteration\n  response field is unchanged.\n- `get_eval_run` returns it on `decisionSummary` for terminal runs and tells the\n  model to read it before step results or a trace.\n- `eval run --wait`, `eval status`, `eval gate` and `eval compare` render it, and\n  human, JSON, JUnit and HTML now agree on the verdict, the counts and their\n  unit, the first failed stage, the failure category, the evidence and the next\n  action. JUnit carries it as `<system-out>` rather than dropping the chain.\n\nWhat the contract fixes, beyond having one of them:\n\n- **Counts say what they count.** `measurementUnit` is `caseVariant` under\n  verdict policy v2 and `trial` on a legacy run. A 3-case suite with 5\n  repetitions is legitimately 3 or 15, and the previous summary called both\n  \"cases\".\n- **The verdict is copied, never recomputed.** Under policy v2 the run's own\n  `EvalVerdictDecision` is the authority; the per-trial diagnostics are evidence\n  beneath it. The old summary derived a verdict by counting iterations, which\n  reported a case that passed 4 of 5 trials as one pass and one failure.\n- **`notEstablished` is a fourth verdict**, for a run that is unfinished, stopped\n  early, or whose decision could not be read — distinct from `inconclusive`,\n  which is a decision the validity phase reached.\n- **Evidence belongs to the claim it supports.** Span ids, prompt indexes and\n  reasons come from the first failed stage's row alone; the old summary unioned\n  them across the whole chain, handing back the evidence of every stage that\n  worked as the explanation of the one that did not.\n- **A partial page says so.** `diagnostics.complete` and `scannedIterations`\n  separate \"nothing failed\" from \"we did not look\".\n- Stage, state, category and reason labels are centralized beside the contract,\n  so human output reads `User value`, not `userValue`.\n\n`PlatformEvalIteration` gains an optional `caseId` — the case's SDK-declared id\nfrom the iteration's frozen snapshot, beside (never merged into) the stored\n`testCaseId`. Omitted, not nulled, when a run recorded none.\n\nCompatibility notes:\n\n- The reporter artifact's `decisionSummary` field now carries the canonical\n  object. It previously held an unversioned per-case summary; a consumer reading\n  `decisionSummary.passRate.percent` and `decisionSummary.cases[]` should read\n  `counts` (with its `measurementUnit`) and `diagnostics.items[]` instead. The\n  object now carries its own `schemaVersion`.\n- `eval status` prints the block for any terminal run that did not pass, rather\n  than only a failed one — `inconclusive` and undecided runs are the ones a\n  reader can least explain unaided — and prints it above the `View:` line.\n- `buildEvalDecisionSummary`, `buildEvalDecisionSummaryFromIterations` and\n  `formatEvalDecisionSummary` are unchanged and still exported, now deprecated.\n  Nothing in this repo calls them.\n- Exit codes are untouched, including `eval gate`'s four-code contract.\n\nDeployment order matters: the endpoint must be live before the new SDK and CLI\nare published. The published clients fall back to the same shared assembler over\n`getEvalRun` + `listEvalRunIterations` when the endpoint is absent, so an older\nor custom API deployment still gets the same object rather than a second\nopinion about the run.",
+      "id": "eval-run-decision-summary-contract"
     },
     {
       "releases": [
@@ -17,171 +61,65 @@
           "type": "minor"
         }
       ],
-      "summary": "The environment composer's lego strip is now a configurable set of slots, and gains a model pill.\n\nThe strip was a fixed sequence — environments, clients, servers, skills, sandbox — which is right for Swarm and User Testing but wrong for the new create-suite page, where a single step wants servers alone or clients plus a model. `EnvironmentComposer` takes an optional `slots` list; **omitting it reproduces today's strip exactly**, so no existing surface changes. Every pill now consults it — previously only the models pill did, so a caller that passed `slots` still got the whole strip. Flag-gated slots named in the list still hide when their flag is off, so `slots` narrows what a surface asks for and never widens what a deployment allows. The \"collapse to edit\" hint is likewise scoped to strips that actually render the environments picker, where it was previously naming a control a caller could have omitted.\n\n**`ModelsPill` is the slot evals opts into**, carrying the stack's `modelSelection` axis (`includeClientDefaults` plus explicit ids) rather than a single id — the model is a fan-out axis, so a surface can ask for the client default *and* two overrides and get a cell per combination. It is capability-gated as well as slot-gated: without the backend model matrix the pill stays hidden, and the resolver refuses to send a model it cannot represent. New Swarm and User Testing omit the slot entirely so a model-bearing environment cannot silently shed its override.\n\nSurfaces must **not** seed a host's default `modelId` as an explicit pick. The default selection already means \"run the client's own model\"; an explicit id that happens to equal the default fingerprints as a distinct environment and mints a duplicate ad-hoc row.\n\n`ServerGroupPicker` accepts `triggerTestId` and `triggerAriaLabel` so composer-rendered instances are addressable, and the composer passes them through. The composer's empty-state label and info tooltip for the servers slot are now caller-supplied — the defaults are the strings that were hardcoded, which describe an *optional* group; a surface that makes the group required has to say so itself rather than offering \"client default\" for a choice it will then block on.",
-      "id": "composer-slots-and-models-pill"
+      "summary": "Evaluate redesign returns as its own tab at `/evaluate`, behind `evaluate-enabled`\n\nThe Evaluate landing page, full-page create-suite flow, and run-history suite\noverview have now been merged into the live `/evals` tab and reverted twice. The\nwork is worth keeping; rewriting the shipped tab in place to get it is not.\n\nSo it ships as a second tab instead. `/evaluate` is a separate route, a separate\nsurface, and a separate sidebar item shown alongside Evaluate — nothing a user\nwithout the flag can reach behaves differently. The screens the redesign\nrewrote are duplicated under `components/evaluate/` rather than refactored into\nshared ones; the queries, mutations, run detail, and case editors are still the\nsame `components/evals/` modules, so eval behaviour cannot drift between them.\n\nThree shared components take small additive changes instead of a fork:\n`SuiteIterationsView` gains an opt-in `suiteDetailOverview` prop (off for every\nexisting caller), `EnvironmentComposer`'s `slots` prop now actually narrows the\nstrip and its servers-pill wording is overridable, and `ServerGroupPicker`\naccepts a test id and an accessible name for its trigger. Every current caller\nrenders exactly what it rendered before.\n\nThe commit-keyed CI review stays on `/evals/runs`. When the redesign replaces\nthe original, the old tab and the duplicated directory are deleted together.",
+      "id": "evaluate-tab-behind-a-flag"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        }
-      ],
-      "summary": "Fix the connect handoff telling a signed-in owner to sign in, forever.\n\nOpening a `/connect/server/<token>` link while correctly signed in as the\naccount that created it showed \"Sign in to finish connecting\" — and clicking\nSign in came straight back to the same screen, with no way out.\n\n`AuthKitProvider` swaps its `getAccessToken` when the client finishes\ninitializing; before that it is literally\n`() => Promise.reject(new LoginRequiredError())`. The page claimed the token on\nmount, and `bestEffortAccessToken` cannot tell that rejection from a genuinely\nsigned-out visitor — they are the same error — so the claim went out with no\nbearer, the backend saw an anonymous caller, and refused `SIGN_IN_REQUIRED`.\n\nIt looped because signing in succeeds instantly for someone who already has a\nsession: AuthKit returns to the same URL (the handoff token is only stripped\nafter a claim succeeds), the page cold-mounts, and hydration races the claim\nagain. Every cold load of a handoff link is exactly the case that loses that\nrace, which is every load that matters.\n\nThe claim now waits for `useAuth().isLoading` to clear, the same gate the app\nshell already applies in two places.",
-      "id": "connect-handoff-waits-for-authkit"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "`eval gate` gains `--baseline <runId>`: gate a run against a regression delta\nfrom an earlier one, not just an absolute threshold.\n\nPassing `--baseline` fetches the same run comparison `eval compare` uses,\nevaluates it with the existing comparative gate engine, and folds the result\ninto the run's threshold `GateReport` with the established outcome precedence\n(`usage_error > failed > incomplete > passed`) — one report, one exit code,\nverdicts from both families visible. The comparative tuning flags\n`eval compare` already has (`--min-sample-size`,\n`--min-effect-size-percent`, `--gate-deterministic-regressions`,\n`--max-p95-latency-increase-ms`) work here too; `--baseline` itself implies\nregression gating, so none of them need a separate enabling flag, and passing\none without `--baseline` is a usage error rather than a silent no-op.\n\nA changed, added, removed, or unequally-weighted case set makes the\nWHOLE-RUN pass-rate and p95-latency gates `non_gateable` (exit 3) rather than\nsilently passing or misreading the population change as a regression — the\nsame population rule `eval compare` already enforces. The deterministic\nper-case regression gate is exempt: it joins by case key, so it can still\nfail (exit 1) on a matching case even when the population around it changed,\nand a real failure there is never buried by an undecidable whole-run gate. A\nmissing baseline is the existing `BASELINE_NOT_FOUND` → incomplete → exit 3\npath. `eval gate`'s four-code contract is unchanged.\n\nThe report (`--reporter`/`--out`) carries baseline provenance — both run\nids, the resolved baseline policy, every compatibility signal that was\nevaluated, and the comparable case ids the verdict actually covers. The\npolicy is recorded with its defaults already resolved (e.g. the\n`--min-sample-size`/`--min-effect-size-percent` values the pass-rate\nregression gate actually ran with, not just whatever was or wasn't passed\non the command line) — `null` when the corresponding gate wasn't\nrequested at all, distinct from a threshold of zero — so an archived\nreport is self-describing without cross-referencing the CLI invocation\nthat produced it. A case can survive `caseSetChanged` (it exists on both\nsides) and still be individually responsible for a config change or\nunequal iteration weighting — including a run-level evaluation config\nchange that the platform didn't also flag on that case's own row — so\neach excluded case is named with its own reason (`case_added`,\n`case_removed`, `scenario_config_changed`, `evaluation_config_changed`,\n`iteration_weighting_unequal`) rather than being silently counted as\ncomparable. Dimensions the comparison wire does not carry yet\n(model/provider, host/harness, server/environment identity, config hashes\nbeyond the evaluation config hash) are recorded explicitly as\n`\"notRecorded\"` rather than omitted.\n\nSHA baselines are not supported yet — a 40-hex `--baseline` argument is\nrejected with a usage error naming the follow-up; only run ids resolve today.\nA blank `--baseline` (e.g. an unset CI variable interpolated into the flag)\nand a `--baseline` equal to `--run` are both usage errors too, rather than\nsilently disabling the comparison or comparing a run against itself and\nreporting a clean \"no regression\" that never consulted an independent\nbaseline. Validation checks the trimmed value, and the trimmed value is what\ntravels to the request — a whitespace-padded but otherwise valid\n`--baseline` cannot slip past validation and then fail to resolve on the\nwire.",
-      "id": "eval-gate-baseline-run-id"
-    },
-    {
-      "releases": [
+        },
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
+          "type": "patch"
         },
         {
           "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add a minimal HTML reporter for the structured run report contract (Evals v2, Lane E, step E3).\n\n`@mcpjam/sdk` exports `renderStructuredRunHtml(report)`, a sibling of\n`renderStructuredRunJUnitXml` that renders the same redacted `StructuredRunReport`\ninto a single self-contained HTML file: inline `<style>`, no external scripts,\nfonts, images, or stylesheets, so it opens correctly from disk (`file://`) with\nno network. Like the JSON and JUnit renderers, redaction runs first — `--out`\nand `--reporter` are two terminals for the same artifact, and rendering from the\nraw report would reopen a gap that already shipped once. Content is a decision\nsummary plus failures only: header (kind, verdict, duration), summary rollups\n(by category / classification), the decision summary when present (verdict,\npass rate with denominators, per-case first-failed-stage, expected vs. observed,\nevidence, next action), and failed cases (title, category, error, details).\n`inconclusive` (and the decision summary's `incomplete`) render with a neutral\namber badge — never green, never red — because an unmeasured run is not the\nsame claim as a measured failure. The paid HTML tiers (traces, parity, history)\nare not included.\n\n`@mcpjam/cli`'s `--reporter` flag accepts `html` alongside `json-summary` and\n`junit-xml` everywhere the flag writes a `StructuredRunReport` — `eval run`,\n`eval gate`, `eval compare`, `server diff`, and `tools call`.\n\nFor `eval run`, `eval gate`, and `eval compare`, `--out` writes whatever\n`--reporter` selected, atomically, to the file — the same content as stdout.\n`server diff --out` is the one exception: it has its own, unrelated,\npre-existing contract — it always writes the **raw** diff JSON (the full\nchange list, not the reporter's summarized cases), regardless of\n`--reporter`, same as before this change. `--reporter` on `server diff`\ngoverns stdout only. `tools call` has no `--out` at all — `--reporter`\nthere is stdout-only too, same as `--debug-out`'s separate, unrelated\nartifact.\n\nCommands that report a different shape (`ConformanceReport` — `apps\nconformance`, `protocol conformance`, `oauth conformance`, `readiness`,\n`conformance run`, `tasks conformance`) now parse `--reporter html` as\nsyntactically valid, since the parser is shared, but reject it at render\ntime with a clear usage error: those surfaces have no HTML renderer yet,\nand building one is out of scope for this change.\n\nAlso fixes `eval compare --out`, which wrote the file through the raw JSON\npath regardless of `--reporter` — so `--reporter junit-xml --out report.xml`\n(and now `--reporter html --out report.html`) produced a file in the wrong\nformat, unlike `eval run`/`eval gate`. It now writes whatever `--reporter`\nselected, defaulting to `json-summary` same as before.\n\nAnd fixes two more spots in the eval-gate path that made an unmeasured gate\nrender the same red as a measured regression. `buildEvalRunReport` and\n`buildRunCompareReport` now carry an explicit `verdict` for gate/compare\nreports (new `gateOutcomeVerdict` export in `@mcpjam/sdk`, mapping the gate's\nown `incomplete` outcome to `inconclusive` — never `failed`) instead of\nleaving it unset or inferring it from the underlying run, which is a\ndifferent question from whether the gate itself could be evaluated. And\n`eval gate`'s network/auth/timeout catch path now honors `--reporter`/\n`--out` instead of always writing raw JSON to stdout and never touching\n`--out` — matching every other reporting path.",
-      "id": "eval-html-report"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Disclose the host axis before a run launches (Evals v2, Lane G, step G4c).\n\nG4b shipped the pre-run disclosure but had to REFUSE the host axis: the\nbackend contract took only `caseIds`/`environmentId(s)`, so the only query\navailable for a host-targeted launch was the selector-less suite-base\nderivation — which a host config can contradict with its own model and\nharness. A run could have been disclosed \"emulated, no sandbox\" moments\nbefore it booted a harness sandbox, so an honest absence was shipped instead.\n\n`testSuites:getRunDisclosure` now takes `namedHostId` (mcpjam-backend #1131),\nand this un-refuses every surface that was standing down:\n\n- `GET /v1/.../run-disclosure` accepts `?host=<id>`, and its mutual-exclusion\n  400 becomes three-way — a launch plan resolves on exactly one axis, and an\n  environment already resolves a host. The route also forwards the runner's\n  `harness-execution` capability handshake, which the backend gates the\n  disclosed engine on exactly as it gates the run's own pinned config. That\n  list is ASSERTED by the route from the executing process, never accepted\n  from the query: this process is the runner, so it is the only honest source\n  for what it can execute, and it now comes from one constant shared with the\n  launch path so the disclosure and the run cannot describe different engines.\n- `@mcpjam/sdk/platform`: `PlatformApiClient.getEvalRunDisclosure` takes\n  `namedHostId`, and `get_eval_run_disclosure` gains a `host` selector.\n  `run_eval_suite` no longer skips the fetch for a single-host plan — it\n  forwards the frozen plan's host, so what is disclosed stays exactly what\n  runs.\n- `mcpjam cloud eval run --host` now prints a disclosure block (the renderer\n  never needed a change; there was simply nothing to render before).\n- The \"Run all\" hint in the eval suite header fetches and renders for a suite\n  whose sole target is one attached host, instead of the static refusal.\n\nThe one deliberate gap left: a MULTI-TARGET launch spanning hosts still\nreports the disclosure as unavailable — the contract answers for one launch\nplan, so a fan-out across hosts has no single engine or model set to\ndescribe, and stitching N pre-launch round trips into a composite would be a\ndifferent contract than the one the audit stamp records. The refusal now\nnames that limit rather than the retired \"no host selector\" one.\n\n**Requires a backend carrying the `namedHostId` argument** (mcpjam-backend\n`#1131`), and the ordering matters in one direction. The runner capability\nhandshake is sent on EVERY disclosure request, not only host-targeted ones —\nthe backend gates the disclosed engine on it for the environment axis too — so\nagainst a deployment that predates #1131, strict argument validation rejects\nevery disclosure request, not just the new axis. Disclosure then goes dark for\nenvironment and flat plans that worked before.\n\nIt degrades safely rather than dangerously: the disclosure fetch is\nbest-effort, so runs still LAUNCH normally, `onDisclosureUnavailable` fires\nwith the reason, and the receipt simply carries no `disclosure` field. #1131 is\nrequired for the disclosure, never for the run. Shipping the backend first is\ncompletely safe — nothing sends the new arguments until this release lands.",
-      "id": "eval-run-disclosure-host-axis"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "**BREAKING BEHAVIOR:** `mcpjam cloud eval run --wait` now exits with a six-code\nverdict-based contract instead of its legacy two-outcome one. Default (no\n`--wait`) behavior is byte-identical — this only changes `--wait`, which\nshipped 2026-08-23, so the compatibility window was days old. This is a\ndirect flip with no opt-in flag; `eval gate` is untouched and keeps its\nexisting four codes (`0`/`1`/`2`/`3`, where `3` = incomplete/non-gateable) as\na deliberate v1 compatibility exception.\n\nEvery flip, named explicitly:\n\n- **A completed run whose verdict FAILED now exits `1`** (was `0`). Read\n  `passed` in the report, or use `eval gate` — those still work — but a\n  script relying on `--wait`'s own exit code to detect a failed run gets one\n  now, for the first time.\n- **A wait that hit its deadline with the run still non-terminal now exits\n  `5`** (was `1`) — \"no valid verdict observed,\" not a launch/completion\n  failure.\n- **A partial or wholly failed fan-out now exits `4`** (was `1`) — a setup\n  defect the CLI itself observed, kept out of the verdict-failure code `1`.\n- **A missing credential, or an `UNAUTHORIZED`/`FORBIDDEN`/`OAUTH_REQUIRED`\n  launch or mid-wait failure, now exits `3`** (was `1`) — auth failures are\n  isolated so a pipeline can retry after fixing the credential without\n  guessing whether `1` meant \"bad creds\" or \"the evals regressed.\"\n- A run whose own `status` is `cancelled`/`timed_out`/`failed` (an execution\n  state, not a verdict), an `inconclusive` result, or a `null`/unrecognized\n  result all exit `5`.\n- A multi-target launch merges these worst-of across every waited run, in\n  the fixed order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never\n  masked by a sibling's infrastructure noise, and a credential failure\n  outranks a plain connection failure.\n- A local `--out` report-write failure now exits `4` instead of the generic\n  `INTERNAL_ERROR` default of `1`.\n\nNo infrastructure condition maps to `1` — that code is reserved exclusively\nfor a run the platform actually graded as failed. New module:\n`cli/src/lib/eval-run-exit-code.ts` (`evalRunWaitExitCode`,\n`classifyLaunchErrorExitCode`, `classifyWaitErrorExitCode`), a pure sibling of\nthe existing `eval-gate-exit-code.ts`. `docs/cli/reference.mdx` and\n`docs/cli/ci.mdx` document both contracts and cross-link the deliberate\n`eval gate` exception so the two never drift into undocumented divergence.",
-      "id": "eval-run-wait-six-code-exit-contract"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "`toolCallId` is now part of the runner's tool-call type instead of a cast, so the eval persistence boundary is type-checked again.\n\nTool-policy enforcement gave the runner a reason to carry the provider's `toolCallId` on every extracted tool call — `extractToolCallsExcludingPolicyBlocks` matches blocked calls by it. The field was attached with an `as ToolCall` cast at all three push sites, and `type ToolCall` was never widened to admit it. That cast is precisely what suppressed TypeScript's excess-property check, and the same array is what gets persisted as `updateTestIteration.actualToolCalls` — where a Convex object validator that had never heard of `toolCallId` rejected it outright. Every eval iteration that called a tool failed to record its result; only prose-only iterations, which send `[]`, got through.\n\nThis change is type-only and alters no runtime behavior — the runtime fix is the matching backend widening, which has to deploy first. What it buys is that the boundary can't silently drift again: `ToolCall` and `finalize-iteration`'s `ToolCallRecord` now both name `toolCallId`, the three casts are gone, and adding another undeclared field to a persisted tool call is a compile error rather than a production `ArgumentValidationError` that surfaces sixty seconds later as `Worker heartbeat lost`.",
-      "id": "eval-tool-call-id-typed-at-boundary"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Evaluate gets a real landing page, and creating a suite is a page instead of a modal.\n\n**`/evals` used to have no list.** Landing there ran an effect that picked the most recently *run* suite and `replace`d the URL with its dashboard, so the only way to see what suites existed — or to reach one that had never run, which ties with every other never-run suite — was the breadcrumb's suite dropdown. The bare list route survived solely as the empty state. That redirect is gone: the landing now renders `SuitesOverview` (one row per suite, sorted by latest activity, with inline Run/Cancel) behind a **Suites | Runs** switcher in the header, where Runs is the existing project-wide `ProjectRunsTable`. Rows use the same pad and column template as User Testing's scenario list so the two landings read as one product.\n\n**`CreateSuiteDialog` is now `CreateSuitePage`** at the `/evals/create` route the dialog was already opening. Mutation, payload shape, and post-create navigation are unchanged and still owned by `EvalsTab`; the page owns chrome, prefill, and the environment lego strip. Two things the modal could not do:\n\n- **The name field seeds with a real default** (`Customer support workflows`) rather than empty, so Continue is enabled on first paint. An empty-hero, URL, or agent prefill still wins, and clearing the field falls back to the seed as placeholder.\n- **The empty hero offers your connected servers directly** — up to four, since more wraps badly under the subtitle. Picking one prefills both the suite name and the server group, resolved by `pickServerAttachmentIdForServer`: an exact single-server group if one exists, otherwise the *smallest* group containing that server, and `null` when nothing matches so a card can never silently attach a different server's group. Those cards are an addition, not a replacement: **Create suite and Try sample suite stay on the hero** whether or not any servers are connected, demoted to ghost buttons under the cards. The quickstart has no other entry point in the product, and \"has servers, has no suites\" is the exact state it exists for.\n\nSuite rows on the landing keep their **delete**, gated per suite by `canDeleteArtifact` and confirmed through the same `ConfirmationDialogs` every other eval delete uses. Deleting from the row is the only path that does not require opening the suite first — the in-suite path (Edit → settings → Delete) still exists, but it cannot help with a suite you never want to look at again.\n\n**A suite's overview page is new**, not a re-skin. `SuiteDetailOverview` renders an identity line (`N cases · N sources · N servers`, where sources are the distinct run origins — UI, SDK, API, scheduled, GitHub), a filterable and paged run-history table, and the case list, with the empty-case state offering Describe / Generate / Import. Its arithmetic lives in `suite-detail-model.ts` as pure functions with their own tests, rather than inline in the view. Run *detail* is untouched and still folds into `SuiteDashboard`.\n\n**Generate sits on the Test Cases card as well as in the empty state.** Offering it only in the empty hero would take it away at the moment a suite gets its first case, which is when \"generate more from live discovery\" is most useful. It carries the same capability gate and disabled-reason tooltip as the hero action. The card's other button now says **Add case** — it always created one; it never opened an editor.\n\n**The header is one component across both eval surfaces.** `EvalsHeader` now owns the Evaluate title, description, Create suite button, and the landing tabs; detail routes swap that chrome for an `Evaluate / suite / page` trail. CI Evals renders the same header and its hand-rolled breadcrumb — with its own commit-crumb bookkeeping — is deleted, as is `evals-mode-nav.tsx`. Because the header sits above `EvalTabGate`, the title and Create suite stay on screen while auth and project selection settle instead of appearing after a spinner.\n\nThe agent-facing `ui_open_eval_suite_form` tool is unchanged in behavior — still name-only, prefill-over-commit, still opening `/evals/create` — and only its wording moves from \"dialog\" to \"page\".",
-      "id": "evaluate-landing-and-create-page"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "The GitHub install callback stops spinning forever when auth never becomes usable.\n\nWaiting for authentication before firing the bind is correct and already shipped — but the wait had no floor. A WorkOS session that resolves a user and then never becomes *usable* (a token Convex rejects, a refresh that fails, a user row that never provisions) leaves the signed-out branch unfired and the gating effect returning on every pass, so `Finishing up with GitHub…` stays on screen indefinitely. This page has no other content to fall back to and nothing to click.\n\nA twelve-second backstop now converts that into a stated outcome. It is deliberately a **timer, not a \"settled and still not usable\" test**: WorkOS resolving a user and Convex flipping `isAuthenticated` are separate ticks, so there is a legitimate instant in which a member is indistinguishable from a permanent failure, and a false refusal there would break the happy path for everyone to fix a slow path for a few. A timer also covers causes this page cannot enumerate. Twelve seconds is past a cold Convex handshake and short of a person deciding the page is broken.\n\nThe message is its own string rather than the signed-out one, because the instruction differs: the person *is* signed in, so telling them to sign in reads as wrong. It names MCPJam as the side that could not confirm and says explicitly that nothing is wrong with their GitHub account — otherwise the natural next move is to go audit GitHub settings that are already fine. A specific refusal that lands before the timer fires still wins; the backstop only overwrites the neutral working state.",
-      "id": "github-install-callback-auth-backstop"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Let an advisory judge attribute a selection failure to misleading tool metadata (D7).\n\n`deriveStageResults` never GUESSES `failureCategory: \"metadata\"` from\ndeterministic evidence — attributing a selection miss to a misleading tool\nname, description or schema is a judgement about intent that no span\ncarries. The stage analyzer gains a second tier-2 evidence field,\n`StageEvidence.metadataAttribution`, consulted only after `selection` has\nalready failed deterministically (`missingToolCall` / `unexpectedToolCall`).\nA scored verdict with `attributed: true` recolors that run's\n`failureCategory` from `\"selection\"` to `\"metadata\"` and merges the judge's\nquoted evidence into the `selection` row; the row's own `state` and `reason`\nare never touched, and the branch is structurally unreachable once\n`connection` or `discovery` has already broken the chain. Analyzer version\nbecomes 4.\n\nThe judge itself is report-only and gated by the same `dual_write`\ngrading-engine mode B3a introduced: it never gates a run, never moves\n`passed`, and treats every tool description as untrusted content fenced\nagainst prompt injection, mirroring the discipline `classifyToolSafety`\nalready applies to tool annotations. Nothing changes until a suite runs\nunder `dual_write` and hits a deterministic selection failure.",
-      "id": "metadata-attribution-selection-judge"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Release the latest Inspector, CLI, and SDK updates.",
-      "id": "releases-2026-08-24"
+      "summary": "Report a legacy protocol-version pin mismatch as a version problem instead of \"the server appears to be down\"\n\nPinning a stateful MCP protocol version (e.g. 2025-11-25) against a server that\nanswers with a different one — Slack and HubSpot both answer 2025-06-18 — failed\nthe connect with a generic 502 and \"Couldn't reach the MCP server\". Tools came\nback silently empty and reconnects looked like someone else's outage rather than\nthe version setting they actually were.\n\nThe `ProtocolVersionPinUnsupported` path that already produces a 424, names both\nversions, and offers \"Change protocol version\" only ever fired for modern\n(2026-07-28) pins: the detector bailed out for stateful pins, and the failure\nparser did not recognize the wording the upstream client uses when it refuses a\nserver's `initialize` reply. Both now handle it, and the message names the\nversion the server actually offered.",
+      "id": "protocol-pin-mismatch-error"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.47.0",
+      "type": "major",
+      "oldVersion": "2.48.1",
       "changesets": [
-        "codex-harness-host-executed-mcp",
-        "composer-slots-and-models-pill",
-        "connect-handoff-waits-for-authkit",
-        "eval-run-disclosure-host-axis",
-        "eval-tool-call-id-typed-at-boundary",
-        "evaluate-landing-and-create-page",
-        "github-install-callback-auth-backstop",
-        "metadata-attribution-selection-judge",
-        "releases-2026-08-24"
+        "eval-baseline-commit-sha",
+        "eval-gate-waivers",
+        "eval-run-decision-summary-contract",
+        "evaluate-tab-behind-a-flag",
+        "protocol-pin-mismatch-error"
       ],
-      "newVersion": "2.48.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "4.1.0",
-      "changesets": [
-        "eval-gate-baseline-run-id",
-        "eval-html-report",
-        "eval-run-wait-six-code-exit-contract",
-        "releases-2026-08-24"
-      ],
-      "newVersion": "4.2.0"
+      "newVersion": "3.0.0"
     },
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "7.0.0",
+      "type": "major",
+      "oldVersion": "7.1.1",
       "changesets": [
-        "eval-html-report",
-        "eval-run-disclosure-host-axis",
-        "metadata-attribution-selection-judge",
-        "releases-2026-08-24"
+        "eval-baseline-commit-sha",
+        "eval-gate-waivers",
+        "eval-run-decision-summary-contract",
+        "protocol-pin-mismatch-error"
       ],
-      "newVersion": "7.1.0"
+      "newVersion": "8.0.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "major",
+      "oldVersion": "4.2.0",
+      "changesets": [
+        "eval-baseline-commit-sha",
+        "eval-gate-waivers",
+        "eval-run-decision-summary-contract",
+        "protocol-pin-mismatch-error"
+      ],
+      "newVersion": "5.0.0"
     },
     {
       "name": "@mcpjam/mcp",
@@ -189,6 +127,20 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/vitest",
+      "type": "patch",
+      "oldVersion": "0.1.3",
+      "changesets": [],
+      "newVersion": "0.1.4"
+    },
+    {
+      "name": "@mcpjam/widget-react",
+      "type": "patch",
+      "oldVersion": "0.1.8",
+      "changesets": [],
+      "newVersion": "0.1.9"
     }
   ]
 }

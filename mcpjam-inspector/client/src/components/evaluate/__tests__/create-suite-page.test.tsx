@@ -350,4 +350,43 @@ describe("CreateSuitePage", () => {
     });
     expect(resolveMock).not.toHaveBeenCalled();
   });
+
+  it("never pins the empty-hero server into the host attachment", async () => {
+    // `initialServerId` seeds the composer's server group and is never cleared
+    // when the user picks a different one, so carrying it into the attachment
+    // would attach a server they have since navigated away from. Every other
+    // creation path (compose mode, the shipped dialog) sends [].
+    flagState.environments = false;
+
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        initialServerId="srv-a"
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("create-suite-name"), {
+      target: { value: "From a server card" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-suite-continue")).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByTestId("create-suite-continue"));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "From a server card",
+          hostAttachments: [
+            { namedHostId: "host-1", enabledOptionalServerIds: [] },
+          ],
+        }),
+      );
+    });
+  });
 });

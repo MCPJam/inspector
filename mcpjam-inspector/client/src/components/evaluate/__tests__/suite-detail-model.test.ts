@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
+import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../evals/types";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryAggregates,

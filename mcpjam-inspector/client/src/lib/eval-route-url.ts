@@ -7,8 +7,12 @@ import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
  * The two prefixes stay mutually exclusive — parsing a Runs URL against the
  * Suites prefix returns null rather than a bare list route, so a mode never
  * silently renders the other mode's URL.
+ *
+ * `/evaluate` is the flag-gated Evaluate (New) tab. It is a SIBLING of
+ * `/evals`, not a sub-tree: it does not start with `/evals/`, so the guards
+ * below already keep the two from parsing each other's URLs.
  */
-export type EvalRoutePrefix = "/evals" | "/evals/runs";
+export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
@@ -160,6 +164,11 @@ export function useEvalsRouteFromUrl(): EvalRoute {
 
 export function useEvalsRunsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals/runs");
+}
+
+/** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
+export function useEvaluateRouteFromUrl(): EvalRoute {
+  return useEvalRouteFromUrl("/evaluate");
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
