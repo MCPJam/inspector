@@ -1,7 +1,6 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
-  createContext,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -187,12 +186,20 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
+import { hasProjectDeepLinkParam } from "./lib/project-deep-link";
 import {
-  clearProjectDeepLinkFromUrl,
-  hasProjectDeepLinkParam,
-  readProjectDeepLinkParam,
-  resolveProjectDeepLinkAction,
-} from "./lib/project-deep-link";
+  buildProjectPath,
+  isProjectIdShape,
+  isProjectScopedPath,
+  readProjectPathSegment,
+  stripProjectFromPath,
+} from "./lib/project-route";
+import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
+import {
+  captureAppSignInReturnPath,
+  consumeAppSignInReturnPath,
+} from "./lib/app-signin-return-path";
+import { trackSignInReturnRestored } from "./lib/project-route-telemetry";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -279,26 +286,32 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
+  buildProjectSettingsTarget,
+  buildProjectSwitchTarget,
   getInvalidOrganizationRouteNavigationTarget,
-  getProjectSwitchNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
   pathnameToActiveTab,
   routePaths,
-  shouldSnapToServersOnActiveProjectChange,
+  scopeNavigationTarget,
   type OrganizationRouteSection,
+  useCurrentLocationParts,
   useActiveTab,
   useAppNavigate,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
+import { ScopedNavigate } from "./components/routing/scoped-navigate";
+import {
+  AppRouteReactContext,
+  useAppRouteContext,
+  type AppRouteContext,
+} from "./lib/app-route-context";
 import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
   UNSAFE_LocationContext,
-  useLocation,
-  useOutletContext,
   useParams,
 } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
@@ -518,14 +531,7 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
 import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
 
-type AppRouteContext = Record<string, any>;
 
-const AppRouteReactContext = createContext<AppRouteContext | null>(null);
-
-function useAppRouteContext() {
-  const context = useContext(AppRouteReactContext);
-  return context ?? useOutletContext<AppRouteContext>();
-}
 
 /**
  * The no-router render path.
@@ -765,13 +771,17 @@ export function HostsRoute() {
     usePreviewedHostId(convexProjectId);
   const params = useParams<{ hostId?: string }>();
   const navigate = useAppNavigate();
+  // The pathname fallback (no-Router renders) reads the LOGICAL path: under
+  // the router the live one is `/p/<projectId>/hosts/<id>`, and matching that
+  // against `/hosts/` would drop the deep-linked host.
+  const fallbackHostPathname =
+    typeof window === "undefined"
+      ? ""
+      : stripProjectFromPath(window.location.pathname);
   const routeHostId =
     params.hostId ??
-    (typeof window !== "undefined" &&
-    window.location.pathname.startsWith(`${routePaths.hosts}/`)
-      ? window.location.pathname
-          .slice(`${routePaths.hosts}/`.length)
-          .split("/")[0]
+    (fallbackHostPathname.startsWith(`${routePaths.hosts}/`)
+      ? fallbackHostPathname.slice(`${routePaths.hosts}/`.length).split("/")[0]
       : null);
   const urlHostId = useMemo(() => {
     if (!routeHostId) return null;
@@ -1095,94 +1105,6 @@ function useTemplateVerifyDeepLink({
   ]);
 }
 
-/**
- * `?project=<id>` deep-link: shared eval/suite/run URLs carry no project
- * segment, so a link renders whatever project the viewer's picker is on.
- * Surfaces that mass-produce links (the Slack bot, CLI run URLs) append the
- * param; this switches the active project (and organization, when the link
- * crosses orgs) to match, then strips the param. Runs once per mount.
- */
-function useProjectDeepLinkSwitch({
-  isAuthenticated,
-  isLoadingRemoteProjects,
-  projects,
-  activeProjectId,
-  activeOrganizationId,
-  setActiveOrganizationId,
-  handleSwitchProject,
-}: {
-  isAuthenticated: boolean;
-  isLoadingRemoteProjects: boolean;
-  projects: Record<string, unknown>;
-  activeProjectId: string | null;
-  activeOrganizationId: string | undefined;
-  setActiveOrganizationId: (organizationId: string | undefined) => void;
-  handleSwitchProject: (projectId: string) => Promise<void>;
-}) {
-  const requestedProjectId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return readProjectDeepLinkParam(window.location.search);
-  }, []);
-  // Unfiltered membership list (same Convex query the org-filtered project
-  // list derives from, so this dedupes) — needed to resolve cross-org links.
-  const { allProjects } = useProjectQueries({ isAuthenticated });
-  const handledRef = useRef(false);
-
-  useEffect(() => {
-    if (!requestedProjectId || handledRef.current) return;
-    if (!isAuthenticated || isLoadingRemoteProjects) return;
-
-    const action = resolveProjectDeepLinkAction({
-      requestedProjectId,
-      activeProjectId,
-      activeOrgProjectIds: new Set(Object.keys(projects)),
-      allProjects,
-      activeOrganizationId,
-    });
-    switch (action.kind) {
-      case "wait":
-        return;
-      case "clear":
-        handledRef.current = true;
-        clearProjectDeepLinkFromUrl();
-        return;
-      case "switch-organization":
-        // The org-filtered project list re-derives; a later run of this
-        // effect lands on switch-project. handledRef stays unset on purpose.
-        setActiveOrganizationId(action.organizationId);
-        return;
-      case "switch-project":
-        handledRef.current = true;
-        // .catch BEFORE .finally: finally re-throws rejections, so a bare
-        // .finally chain would turn a failed switch into an unhandled
-        // rejection with the user silently left on the wrong project.
-        void handleSwitchProject(requestedProjectId)
-          .catch(() => {
-            toast.error(
-              "Couldn't switch to the linked project — use the project picker."
-            );
-          })
-          .finally(clearProjectDeepLinkFromUrl);
-        return;
-      case "not-found":
-        handledRef.current = true;
-        clearProjectDeepLinkFromUrl();
-        toast.error("This link points to a project you don't have access to.");
-        return;
-    }
-  }, [
-    requestedProjectId,
-    isAuthenticated,
-    isLoadingRemoteProjects,
-    projects,
-    activeProjectId,
-    activeOrganizationId,
-    allProjects,
-    setActiveOrganizationId,
-    handleSwitchProject,
-  ]);
-}
-
 function buildHostVerifyLandingPath(
   hostId: string,
   tab: HostFocusTabId | null
@@ -1299,7 +1221,7 @@ export function ComputerRoute() {
   // /computer directly (the redirect fires before the flag resolves). Render
   // nothing until it settles — disabled users get the bounce a beat later.
   if (computersEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (computersEnabled === undefined) {
     return null;
@@ -1553,7 +1475,7 @@ export function ScenariosRoute() {
   // `undefined`, and bouncing then would strand a flagged-in user who cold-
   // loads the URL. (Same tradeoff SwarmsRoute makes.)
   if (sandboxesEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
     return null;
@@ -1598,8 +1520,17 @@ function isUserTestingEditPath(pathname: string): boolean {
   return /^\/user-testing\/[^/]+\/edit$/.test(pathname.replace(/\/+$/, ""));
 }
 
+/**
+ * The logical pathname for the no-Router fallbacks below.
+ *
+ * Project-relative: the User Testing matchers here are written against
+ * `/user-testing/...`, and the live path carries `/p/<projectId>` in front of
+ * it.
+ */
 function getRouteFallbackPathname(): string {
-  return typeof window === "undefined" ? "" : window.location.pathname;
+  return typeof window === "undefined"
+    ? ""
+    : stripProjectFromPath(window.location.pathname);
 }
 
 /**
@@ -1677,7 +1608,7 @@ export function SwarmsRoute() {
   // /swarms directly. Render nothing until it settles. (Same tradeoff the
   // Environments route already makes.)
   if (sandboxesEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
     return null;
@@ -1719,11 +1650,14 @@ export function SwarmsRoute() {
     }
   }
 
+  const fallbackSwarmPathname =
+    typeof window === "undefined"
+      ? ""
+      : stripProjectFromPath(window.location.pathname);
   const rawRouteSwarmId =
     params.swarmId ??
-    (typeof window !== "undefined" &&
-    window.location.pathname.startsWith(`${routePaths.swarms}/`)
-      ? window.location.pathname
+    (fallbackSwarmPathname.startsWith(`${routePaths.swarms}/`)
+      ? fallbackSwarmPathname
           .slice(`${routePaths.swarms}/`.length)
           .split("/")[0]
       : null);
@@ -1799,7 +1733,7 @@ export function SessionsRoute() {
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /sessions directly. (Same tradeoff as SwarmsRoute.)
   if (unifiedSessionsEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (unifiedSessionsEnabled === undefined) {
     return null;
@@ -1924,7 +1858,7 @@ export function SkillsRoute() {
     // `undefined`; bouncing then would strand a flagged-in user who cold-loads
     // /skills directly. Render nothing until it settles.
     if (skillsEnabled === false) {
-      return <Navigate to={routePaths.servers} replace />;
+      return <ScopedNavigate to={routePaths.servers} replace />;
     }
     if (skillsEnabled === undefined) {
       return null;
@@ -2314,17 +2248,22 @@ export function ChatAliasRoute() {
   // Forward the query string: `/chat?conversation=<id>` is what an OAuth return
   // marker or an old bookmark can still carry, and dropping the search here
   // would land the user on an empty Playground with the id already gone.
-  const location = useLocation();
+  //
+  // Scoped to the project the alias was reached IN: `<Navigate to="/playground">`
+  // would leave the project sub-tree, land on the unscoped legacy route, and
+  // re-resolve the project from persisted state — an extra redirect that can
+  // arrive at a DIFFERENT project than the link named.
+  const { pathname, search } = useCurrentLocationParts();
   return (
     <Navigate
-      to={{ pathname: routePaths.playground, search: location.search }}
+      to={scopeNavigationTarget(`${routePaths.playground}${search}`, pathname)}
       replace
     />
   );
 }
 
 export function ServersRedirectRoute() {
-  return <Navigate to={routePaths.servers} replace />;
+  return <ScopedNavigate to={routePaths.servers} replace />;
 }
 
 export function HomeRoute() {
@@ -2763,19 +2702,37 @@ export default function App() {
         : null;
       const cliReturnPath = readCliSignInReturnPath();
       const apiKeysReturnPath = readApiKeysSignInReturnPath();
+      // Consumed (read AND cleared) whether or not it wins: a path left in
+      // storage would outlive this sign-in and hijack the next one.
+      const appReturnPath = consumeAppSignInReturnPath();
       clearScenarioSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
       clearApiKeysSignInReturnPath();
-      window.history.replaceState(
-        {},
-        "",
+      // LAST in precedence, deliberately. The scenario, billing, CLI and
+      // API-key flows encode an intent, not just a location, and each has its
+      // own documented ordering; the generic path only says "put me back", so
+      // it fills in for the ordinary case those four do not cover.
+      const restoredPath =
         scenarioReturnPath ??
-          billingReturnPath ??
-          cliReturnPath ??
-          apiKeysReturnPath ??
-          "/"
+        billingReturnPath ??
+        cliReturnPath ??
+        apiKeysReturnPath ??
+        appReturnPath ??
+        "/";
+      trackSignInReturnRestored(
+        !appReturnPath
+          ? "absent"
+          : restoredPath === appReturnPath
+            ? "restored"
+            : "superseded"
       );
+      // `navigateApp`, not `history.replaceState`: a raw history write leaves
+      // the ROUTER matched on `/callback` while the address bar says
+      // `/p/<id>/evals/...`, so the project boundary never mounts and the URL
+      // that was just restored decides nothing. This is what makes the
+      // complete canonical URL survive the round trip.
+      navigateApp(restoredPath, { replace: true });
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
       return;
@@ -2869,6 +2826,10 @@ export default function App() {
     validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     requestSignIn: () => {
+      // Ordinary app sign-in: remember the whole current URL — project
+      // segment, query and hash included — so the round trip through WorkOS
+      // returns to the exact page, not to the app's front door.
+      captureAppSignInReturnPath();
       void signIn();
     },
   });
@@ -3073,14 +3034,17 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
-  // Same clobber hazard for `?project=` deep links: the onboarding redirect
-  // would drop the path + param before the switch handler consumes it. Unlike
-  // `?template`, membership can't be checked synchronously — but the handler
-  // always strips the param once project data settles (including the
-  // no-access case), so the suppression is transient by construction.
+  // Same clobber hazard for a project-bearing entry — either shape. The
+  // onboarding redirect would drop the path before it is normalized onto
+  // `/p/<projectId>/...`, taking the destination the link named with it.
+  // A legacy `?project=` counts only when it is USABLE (a malformed one is
+  // stripped and must not suppress onboarding), and the suppression is
+  // transient either way: the normalizer resolves or gives up on the first
+  // render after project data settles.
   const hasProjectSwitchDeepLinkParam =
     typeof window !== "undefined" &&
-    hasProjectDeepLinkParam(window.location.search);
+    (hasProjectDeepLinkParam(window.location.search) ||
+      isProjectScopedPath(window.location.pathname));
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
@@ -3549,7 +3513,11 @@ export default function App() {
   );
   const navigateToServers = useCallback(
     (options?: { replace?: boolean }) => {
-      if (window.location.pathname === routePaths.servers) {
+      // Compared on the LOGICAL path: `/p/<id>/servers` is already Servers,
+      // and re-navigating would push a duplicate history entry that Back has
+      // to be pressed through twice.
+      const logicalPathname = stripProjectFromPath(window.location.pathname);
+      if (logicalPathname === routePaths.servers) {
         return;
       }
       navigateToTarget(routePaths.servers, options);
@@ -3939,41 +3907,12 @@ export default function App() {
     }
   }, [shouldRouteToFirstRunOnboarding]);
 
-  // When the active project changes (org switch, project delete, manual switch),
-  // snap to Servers — staying on App Builder/Chat would leave the user pointed
-  // at a project that no longer exists. Start tracking only after auth/project
-  // loading settles so the initial local-default → Convex-project hydration
-  // doesn't yank deep-links away on first load.
-  const previousActiveProjectIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading) {
-      return;
-    }
-
-    // Advance the ref regardless so this project change is consumed and can't
-    // trigger a stale snap on a later render (e.g. once the user leaves the
-    // org route). The snap decision itself lives in a pure, unit-tested helper.
-    const previousActiveProjectId = previousActiveProjectIdRef.current;
-    previousActiveProjectIdRef.current = activeProjectId;
-    if (
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId,
-        nextActiveProjectId: activeProjectId,
-        // Deliberately not the `activeTab` hook value: the router commits in a
-        // transition, so that still names the page being left while the project
-        // change is already live. `navigateToServers` reads the same source.
-        activeTab: pathnameToActiveTab(window.location.pathname),
-      })
-    ) {
-      navigateToServers();
-    }
-  }, [
-    activeProjectId,
-    isAuthLoading,
-    isLoadingRemoteProjects,
-    isWorkOsLoading,
-    navigateToServers,
-  ]);
+  // The snap-to-Servers effect that used to live here is gone with the URL
+  // migration. It existed because a project switch changed hidden state and
+  // left the URL naming a resource in the project being left; now the URL is
+  // the switch, so there is nothing to repair afterwards — and an effect that
+  // navigates on every observed project change would race the coordinator
+  // that just performed one.
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -4299,35 +4238,94 @@ export default function App() {
     ]
   );
 
-  useProjectDeepLinkSwitch({
+  // The URL owns which project this tab is on. This reconciles the two
+  // continuously — on cold open, on Back/Forward, and on every in-app
+  // navigation — switching organization first when the link crosses one.
+  const { allProjects: allMembershipProjects } = useProjectQueries({
     isAuthenticated,
+  });
+  // Silent: the URL already told the user which project they are in, so a
+  // toast on every cold open of a shared link would be narrating the address
+  // bar back at them.
+  const switchProjectForRoute = useCallback(
+    (projectId: string) => handleSwitchProject(projectId, { silent: true }),
+    [handleSwitchProject]
+  );
+  const projectRouteState = useProjectRouteCoordinator({
+    isAuthenticated,
+    isAuthLoading,
     isLoadingRemoteProjects,
     projects,
+    allProjects: allMembershipProjects,
     activeProjectId,
     activeOrganizationId,
     setActiveOrganizationId,
-    handleSwitchProject,
+    switchProject: switchProjectForRoute,
   });
 
+  /**
+   * Picking another project in the switcher NAVIGATES. It does not switch
+   * state and then repair the URL: that ordering is what let a stale effect
+   * bounce the user off the page they had just opened, and it left the
+   * address bar naming project A while the app rendered project B.
+   */
   const handleSidebarSwitchProject = useCallback(
-    async (projectId: string) => {
-      const nextProject = projects[projectId];
-      await handleSwitchProject(projectId);
-
-      const navigationTarget = getProjectSwitchNavigationTarget({
-        // Read the tab from the live pathname, not the `activeTab` hook value:
-        // the switcher's per-row gear navigates while this switch is still in
-        // flight, and a closure-captured tab would send the user back to
-        // Servers on top of the settings page they just opened.
-        activeTab: pathnameToActiveTab(window.location.pathname),
-        activeOrganizationId,
-        nextProjectOrganizationId: nextProject?.organizationId,
-      });
-      if (navigationTarget) {
-        navigateToTarget(navigationTarget);
-      }
+    (projectId: string) => {
+      navigateToTarget(buildProjectSwitchTarget(projectId));
     },
-    [activeOrganizationId, handleSwitchProject, navigateToTarget, projects]
+    [navigateToTarget]
+  );
+
+  /** The switcher's per-row gear — one gesture, one URL, no pre-switch. */
+  const handleSidebarOpenProjectSettings = useCallback(
+    (projectId: string) => {
+      navigateToTarget(buildProjectSettingsTarget(projectId));
+    },
+    [navigateToTarget]
+  );
+
+  /**
+   * Deleting the project you are looking at has to move the URL, because the
+   * URL is what names it. Left alone, the address bar would keep pointing at
+   * a project that no longer exists and the route boundary would render the
+   * inaccessible state on a deletion the user performed deliberately.
+   *
+   * The fallback is VALIDATED — a project still visible in this organization,
+   * preferring the default one — and when there is none the viewer goes to
+   * the unscoped root, which is the onboarding/no-project surface. A guessed
+   * or stale id here would put someone in a project they did not choose.
+   */
+  const handleDeleteProjectAndLeave = useCallback(
+    async (projectId: string) => {
+      const remainingIds = Object.keys(projects).filter(
+        (id) => id !== projectId
+      );
+      const fallbackProjectId =
+        remainingIds.find((id) => (projects[id] as any)?.isDefault) ??
+        remainingIds[0] ??
+        null;
+
+      const deleted = await handleDeleteProject(projectId);
+      if (!deleted) return deleted;
+      // Only the tab whose URL named the deleted project moves. A deletion
+      // performed from Project settings while parked on a global route (say
+      // Organizations) should not yank the user off it.
+      if (readProjectPathSegment(window.location.pathname) !== projectId) {
+        return deleted;
+      }
+      if (fallbackProjectId && isProjectIdShape(fallbackProjectId)) {
+        navigateApp(buildProjectPath(fallbackProjectId, routePaths.servers), {
+          replace: true,
+        });
+      } else {
+        // `unscoped`: the current URL still names the project that was just
+        // deleted, and the ordinary scope inheritance would carry that id
+        // straight back into the root target.
+        navigateApp(routePaths.root, { replace: true, unscoped: true });
+      }
+      return deleted;
+    },
+    [handleDeleteProject, projects]
   );
 
   const isBillingEntryHandoff =
@@ -4647,6 +4645,10 @@ export default function App() {
       : null;
 
   const routeContext: AppRouteContext = {
+    // What the URL's project segment resolved to. `ProjectRouteBoundary`
+    // renders on it, and the legacy normalizer reads the rest of this bag to
+    // decide which project an old link should adopt.
+    projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
@@ -4675,7 +4677,7 @@ export default function App() {
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,
-    handleDeleteProject,
+    handleDeleteProject: handleDeleteProjectAndLeave,
     handleDisconnect,
     handleLeaveProject,
     handleNavigate,
@@ -4742,8 +4744,9 @@ export default function App() {
         projects={projects}
         activeProjectId={activeProjectId}
         onSwitchProject={handleSidebarSwitchProject}
+        onOpenProjectSettings={handleSidebarOpenProjectSettings}
         onCreateProject={handleCreateProject}
-        onDeleteProject={handleDeleteProject}
+        onDeleteProject={handleDeleteProjectAndLeave}
         isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
@@ -4927,6 +4930,10 @@ export default function App() {
                   if (scenarioPathToken) {
                     writeScenarioSignInReturnPath(window.location.pathname);
                   }
+                  // The generic path is stored alongside the scenario one, not
+                  // instead of it: the scenario flow keeps its precedence on
+                  // `/callback`, and this only fills in for everything else.
+                  captureAppSignInReturnPath();
                   signIn();
                 }}
                 onSignOut={() => {

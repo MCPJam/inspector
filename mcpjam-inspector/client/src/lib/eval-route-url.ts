@@ -1,6 +1,7 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import { stripProjectFromPath } from "./project-route";
 
 /**
  * Both eval modes live under `/evals`; Runs is the `/evals/runs` sub-tree.
@@ -15,9 +16,14 @@ export function parseEvalRouteFromUrl(
   pathname: string,
   search = ""
 ): EvalRoute | null {
-  const normalizedPathname = pathname.startsWith("/")
-    ? pathname
-    : `/${pathname}`;
+  // Eval routes are project-owned, so the live pathname is
+  // `/p/<projectId>/evals/...`. The project comes off before matching: these
+  // prefixes are LOGICAL, and the eval route is the same route in every
+  // project.
+  const withoutProject = stripProjectFromPath(pathname);
+  const normalizedPathname = withoutProject.startsWith("/")
+    ? withoutProject
+    : `/${withoutProject}`;
   if (
     normalizedPathname !== prefix &&
     !normalizedPathname.startsWith(`${prefix}/`)
@@ -140,7 +146,8 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
 export type EvalsMode = "suites" | "runs";
 
 export function evalsModeForPathname(pathname: string): EvalsMode {
-  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const logical = stripProjectFromPath(pathname);
+  const normalized = logical.startsWith("/") ? logical : `/${logical}`;
   return normalized === "/evals/runs" || normalized.startsWith("/evals/runs/")
     ? "runs"
     : "suites";

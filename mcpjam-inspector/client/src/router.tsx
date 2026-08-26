@@ -43,23 +43,52 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
+import LoadingScreen from "./components/LoadingScreen";
+import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
+import { LegacyProjectRouteNormalizer } from "./components/routing/legacy-project-route-normalizer";
+import { NotFoundRoute } from "./components/routing/not-found-route";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
   legacyCiEvalsPathToRunsPath,
   routePaths,
 } from "./lib/app-navigation";
-import { APP_ROUTES } from "./lib/app-routes";
+import { APP_ROUTES, type AppRouteEntry } from "./lib/app-routes";
+import {
+  buildProjectPath,
+  parseProjectPath,
+  PROJECT_HOME_RELATIVE_PATH,
+} from "./lib/project-route";
 
 export { getAppRouter };
 
 type AppRouter = ReturnType<typeof createBrowserRouter>;
 
+/**
+ * Legacy `/ci-evals/*` → `/evals/runs/*`, under a project or not.
+ *
+ * The project prefix comes off before the rewrite and goes back on after: the
+ * rewrite is an anchored `^/ci-evals` replacement, so running it against
+ * `/p/<id>/ci-evals/...` would match nothing, return the path unchanged, and
+ * redirect the route to itself forever.
+ */
 function ciEvalsRedirect({ request }: { request: Request }) {
   const url = new URL(request.url);
-  return redirect(
-    legacyCiEvalsPathToRunsPath(url.pathname, url.search, url.hash)
-  );
+  const scoped = parseProjectPath(url.pathname);
+  const logical = scoped ? scoped.relativePath : url.pathname;
+  const target = legacyCiEvalsPathToRunsPath(logical, url.search, url.hash);
+  return redirect(scoped ? buildProjectPath(scoped.projectId, target) : target);
+}
+
+/**
+ * A neutral landing for the routes that exist only to be redirected away
+ * from (`/callback`, `/billing`, the MCP OAuth callback). They used to render
+ * Servers, which meant a sign-in or a checkout return flashed one project's
+ * server list before App restored the destination the user actually asked
+ * for. App gates all three behind its own loading states anyway.
+ */
+function AppEntryLandingRoute() {
+  return <LoadingScreen />;
 }
 
 /**
@@ -75,9 +104,13 @@ function ciEvalsRedirect({ request }: { request: Request }) {
  *
  * `buildRouteChildren` iterates `APP_ROUTES`, not this map, so a route
  * registered ONLY here is never mounted — the URL falls through to the `"*"`
- * catch-all and renders something else entirely, with no error anywhere.
- * The reverse direction throws loudly; this one fails silently, which is why
- * `router.test.tsx` asserts it.
+ * catch-all, with no error anywhere. The reverse direction throws loudly;
+ * this one fails silently, which is why `route-elements-coverage.test.ts`
+ * asserts it.
+ *
+ * The elements here are LOGICAL: the same entry is mounted twice, once below
+ * `p/:projectId` and once at the root behind the legacy normalizer, so
+ * nothing in this map knows about the project prefix.
  */
 const ROUTE_ELEMENTS: Record<
   string,
@@ -128,9 +161,10 @@ const ROUTE_ELEMENTS: Record<
   tracing: { element: <TracingRoute /> },
   chat: { element: <ChatAliasRoute /> },
   // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
-  // Playground instead of the router's `*` catch-all (which would
-  // render ServersRoute while `pathnameToActiveTab` still resolves
-  // "chat" → "playground" — sidebar/content mismatch).
+  // Playground instead of the router's `*` catch-all (now an explicit
+  // not-found, which is at least honest — it used to render Servers while
+  // `pathnameToActiveTab` resolved "chat" → "playground", so the sidebar and
+  // the content disagreed).
   "chat/*": { element: <ChatAliasRoute /> },
   // `/user-testing` — the scenario list; `/user-testing/:scenarioId` detail
   // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
@@ -228,15 +262,57 @@ const ROUTE_ELEMENTS: Record<
   // `?project=`.
   "ci-evals": { loader: ciEvalsRedirect },
   "ci-evals/*": { loader: ciEvalsRedirect },
-  billing: { element: <ServersRoute /> },
+  billing: { element: <AppEntryLandingRoute /> },
   // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
   // component of its own rather than Servers: it must call `signIn()` so
   // authkit-js writes a PKCE verifier before the code lands on `/callback`.
   login: { element: <LoginInitiationRoute /> },
-  callback: { element: <ServersRoute /> },
-  "oauth/callback/*": { element: <ServersRoute /> },
-  "*": { element: <ServersRoute /> },
+  callback: { element: <AppEntryLandingRoute /> },
+  "oauth/callback/*": { element: <AppEntryLandingRoute /> },
+  "*": { element: <NotFoundRoute /> },
 };
+
+/**
+ * Scope-aware redirect loader.
+ *
+ * A legacy alias registered under `/p/<id>` must redirect WITHIN that project:
+ * `/p/A/clients` → `/p/A/hosts`, not `/hosts` (which would bounce through the
+ * legacy normalizer and re-resolve the project from persisted state — the
+ * long way round to the same place, with a chance of landing somewhere else).
+ */
+function withProjectScopedRedirect(
+  loader: (args: any) => unknown
+): (args: any) => unknown {
+  return async (args: any) => {
+    const result = await loader(args);
+    if (!(result instanceof Response)) return result;
+    if (result.status < 300 || result.status >= 400) return result;
+    const location = result.headers.get("Location");
+    if (!location) return result;
+    if (parseProjectPath(location)) return result;
+    const scoped = parseProjectPath(new URL(args.request.url).pathname);
+    if (!scoped) return result;
+    return redirect(buildProjectPath(scoped.projectId, location));
+  };
+}
+
+/**
+ * `APP_ROUTES` is still the ONLY catalog. Project routes are filtered out of
+ * the root level and mounted twice from the same entries: canonically below
+ * `p/:projectId`, and again at the root as legacy normalizers. Copying a
+ * second hand-written list into this file is what the scope field exists to
+ * avoid.
+ */
+function routeChildFor(
+  route: AppRouteEntry,
+  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown }
+) {
+  const isIndex = route.path === "/";
+  return {
+    ...(isIndex ? { index: true as const } : { path: route.path }),
+    ...rendered,
+  };
+}
 
 /** Route table → react-router children, preserving declaration order. */
 function buildRouteChildren() {
@@ -258,7 +334,7 @@ function buildRouteChildren() {
     }
   }
 
-  return APP_ROUTES.map((route) => {
+  const elementFor = (route: AppRouteEntry) => {
     const rendered = ROUTE_ELEMENTS[route.path];
     if (!rendered) {
       // A route table entry with nothing to render is a first-party bug —
@@ -267,18 +343,90 @@ function buildRouteChildren() {
         `[router] no element registered for route "${route.path}"`
       );
     }
-    const isIndex = route.path === "/";
-    return {
-      ...(isIndex ? { index: true as const } : { path: route.path }),
+    return rendered;
+  };
+
+  const projectRoutes = APP_ROUTES.filter((route) => route.scope === "project");
+
+  // 1. The canonical registration of every project-owned screen.
+  const projectChildren = projectRoutes.map((route) => {
+    const rendered = elementFor(route);
+    if (route.path === "/") {
+      // `/p/<id>` alone is not a destination — project HOME is. Redirecting
+      // rather than rendering Home here keeps one canonical URL per screen.
+      return {
+        index: true as const,
+        loader: ({ params }: any) =>
+          redirect(
+            buildProjectPath(
+              String(params.projectId ?? ""),
+              PROJECT_HOME_RELATIVE_PATH
+            )
+          ),
+      };
+    }
+    return routeChildFor(route, {
       ...rendered,
-    };
+      ...(rendered.loader
+        ? { loader: withProjectScopedRedirect(rendered.loader) }
+        : {}),
+    });
   });
+
+  // 2. The same paths at the root, rendering a NORMALIZER rather than the
+  //    screen. An old link resolves its project first and lands on the
+  //    canonical URL; nothing project-owned renders in the meantime, so the
+  //    wrong project's screen can never flash.
+  const legacyChildren = projectRoutes.map((route) => {
+    const rendered = elementFor(route);
+    if (rendered.loader) {
+      // A redirect renders nothing of its own, so there is nothing to hold
+      // back: let it rewrite the path, and the normalizer for the target
+      // route adds the project.
+      return routeChildFor(route, rendered);
+    }
+    return routeChildFor(route, {
+      element: (
+        <LegacyProjectRouteNormalizer>
+          {rendered.element}
+        </LegacyProjectRouteNormalizer>
+      ),
+    });
+  });
+
+  const unscopedChildren = APP_ROUTES.filter(
+    (route) => route.scope !== "project"
+  ).map((route) => routeChildFor(route, elementFor(route)));
+
+  return [
+    {
+      path: "p/:projectId",
+      element: <ProjectRouteBoundary />,
+      children: [
+        ...projectChildren,
+        // An unknown path under a real project is still not found. Without
+        // this it would fall through to the root `"*"`, which renders the
+        // not-found screen outside the project boundary — same message, but
+        // the project chrome disappears mid-navigation.
+        { path: "*", element: <NotFoundRoute /> },
+      ],
+    },
+    ...legacyChildren,
+    ...unscopedChildren,
+  ];
 }
 
 /**
- * Phase 1 router: a single catch-all route renders the existing App.
- * Subsequent phases will replace the catch-all with a real route tree
- * (chrome layout + tab outlets + nested evals/orgs).
+ * The app router.
+ *
+ * One shell (`<App>`) over three groups of children:
+ *
+ *   - `p/:projectId` — every project-owned screen, gated by
+ *     `ProjectRouteBoundary`. This is the canonical home of those routes, and
+ *     the reason a project is in the address bar at all.
+ *   - the same paths at the root, rendering `LegacyProjectRouteNormalizer`,
+ *     so links minted before the migration still open and then normalize.
+ *   - global and public routes, which never gain a project prefix.
  */
 export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
