@@ -75,6 +75,10 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
+  PlatformClientImpact,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -836,8 +840,170 @@ export class PlatformApiClient {
     );
   }
 
-  // ── Hosts ────────────────────────────────────────────────────────────
+  // ── Clients ──────────────────────────────────────────────────────────
+  //
+  // A **Client** is the product noun. The `listHosts`…`deleteHost` methods
+  // below these are DEPRECATED compatibility delegates: they keep calling the
+  // `/hosts` alias and keep returning its `PlatformHost*` shapes, so existing
+  // callers are unaffected. They are not thin wrappers over the client methods
+  // — the two surfaces return different fields.
 
+  listClients(
+    params: { projectId: string; includePrivateBacking?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformClient>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/clients/{client}` — `client` is a NAME or an ID.
+   *
+   * Name resolution happens server-side, where one implementation owns the
+   * eligibility and ambiguity rules. A client-side list-and-scan would be a
+   * second answer to "is this name ambiguous?", and would also have to
+   * re-implement the private-backing filter to avoid resolving a name the
+   * server would not.
+   */
+  getClient(
+    params: {
+      projectId: string;
+      client: string;
+      includePrivateBacking?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/clients` — create a client either from a built-in
+   * template (`{ name, template, theme? }`) or from a full config
+   * (`{ name, config }`). Returns the created client detail.
+   */
+  createClient(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `PATCH /projects/{p}/clients/{client}` — rename and/or edit the config.
+   *
+   * The body carries the compare-and-set tokens the canonical route requires
+   * (`expectedConfigId` for a config edit, `expectedName` for a rename); a
+   * stale one comes back as a 409 whose `details` names the current value.
+   */
+  updateClient(
+    params: {
+      projectId: string;
+      client: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  setClientServers(
+    params: {
+      projectId: string;
+      client: string;
+      serverIds: string[];
+      optionalServerIds?: string[];
+      expectedConfigId: string;
+      expectedImpact?: PlatformClientImpact;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/servers`,
+      {
+        body: {
+          serverIds: params.serverIds,
+          ...(params.optionalServerIds
+            ? { optionalServerIds: params.optionalServerIds }
+            : {}),
+          expectedConfigId: params.expectedConfigId,
+          ...(params.expectedImpact
+            ? { expectedImpact: params.expectedImpact }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  duplicateClient(
+    params: { projectId: string; client: string; name?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}/duplicate`,
+      { body: params.name === undefined ? {} : { name: params.name } },
+      options,
+    );
+  }
+
+  deleteClient(
+    params: {
+      projectId: string;
+      client: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClientDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body ?? {} },
+      options,
+    );
+  }
+
+  // ── Hosts (deprecated compatibility surface) ─────────────────────────
+
+  /** @deprecated Use {@link listClients}. Calls the deprecated `/hosts` alias. */
   listHosts(
     params: { projectId: string },
     options?: RequestOptions,
@@ -850,6 +1016,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link getClient}. Calls the deprecated `/hosts` alias. */
   getHost(
     params: { projectId: string; hostId: string },
     options?: RequestOptions,
@@ -868,6 +1035,8 @@ export class PlatformApiClient {
    * `POST /projects/{p}/hosts` — create a host either from a built-in template
    * (`{ name, template, theme? }`) or from a full host config
    * (`{ name, config }`). Returns the created host detail.
+   *
+   * @deprecated Use {@link createClient}. Calls the deprecated `/hosts` alias.
    */
   createHost(
     params: { projectId: string; body: Record<string, unknown> },
@@ -881,6 +1050,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link updateClient}. Calls the deprecated `/hosts` alias. */
   updateHost(
     params: {
       projectId: string;
@@ -899,6 +1069,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link setClientServers}. Calls the deprecated `/hosts` alias. */
   setHostServers(
     params: {
       projectId: string;
@@ -925,6 +1096,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link duplicateClient}. Calls the deprecated `/hosts` alias. */
   duplicateHost(
     params: { projectId: string; hostId: string; name?: string },
     options?: RequestOptions,
@@ -939,6 +1111,7 @@ export class PlatformApiClient {
     );
   }
 
+  /** @deprecated Use {@link deleteClient}. Calls the deprecated `/hosts` alias. */
   deleteHost(
     params: {
       projectId: string;
