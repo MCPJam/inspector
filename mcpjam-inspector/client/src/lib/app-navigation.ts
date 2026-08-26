@@ -6,6 +6,17 @@
  * URLs are path-based (`/servers`, `/organizations/:orgId/billing`, etc.)
  * matching `react-router` semantics. Scenario session hashes
  * (`#scenario-slug`) are NOT app navigation and are preserved verbatim.
+ *
+ * ## Logical paths in, scoped paths out
+ *
+ * `routePaths` and every `build*Path` helper stay LOGICAL — project-relative,
+ * with no `/p/<projectId>` in them. One conversion happens at the navigation
+ * boundary (`useAppNavigate`, `navigateApp`): a `scope: "project"` target
+ * navigated from inside a project keeps that project in the URL. That is the
+ * whole trick — callers never think about the prefix, and the prefix never
+ * gets lost, because there is exactly one place that adds it and one place
+ * (`stripProjectFromPath`) that takes it off before a path is matched against
+ * the logical route table.
  */
 import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
@@ -13,6 +24,13 @@ import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
+import { isProjectScopedRoutePath } from "./app-routes";
+import {
+  buildProjectPath,
+  isAppRelativeTarget,
+  parseProjectPath,
+  stripProjectFromPath,
+} from "./project-route";
 import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 import type { InsightsView } from "@/hooks/useInsightsFlowController";
 
@@ -319,18 +337,20 @@ export function parseSwarmSessionParams(search: string): {
  * not exist (an eval Quick Run, a session whose parent run was deleted).
  *
  * `project` is threaded explicitly rather than inherited from the recipient's
- * picker: `/sessions` has no project segment in its path, so without it the
- * page renders whatever project the viewer was last parked on rather than the
- * one the session belongs to.
+ * picker, and it goes in the PATH: a link minted for one project must open
+ * that project for whoever follows it, including on a refresh, which a
+ * consumed-and-stripped query parameter could not survive.
  */
 export function buildSessionsPath(
   opts: { session?: string; project?: string } = {}
 ): string {
   const search = new URLSearchParams();
   if (opts.session) search.set("session", opts.session);
-  if (opts.project) search.set("project", opts.project);
   const query = search.toString();
-  return query ? `${routePaths.sessions}?${query}` : routePaths.sessions;
+  const logical = query
+    ? `${routePaths.sessions}?${query}`
+    : routePaths.sessions;
+  return opts.project ? buildProjectPath(opts.project, logical) : logical;
 }
 
 /** Build a path for a specific organization route. */
@@ -462,6 +482,54 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
 
 export interface AppNavigateOptions {
   replace?: boolean;
+  /**
+   * Navigate to the LOGICAL path, refusing to inherit the current project.
+   *
+   * Rare and deliberate: the only caller is the screen shown when a project
+   * URL cannot be resolved, whose way out must not be "the project you just
+   * failed to open". Everything else wants the inheritance.
+   */
+  unscoped?: boolean;
+}
+
+/**
+ * The pathname the app is actually on, preferring the router's own location.
+ *
+ * `window.location` lags a router navigation that is still committing, and the
+ * scope decision below has to be made against where the user IS, not where the
+ * browser has finished painting.
+ */
+function currentAppPathname(): string {
+  const routerPathname = getAppRouter()?.state?.location?.pathname;
+  if (routerPathname) return routerPathname;
+  return getWindowFallbackPathname();
+}
+
+/**
+ * Carry the current project into a project-owned target.
+ *
+ * The one conversion from logical to concrete. It is deliberately derived
+ * from the CURRENT URL rather than from an ambient "active project" variable:
+ * two tabs can be on two different projects, and a module-level default would
+ * be a second source of truth for the very thing the URL now owns.
+ *
+ * Left alone: already-scoped paths (idempotent), global and public targets
+ * (Settings must never gain a project), bare `?query`/`#hash` navigations,
+ * anything off-origin, and any path no route claims.
+ */
+export function scopeNavigationTarget(
+  to: string,
+  fromPathname?: string
+): string {
+  if (typeof to !== "string" || !to) return to;
+  if (to.startsWith("?") || to.startsWith("#")) return to;
+  if (!isAppRelativeTarget(to)) return to;
+  if (parseProjectPath(to)) return to;
+  const current = parseProjectPath(fromPathname ?? currentAppPathname());
+  if (!current) return to;
+  const logical = to.split(/[?#]/)[0];
+  if (!isProjectScopedRoutePath(logical)) return to;
+  return buildProjectPath(current.projectId, to);
 }
 
 /**
@@ -472,15 +540,16 @@ export interface AppNavigateOptions {
  * (e.g. very early bootstrap).
  */
 export function navigateApp(to: string, options?: AppNavigateOptions): void {
+  const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(to, { replace: options?.replace });
+    void router.navigate(target, { replace: options?.replace });
     return;
   }
   if (options?.replace) {
-    window.history.replaceState({}, "", to);
+    window.history.replaceState({}, "", target);
   } else {
-    window.history.pushState({}, "", to);
+    window.history.pushState({}, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -495,20 +564,25 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
  */
 export function useAppNavigate() {
   const navigationContext = useContext(UNSAFE_NavigationContext);
+  const locationContext = useContext(UNSAFE_LocationContext);
   const navigator = navigationContext?.navigator;
+  const pathname = locationContext?.location.pathname;
   return useCallback(
     (to: string, options?: AppNavigateOptions) => {
+      const target = options?.unscoped
+        ? to
+        : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(to);
+          navigator.replace(target);
         } else {
-          navigator.push(to);
+          navigator.push(target);
         }
         return;
       }
-      navigateApp(to, options);
+      navigateApp(target, options);
     },
-    [navigator]
+    [navigator, pathname]
   );
 }
 
@@ -538,6 +612,76 @@ export function useActiveTab(): string {
 
   const pathname = locationContext?.location.pathname ?? fallbackPathname;
   return pathnameToActiveTab(pathname);
+}
+
+/**
+ * The live pathname, router-first with a `window` fallback and a `popstate`
+ * listener for the no-router render path.
+ *
+ * Same shape as `useActiveTab` and for the same reason: components in this app
+ * are mounted without a `<Router>` in unit tests, where `useLocation()` throws.
+ * Subscribing to the location context is what makes the project route
+ * coordinator reconcile CONTINUOUSLY — Back/Forward and an in-app A → B
+ * navigation change the pathname without remounting anything, and a
+ * once-per-mount reader would miss both.
+ */
+export function useCurrentPathname(): string {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallbackPathname, setFallbackPathname] = useState(
+    getWindowFallbackPathname
+  );
+
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const sync = () => setFallbackPathname(getWindowFallbackPathname());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, [locationContext]);
+
+  return locationContext?.location.pathname ?? fallbackPathname;
+}
+
+export interface AppLocationParts {
+  pathname: string;
+  search: string;
+  hash: string;
+}
+
+/**
+ * The full current location (path, search, hash), router-first.
+ *
+ * The legacy normalizer needs all three: it rewrites the path, drops exactly
+ * one query field, and must hand back the hash byte-for-byte.
+ */
+export function useCurrentLocationParts(): AppLocationParts {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallback, setFallback] = useState(getWindowFallbackLocationParts);
+
+  useLayoutEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const sync = () => setFallback(getWindowFallbackLocationParts());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, [locationContext]);
+
+  const location = locationContext?.location;
+  if (!location) return fallback;
+  return {
+    pathname: location.pathname || "/",
+    search: location.search || "",
+    hash: location.hash || "",
+  };
+}
+
+function getWindowFallbackLocationParts(): AppLocationParts {
+  if (typeof window === "undefined") {
+    return { pathname: "/", search: "", hash: "" };
+  }
+  return {
+    pathname: window.location.pathname || "/",
+    search: window.location.search || "",
+    hash: window.location.hash || "",
+  };
 }
 
 /**
@@ -590,14 +734,20 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
   );
 }
 
+/**
+ * One conformance run's immutable detail URL.
+ *
+ * The project rides in the PATH now. It used to be `?project=<id>`, which the
+ * app accepted, consumed, and stripped — leaving a URL that no longer said
+ * which project it belonged to, so a refresh or a re-share went back to
+ * whatever project the reader was parked on.
+ */
 export function buildConformanceRunPath(
   runId: string,
   projectId?: string | null
 ): string {
   const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
-  return projectId
-    ? `${base}?project=${encodeURIComponent(projectId)}`
-    : base;
+  return projectId ? buildProjectPath(projectId, base) : base;
 }
 
 export function buildConformanceSharePath(token: string): string {
@@ -608,7 +758,11 @@ export function buildEvalSharePath(token: string): string {
   return `${routePaths.evalsShared}/${encodeURIComponent(token)}`;
 }
 
-export function pathnameToActiveTab(pathname: string): string {
+export function pathnameToActiveTab(rawPathname: string): string {
+  // Every first-segment parser in the app funnels through here, so this is
+  // where the project prefix comes off: `/p/<id>/servers` is the Servers tab,
+  // not a tab called "p".
+  const pathname = stripProjectFromPath(rawPathname);
   if (isSpecialEntryPathname(pathname)) return "servers";
   if (pathname.startsWith(`${routePaths.capabilities}/`)) {
     return "host-compare";
@@ -690,6 +844,22 @@ export function navigationTargetToPath(
   rawTarget: string,
   fallback: string = routePaths.servers
 ): string {
+  // A scoped target normalizes on its LOGICAL half and is re-scoped to the
+  // same project. Without this, `/p/A/evals/suite/X` would reduce to the
+  // fallback (`/servers`) — which is exactly how a sign-in round trip used to
+  // lose the page the user asked for.
+  const scoped = parseProjectPath(rawTarget);
+  if (scoped) {
+    const { suffix, path } = (() => {
+      const stripped = stripProjectFromPath(rawTarget);
+      const cut = stripped.search(/[?#]/);
+      return cut === -1
+        ? { path: stripped, suffix: "" }
+        : { path: stripped.slice(0, cut), suffix: stripped.slice(cut) };
+    })();
+    const logical = navigationTargetToPath(`${path}${suffix}`, fallback);
+    return buildProjectPath(scoped.projectId, logical);
+  }
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");
   const questionIndex = stripped.indexOf("?");
   const pathPart =
@@ -729,12 +899,22 @@ export function normalizeInitialLegacyHashBookmark(): void {
   window.history.replaceState({}, "", path);
 }
 
+/**
+ * A stored "come back here" path → a path this app will actually navigate to.
+ *
+ * Two jobs: refuse anything that could leave this origin (an absolute URL, a
+ * protocol-relative one, a backslash the browser folds into a slash), and
+ * keep a valid `/p/<projectId>/...` intact instead of reducing it to
+ * `/servers`. The second one is postcondition 7 of the canonical-URL work: the
+ * complete URL, project and all, survives a sign-in round trip.
+ */
 export function normalizeReturnTargetPath(
   target?: string | null,
   fallback: string = routePaths.servers
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;
+  if (!isAppRelativeTarget(trimmed)) return fallback;
   return navigationTargetToPath(trimmed, fallback);
 }
 
@@ -742,40 +922,35 @@ export function captureCurrentReturnPath(): string | null {
   if (typeof window === "undefined") return null;
   const pathname = window.location.pathname || routePaths.root;
   const search = window.location.search || "";
+  // The hash is part of the destination on eval and scenario deep links
+  // (`#case`, `#scenario-slug`); dropping it returns the user to the page but
+  // not to the thing on it.
+  const hash = window.location.hash || "";
   if (pathname === routePaths.root || pathname === "") return null;
-  return `${pathname}${search}`;
+  return `${pathname}${search}${hash}`;
 }
 
 /**
- * Where a manual project switch should land, if anywhere.
+ * Where selecting another project in the picker lands.
  *
- * As with `shouldSnapToServersOnActiveProjectChange`, callers must resolve
- * `activeTab` from the live pathname rather than a routing hook: a switch that
- * resolves after the caller has already navigated would otherwise be judged
- * against the page the user left.
+ * Deterministic and URL-first: the picker NAVIGATES, and the project route
+ * coordinator performs the state switch because the URL changed. The previous
+ * shape — switch hidden state, then repair the URL from an effect — is what
+ * made project switching racy: two effects (a snap-to-Servers and a
+ * deep-link resolver) both wrote the URL from a project change they had each
+ * observed at a different moment.
+ *
+ * Servers rather than "stay where you are": the current path can name a
+ * resource that only exists in the project being left (`/evals/suite/<id>`),
+ * and carrying that id across projects renders someone else's empty state.
  */
-export function getProjectSwitchNavigationTarget({
-  activeTab,
-  activeOrganizationId,
-  nextProjectOrganizationId,
-}: {
-  activeTab: string;
-  activeOrganizationId?: string;
-  nextProjectOrganizationId?: string;
-}): string | null {
-  if (activeTab !== "organizations") {
-    return null;
-  }
+export function buildProjectSwitchTarget(projectId: string): string {
+  return buildProjectPath(projectId, routePaths.servers);
+}
 
-  if (
-    !activeOrganizationId ||
-    !nextProjectOrganizationId ||
-    nextProjectOrganizationId !== activeOrganizationId
-  ) {
-    return routePaths.servers;
-  }
-
-  return null;
+/** The per-project settings gear in the picker — one gesture, one URL. */
+export function buildProjectSettingsTarget(projectId: string): string {
+  return buildProjectPath(projectId, routePaths.projectSettings);
 }
 
 export function getInvalidOrganizationRouteNavigationTarget({
@@ -798,52 +973,4 @@ export function getInvalidOrganizationRouteNavigationTarget({
   }
 
   return null;
-}
-
-/**
- * Decide whether an active-project change should snap the user to Servers.
- *
- * Staying on a project-scoped page (App Builder/Chat) after the active project
- * changes would leave the user pointed at a project that no longer exists, so
- * we snap to Servers. But not every project change is a manual switch: opening
- * another org's settings (e.g. via the switcher's per-row gear) flips the
- * active org, which auto-resolves a new active project as a *side effect* while
- * the user deliberately navigates to the org page. Organization routes are
- * org-scoped, not project-scoped, so snapping there would bounce the user right
- * back off the settings they just opened.
- *
- * Project settings is exempt for the same reason: it renders whichever project
- * is active, so it is still correct after the switch, and the switcher's
- * per-row gear reaches it by switching project and navigating as one gesture.
- *
- * Callers must resolve `activeTab` from the live pathname, not from a routing
- * hook — the router commits navigations in a transition, so a hook-derived tab
- * can still name the page the user is leaving when this runs.
- *
- * The initial hydration (no previous id) and the local-default `"none"`
- * placeholder are never treated as real switches.
- */
-export function shouldSnapToServersOnActiveProjectChange({
-  previousActiveProjectId,
-  nextActiveProjectId,
-  activeTab,
-}: {
-  previousActiveProjectId: string | null;
-  nextActiveProjectId: string;
-  activeTab: string;
-}): boolean {
-  if (
-    previousActiveProjectId == null ||
-    previousActiveProjectId === nextActiveProjectId ||
-    previousActiveProjectId === "none" ||
-    nextActiveProjectId === "none"
-  ) {
-    return false;
-  }
-
-  if (activeTab === "organizations" || activeTab === "project-settings") {
-    return false;
-  }
-
-  return true;
 }
