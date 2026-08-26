@@ -1584,7 +1584,11 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/");
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      // The restoration NAVIGATES now rather than writing history behind the
+      // router's back, so the screen follows the URL it just restored: `/`
+      // is Home. (It used to leave the app rendering Servers under a `/` it
+      // had silently rewritten — the mismatch this migration removes.)
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
     expect(readBillingSignInReturnPath()).toBeNull();
   });

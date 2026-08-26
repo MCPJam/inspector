@@ -7,6 +7,7 @@
  * additive fields are non-breaking and must be ignored, never relied on
  * being absent.
  */
+import type { PlatformPermalink } from "./permalinks.js";
 import type { ServerDoctorResult } from "../server-doctor-core.js";
 import type {
   EvaluationConfigSnapshot,
@@ -307,6 +308,16 @@ export interface PlatformTurnUsage {
 export interface PlatformChatTurn {
   sessionId: string | null;
   turnId: string;
+  /**
+   * The project this turn ran in.
+   *
+   * A CONTINUATION does not send one — it is read off the session row — so
+   * without this a caller holding only the turn cannot say where the session
+   * lives, and the session permalink cannot be composed. That is not
+   * hypothetical: it is the one operation whose scope is never resolved
+   * locally, so nothing else in the response or the context carries it.
+   */
+  projectId: string;
   reply?: string;
   finishReason?: string | null;
   toolCalls?: PlatformTurnToolCall[];
@@ -431,7 +442,11 @@ export interface PlatformWidgetRender {
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */
-export type PlatformSessionSourceType = "direct" | "scenario" | "eval" | "swarm";
+export type PlatformSessionSourceType =
+  | "direct"
+  | "scenario"
+  | "eval"
+  | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -447,13 +462,21 @@ export interface PlatformSessionParentRef {
   scenarioId?: string;
 }
 
-/** Where a human goes to read a session. Always present. */
-export interface PlatformSessionLink {
-  /** App-relative path, including `?project=`. */
-  path: string;
-  /** Absolute URL for the same target. */
-  url: string;
-}
+/**
+ * Where a human goes to read a session. Always present.
+ *
+ * A PROJECTION of `PlatformPermalink`, not a widening of it: the wire
+ * contract for `/v1/sessions` rows is exactly `{path, url}` today, and adding
+ * `label`/`resource` as REQUIRED fields would make every older backend's
+ * response fail a client that trusted the type. Deriving it from
+ * `PlatformPermalink` instead of restating the two fields is what stops the
+ * shared permalink shape and the session wire shape from drifting apart —
+ * rename `path` there and this stops compiling here.
+ *
+ * The backend may later add `label`/`resource` as OPTIONAL fields without
+ * breaking a client built against this.
+ */
+export type PlatformSessionLink = Pick<PlatformPermalink, "path" | "url">;
 
 /**
  * One row of the unified, cross-surface sessions feed
@@ -861,7 +884,10 @@ export interface PlatformDisclosedModel {
  * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
  * a fourth runtime kind.
  */
-export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
+export type PlatformDisclosureEngine =
+  | "emulated"
+  | "mixed"
+  | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -1646,7 +1672,80 @@ export interface PlatformEvalCaseDeleted {
   deleted: true;
 }
 
-/** A host in a project (list projection). */
+// ── Clients ──────────────────────────────────────────────────────────────────
+//
+// A **Client** is the product noun: a named, reusable configuration that
+// defines how MCPJam connects to and talks to your MCP servers. The
+// `PlatformHost*` types below it are the DEPRECATED shapes the `/hosts` alias
+// still returns. They are separate interfaces, not aliases of these, because
+// the two surfaces genuinely differ in their fields — see the note on
+// `PlatformHost`.
+
+/**
+ * What a config edit to a client would follow.
+ *
+ * These are the DURABLE consumers that re-resolve the client's current config.
+ * Past runs, per-turn traces and pinned eval-suite snapshots hold a config id
+ * and do not follow an edit. Direct playground / client-chat use follows it and
+ * has no row to count, which is why it is described in prose by the surfaces
+ * that quote these numbers rather than folded into one of them.
+ */
+export interface PlatformClientImpact {
+  liveEnvironmentCount: number;
+  scenarioAttachmentCount: number;
+  activeLegacyJourneyCount: number;
+}
+
+/** A client in a project (list projection). */
+export interface PlatformClient {
+  id: string;
+  name: string;
+  /**
+   * ID of the content-addressed config this client points at, and the
+   * concurrency token every write takes. Content addressed, so the same id
+   * means byte-identical settings.
+   */
+  configId: string;
+  modelId: string;
+  serverCount: number;
+  /** Product ownership of the row (null for untagged). Never an auth signal. */
+  ownerScope: Record<string, unknown> | null;
+  hasComputer: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Full client detail, including the resolved config DTO and its read-backs. */
+export interface PlatformClientDetail {
+  id: string;
+  name: string;
+  /** The concurrency token — see {@link PlatformClient.configId}. */
+  configId?: string;
+  /** Resolved client-config v2 DTO (model, capabilities, hostContext, …). */
+  config: Record<string, unknown>;
+  ownerScope: Record<string, unknown> | null;
+  hasComputer?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+  /** What a config edit would follow. */
+  impact?: PlatformClientImpact;
+}
+
+export interface PlatformClientDeleted {
+  id: string;
+  deleted: true;
+}
+
+/**
+ * @deprecated A host in a project, as the `/hosts` alias returns it. Use
+ * {@link PlatformClient}.
+ *
+ * NOT a type alias of `PlatformClient`, deliberately. `/hosts` returns
+ * `hostConfigId` where `/clients` returns `configId`, and carries none of the
+ * read-backs — so an alias would be a compile-time lie about a runtime shape,
+ * and every existing caller reading `hostConfigId` would start failing
+ * typecheck for a field the deprecated route still sends.
+ */
 export interface PlatformHost {
   id: string;
   name: string;
@@ -1657,7 +1756,10 @@ export interface PlatformHost {
   updatedAt: number;
 }
 
-/** Full host detail, including the resolved host config DTO. */
+/**
+ * @deprecated Full host detail as the `/hosts` alias returns it. Use
+ * {@link PlatformClientDetail}, which also carries `configId` and `impact`.
+ */
 export interface PlatformHostDetail {
   id: string;
   name: string;
@@ -1665,6 +1767,7 @@ export interface PlatformHostDetail {
   config: Record<string, unknown>;
 }
 
+/** @deprecated Use {@link PlatformClientDeleted}. */
 export interface PlatformHostDeleted {
   id: string;
   deleted: true;
