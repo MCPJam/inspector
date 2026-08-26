@@ -942,6 +942,12 @@ export type {
   ProviderLanguageModel,
 } from "./model-factory.js";
 
+// Which sampling parameters a model accepts. Also exported from
+// `@mcpjam/sdk/browser` so client code can gate a temperature control without
+// pulling the Node graph in; exported here so a Node consumer building its own
+// request doesn't re-derive the version thresholds locally.
+export { modelRejectsTemperature } from "./model-sampling-support.js";
+
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
   serializeForInlineScript,

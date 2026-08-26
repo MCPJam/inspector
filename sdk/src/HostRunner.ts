@@ -20,6 +20,7 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
+import { modelRejectsTemperature } from "./model-sampling-support.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -724,10 +725,13 @@ export class HostRunner implements HostExecutor {
         ...(contextMessages.length > 0
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
-        // Only include temperature if explicitly set (some models like reasoning models don't support it)
-        ...(this.temperature !== undefined && {
-          temperature: this.temperature,
-        }),
+        // Only include temperature if explicitly set (some models like reasoning
+        // models don't support it), and never for a model that 400s on the field
+        // being present at all — the key has to be absent, not undefined.
+        ...(this.temperature !== undefined &&
+          !modelRejectsTemperature(this.model) && {
+            temperature: this.temperature,
+          }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),
