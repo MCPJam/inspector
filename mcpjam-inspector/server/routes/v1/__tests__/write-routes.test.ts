@@ -277,6 +277,46 @@ describe("v1 write routes", () => {
         return { disconnectAllServers };
       }
 
+      it("answers an import refusal with 400 and its reason, not a 500", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "host_config",
+          }),
+        });
+        prepareEvalRunMock.mockRejectedValue(
+          Object.assign(new Error("Uncaught ConvexError: not approved"), {
+            data: {
+              code: "IMPORT_INELIGIBLE",
+              message:
+                'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+              reason: "approval_required",
+            },
+          })
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        // Rethrown raw this reached the application-level handler as a 500,
+        // telling the one person who could fix it that the server broke.
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toMatch(/approximated/);
+        expect(body.details?.reason).toBe("approval_required");
+      });
+
       it("derives the suite's saved server selection and connects it", async () => {
         const { disconnectAllServers } = mockHappyCreate();
         mockConvexQueries({
@@ -1754,6 +1794,48 @@ describe("v1 write routes", () => {
         expect(call[1]).toMatchObject({ importApprovals: approvals });
       }
       await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("reports an import refusal as a validation failure, not INTERNAL_ERROR", async () => {
+      hostSuiteQueries();
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      // What `startTestSuiteRun` throws for a selected approximation carrying
+      // no approval.
+      prepareEvalRunMock.mockRejectedValue(
+        Object.assign(new Error("Uncaught ConvexError: not approved"), {
+          data: {
+            code: "IMPORT_INELIGIBLE",
+            message:
+              'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+            reason: "approval_required",
+          },
+        })
+      );
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [{ namedHostId: "host_claude" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as {
+        targets: Array<{ error?: { code?: string; message?: string } }>;
+      };
+      // `describeLaunchFailure` keeps a WebRouteError's code and flattens
+      // everything else to INTERNAL_ERROR. Reporting a server fault for a
+      // decision the CALLER can make — approve the case or exclude it — sends
+      // them to the wrong place entirely.
+      expect(body.targets[0]?.error?.code).toBe("VALIDATION_ERROR");
+      expect(body.targets[0]?.error?.message).toMatch(/approximated/);
     });
 
     it("refuses a caller-supplied approver on the group body (400, no launch)", async () => {

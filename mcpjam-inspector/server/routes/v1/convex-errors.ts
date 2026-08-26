@@ -228,6 +228,32 @@ function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   return formatRetryAfterSeconds(retryAfterMs);
 }
 
+/**
+ * An import-ineligibility refusal, translated — or `undefined` for anything else.
+ *
+ * A launch that refuses a selected `approximated`, `unsupported` or
+ * `unresolved` case is the one refusal in this feature a CALLER can act on:
+ * approve the case for this run, or exclude it. Rethrown raw, it reaches the
+ * application-level handler as a 500 on the single route and is flattened to
+ * `INTERNAL_ERROR` by `describeLaunchFailure` on the grouped one, so the person
+ * who could fix it is told the server broke instead.
+ *
+ * Deliberately NARROW. Running every launch failure through the full
+ * translator would re-status unrelated errors that the launch paths have
+ * always surfaced their own way; this touches exactly the code that was
+ * unreachable.
+ */
+export function translateImportIneligibleError(
+  error: unknown
+): WebRouteError | undefined {
+  const data = convexErrorData(error);
+  if (data?.code !== "IMPORT_INELIGIBLE") return undefined;
+  // `resource` is unused on this path — the IMPORT_INELIGIBLE branch returns
+  // before any not-found copy — but the option is required, so name the thing
+  // the caller was trying to start rather than leaving it meaningless.
+  return translateConvexWriteError(error, { resource: "Eval run" });
+}
+
 export function translateConvexWriteError(
   error: unknown,
   options: TranslateConvexWriteErrorOptions

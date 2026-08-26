@@ -115,7 +115,10 @@ import {
 } from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
-import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import {
+  translateConvexWriteError as translateConvexError,
+  translateImportIneligibleError,
+} from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
@@ -3130,7 +3133,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     );
   } catch (error) {
     releaseSlotOnce();
-    throw error;
+    // An import refusal is actionable BY THE CALLER — approve the case for this
+    // run or exclude it — so it must not escape as a 500.
+    throw translateImportIneligibleError(error) ?? error;
   }
 });
 
@@ -3498,7 +3503,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // will never run — decrement HERE or the group's slot outlives it.
       releaseRunGroupSlotRef(slot);
       failedCount += 1;
-      const failure = describeLaunchFailure(error);
+      // Same translation as the single route: `describeLaunchFailure` keeps a
+      // `WebRouteError`'s code and message and flattens everything else to
+      // `INTERNAL_ERROR`, so the refusal has to become one first or the entry
+      // reports a server fault for a decision the caller can make.
+      const failure = describeLaunchFailure(
+        translateImportIneligibleError(error) ?? error,
+      );
       logger.warn("[v1 evals] eval run group target failed to launch", {
         projectId,
         suiteId: body.suiteId,
