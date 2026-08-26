@@ -22,6 +22,8 @@ export {
   type PlatformApiClientOptions,
 } from "./client.js";
 
+export { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+
 export {
   computeRunTargets,
   type ComputeRunTargetsInput,
@@ -89,6 +91,7 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessSubmissionMode,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
   PlatformGateWaiver,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,

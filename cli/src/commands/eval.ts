@@ -57,7 +57,6 @@ import {
 import {
   applyGateWaiver,
   buildCorpus,
-  buildEvalDecisionSummaryFromIterations,
   buildEvalRunReport,
   buildRunCompareReport,
   detectFlakyCases,
@@ -143,6 +142,11 @@ import {
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
+import {
+  decisionSummaryFromIterations,
+  readEvalRunDecisionSummary,
+} from "../lib/eval-decision-summary.js";
+import type { EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -1178,9 +1182,7 @@ async function runEvalGate(
       : DEFAULT_GATE_WAIT_TIMEOUT_MS;
   const resolved = resolveCloudProjectArgs(options);
 
-  let decisionSummary:
-    | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
-    | undefined;
+  let decisionSummary: EvalRunDecisionSummary | undefined;
   let outcome: {
     report: GateReport;
     run?: PlatformEvalRun;
@@ -1213,6 +1215,12 @@ async function runEvalGate(
             // Without --wait, a still-running run would otherwise be gated on
             // its PARTIAL summary — a confident verdict about an unfinished
             // run. Undecidable, not failed.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1225,12 +1233,19 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           if (Date.now() >= deadline) {
             // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
             // pass. Reported as incomplete so it can never read as a
             // regression.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1243,6 +1258,7 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -1274,6 +1290,19 @@ async function runEvalGate(
           isNonVerdictRunStatus(run.status) ||
           isNonVerdictRunResult(run.result)
         ) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run
+                );
           // Cancelled / timed out: the run has not told us the server
           // regressed, it has told us nothing. Same for a policy-2
           // `inconclusive` result, where the platform itself declined to
@@ -1299,15 +1328,26 @@ async function runEvalGate(
           };
         }
 
+        // Assembled from the walk this gate already paid for, through the
+        // canonical assembler. The gate's own verdict is untouched: this
+        // EXPLAINS the run, it does not re-decide it, and the summary's verdict
+        // comes from the run's own decision rather than from these rows.
         if (iterations) {
-          decisionSummary = buildEvalDecisionSummaryFromIterations(
-            iterations.items,
-            {
-              total: run.summary?.total,
-              passed: run.summary?.passed,
-              failed: run.summary?.failed,
-              iterationWalkComplete: iterations.complete,
-            }
+          decisionSummary = decisionSummaryFromIterations({
+            projectId: project.id,
+            run,
+            iterations,
+          });
+        } else {
+          // The most common gate — `--min-pass-rate-percent` — is decided off
+          // the run's own summary and needs no iteration walk. Read the
+          // canonical object for every output mode so JSON and reporter
+          // artifacts cannot silently omit it.
+          decisionSummary = await readEvalRunDecisionSummary(
+            client,
+            signal,
+            project.id,
+            run
           );
         }
         // A failed LOCAL iteration fetch makes the run's own threshold report
@@ -1485,7 +1525,16 @@ async function runEvalGate(
   if (reporter && structured) {
     writeReporterResult(reporter, structured);
   } else {
-    writeResult({ gate: report, exitCode }, globalOptions.format);
+    writeResult(
+      globalOptions.format === "json"
+        ? {
+            gate: report,
+            exitCode,
+            ...(decisionSummary ? { decisionSummary } : {}),
+          }
+        : { gate: report, exitCode },
+      globalOptions.format
+    );
   }
   if (globalOptions.format === "human" && !reporter) {
     process.stderr.write(`${formatGateReport(report)}\n`);
@@ -1717,7 +1766,7 @@ async function runEvalCompare(
     report: GateReport;
     compare?: PlatformRunCompare;
     flakyCases?: FlakyCase[];
-    decisionSummary?: ReturnType<typeof buildEvalDecisionSummaryFromIterations>;
+    decisionSummary?: EvalRunDecisionSummary;
   };
 
   let outcome: CompareOutcome;
@@ -1806,20 +1855,33 @@ async function runEvalCompare(
           compareP95Ms: p95Of(compareIterations),
         });
 
+        // The compare wire's run sides are a COMPARISON projection: they carry
+        // `result` and `summary` but no `status` and no `verdictSummary`, so
+        // assembling a decision from one would report a policy-v2 run as a
+        // legacy percent-threshold run — a claim about where its verdict came
+        // from that would simply be false. One small read gets the real thing;
+        // the diagnostics still come from the walk already performed, which is
+        // more complete than a single endpoint page.
+        const compareRunDetail = await client
+          .getEvalRun(
+            { projectId: project.id, runId: compare.compareRun.id },
+            { signal }
+          )
+          .catch(() => undefined);
+
         return {
           report: evaluateCompareGates(input, policy),
           compare,
-          decisionSummary: compareIterations
-            ? buildEvalDecisionSummaryFromIterations(
-                compareIterations.items,
-                {
-                  total: compare.compareRun.summary?.total,
-                  passed: compare.compareRun.summary?.passed,
-                  failed: compare.compareRun.summary?.failed,
-                  iterationWalkComplete: compareIterations.complete,
-                }
-              )
-            : undefined,
+          // About the COMPARE side only. A baseline's own failures are a
+          // different run's diagnostics and would read here as this run's.
+          decisionSummary:
+            compareIterations && compareRunDetail
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run: compareRunDetail,
+                  iterations: compareIterations,
+                })
+              : undefined,
           // Reported, NEVER gated. See `detectFlakyCases`.
           flakyCases: compareIterations?.complete
             ? detectFlakyCases(flakyInputFrom(compareIterations.items))
@@ -1884,6 +1946,15 @@ async function runEvalCompare(
   );
   if (globalOptions.format === "human" && !reporter) {
     process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+    // The COMPARE side's own decision, the same object the report carries.
+    // Stderr, like the gate report above, so `--format human` still leaves one
+    // parseable document on stdout. The baseline's failures are a different
+    // run's diagnostics and are deliberately not shown here.
+    writeEvalDecisionSummary(
+      globalOptions.format,
+      outcome.decisionSummary,
+      process.stderr
+    );
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
@@ -2966,6 +3037,26 @@ export function registerEvalCommands(program: Command): void {
           );
 
           if (!needsReport) {
+            // No report was asked for, so no iteration walk was paid for — but
+            // in human format the whole value of `--wait` is being told what
+            // happened, and today a failing wait prints a receipt and an exit
+            // code and nothing about why. One bounded read buys that back.
+            //
+            // SINGLE-RUN ONLY, here and below. `StructuredRunReport` carries
+            // one summary and a fan-out has several runs; attaching one of them
+            // would label a report about N runs with the decision of one.
+            const soloSummary =
+              globalOptions.format === "human" &&
+              result.targets.length === 1 &&
+              runs.length === 1 &&
+              TERMINAL_RUN_STATUSES.has(runs[0]!.status)
+                ? await readEvalRunDecisionSummary(
+                    client,
+                    signal,
+                    result.project.id,
+                    runs[0]!
+                  )
+                : undefined;
             // Deliberately does NOT throw on `waitErrors` here. Throwing from
             // inside the platform command skips the receipt below, and the
             // receipt is the only place the launched run ids are printed: a
@@ -2979,6 +3070,7 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs: [] as StructuredEvalRunInput[],
               iterationErrorCodes: new Map<string, string>(),
+              ...(soloSummary ? { decisionSummary: soloSummary } : {}),
             };
           }
 
@@ -3015,7 +3107,33 @@ export function registerEvalCommands(program: Command): void {
               }
             })
           );
-          return { runs, waitErrors, reportInputs, iterationErrorCodes };
+          // Free: assembled from the walk `reportInputs` already performed,
+          // through the same assembler the API endpoint calls. Skipped when the
+          // walk failed — a summary built from an empty iteration list would
+          // report zero failures for a run nobody managed to read.
+          const solo =
+            result.targets.length === 1 &&
+            runs.length === 1 && reportInputs.length === 1
+              ? reportInputs[0]!
+              : undefined;
+          const decisionSummary =
+            solo && solo.iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: result.project.id,
+                  run: solo.run,
+                  iterations: {
+                    items: [...solo.iterations],
+                    complete: solo.iterationsComplete,
+                  },
+                })
+              : undefined;
+          return {
+            runs,
+            waitErrors,
+            reportInputs,
+            iterationErrorCodes,
+            ...(decisionSummary ? { decisionSummary } : {}),
+          };
         },
         {
           projectScope: resolved.projectScope,
@@ -3040,6 +3158,9 @@ export function registerEvalCommands(program: Command): void {
               suite: result.suite,
               ...(result.runGroupId ? { runGroupId: result.runGroupId } : {}),
             },
+            ...(completion.decisionSummary
+              ? { decisionSummary: completion.decisionSummary }
+              : {}),
           })
         : undefined;
 
@@ -3095,6 +3216,13 @@ export function registerEvalCommands(program: Command): void {
           globalOptions.format
         );
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        // Human only, and after the receipt: the receipt carries the run ids
+        // and must reach stdout first whatever else happens.
+        writeEvalDecisionSummary(
+          globalOptions.format,
+          completion.decisionSummary,
+          process.stdout
+        );
       }
 
       // Everything above has already been written — report file, reporter
@@ -3148,9 +3276,7 @@ export function registerEvalCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
-      let decisionSummary:
-        | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
-        | undefined;
+      let decisionSummary: EvalRunDecisionSummary | undefined;
       const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
         platformOptionsOf(command),
@@ -3166,31 +3292,22 @@ export function registerEvalCommands(program: Command): void {
             } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
+          // Any terminal run that did NOT pass — not just a failed one.
+          // `inconclusive` and a run that stopped without a verdict are the
+          // outcomes a reader is least able to explain on their own, and the
+          // summary is the only place that says which check withheld it. A
+          // clean pass is skipped: there is nothing to diagnose, and the extra
+          // read would buy a block of "0 non-passing" noise.
+          //
+          // `getEvalRunOperation` already uses the endpoint-first, shared
+          // fallback reader. Reuse that exact object instead of doing a second
+          // network read (and, on old deployments, a second iteration walk).
           if (
             globalOptions.format === "human" &&
             TERMINAL_RUN_STATUSES.has(result.run.status) &&
-            result.run.result === "failed"
+            result.run.result !== "passed"
           ) {
-            try {
-              const iterations = await fetchAllIterations(
-                context.client,
-                context.signal,
-                result.project.id,
-                result.run.id
-              );
-              decisionSummary = buildEvalDecisionSummaryFromIterations(
-                iterations.items,
-                {
-                  total: result.run.summary?.total,
-                  passed: result.run.summary?.passed,
-                  failed: result.run.summary?.failed,
-                  iterationWalkComplete: iterations.complete,
-                }
-              );
-            } catch {
-              // The status result is already useful; an optional diagnostic
-              // read must never turn a successful status request into a failure.
-            }
+            decisionSummary = result.decisionSummary;
           }
           return result;
         },
@@ -3199,18 +3316,33 @@ export function registerEvalCommands(program: Command): void {
           quiet: globalOptions.quiet,
         }
       );
-      writeResult(result, globalOptions.format);
+      // The wire-shaped result is useful in JSON, but human output must not
+      // leak raw decision enums (for example `argumentMismatch`) before the
+      // label-aware summary below. The operation still returns the canonical
+      // object verbatim for MCP/JSON consumers; this only removes the duplicate
+      // machine payload from the human terminal.
+      const resultForOutput =
+        globalOptions.format === "human"
+          ? (() => {
+              const { decisionSummary: _decisionSummary, ...humanResult } = result;
+              return humanResult;
+            })()
+          : result;
+      writeResult(resultForOutput, globalOptions.format);
       writeJudgeSummary(globalOptions.format, result.run.judges);
-      writeRunLink(globalOptions.format, webOrigin, {
-        projectId: result.project.id,
-        suiteId: result.run.suiteId,
-        runId: result.run.id,
-      });
+      // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
+      // it is the one thing a reader acts on after reading the rest, and a
+      // block printed under it would push it out of sight on a long run.
       writeEvalDecisionSummary(
         globalOptions.format,
         decisionSummary,
         process.stdout
       );
+      writeRunLink(globalOptions.format, webOrigin, {
+        projectId: result.project.id,
+        suiteId: result.run.suiteId,
+        runId: result.run.id,
+      });
     }
   );
 

@@ -24,6 +24,11 @@ import {
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
 import {
+  buildEvalRunDecisionSummaryResponse,
+  decisionSummaryPageIsComplete,
+  parseDecisionSummaryLimit,
+} from "./eval-decision-summary-projection.js";
+import {
   toRunVerdictProjection,
   toSuiteVerdictPolicyDto,
 } from "./eval-verdict-projection.js";
@@ -1390,6 +1395,19 @@ function toIterationDto(iteration: IterationDoc) {
   return {
     id: String(iteration._id),
     testCaseId: iteration.testCaseId ? String(iteration.testCaseId) : null,
+    // The case's SDK-DECLARED id, from the iteration's FROZEN snapshot — the
+    // identity the suite declared when the run started, which survives the case
+    // row being recreated. Kept beside `testCaseId` and never merged into it:
+    // one is the author's durable name for the case and the other is this
+    // deployment's row id, and a reader that cannot tell them apart cannot tell
+    // a re-created case from a renamed one.
+    //
+    // OMITTED, never nulled, when the snapshot has none — a UI-authored case
+    // declares no id, and every iteration predating declared ids has none — so
+    // this is additive for every existing row.
+    ...(typeof snapshot.caseId === "string" && snapshot.caseId.length > 0
+      ? { caseId: snapshot.caseId }
+      : {}),
     title: snapshot.title ?? null,
     iterationNumber: iteration.iterationNumber,
     status: iteration.status,
@@ -4083,6 +4101,70 @@ evals.delete(
     return v1Resource(c, toGateWaiverWriteDto(result));
   },
 );
+
+// GET /v1/projects/:projectId/eval-runs/:runId/decision-summary?cursor=&limit=
+//
+// THE FIRST THING TO READ ABOUT A FINISHED RUN. One versioned object: the
+// verdict, the population its counts are in, the run's own authoritative
+// `EvalVerdictDecision` when it has one, and one page of per-trial diagnostics
+// with the user-value chain, the first failed stage, the failure category and a
+// typed pointer at the evidence.
+//
+// ADDITIVE. Every existing run/iteration field is untouched — this composes the
+// same two reads a caller would otherwise make by hand, and the composing is
+// the point: doing it in three clients produced three readings of one run.
+//
+// The verdict is COPIED from the run, never recomputed here. Under policy v2
+// `verdictSummary` is the only authority for the verdict, the rates, the
+// validity phase and the per-case aggregation; the iterations below are
+// evidence UNDER that decision and are never counted as cases.
+evals.get("/projects/:projectId/eval-runs/:runId/decision-summary", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const limit = parseDecisionSummaryLimit(c.req.query("limit"));
+  // `null`, not `undefined`, and the difference is the completeness claim: a
+  // request that carried a cursor has already skipped rows, so whatever it gets
+  // back cannot be the run's complete failure list however short it is.
+  const cursor = c.req.query("cursor") ?? null;
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+    requireProjectMatch(run, projectId, "Eval run");
+    page = await convex.query("testSuites:listTestSuiteRunIterations" as any, {
+      runId,
+      paginationOpts: { numItems: limit, cursor },
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  const complete = decisionSummaryPageIsComplete({
+    requestCursor: cursor,
+    isDone: page.isDone,
+  });
+  return v1Resource(
+    c,
+    buildEvalRunDecisionSummaryResponse({
+      projectId,
+      // The PUBLIC projections, not the documents: `toRunDto` has already
+      // refused a verdict decision that does not validate and `toIterationDto`
+      // has already quarantined an unverifiable stage chain. Assembling from
+      // the raw rows would route around both.
+      run: toRunDto(run!),
+      iterations: (page.page ?? []).map(toIterationDto),
+      page: {
+        complete,
+        ...(page.isDone ? {} : { nextCursor: page.continueCursor }),
+      },
+    }),
+  );
+});
 
 // GET /v1/projects/:projectId/eval-runs/:runId/iterations?cursor=&limit=
 // Per-iteration results: tool calls, structured token usage, latency.
