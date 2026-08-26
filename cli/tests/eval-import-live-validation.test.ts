@@ -323,6 +323,50 @@ cases:
             argumentMatching: partial
 `;
 
+/**
+ * Two enabled cases sharing one TITLE, which the suite contract permits — only
+ * case ids must be unique.
+ *
+ * `c_new` comes FIRST in the file and its deterministic call does not resolve;
+ * `c_old` comes second and resolves. Seed `c_old` as an existing hosted row and
+ * the two orderings disagree: authored order makes `c_old` the last match for
+ * the shared title, while the launcher sees `[...updates, ...creates]` and
+ * makes `c_new` the last match. Resolving the title here rather than widening
+ * would vouch for `c_old` and run `c_new`.
+ */
+const SHARED_TITLE_CREATE_AND_UPDATE = `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_billing
+  name: Billing smoke
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+cases:
+  - id: c_new
+    title: Renders the refund widget
+    steps:
+      - id: step-1
+        kind: toolCall
+        serverName: billing
+        toolName: render_gone
+        arguments: {}
+  - id: c_old
+    title: Renders the refund widget
+    steps:
+      - id: step-1
+        kind: toolCall
+        serverName: billing
+        toolName: render_refund
+        arguments: {}
+`;
+
 // ── the fixture ──────────────────────────────────────────────────────────────
 
 type FixtureOptions = {
@@ -342,6 +386,14 @@ type FixtureOptions = {
   hosts?: Record<string, string[]>;
   /** Report a host whose config carries no readable `serverIds` at all. */
   hostWithUnreadableConfig?: string;
+  /**
+   * Cases the suite ALREADY holds, keyed by the declared id the file uses.
+   *
+   * Seeding one makes that case an UPDATE at sync time while the rest are
+   * creates — the only way to observe that the launcher sees
+   * `[...updates, ...creates]` rather than authored file order.
+   */
+  existingCases?: Array<{ declaredId: string; title: string }>;
 };
 
 type Fixture = {
@@ -381,6 +433,13 @@ async function startFixture(options: FixtureOptions = {}): Promise<Fixture> {
     string,
     { id: string; declaredId: string; title: string }
   >();
+  for (const seed of options.existingCases ?? []) {
+    casesByDeclaredId.set(seed.declaredId, {
+      id: `row_${seed.declaredId}`,
+      declaredId: seed.declaredId,
+      title: seed.title,
+    });
+  }
 
   const server: Server = createServer(async (req, res) => {
     let raw = "";
@@ -1615,6 +1674,41 @@ describe("the preflight checks what the run will actually execute", () => {
         // A file-order scan would have picked the title match (`c_render`,
         // which resolves) and let the run start; matching the launcher's
         // id-first precedence refuses before any write.
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a title shared by a created and an updated case widens instead of guessing", async () => {
+    const fixture = await startFixture({
+      // `c_old` already exists, so it syncs as an UPDATE while `c_new` is a
+      // CREATE — and the launcher orders updates before creates.
+      existingCases: [
+        { declaredId: "c_old", title: "Renders the refund widget" },
+      ],
+    });
+    try {
+      await withSuiteFile(SHARED_TITLE_CREATE_AND_UPDATE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              "--case",
+              "Renders the refund widget"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // Resolving the shared title in AUTHORED order picks `c_old`, whose
+        // call resolves, leaves native `c_new` untouched as "unselected", and
+        // starts a paid run on the case the launcher actually picks — the one
+        // whose call does not resolve. Widening checks every enabled case, so
+        // `c_new` is caught before anything is written.
         assert.equal(run.result.exitCode, 2, run.stdout);
         assert.deepEqual(fixture.fromFileBodies, []);
         assert.deepEqual(fixture.runBodies, []);

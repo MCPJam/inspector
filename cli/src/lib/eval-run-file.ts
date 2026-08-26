@@ -273,16 +273,39 @@ export function selectedAuthoredCaseIds(
   // different case here than at launch: this stage would leave the case the run
   // actually executes untouched, and refuse (or spare) one it never runs.
   const byId = new Map(enabled.map((testCase) => [testCase.id, testCase]));
-  const byTitle = new Map(
-    enabled.map((testCase) => [testCase.title, testCase])
-  );
+  // Only case IDS are unique in the suite contract, so two enabled cases may
+  // share a title. A `Map` would silently keep the last of them IN AUTHORED
+  // ORDER, but the launcher resolves the same title against rows the sync
+  // reordered — `[...toUpdate, ...created]`, so every already-hosted case
+  // precedes every new one. Authored order and launch order therefore pick
+  // DIFFERENT cases whenever a shared title spans a create and an update, and
+  // this stage would vouch for one while the run executed the other.
+  const byTitle = new Map<string, ResolvedEvalSuiteFileCase>();
+  const ambiguousTitles = new Set<string>();
+  for (const testCase of enabled) {
+    if (byTitle.has(testCase.title)) ambiguousTitles.add(testCase.title);
+    else byTitle.set(testCase.title, testCase);
+  }
   const chosen = new Set<string>();
   for (const selector of selectors) {
-    const hit = byId.get(selector) ?? byTitle.get(selector);
+    // ID first, so a string that is one case's id and another's shared title
+    // still resolves by id — the precedence the launcher uses.
+    const byIdHit = byId.get(selector);
+    if (byIdHit) {
+      chosen.add(byIdHit.id);
+      continue;
+    }
+    // An ambiguous title cannot name one case HERE, and guessing which one the
+    // launcher will pick is exactly the fail-open reading: guess wrong and the
+    // case that actually executes is never checked. Widen instead.
+    if (ambiguousTitles.has(selector)) {
+      return { ids: everyEnabled(), indeterminate: true };
+    }
     // A selector that resolves to no authored case is either a hosted row id
     // (which the launcher accepts and this stage cannot map) or a typo the
     // launcher will reject later by name. Neither is "selects nothing", and
     // guessing that it is would be the fail-open reading.
+    const hit = byTitle.get(selector);
     if (!hit) return { ids: everyEnabled(), indeterminate: true };
     chosen.add(hit.id);
   }
