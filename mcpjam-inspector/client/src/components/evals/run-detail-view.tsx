@@ -185,6 +185,15 @@ interface RunDetailViewProps {
    * Optional — CI/commit-detail parents don't have a live suite handle.
    */
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
+  /**
+   * The run's own canonical decision summary, as a slot.
+   *
+   * A SLOT rather than a fetch, because this view is shared: `/evals`, the CI
+   * commit detail and Evaluate all mount it, and only Evaluate opts into the
+   * D9 read. Passing the rendered node keeps the opt-in at the call site and
+   * keeps every non-Evaluate mount at exactly zero summary requests.
+   */
+  decisionSummarySlot?: React.ReactNode;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -404,6 +413,7 @@ export function RunDetailView({
   hideAccuracyHero = false,
   onExportTraces,
   onShare,
+  decisionSummarySlot,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -1022,7 +1032,16 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      <div className="shrink-0">{runMetadataBlock}</div>
+      {/* The run's own answer, above the browser's derived KPIs: what the run
+          DECIDED comes before how its trials went. Absent (and unfetched) on
+          every surface that does not pass the slot. */}
+      {decisionSummarySlot ? (
+        <div className="shrink-0">{decisionSummarySlot}</div>
+      ) : null}
+
+      <div className="shrink-0" data-testid="run-detail-metadata">
+        {runMetadataBlock}
+      </div>
 
       {useTwoColumnLayout ? (
         <>
