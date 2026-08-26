@@ -335,7 +335,7 @@ export function UserTestingScenarioCreateFlow({
           )}
         >
           <ArrowLeft className="size-3.5" />
-          Acceptance Testing
+          User Testing
         </button>
 
         <h1 className="mt-3 text-2xl font-semibold tracking-[-0.02em] text-foreground">

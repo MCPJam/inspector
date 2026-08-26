@@ -134,7 +134,7 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add goal/i }));
 
     const createBtn = screen.getByRole("button", { name: /create goal/i });
     expect(createBtn).toBeDisabled();
@@ -152,7 +152,7 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
@@ -181,7 +181,7 @@ describe("SwarmsTab — new journey form", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add goal/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },

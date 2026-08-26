@@ -531,14 +531,13 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.queryByText(/optional/i)).not.toBeInTheDocument();
 
     const submit = screen.getByTestId("new-swarm-continue");
-    const hint = screen.getByTestId("new-swarm-continue-hint");
     expect(submit).toBeDisabled();
-    expect(hint).toBeVisible();
-    expect(hint).toHaveTextContent(/describe your users, or pick a persona/i);
-    expect(submit).toHaveAttribute(
-      "aria-describedby",
-      "new-swarm-continue-hint"
-    );
+    // The blocker line for this case is hidden — the required label above is
+    // the only thing that has to be on screen.
+    expect(
+      screen.queryByTestId("new-swarm-continue-hint")
+    ).not.toBeInTheDocument();
+    expect(submit).not.toHaveAttribute("aria-describedby");
   });
 
   /**
@@ -609,9 +608,6 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     const submit = screen.getByTestId("new-swarm-continue");
     expect(submit).toBeDisabled();
-    expect(
-      screen.getByText(/describe your users, or pick a persona/i)
-    ).toBeVisible();
     expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
 
     pickExistingPersona(/include ana/i);
@@ -1871,67 +1867,20 @@ describe("SwarmsTab — New swarm create flow", () => {
 });
 
 /**
- * Insight grouping — the project-level clustering default, offered at the last
- * moment before the automatic post-run rebuild reads it.
+ * Insight grouping — the project-level clustering default.
  *
- * It sits in Shared setup but is NOT one of the target chips: those pin what
- * this swarm executes, while this reaches every swarm's insights in the
- * project. The copy has to say so, and the control has to save rather than
- * promise a rebuild that cannot happen yet.
+ * The control is still wired to `onSetInsightsTuning`, but it is hidden in the
+ * create flow (`SHOW_INSIGHT_GROUPING`). This test pins the hiding so the row
+ * cannot drift back in unnoticed; the block itself stays in the component
+ * because the project default it writes is still a real setting.
  */
 describe("SwarmsTab create flow — insight grouping", () => {
-  it("offers the row in Shared setup and says the setting is project-wide", () => {
-    openDescribe();
-    const row = screen.getByTestId("new-swarm-insight-grouping");
-    expect(within(row).getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
-    expect(row).toHaveTextContent(/Saved for this project/i);
-  });
-
-  it("saves rather than rebuilds, and never offers to re-analyze", async () => {
-    const user = userEvent.setup();
-    openDescribe();
-    await user.click(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    );
-
-    expect(screen.getByTestId("cluster-tuning-apply")).toHaveTextContent(
-      "Save default",
-    );
-    // Nothing has run, so re-summarizing "every session" is not on offer.
-    expect(screen.queryByTestId("cluster-tuning-force")).not.toBeInTheDocument();
-  });
-
-  it("writes the chosen preset to the project", async () => {
-    const user = userEvent.setup();
-    openDescribe();
-    await user.click(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    );
-    await user.click(screen.getByTestId("cluster-tuning-preset-detailed"));
-    await user.click(screen.getByTestId("cluster-tuning-apply"));
-
-    await waitFor(() => expect(setInsightsTuningMock).toHaveBeenCalled());
-    expect(setInsightsTuningMock.mock.calls[0][0]).toEqual({
-      projectId: "proj-1",
-      tuning: { maxClusters: 16, minSeparation: 0.08, linkThreshold: 0.82 },
-    });
-  });
-
-  it("seeds the control from what the project already uses", async () => {
-    insightsTuningRef.current = {
-      tuning: { maxClusters: 4, minSeparation: 0.25, linkThreshold: 0.72 },
-      source: "project",
-    };
+  it("does not offer the row in Shared setup", () => {
     openDescribe();
     expect(
-      within(screen.getByTestId("new-swarm-insight-grouping")).getByTestId(
-        "cluster-tuning-trigger",
-      ),
-    ).toHaveTextContent("Broad");
+      screen.queryByTestId("new-swarm-insight-grouping"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Insight grouping/i)).not.toBeInTheDocument();
   });
 });
 

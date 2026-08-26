@@ -246,9 +246,7 @@ export const navigationSections: NavSection[] = [
     label: "Measure",
     items: [
       {
-        // Labeled "Acceptance Testing" in the nav; the route stays
-        // /user-testing so existing links and hash tabs keep working.
-        title: "Acceptance Testing",
+        title: "User Testing",
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
@@ -279,7 +277,7 @@ export const navigationSections: NavSection[] = [
         billingFeature: "evals",
       },
       {
-        // Cross-surface session feed (Playground + Acceptance Testing + Evals +
+        // Cross-surface session feed (Playground + User Testing + Evals +
         // Swarms). Route-guarded on the same flag (`SessionsRoute`).
         title: "Sessions",
         url: "/sessions",

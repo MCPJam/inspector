@@ -134,6 +134,13 @@ export function suggestSwarmName(now: Date): string {
 /** Backend cap on `swarms.name`. */
 const SWARM_NAME_MAX = 120;
 
+/**
+ * The insight-grouping control is hidden in the create flow. The block is left
+ * wired up rather than deleted — the project default it writes is still a real
+ * setting, so this is a visibility switch, not a removal.
+ */
+const SHOW_INSIGHT_GROUPING: boolean = false;
+
 // Prefixed with "e.g." on purpose: the un-prefixed sentence read as filled-in
 // content, so users hit a disabled button with no idea the box was empty.
 const DESCRIBE_PLACEHOLDER =
@@ -802,7 +809,10 @@ export function NewSwarmCreateFlow({
           : "Pick clients to generate against.";
       }
       if (personaList.length > 0) {
-        return "Describe your users, or pick a persona you already have.";
+        // Hidden on purpose — the copy is kept here rather than deleted so it
+        // can be switched back on:
+        // "Describe your users, or pick a persona you already have."
+        return null;
       }
       return "Describe your users to continue.";
     }
@@ -1977,11 +1987,13 @@ export function NewSwarmCreateFlow({
               </div>
             </div>
 
-            {/* Not in the frame, and deliberately kept: this is the only place
-                the project's clustering default can be set, and it reaches
-                every swarm's insights — not just this one, which is why it
-                sits apart from the controls above rather than among them. */}
-            {onSetInsightsTuning ? (
+            {/* Not in the frame. Currently hidden behind
+                `SHOW_INSIGHT_GROUPING` but kept intact, because this is the
+                only place the project's clustering default can be set and it
+                reaches every swarm's insights — not just this one, which is
+                why it sits apart from the controls above rather than among
+                them. */}
+            {SHOW_INSIGHT_GROUPING && onSetInsightsTuning ? (
               <div
                 className="space-y-2"
                 data-testid="new-swarm-insight-grouping"

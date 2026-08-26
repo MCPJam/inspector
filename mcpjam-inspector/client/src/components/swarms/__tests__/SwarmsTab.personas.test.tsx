@@ -311,14 +311,10 @@ describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
     expect(updatePersonaMutation).not.toHaveBeenCalled();
   });
 
-  it("does not put a delete control on a rendered goal row", async () => {
-    // Deliberately absent for now: the design shows a trash icon per goal, but
-    // goals here carry runs and grading, so removing one is not a row-level
-    // gesture yet.
-    //
+  it("renders each goal as a bullet, its text, and a delete control", async () => {
     // A journey is mocked on purpose. The first version of this ran against the
-    // EMPTY goals state, so it asserted the absence of a control on a row that
-    // was never rendered — a test that could not fail.
+    // EMPTY goals state, so it asserted against a row that was never rendered —
+    // a test that could not fail.
     journeyRows.current = [
       {
         _id: "journey-1",
@@ -339,10 +335,17 @@ describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
       await screen.findByText("Reconcile the payouts ledger")
     ).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /remove goal/i })
+      screen.getByRole("button", {
+        name: "Delete goal Reconcile the payouts ledger",
+      })
+    ).toBeVisible();
+    // The library row is the whole goal: no per-goal run, history or grading
+    // affordances travel with it.
+    expect(
+      screen.queryByRole("button", { name: "Run" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /delete goal/i })
+      screen.queryByTestId("journey-grading-trigger")
     ).not.toBeInTheDocument();
   });
 });
