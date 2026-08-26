@@ -1419,75 +1419,88 @@ function toImportEligibilityProjection(
   if (typeof source.gateable !== "boolean") return {};
   if (typeof source.importedCaseCount !== "number") return {};
 
-  const stringList = (value: unknown): string[] =>
-    Array.isArray(value)
-      ? value.filter((entry): entry is string => typeof entry === "string")
-      : [];
+  // A required list is validated WHOLE, exactly like the scalars above.
+  //
+  // Coercing an absent or malformed list to `[]` would publish a projection
+  // that reads as complete: an `eligible` run whose frozen approval receipts
+  // silently became an empty array still says "imported cases ran with a
+  // recorded decision", while the audit that made them runnable is simply
+  // gone, and nothing on the wire distinguishes "approved by nobody" from
+  // "we could not read who approved". `undefined` is the ONLY way this
+  // function reports "no opinion", and a payload that is present but wrong
+  // must not borrow it.
+  const stringList = (value: unknown): string[] | undefined =>
+    Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === "string")
+      ? (value as string[])
+      : undefined;
 
-  const receipts = (Array.isArray(source.approvedApproximationReceipts)
-    ? source.approvedApproximationReceipts
-    : []
-  ).flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
+  const claimedExactCaseIds = stringList(source.claimedExactCaseIds);
+  if (claimedExactCaseIds === undefined) return {};
+  const approvedApproximationCaseIds = stringList(
+    source.approvedApproximationCaseIds,
+  );
+  if (approvedApproximationCaseIds === undefined) return {};
+
+  if (!Array.isArray(source.approvedApproximationReceipts)) return {};
+  const receipts: Array<Record<string, unknown>> = [];
+  for (const entry of source.approvedApproximationReceipts) {
+    if (!entry || typeof entry !== "object") return {};
     const receipt = entry as Record<string, unknown>;
     // Every field of a receipt is load-bearing — who, when, why, and for which
     // case. A receipt missing any of them is not a weaker receipt; it is one a
-    // reader would have to guess at, so it is dropped rather than shown.
+    // reader would have to guess at. Dropping just that ENTRY would leave
+    // `approvedApproximationCaseIds` naming a case with no receipt to explain
+    // it, so the whole projection goes instead of a self-contradicting one.
     if (
       typeof receipt.testCaseId !== "string" ||
       typeof receipt.approvedBy !== "string" ||
       typeof receipt.approvedAt !== "number" ||
       typeof receipt.reason !== "string"
     ) {
-      return [];
+      return {};
     }
-    return [
-      {
-        testCaseId: receipt.testCaseId,
-        ...(typeof receipt.caseKey === "string"
-          ? { caseKey: receipt.caseKey }
-          : {}),
-        ...(typeof receipt.sourceCaseKey === "string"
-          ? { sourceCaseKey: receipt.sourceCaseKey }
-          : {}),
-        approvedBy: receipt.approvedBy,
-        approvedAt: receipt.approvedAt,
-        reason: receipt.reason,
-      },
-    ];
-  });
+    receipts.push({
+      testCaseId: receipt.testCaseId,
+      ...(typeof receipt.caseKey === "string"
+        ? { caseKey: receipt.caseKey }
+        : {}),
+      ...(typeof receipt.sourceCaseKey === "string"
+        ? { sourceCaseKey: receipt.sourceCaseKey }
+        : {}),
+      approvedBy: receipt.approvedBy,
+      approvedAt: receipt.approvedAt,
+      reason: receipt.reason,
+    });
+  }
 
-  const issues = (Array.isArray(source.issues) ? source.issues : []).flatMap(
-    (entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      const issue = entry as Record<string, unknown>;
-      if (typeof issue.code !== "string") return [];
-      return [
-        {
-          code: issue.code,
-          ...(typeof issue.testCaseId === "string"
-            ? { testCaseId: issue.testCaseId }
-            : {}),
-          ...(typeof issue.caseKey === "string"
-            ? { caseKey: issue.caseKey }
-            : {}),
-          ...(typeof issue.toolName === "string"
-            ? { toolName: issue.toolName }
-            : {}),
-        },
-      ];
-    },
-  );
+  if (!Array.isArray(source.issues)) return {};
+  const issues: Array<Record<string, unknown>> = [];
+  for (const entry of source.issues) {
+    if (!entry || typeof entry !== "object") return {};
+    const issue = entry as Record<string, unknown>;
+    // `code` is what names the problem. An issue without one explains nothing,
+    // and a partial issue list understates how much is wrong with the run.
+    if (typeof issue.code !== "string") return {};
+    issues.push({
+      code: issue.code,
+      ...(typeof issue.testCaseId === "string"
+        ? { testCaseId: issue.testCaseId }
+        : {}),
+      ...(typeof issue.caseKey === "string" ? { caseKey: issue.caseKey } : {}),
+      ...(typeof issue.toolName === "string"
+        ? { toolName: issue.toolName }
+        : {}),
+    });
+  }
 
   return {
     importEligibility: {
       status,
       gateable: source.gateable,
       importedCaseCount: source.importedCaseCount,
-      claimedExactCaseIds: stringList(source.claimedExactCaseIds),
-      approvedApproximationCaseIds: stringList(
-        source.approvedApproximationCaseIds,
-      ),
+      claimedExactCaseIds,
+      approvedApproximationCaseIds,
       approvedApproximationReceipts: receipts,
       issues,
     },

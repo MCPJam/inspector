@@ -2610,6 +2610,31 @@ describe("v1 write routes", () => {
         ["an unknown status", { ...ELIGIBILITY, status: "probably-fine" }],
         ["a non-boolean gateable", { ...ELIGIBILITY, gateable: "false" }],
         ["no importedCaseCount", { ...ELIGIBILITY, importedCaseCount: null }],
+        // The LISTS are validated exactly like the scalars. Coercing a
+        // malformed one to `[]` would publish a projection that reads as
+        // complete while the evidence behind it is missing — an `eligible`
+        // run whose approval audit silently became empty.
+        [
+          "a missing claimedExactCaseIds",
+          { ...ELIGIBILITY, claimedExactCaseIds: undefined },
+        ],
+        [
+          "a non-array approvedApproximationCaseIds",
+          { ...ELIGIBILITY, approvedApproximationCaseIds: "case_2" },
+        ],
+        [
+          "a non-string entry among the case ids",
+          { ...ELIGIBILITY, claimedExactCaseIds: ["case_1", 7] },
+        ],
+        [
+          "a non-array approvedApproximationReceipts",
+          { ...ELIGIBILITY, approvedApproximationReceipts: {} },
+        ],
+        ["a non-array issues", { ...ELIGIBILITY, issues: null }],
+        [
+          "an issue carrying no code",
+          { ...ELIGIBILITY, issues: [{ testCaseId: "case_2" }] },
+        ],
       ] as const)("drops the whole projection given %s", async (_l, payload) => {
         // Not partially projected: a gate cannot tell a missing field from a
         // satisfied one, and absence is already handled correctly downstream
@@ -2617,7 +2642,7 @@ describe("v1 write routes", () => {
         expect("importEligibility" in (await readRun(payload))).toBe(false);
       });
 
-      it("drops a receipt that is missing any of who, when, why, or which case", async () => {
+      it("drops the whole projection for a receipt missing who, when, why, or which case", async () => {
         const body = await readRun({
           ...ELIGIBILITY,
           approvedApproximationReceipts: [
@@ -2627,10 +2652,12 @@ describe("v1 write routes", () => {
         });
         // Every field of a receipt is load-bearing. One missing `approvedAt`
         // is not a weaker receipt; it is one a reader would have to guess at.
-        expect(
-          (body.importEligibility as typeof ELIGIBILITY)
-            .approvedApproximationReceipts
-        ).toEqual(ELIGIBILITY.approvedApproximationReceipts);
+        //
+        // The whole projection goes rather than just that entry: dropping the
+        // entry alone would leave `approvedApproximationCaseIds` naming a case
+        // whose receipt is nowhere, so the payload would contradict itself and
+        // a reader could not tell that anything was missing at all.
+        expect("importEligibility" in body).toBe(false);
       });
     });
 
