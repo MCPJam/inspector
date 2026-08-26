@@ -276,6 +276,21 @@ export type StageSetupPhaseSignal = {
   egressVerified?: boolean;
   /** Culprit synthetic-span ids (`run-connect-<id>` / `run-toolslist-<id>`). */
   spanIds?: string[];
+  /**
+   * How long this setup PHASE took, in milliseconds — its wall-clock envelope.
+   *
+   * A RUN-LEVEL fact that happens to be copied onto every iteration so the
+   * derivation above can read it per-iteration. Analytics must count it ONCE
+   * per run+phase: a run with 200 trials copies one 3-second connect onto all
+   * 200 of them, and a consumer that treats each copy as a sample reports a
+   * 3-second connection latency measured 200 times.
+   *
+   * Deliberately NOT a source of per-trial `connection` / `discovery` latency —
+   * see `STAGE_LATENCY_ELIGIBLE_STAGES` in `./stage-measurements.ts`. This
+   * field is inert to `deriveStageResults`, which never reads it: timing must
+   * not move a stage's state.
+   */
+  durationMs?: number;
 };
 
 export type StageSetupSignals = {
