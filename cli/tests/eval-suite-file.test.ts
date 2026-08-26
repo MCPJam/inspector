@@ -104,6 +104,48 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   }
 }
 
+/**
+ * Run with NO Cloud credentials resolvable, whatever the machine has.
+ *
+ * `withTempDir` changes the working directory and nothing else, so a
+ * contributor already logged into MCPJam Cloud kept a readable
+ * `$XDG_CONFIG_HOME/mcpjam/auth.json` — and a test asserting "this fails for
+ * want of a credential" instead authenticated, reached the PRODUCTION API and
+ * failed on a project lookup. That is two defects: a suite that only fails for
+ * logged-in contributors, and a unit test making a live request nobody asked
+ * for.
+ *
+ * `MCPJAM_AUTH_FILE` is the store's own documented override ("Explicit
+ * override for CI and tests" in `auth-store.ts`) and is honoured on every
+ * platform, unlike `XDG_CONFIG_HOME`. Pointed at a path inside the temp dir
+ * that is never created, it reads as "no stored auth". The credential-bearing
+ * environment variables are cleared alongside it, since any one of them would
+ * satisfy the credential the test needs absent.
+ */
+async function withoutStoredCredentials<T>(
+  dir: string,
+  run: () => Promise<T>
+): Promise<T> {
+  const overridden = [
+    "MCPJAM_AUTH_FILE",
+    "MCPJAM_API_KEY",
+    "MCPJAM_API_URL",
+    "MCPJAM_PROJECT",
+    "MCPJAM_PROJECT_ID",
+  ] as const;
+  const previous = new Map(overridden.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of overridden) delete process.env[key];
+    process.env.MCPJAM_AUTH_FILE = path.join(dir, "absent-auth.json");
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
   // `realpath`, because the commands under test resolve their output paths
   // against `process.cwd()`. On macOS `os.tmpdir()` is `/var/folders/...`, a
@@ -524,7 +566,10 @@ describe("directed --file overload", () => {
       ),
       true
     );
-    assert.equal(looksLikeVersionedSuiteFile('{"name":"smoke","cases":[]}'), false);
+    assert.equal(
+      looksLikeVersionedSuiteFile('{"name":"smoke","cases":[]}'),
+      false
+    );
   });
 
   test("detects create-API JSON and ignores suite files", () => {
@@ -602,22 +647,24 @@ describe("eval validate", () => {
     await withTempDir(async (dir) => {
       const file = path.join(dir, "suite.yaml");
       await writeFile(file, VALID_SUITE_FILE, "utf8");
-      const run = await captureProcessOutput(() =>
-        main(
-          [
-            "node",
-            "mcpjam",
-            "cloud",
-            "eval",
-            "validate",
-            "--file",
-            file,
-            "--project",
-            "Alpha",
-            "--format",
-            "json",
-          ],
-          { telemetry: telemetryDisabled }
+      const run = await withoutStoredCredentials(dir, () =>
+        captureProcessOutput(() =>
+          main(
+            [
+              "node",
+              "mcpjam",
+              "cloud",
+              "eval",
+              "validate",
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--format",
+              "json",
+            ],
+            { telemetry: telemetryDisabled }
+          )
         )
       );
       // With no credential the command fails as a CREDENTIAL problem, not as a
@@ -1300,10 +1347,7 @@ describe("eval export", () => {
         );
         assert.equal(run.result.exitCode, 1);
         assert.match(run.stdout, /Nothing was written/);
-        assert.match(
-          run.stdout,
-          /UNSUPPORTED_SUITE_EXPORT environmentIds: /
-        );
+        assert.match(run.stdout, /UNSUPPORTED_SUITE_EXPORT environmentIds: /);
         assert.deepEqual(await readdir(dir), []);
       } finally {
         await fixture.close();
@@ -1714,7 +1758,11 @@ async function startFileRunFixture(options?: {
       updateBodies.push(raw ? JSON.parse(raw) : {});
       if (options?.failUpdates) {
         res.statusCode = 500;
-        res.end(JSON.stringify({ error: { code: "UPDATE_FAILED", message: "fixture update failed" } }));
+        res.end(
+          JSON.stringify({
+            error: { code: "UPDATE_FAILED", message: "fixture update failed" },
+          })
+        );
         return;
       }
       res.end(JSON.stringify({ id: "row_c_refund", title: "updated" }));
@@ -1913,7 +1961,10 @@ describe("eval run --file", () => {
           })
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
-        assert.ok(fixture.authHeaders.length > 0, "auth request must arrive first");
+        assert.ok(
+          fixture.authHeaders.length > 0,
+          "auth request must arrive first"
+        );
         assert.equal(fixture.fromFileBodies.length, 0);
         assert.equal(fixture.runBodies.length, 0);
         assert.match(run.stderr, /SUITE_FILE_INVALID/);
@@ -1931,9 +1982,12 @@ describe("eval run --file", () => {
         await writeFile(file, VALID_SUITE_FILE, "utf8");
         const expectedHash = sha256HexOfBuffer(Buffer.from(VALID_SUITE_FILE));
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.fromFileBodies.length, 1);
@@ -1944,7 +1998,9 @@ describe("eval run --file", () => {
           modelId: "anthropic/claude-sonnet-4-6",
         });
         assert.equal(fixture.batchBodies.length, 1);
-        const batch = fixture.batchBodies[0] as { cases: Array<{ id: string }> };
+        const batch = fixture.batchBodies[0] as {
+          cases: Array<{ id: string }>;
+        };
         assert.equal(batch.cases[0].id, "c_refund");
         assert.equal(fixture.runBodies.length, 1);
         const launched = fixture.runBodies[0] as Record<string, unknown>;
@@ -1976,13 +2032,7 @@ describe("eval run --file", () => {
         await writeFile(file, configured, "utf8");
         const run = await captureProcessOutput(() =>
           main(
-            runFileArgv(
-              fixture.baseUrl,
-              "--file",
-              file,
-              "--project",
-              "Alpha"
-            ),
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
             { telemetry: telemetryDisabled }
           )
         );
@@ -2108,9 +2158,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /REPETITIONS_CAP/);
@@ -2130,9 +2183,12 @@ describe("eval run --file", () => {
         const file = path.join(dir, "suite.yaml");
         await writeFile(file, suiteFileWithCases(250), "utf8");
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.batchBodies.length, 3);
@@ -2195,9 +2251,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /eval create --file/);
@@ -2225,9 +2284,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.runBodies.length, 1);
@@ -2248,9 +2310,12 @@ describe("eval run --file", () => {
         const file = path.join(dir, "suite.yaml");
         await writeFile(file, suiteFileWithCases(2), "utf8");
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /CASE_SYNC_FAILED/);
@@ -2260,7 +2325,9 @@ describe("eval run --file", () => {
           .find((line) => line.startsWith("{"));
         assert.ok(jsonLine, run.stderr);
         const payload = JSON.parse(jsonLine) as {
-          error: { details: { created: number; updated: number; deleted: number } };
+          error: {
+            details: { created: number; updated: number; deleted: number };
+          };
         };
         assert.equal(payload.error.details.created, 1);
         assert.equal(payload.error.details.updated, 0);
@@ -2284,9 +2351,12 @@ describe("eval run --file", () => {
         const file = path.join(dir, "suite.yaml");
         await writeFile(file, VALID_SUITE_FILE, "utf8");
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /CASE_SYNC_FAILED/);
@@ -2321,9 +2391,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         const batch = fixture.batchBodies[0] as {
@@ -2349,9 +2422,12 @@ describe("eval run --file", () => {
         const file = path.join(dir, "suite.yaml");
         await writeFile(file, VALID_SUITE_FILE, "utf8");
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.deepEqual(fixture.deletedCaseIds, ["row_c_stale"]);
@@ -2430,8 +2506,9 @@ describe("eval run --file", () => {
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.batchBodies.length, 1);
-        const created = (fixture.batchBodies[0] as { cases: Array<{ id: string }> })
-          .cases;
+        const created = (
+          fixture.batchBodies[0] as { cases: Array<{ id: string }> }
+        ).cases;
         assert.deepEqual(
           created.map((entry) => entry.id),
           ["c_parked"]
@@ -2459,9 +2536,12 @@ describe("eval run --file", () => {
         const file = path.join(dir, "suite.yaml");
         await writeFile(file, VALID_SUITE_FILE, "utf8");
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.updateBodies.length, 1);
@@ -2544,9 +2624,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /NO_ENABLED_CASES/);
@@ -2609,9 +2692,12 @@ describe("eval run --file", () => {
           "utf8"
         );
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            {
+              telemetry: telemetryDisabled,
+            }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
@@ -2630,7 +2716,11 @@ describe("eval run --file", () => {
           },
         });
         const batch = fixture.batchBodies[0] as {
-          cases: Array<{ iterations: number; repetitions: number; passThreshold: number }>;
+          cases: Array<{
+            iterations: number;
+            repetitions: number;
+            passThreshold: number;
+          }>;
         };
         assert.equal(batch.cases[0].iterations, 1);
         assert.equal(batch.cases[0].repetitions, 1);
@@ -2656,7 +2746,13 @@ describe("eval run --file", () => {
         );
         const policy = await captureProcessOutput(() =>
           main(
-            runFileArgv(fixture.baseUrl, "--file", policyFile, "--project", "Alpha"),
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              policyFile,
+              "--project",
+              "Alpha"
+            ),
             { telemetry: telemetryDisabled }
           )
         );
