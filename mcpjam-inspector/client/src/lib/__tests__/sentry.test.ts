@@ -5,7 +5,10 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const reactRouterV7BrowserTracingIntegration = vi.fn(() => ({
   name: "BrowserTracing",
 }));
-const wrapCreateBrowserRouterV7 = vi.fn((createRouter) => createRouter);
+// Returns a stub rather than the passthrough `(fn) => fn`: the wrapped factory
+// gets invoked below, and the real createBrowserRouter would build a router.
+const wrappedRouterFactory = vi.fn(() => ({ routes: [] }));
+const wrapCreateBrowserRouterV7 = vi.fn(() => wrappedRouterFactory);
 const getClient = vi.fn();
 
 vi.mock("@sentry/react", () => ({
@@ -34,6 +37,7 @@ describe("client sentry init", () => {
     replayIntegration.mockClear();
     reactRouterV7BrowserTracingIntegration.mockClear();
     wrapCreateBrowserRouterV7.mockClear();
+    wrappedRouterFactory.mockClear();
     getClient.mockReset();
   });
 
@@ -140,14 +144,27 @@ describe("client sentry init", () => {
     expect(typeof options.matchRoutes).toBe("function");
   });
 
-  it("builds the app router through Sentry's router wrapper", async () => {
-    // The hooks above only report navigations the SDK can see; a data router
-    // has to be created through the wrapper for its routes to be matched.
+  it("does not wrap the router at module scope", async () => {
+    // Module scope runs before initSentry(), and wrapCreateBrowserRouterV7
+    // returns createBrowserRouter UNWRAPPED when the integration's setup() has
+    // not run yet — reactrouterv6-compat-utils.js:33. It only warns behind
+    // DEBUG_BUILD, so a premature wrap fails silently in production.
+    await import("../sentry");
+
+    expect(wrapCreateBrowserRouterV7).not.toHaveBeenCalled();
+  });
+
+  it("wraps the router only after the tracing integration is registered", async () => {
     const { createBrowserRouter } = await import("react-router");
-    const { createSentryBrowserRouter } = await import("../sentry");
+    const { initSentry, createSentryBrowserRouter } = await import("../sentry");
+
+    initSentry();
+    createSentryBrowserRouter([]);
 
     expect(wrapCreateBrowserRouterV7).toHaveBeenCalledWith(createBrowserRouter);
-    expect(typeof createSentryBrowserRouter).toBe("function");
+    expect(init.mock.invocationCallOrder[0]).toBeLessThan(
+      wrapCreateBrowserRouterV7.mock.invocationCallOrder[0],
+    );
   });
 });
 

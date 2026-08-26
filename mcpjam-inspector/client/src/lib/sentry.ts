@@ -15,15 +15,28 @@ import {
   shouldRecordSession,
 } from "./PosthogUtils";
 
+let wrappedCreateBrowserRouter: typeof createBrowserRouter | null = null;
+
 /**
  * `createBrowserRouter`, instrumented — build the app router with this.
  *
- * Plain `browserTracingIntegration` names a transaction once, at pageload, and
- * never again on a client-side navigation. That is why INSPECTOR-CLIENT-253
- * was filed against `/servers` while actually crashing on `/playground`.
+ * Wrapped on FIRST CALL, never at module scope. `wrapCreateBrowserRouterV7`
+ * hands back `createBrowserRouter` unwrapped when the tracing integration's
+ * `setup()` has not run yet, and says so only behind `DEBUG_BUILD` — silence in
+ * production. Module scope always loses that race: `router.tsx` imports this
+ * file, so it evaluates before `main.tsx` reaches `initSentry()`.
+ *
+ * A no-op wrap is worse than none: the v7 integration builds its inner
+ * browser-tracing with `instrumentNavigation: false` and re-implements
+ * navigation spans through this wrapper, so an inert wrapper emits nothing.
  */
-export const createSentryBrowserRouter =
-  Sentry.wrapCreateBrowserRouterV7(createBrowserRouter);
+export function createSentryBrowserRouter(
+  ...args: Parameters<typeof createBrowserRouter>
+) {
+  wrappedCreateBrowserRouter ??=
+    Sentry.wrapCreateBrowserRouterV7(createBrowserRouter);
+  return wrappedCreateBrowserRouter(...args);
+}
 
 /**
  * Resolve the config the browser bundle inits with.
