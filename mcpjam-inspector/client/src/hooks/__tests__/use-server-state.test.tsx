@@ -1264,6 +1264,11 @@ describe("useServerState effective server projection", () => {
       slug: "transport/enotfound",
       title: "Couldn't reach the MCP server",
     } as unknown as ServerWithName["lastNormalizedError"];
+    // The OAuth trace rides the same projection: the card reads it to label
+    // WHICH handshake step failed above the ErrorCard.
+    const oauthTrace = {
+      steps: [{ id: "discovery", status: "error" }],
+    } as unknown as ServerWithName["lastOAuthTrace"];
 
     appState.projects.default.servers = {
       "test-bad-url": persistedServer,
@@ -1274,6 +1279,7 @@ describe("useServerState effective server projection", () => {
         connectionStatus: "failed",
         lastError: "Couldn't reach the MCP server (getaddrinfo ENOTFOUND).",
         lastNormalizedError: normalized,
+        lastOAuthTrace: oauthTrace,
       },
     };
 
@@ -1292,6 +1298,7 @@ describe("useServerState effective server projection", () => {
         connectionStatus: "failed",
         lastError: "Couldn't reach the MCP server (getaddrinfo ENOTFOUND).",
         lastNormalizedError: normalized,
+        lastOAuthTrace: oauthTrace,
       })
     );
   });
@@ -1312,6 +1319,13 @@ describe("useServerState effective server projection", () => {
       retryCount: 0,
       enabled: true,
       lastError: "stale reason from a previous session",
+      lastNormalizedError: {
+        slug: "transport/enotfound",
+        title: "stale normalized block",
+      } as unknown as ServerWithName["lastNormalizedError"],
+      lastOAuthTrace: {
+        steps: [{ id: "discovery", status: "error" }],
+      } as unknown as ServerWithName["lastOAuthTrace"],
     };
 
     appState.projects.default.servers = {
@@ -1329,10 +1343,14 @@ describe("useServerState effective server projection", () => {
       activeProjectServersFlat: [{ _id: "srv_1", name: "test-bad-url" }],
     });
 
+    // All three go together: a lingering normalized block or OAuth trace would
+    // render the same stale ErrorCard the string was cleared to prevent.
     expect(result.current.projectServers["test-bad-url"]).toEqual(
       expect.objectContaining({
         connectionStatus: "disconnected",
         lastError: undefined,
+        lastNormalizedError: undefined,
+        lastOAuthTrace: undefined,
       })
     );
   });

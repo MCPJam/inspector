@@ -15,6 +15,22 @@ const { mcpClientManagerMock, getToolsForAiSdkMock, disconnectAllServersMock } =
     disconnectAllServersMock: vi.fn(),
   }));
 
+// The inspection snapshot and its fire-and-forget Convex write are not what
+// this file is about: stubbed so the success case exercises the route's own
+// envelope rather than the exporter's manager calls or a live Convex mutation.
+vi.mock("../../../utils/export-helpers.js", () => ({
+  exportSingleServerForInspection: vi.fn(async () => ({ tools: [] })),
+}));
+
+vi.mock("convex/browser", () => ({
+  ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return null;
+    }
+  },
+}));
+
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
     "@mcpjam/sdk",
@@ -25,6 +41,9 @@ vi.mock("@mcpjam/sdk", async () => {
       getToolsForAiSdk: getToolsForAiSdkMock,
       disconnectAllServers: disconnectAllServersMock,
       setPerRequestLogLevel: vi.fn(),
+      getInitializationInfo: vi.fn(() => ({
+        serverInfo: { name: "test-server", version: "1.0.0" },
+      })),
     })),
   };
 });
@@ -61,14 +80,14 @@ function authorizeBatchResponse() {
   );
 }
 
-function postValidate() {
+function postValidate(body: unknown = { projectId: "prj_1", serverId: "srv_1" }) {
   return serversRoute.request("/validate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer test-token",
     },
-    body: JSON.stringify({ projectId: "prj_1", serverId: "srv_1" }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -117,5 +136,37 @@ describe("hosted /api/web/servers/validate — unreachable target", () => {
     const res = await postValidate();
 
     expect(res.status).toBe(502);
+  });
+
+  it("still answers 200 with the connect envelope when the target is reachable", async () => {
+    getToolsForAiSdkMock.mockResolvedValue({});
+
+    const res = await postValidate();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      success: true,
+      status: "connected",
+    });
+  });
+
+  it.each([
+    ["an empty body", {}],
+    ["a null body", null],
+    ["a body missing serverId", { projectId: "prj_1" }],
+  ])("rejects %s as a client error, not a dependency failure", async (
+    _label,
+    body
+  ) => {
+    getToolsForAiSdkMock.mockResolvedValue({});
+
+    const res = await postValidate(body);
+
+    // A malformed request is the caller's to fix. `mapTargetServerError` only
+    // moves connection-class failures that name an MCP server, so a schema
+    // rejection must keep landing in the 4xx band it always did — and never
+    // reach the target at all.
+    expect(res.status).toBe(400);
+    expect(getToolsForAiSdkMock).not.toHaveBeenCalled();
   });
 });

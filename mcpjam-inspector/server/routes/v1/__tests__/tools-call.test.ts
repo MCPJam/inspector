@@ -58,25 +58,32 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
   });
 
   it("returns the MCP CallToolResult plus additive durationMs", async () => {
-    const executeTool = vi.fn().mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      return {
-        content: [{ type: "text", text: "ok" }],
-      };
+    const executeTool = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
     });
     stubConnection(executeTool);
+    // The route measures with `Date.now()`, whose whole-millisecond truncation
+    // does not line up with the timer clock: a real `setTimeout(5)` here
+    // measured 4ms on CI and failed a `>= 5` assertion. Stubbing the two reads
+    // — the same technique as the clock-backward test below — pins the exact
+    // number instead of asserting a lower bound against a coarse clock.
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(1_005);
 
-    const res = await postToolsCall();
+    try {
+      const res = await postToolsCall();
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      content?: unknown[];
-      durationMs?: number;
-    };
-    expect(body.content).toEqual([{ type: "text", text: "ok" }]);
-    expect(typeof body.durationMs).toBe("number");
-    expect(body.durationMs).toBeGreaterThanOrEqual(5);
-    expect(executeTool).toHaveBeenCalledWith("s1", "echo", {});
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        content?: unknown[];
+        durationMs?: number;
+      };
+      expect(body.content).toEqual([{ type: "text", text: "ok" }]);
+      expect(body.durationMs).toBe(5);
+      expect(executeTool).toHaveBeenCalledWith("s1", "echo", {});
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("clamps durationMs to zero when the clock moves backward", async () => {
