@@ -33,6 +33,19 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### Non-compliant challenge status (403 with Bearer challenge)
+
+MCP requires a server to respond with `401 Unauthorized` and a `WWW-Authenticate: Bearer` header when it needs the client to authenticate. Some servers — particularly those fronted by a CDN, WAF, or a reverse proxy that treats anonymous access as a scope failure — respond with `403 Forbidden` instead, while still including a `WWW-Authenticate: Bearer` challenge.
+
+When the debugger's unauthenticated probe step receives a `403` that carries a Bearer challenge, it continues OAuth discovery from that challenge rather than stopping. A **warning** is recorded at the probe step that names the received status (`403 Forbidden`) and the required status (`401 Unauthorized`), and explains that clients which decide whether to start OAuth based on the status code alone — including the official MCP SDK — will not authenticate against this server.
+
+A `403` with **no** Bearer challenge, or with only a non-Bearer scheme (such as `Basic`), still fails the probe step. The error message distinguishes between the two cases:
+
+- **No `WWW-Authenticate` header at all** — the message points to a proxy, WAF, or IP allowlist as the likely cause, since a bare 403 almost always means the request never reached the MCP server.
+- **`WWW-Authenticate` present but no Bearer challenge** — the message names the missing Bearer challenge specifically, so you are not sent looking for a header that is already there.
+
+The debugger proceeds through non-compliant behavior so you can observe real server behavior and identify what needs to change. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict validation that enforces the 401 requirement.
+
 ### Path-scoped authorization servers
 
 Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path — for example `https://<env>.example.com/resources/res_x` — while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
