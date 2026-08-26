@@ -270,6 +270,15 @@ temperature: 0.1; // More deterministic, better for testing
 temperature: 0.9; // More creative
 ```
 
+<Note>
+  Some Claude families — Opus 4.7 and later, Sonnet 5, Fable 5, and Mythos 5 —
+  reject `temperature` with a 400 error if the field is present at all. For
+  those models, `HostRunner` omits the field entirely regardless of what you
+  pass, and the provider uses its own default sampling. This applies to every id
+  shape those models appear under, including AWS Bedrock inference profiles
+  (e.g. `bedrock/us.anthropic.claude-opus-4-7-20260205-v1:0`).
+</Note>
+
 ### maxSteps
 
 Maximum iterations of the agentic loop (prompt → tool → result → continue).
