@@ -109,6 +109,20 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
   process and identify where things might be going wrong.
 </Info>
 
+### Getting 403 Forbidden errors during OAuth discovery
+
+A `403 Forbidden` response during the OAuth probe step usually means a proxy, WAF, or IP allowlist rejected the request before it reached your MCP server — not that the MCP server itself refused it.
+
+**If the 403 carries a `WWW-Authenticate: Bearer` header**, the OAuth Debugger and `server probe` / `server doctor` commands continue OAuth discovery from the challenge and record a warning. The warning explains that MCP requires `401` here, so clients that decide whether to start OAuth based on the status code alone will not authenticate against the server. The flow proceeds so you can observe real behavior, but the non-compliant status is flagged.
+
+**If the 403 has no `WWW-Authenticate: Bearer` header**, the probe cannot discover OAuth metadata and stops. Check whether a CDN, reverse proxy, or firewall rule is intercepting the request before it reaches your server. Common causes:
+
+- An IP allowlist or geo-block rejecting the probe's source address
+- A WAF rule blocking unauthenticated requests to the MCP endpoint
+- A reverse proxy requiring a specific header or client certificate before forwarding
+
+Use the [OAuth Debugger](/inspector/guided-oauth) to inspect the exact response headers and identify what is blocking the request.
+
 ### OAuth connection failures
 
 When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
