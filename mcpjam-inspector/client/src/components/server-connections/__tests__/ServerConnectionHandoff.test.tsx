@@ -148,7 +148,7 @@ describe("the claim", () => {
     expect(calls.some((call) => call.path === "/claim")).toBe(false);
   });
 
-  it("says the link is unusable rather than showing an empty page", async () => {
+  it("explains that a spent one-time link must be recreated", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -163,7 +163,12 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("That link has expired."),
+      await screen.findByText("This link has already been used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connection links work only once. Create a new link from the CLI to connect again.",
+      ),
     ).toBeInTheDocument();
   });
 });
