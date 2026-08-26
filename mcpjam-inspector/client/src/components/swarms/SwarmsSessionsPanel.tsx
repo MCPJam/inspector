@@ -26,6 +26,7 @@ import {
   SwarmSessionsGroupCount,
 } from "@/components/swarms/SwarmSessionsGroupedList";
 import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
+import { SwarmRunStageFunnelPanels } from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
@@ -365,6 +366,17 @@ export function SwarmsSessionsPanel({
           />
         </ErrorBoundary>
       </div>
+
+      {/* D8: one funnel PER RUN, never one folded across runs — two runs
+          against different hosts have different denominators and a combined
+          bar would describe neither. Rendered only on the run-scoped mount:
+          without `journeyRunIds` this panel is project-wide, which is not a
+          population any single funnel can honestly describe. */}
+      {runIdSet ? (
+        <div className="shrink-0 space-y-2 px-4 pt-3">
+          <SwarmRunStageFunnelPanels journeyRunIds={[...runIdSet]} />
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
