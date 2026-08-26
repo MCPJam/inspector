@@ -22,8 +22,8 @@
   ],
   "tags": [
     {
-      "name": "Hosts",
-      "description": "Project hosts: named model + capability profiles you run chats and eval suites against."
+      "name": "Clients",
+      "description": "Clients \u2014 the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. The original `/hosts` paths remain as deprecated, ID-only compatibility aliases with their original DTOs and their original (tokenless) write contracts; every alias response carries `Deprecation: true`. New integrations should use `/clients`."
     },
     {
       "name": "Environments",
@@ -842,26 +842,29 @@
         }
       }
     },
-    "/projects/{projectId}/hosts": {
+    "/projects/{projectId}/clients": {
       "get": {
-        "operationId": "listHosts",
+        "operationId": "listClients",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "List a project's hosts",
-        "description": "The hosts saved in the project \u2014 the named model + capability profiles you attach to chats and eval suites. Returns the `id`s the host detail/update/delete routes take.",
+        "summary": "List a project's clients",
+        "description": "The clients saved in the project \u2014 the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns the `id`s and `configId`s the detail and write routes take. Clients that exist only as the private backing of a User Testing scenario are omitted unless `includePrivateBacking=true`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/includePrivateBacking"
           }
         ],
         "responses": {
           "200": {
-            "description": "The project's hosts.",
+            "description": "The project's clients.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostPage"
+                  "$ref": "#/components/schemas/ClientPage"
                 }
               }
             }
@@ -874,6 +877,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -887,12 +893,12 @@
         }
       },
       "post": {
-        "operationId": "createHost",
+        "operationId": "createClient",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Create a host (from a template or a full config)",
-        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the live backend host catalog, falling back to the bundled SDK catalog snapshot if the live catalog is unavailable, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
+        "summary": "Create a client (from a template or a full config)",
+        "description": "Creates a client in the project and responds `201` with the new client's detail. Seed the config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the live backend client-template catalog, falling back to the bundled SDK catalog snapshot if the live catalog is unavailable, OR pass `config` (a full client config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (client creation is a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -903,7 +909,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HostCreateRequest"
+                "$ref": "#/components/schemas/ClientCreateRequest"
               },
               "example": {
                 "name": "Claude",
@@ -915,11 +921,11 @@
         },
         "responses": {
           "201": {
-            "description": "The host was created.",
+            "description": "The client was created.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDetail"
+                  "$ref": "#/components/schemas/ClientDetail"
                 }
               }
             }
@@ -935,6 +941,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -948,29 +957,32 @@
         }
       }
     },
-    "/projects/{projectId}/hosts/{hostId}": {
+    "/projects/{projectId}/clients/{client}": {
       "get": {
-        "operationId": "getHost",
+        "operationId": "getClient",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Get a host",
-        "description": "One host's full settings, including its resolved host config. A host that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "summary": "Get a client",
+        "description": "One client's full settings, including its resolved config, its `configId` (the concurrency token every write takes), and `impact` \u2014 what a config edit would follow. The path segment accepts a client **name or ID**. A client that exists but belongs to a different project reads as `404 NOT_FOUND`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/hostId"
+            "$ref": "#/components/parameters/client"
+          },
+          {
+            "$ref": "#/components/parameters/includePrivateBacking"
           }
         ],
         "responses": {
           "200": {
-            "description": "The host settings.",
+            "description": "The client settings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDetail"
+                  "$ref": "#/components/schemas/ClientDetail"
                 }
               }
             }
@@ -983,6 +995,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -996,18 +1011,18 @@
         }
       },
       "patch": {
-        "operationId": "updateHost",
+        "operationId": "updateClient",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Update a host",
-        "description": "Edit a host's display name and/or its host config. Only the fields you pass change. Guest callers are denied (a write).",
+        "summary": "Update a client",
+        "description": "Edit a client's display name and/or its config. Two ways to change the config: `config` replaces it wholesale, and `set` changes named fields over the config read inside the write transaction \u2014 prefer `set`, because a whole-config round-trip composed from a stale read reverts whatever landed in between.\n\nConfig edits require `expectedConfigId` and renames require `expectedName`. A stale token is `409 CONFLICT` whose `details` carries the current value: re-read the client and retry. A config edit that resolves to byte-identical settings writes nothing at all.\n\nGuest callers are denied (a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/hostId"
+            "$ref": "#/components/parameters/client"
           }
         ],
         "requestBody": {
@@ -1015,21 +1030,24 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HostUpdateRequest"
+                "$ref": "#/components/schemas/ClientUpdateRequest"
               },
               "example": {
-                "name": "Claude (renamed)"
+                "expectedConfigId": "hc_01J8\u2026",
+                "set": {
+                  "temperature": 0.2
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The updated host settings.",
+            "description": "The updated client settings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDetail"
+                  "$ref": "#/components/schemas/ClientDetail"
                 }
               }
             }
@@ -1045,6 +1063,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -1058,43 +1079,27 @@
         }
       },
       "delete": {
-        "operationId": "deleteHost",
+        "operationId": "deleteClient",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Delete a host",
-        "description": "Permanently delete a host from the project. Pass `{ \"force\": true }` to delete a host that is still referenced (e.g. by an eval suite). Guest callers are denied (a write).",
+        "summary": "Delete a client",
+        "description": "Permanently deletes the client. Refused while a live environment, an active legacy journey or an eval suite still holds it \u2014 the error names what to detach first. Guest callers are denied (a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/hostId"
+            "$ref": "#/components/parameters/client"
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "force": {
-                    "type": "boolean",
-                    "description": "Delete even if the host is still referenced."
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
-            "description": "The host was deleted.",
+            "description": "The client was deleted.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDeleted"
+                  "$ref": "#/components/schemas/ClientDeleted"
                 }
               }
             }
@@ -1110,6 +1115,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -5925,20 +5933,20 @@
         }
       }
     },
-    "/projects/{projectId}/hosts/{hostId}/servers": {
+    "/projects/{projectId}/clients/{client}/servers": {
       "post": {
-        "operationId": "setHostServers",
+        "operationId": "setClientServers",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Replace a host's server attachments",
-        "description": "Sets the host's required and optional server ids without round-tripping its whole config, and responds with the updated host detail. Preserves every other identity field (computer, harness, built-in tools) and trims per-server connection overrides to the kept set. Requires project admin.",
+        "summary": "Replace a client's servers",
+        "description": "Replaces the client's required and optional saved-server attachments without round-tripping the whole config. Composed server-side from the client's current config, so every other setting is preserved \u2014 and `expectedConfigId` is required so two concurrent server replacements cannot silently lose one.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/hostId"
+            "$ref": "#/components/parameters/client"
           }
         ],
         "requestBody": {
@@ -5946,24 +5954,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HostServersRequest"
-              },
-              "example": {
-                "serverIds": [
-                  "srv_1"
-                ],
-                "optionalServerIds": []
+                "$ref": "#/components/schemas/ClientServersRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The updated host.",
+            "description": "The updated client settings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDetail"
+                  "$ref": "#/components/schemas/ClientDetail"
                 }
               }
             }
@@ -5979,6 +5981,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -5992,20 +5997,20 @@
         }
       }
     },
-    "/projects/{projectId}/hosts/{hostId}/duplicate": {
+    "/projects/{projectId}/clients/{client}/duplicate": {
       "post": {
-        "operationId": "duplicateHost",
+        "operationId": "duplicateClient",
         "tags": [
-          "Hosts"
+          "Clients"
         ],
-        "summary": "Duplicate a host",
-        "description": "Copies the host and responds `201` with the new host's detail. The copy SHARES the source's content-addressed config row rather than cloning it, so both hosts continue to describe the same configuration. Requires project admin.",
+        "summary": "Duplicate a client",
+        "description": "Creates a new client carrying the selected client's current config, and responds `201` with the copy's detail. Purely additive \u2014 the source is untouched.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/hostId"
+            "$ref": "#/components/parameters/client"
           }
         ],
         "requestBody": {
@@ -6013,21 +6018,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HostDuplicateRequest"
-              },
-              "example": {
-                "name": "Claude (copy)"
+                "$ref": "#/components/schemas/ClientDuplicateRequest"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "The duplicated host.",
+            "description": "The client was duplicated.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostDetail"
+                  "$ref": "#/components/schemas/ClientDetail"
                 }
               }
             }
@@ -6043,6 +6045,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -11099,13 +11104,22 @@
           "type": "string"
         }
       },
-      "hostId": {
-        "name": "hostId",
+      "client": {
+        "name": "client",
         "in": "path",
         "required": true,
-        "description": "Host ID, as returned by the project's host list.",
+        "description": "Client **name or ID**. A name is matched case-insensitively and must be unique in the project; an ambiguous name is refused with `409 CONFLICT` listing the candidate ids rather than resolved to one of them.",
         "schema": {
           "type": "string"
+        }
+      },
+      "includePrivateBacking": {
+        "name": "includePrivateBacking",
+        "in": "query",
+        "required": false,
+        "description": "Include clients that exist only as the private backing of a User Testing scenario. Excluded by default, matching the Clients tab; this is an administrative opt-in and applies to name resolution as well as to listing.",
+        "schema": {
+          "type": "boolean"
         }
       },
       "imageId": {
@@ -16893,15 +16907,17 @@
           }
         }
       },
-      "Host": {
+      "Client": {
         "type": "object",
-        "description": "A host in a project, as returned by the host list.",
+        "description": "A client in a project, as returned by the client list.",
         "required": [
           "id",
           "name",
-          "hostConfigId",
+          "configId",
           "modelId",
           "serverCount",
+          "ownerScope",
+          "hasComputer",
           "createdAt",
           "updatedAt"
         ],
@@ -16912,9 +16928,9 @@
           "name": {
             "type": "string"
           },
-          "hostConfigId": {
+          "configId": {
             "type": "string",
-            "description": "ID of the content-addressed host config this host points at."
+            "description": "ID of the content-addressed config this client points at. Content addressed, so the same id means byte-identical settings \u2014 send it back as `expectedConfigId` on a write to make the write compare-and-set."
           },
           "modelId": {
             "type": "string",
@@ -16922,7 +16938,19 @@
           },
           "serverCount": {
             "type": "integer",
-            "description": "Number of MCP servers attached to the host config."
+            "description": "Number of MCP servers attached to the client config."
+          },
+          "ownerScope": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Product ownership of the row (null for untagged clients). Never an authorization signal."
+          },
+          "hasComputer": {
+            "type": "boolean",
+            "description": "Whether the live config attaches a computer."
           },
           "createdAt": {
             "type": "number",
@@ -16934,7 +16962,30 @@
           }
         }
       },
-      "HostPage": {
+      "ClientImpact": {
+        "type": "object",
+        "description": "What a config edit to this client would follow. These are the DURABLE consumers that re-resolve the client's current config; past runs, per-turn traces and pinned eval-suite snapshots hold a config id and are unaffected. Direct playground and client-chat use follows the edit too and has no row to count.",
+        "required": [
+          "liveEnvironmentCount",
+          "scenarioAttachmentCount",
+          "activeLegacyJourneyCount"
+        ],
+        "properties": {
+          "liveEnvironmentCount": {
+            "type": "integer",
+            "description": "Non-archived project environments selecting this client."
+          },
+          "scenarioAttachmentCount": {
+            "type": "integer",
+            "description": "Scenario attachments re-materialized inside the edit transaction."
+          },
+          "activeLegacyJourneyCount": {
+            "type": "integer",
+            "description": "Active journeys with no environments that pin this client."
+          }
+        }
+      },
+      "ClientPage": {
         "type": "object",
         "required": [
           "items"
@@ -16943,18 +16994,19 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Host"
+              "$ref": "#/components/schemas/Client"
             }
           }
         }
       },
-      "HostDetail": {
+      "ClientDetail": {
         "type": "object",
-        "description": "A host plus its resolved host config (model, capabilities, host context, MCP profile).",
+        "description": "A client plus its resolved config (model, capabilities, host context, MCP profile) and the read-backs an editor needs.",
         "required": [
           "id",
           "name",
-          "config"
+          "config",
+          "ownerScope"
         ],
         "properties": {
           "id": {
@@ -16963,23 +17015,48 @@
           "name": {
             "type": "string"
           },
+          "configId": {
+            "type": "string",
+            "description": "The concurrency token \u2014 see `Client.configId`."
+          },
           "config": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Host config v2 DTO. Opaque object; shape mirrors the inspector's host editor."
+            "description": "Client config v2 DTO. Opaque object; shape mirrors the inspector's client editor."
+          },
+          "ownerScope": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "hasComputer": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Unix epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Unix epoch milliseconds."
+          },
+          "impact": {
+            "$ref": "#/components/schemas/ClientImpact"
           }
         }
       },
-      "HostCreateRequest": {
+      "ClientCreateRequest": {
         "type": "object",
-        "description": "Create a host from a built-in template OR a full host config. Exactly one of `template` or `config` is required.",
+        "description": "Create a client from a built-in template OR a full config. Exactly one of `template` or `config` is required.",
         "required": [
           "name"
         ],
         "properties": {
           "name": {
             "type": "string",
-            "description": "Display name for the new host."
+            "description": "Display name for the new client."
           },
           "template": {
             "type": "string",
@@ -17019,10 +17096,10 @@
                 "type": "string",
                 "minLength": 1,
                 "pattern": ".*\\S.*",
-                "description": "Model id the host pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a host created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though hosts created before this rule stay editable."
+                "description": "Model id the client pins. Required and non-empty: an environment inherits its client's model when it sets no override, so a client created without one cannot back a headless environment and its launches are refused with `ENV_MODEL_REQUIRED`. A `PATCH` may not clear it either, though clients created before this rule stay editable."
               }
             },
-            "description": "Full host config v2, used verbatim (alternative to `template`). Must pin `modelId`."
+            "description": "Full client config v2, used verbatim (alternative to `template`). Must pin `modelId`."
           }
         },
         "oneOf": [
@@ -17039,19 +17116,41 @@
         ],
         "additionalProperties": false
       },
-      "HostUpdateRequest": {
+      "ClientUpdateRequest": {
         "type": "object",
-        "description": "Edit a host. Provide at least one of `name` or `config`; only the fields you pass change.",
+        "description": "Edit a client. Provide at least one of `name`, `config` (whole-config replacement) or `set` (named fields); `config` and `set` are mutually exclusive. Config edits require `expectedConfigId` and renames require `expectedName`, so a concurrent edit is rejected rather than overwritten.",
         "properties": {
           "name": {
             "type": "string",
+            "minLength": 1,
             "description": "New display name."
+          },
+          "expectedName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The `name` you last read for this client. REQUIRED whenever the request sends `name`: a rename does not rotate the config, so `expectedConfigId` cannot detect a concurrent one. A mismatch is `409 CONFLICT` carrying `details.currentName`."
+          },
+          "expectedConfigId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The `configId` you last read for this client. REQUIRED whenever the request changes the config (`config` or `set`): without it a write composed from a stale read silently reverts whatever landed in between. A mismatch is `409 CONFLICT` carrying `details.currentConfigId`."
+          },
+          "expectedImpact": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClientImpact"
+              }
+            ],
+            "description": "The `impact` you last read for this client. Optional, and checked transactionally when sent \u2014 a consumer added or removed since you read it makes the write conflict (`details.currentImpact`) instead of quietly affecting more than you were told it would."
           },
           "config": {
             "type": "object",
             "additionalProperties": true,
             "minProperties": 1,
-            "description": "Replacement host config v2."
+            "description": "Replacement client config v2. Replaces the config wholesale; use `set` to change named fields instead."
+          },
+          "set": {
+            "$ref": "#/components/schemas/ClientFieldSet"
           }
         },
         "anyOf": [
@@ -17064,11 +17163,186 @@
             "required": [
               "config"
             ]
+          },
+          {
+            "required": [
+              "set"
+            ]
           }
         ],
         "additionalProperties": false
       },
-      "HostDeleted": {
+      "ClientFieldSet": {
+        "type": "object",
+        "description": "Named fields to change, applied over the client's current config INSIDE the write transaction. Absent always means keep. `null` means \"make it go away\", and what that means depends on the field: a required field resets to its documented default, an optional one clears to absent. Object-valued fields are whole-object replacements, not merges \u2014 to change a deep knob, read the client, overlay the sub-object, and send it back whole. `hostStyle`, `clientCapabilities`, `hostContext` and server membership are deliberately not settable here (use a whole-`config` replacement, or the servers operation).",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "description": "Model id the client pins. Value only \u2014 there is no `null`, and a blank string is refused: a client that pins a model cannot be edited into one that does not."
+          },
+          "systemPrompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `\"\"`."
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `0.7`."
+          },
+          "requireToolApproval": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `false`."
+          },
+          "connectionDefaults": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "headers",
+              "requestTimeout"
+            ],
+            "properties": {
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "requestTimeout": {
+                "type": "number"
+              }
+            },
+            "description": "Send `null` to reset this field to its canonical default. Default: empty headers and the platform's default request timeout."
+          },
+          "respectToolVisibility": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "progressiveToolDiscovery": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "harness": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "claude-code",
+              "codex",
+              null
+            ],
+            "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
+          },
+          "computer": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "personal"
+                ]
+              },
+              "toolset": {
+                "type": "string",
+                "enum": [
+                  "bash"
+                ]
+              },
+              "workdir": {
+                "type": "string"
+              }
+            },
+            "description": "Send `null` to clear this field back to absent. Attaching one requires the computers feature flag; detaching never does."
+          },
+          "builtInToolIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "skillSelection": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "`{ mode: \"all-visible\" }` or `{ mode: \"explicit\", skillIds: [...] }`. Send `null` to clear this field back to absent."
+          },
+          "modelVisibleMcpToolResults": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "mcpToolResultImageRendering": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "mcpProfile": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "hostCapabilitiesOverride": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "chatUiOverride": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          }
+        }
+      },
+      "ClientDeleted": {
         "type": "object",
         "required": [
           "id",
@@ -18747,11 +19021,12 @@
           }
         }
       },
-      "HostServersRequest": {
+      "ClientServersRequest": {
         "type": "object",
-        "description": "Replaces the host's server attachments wholesale. Every id must name a live server in the same project.",
+        "description": "Replaces the client's server attachments wholesale. Every id must name a live server in the same project. Per-server connection overrides are trimmed to the surviving selection.",
         "required": [
-          "serverIds"
+          "serverIds",
+          "expectedConfigId"
         ],
         "additionalProperties": false,
         "properties": {
@@ -18767,10 +19042,23 @@
               "type": "string"
             },
             "description": "Attached but not required to connect."
+          },
+          "expectedConfigId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The `configId` you last read for this client. ALWAYS required here: this operation rewrites the config, and without the token a write composed from a stale read silently reverts whatever landed in between. A mismatch is `409 CONFLICT` carrying `details.currentConfigId`."
+          },
+          "expectedImpact": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClientImpact"
+              }
+            ],
+            "description": "The `impact` you last read for this client. Optional, and checked transactionally when sent \u2014 a consumer added or removed since you read it makes the write conflict (`details.currentImpact`) instead of quietly affecting more than you were told it would."
           }
         }
       },
-      "HostDuplicateRequest": {
+      "ClientDuplicateRequest": {
         "type": "object",
         "description": "Optional name for the copy; defaults to a derived name.",
         "additionalProperties": false,
