@@ -50,6 +50,7 @@ import {
   routePaths,
 } from "./lib/app-navigation";
 import { APP_ROUTES } from "./lib/app-routes";
+import { createSentryBrowserRouter } from "./lib/sentry";
 
 export { getAppRouter };
 
@@ -283,7 +284,9 @@ function buildRouteChildren() {
 export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
-  const router = createBrowserRouter([
+  // Sentry-wrapped: an unwrapped data router leaves every transaction named
+  // after the pageload URL. See `createSentryBrowserRouter`.
+  const router = createSentryBrowserRouter([
     ...(import.meta.env.DEV
       ? [
           {

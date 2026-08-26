@@ -1,4 +1,12 @@
 import * as Sentry from "@sentry/react";
+import { useEffect } from "react";
+import {
+  createBrowserRouter,
+  createRoutesFromChildren,
+  matchRoutes,
+  useLocation,
+  useNavigationType,
+} from "react-router";
 import { buildClientSentryConfig } from "../../../shared/sentry-config";
 import { HOSTED_MODE } from "./config";
 import {
@@ -6,6 +14,16 @@ import {
   isErrorCaptureSurface,
   shouldRecordSession,
 } from "./PosthogUtils";
+
+/**
+ * `createBrowserRouter`, instrumented — build the app router with this.
+ *
+ * Plain `browserTracingIntegration` names a transaction once, at pageload, and
+ * never again on a client-side navigation. That is why INSPECTOR-CLIENT-253
+ * was filed against `/servers` while actually crashing on `/playground`.
+ */
+export const createSentryBrowserRouter =
+  Sentry.wrapCreateBrowserRouterV7(createBrowserRouter);
 
 /**
  * Resolve the config the browser bundle inits with.
@@ -46,7 +64,15 @@ export function initSentry() {
       // `replay.stop()` FLUSHES the buffered segment — which is the
       // token-bearing page itself. Such a session simply has no replay.
       ...(shouldRecordSession() ? [Sentry.replayIntegration()] : []),
-      Sentry.browserTracingIntegration(),
+      // Paired with `createSentryBrowserRouter` above: the hooks report the
+      // navigation, the wrapper supplies the route it resolved to.
+      Sentry.reactRouterV7BrowserTracingIntegration({
+        useEffect,
+        useLocation,
+        useNavigationType,
+        createRoutesFromChildren,
+        matchRoutes,
+      }),
     ],
   });
 }
