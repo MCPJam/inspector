@@ -31,6 +31,7 @@ import {
 import {
   SKILLS_EXTENSION_CAPABILITY,
   SKILLS_EXTENSION_ID,
+  SKILLS_LIST_CACHE_SCOPE,
 } from "../src/lib/skills-surface.js";
 // eslint-disable-next-line
 // @ts-expect-error Local build helper is implemented as plain ESM.
@@ -61,6 +62,10 @@ test("does not advertise directoryRead, which it cannot answer", () => {
     SKILLS_EXTENSION_CAPABILITY as Record<string, Record<string, unknown>>
   )[SKILLS_EXTENSION_ID]!;
   assert.equal(declared.directoryRead, undefined);
+});
+
+test("uses a valid public cache scope for the static catalog", () => {
+  assert.equal(SKILLS_LIST_CACHE_SCOPE, "public");
 });
 
 test("every manifest entry carries a digest and a byte size", () => {

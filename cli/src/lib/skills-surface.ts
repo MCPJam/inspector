@@ -49,13 +49,12 @@ export const SKILLS_EXTENSION_CAPABILITY = {
 } as const;
 
 /**
- * The catalog is compiled into the binary, so it changes only on release.
- * `cacheScope: "server"` because every caller sees the same listing — a stdio
- * server has exactly one caller, but stating the scope keeps the claim true if
- * that ever stops being so.
+ * The catalog is compiled into the binary, so it changes only on release. It
+ * is public and does not vary by caller, so SEP-2549 calls for a `public`
+ * cache scope.
  */
 export const SKILLS_LIST_TTL_MS = 60 * 60 * 1000;
-export const SKILLS_LIST_CACHE_SCOPE = "server";
+export const SKILLS_LIST_CACHE_SCOPE = "public";
 
 const INVALID_PARAMS = -32602;
 
