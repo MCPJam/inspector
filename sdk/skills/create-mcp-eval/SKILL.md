@@ -77,8 +77,6 @@ In all cases, use `@mcpjam/sdk` for the eval harness (`HostRunner`, `EvalTest`, 
 
 ---
 
----
-
 ## 5. Generation Guidelines
 
 Follow these rules when generating eval test files:

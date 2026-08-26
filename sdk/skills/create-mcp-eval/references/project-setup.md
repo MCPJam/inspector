@@ -1,6 +1,6 @@
 ## 2. Project Setup
 
-Generate the following scaffold when creating a new eval project. Use the test runner detected above — the examples below show both Vitest and Jest variants.
+Generate the following scaffold when creating a new eval project. Use the test runner chosen in `SKILL.md` §1 (detect from the repo; fall back to Vitest) — the examples below show both Vitest and Jest variants.
 
 ### package.json (essentials)
 ```json

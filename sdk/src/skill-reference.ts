@@ -23,7 +23,25 @@ import commonMistakesMd from "../skills/create-mcp-eval/references/common-mistak
 import agentBriefMd from "../skills/create-mcp-eval/references/agent-brief.md";
 import exploreSkillMd from "../skills/explore-to-sdk-evals/SKILL.md";
 
-/** The reference files, in the order a reader works through them. */
+/**
+ * Prepended to the assembled blob.
+ *
+ * The routing file tells a reader to open `references/sdk-api.md` and friends
+ * — correct for a filesystem consumer, and a dead end for a clipboard paste,
+ * where those files do not exist. Without this line the split re-introduces
+ * the very failure it was meant to prevent, in softer form: an agent follows
+ * the reference map, cannot open the path, and either stalls or proceeds
+ * without the API reference that is sitting 200 lines further down the same
+ * paste.
+ */
+const INLINED_PREAMBLE = [
+  "> **Note:** every file named in the reference map below is already inlined",
+  "> in this document, in the order listed at the end. Do not try to open",
+  "> `references/*.md` from disk — read on instead.",
+  "",
+].join("\n");
+
+/** The reference files, in the order the reference map lists them. */
 export const CREATE_MCP_EVAL_REFERENCES = [
   projectSetupMd,
   sdkApiMd,
@@ -39,7 +57,16 @@ export const CREATE_MCP_EVAL_SKILL_MD = skillMd;
 /**
  * Routing file plus every reference, concatenated. This is what a clipboard
  * paste needs, and it is what `SKILL_MD` has always been.
+ *
+ * Section numbering runs 1, 5, 2, 3, 4, 6, 7, 8 — the routing file keeps §1
+ * and §5 because they are the decision rules a reader needs BEFORE any
+ * reference, and the references follow in reference-map order. Stated here
+ * because the numbers otherwise read as a mistake.
  */
-export const SKILL_MD = [skillMd, ...CREATE_MCP_EVAL_REFERENCES].join("\n\n");
+export const SKILL_MD = [
+  INLINED_PREAMBLE,
+  skillMd,
+  ...CREATE_MCP_EVAL_REFERENCES,
+].join("\n\n");
 
 export const EXPLORE_TO_SDK_EVALS_SKILL_MD = exploreSkillMd;
