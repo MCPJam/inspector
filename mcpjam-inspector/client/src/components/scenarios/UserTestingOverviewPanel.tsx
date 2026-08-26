@@ -2,7 +2,6 @@ import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import type { ScenarioListItem } from "@/hooks/useScenarios";
 import {
   getScenarioHostLabel,
@@ -216,17 +215,14 @@ function LoadFailureState({
 /**
  * The redesigned User Testing empty state (BB-125).
  *
- * The graphic is one of the project's pixel characters rather than the frame's
- * bitmap: the asset lives in the design file, and reaching for a stock icon
- * instead would put a third visual language on a page that already sits beside
- * the Swarm empty state. Scaled up because at its native 44px it reads as a
- * list bullet, not an illustration.
+ * The graphic is the frame's own bitmap, served from `public/`. It replaces a
+ * scaled-up `PersonaPixelAvatar`, which stood in while the asset did not exist
+ * yet: a persona avatar says "a user", but this page is about a study — the
+ * desk, the brief and the observed subject are the thing being described.
  *
- * The scale goes on a WRAPPER so it stays independent of the avatar, which
- * animates its own `transform` for the idle float every PersonaPixelAvatar
- * carries. Tailwind emits the standalone `scale` property, so the two do
- * compose today — the wrapper is what keeps that true if the utility ever
- * compiles to `transform` instead, where the animation would win.
+ * Sized to its native 196×250 so the pixel art lands on whole device pixels;
+ * `image-rendering: pixelated` keeps the edges hard on retina rather than
+ * letting the browser smooth them into mush.
  */
 function EmptyState({
   onCreateScenario,
@@ -240,21 +236,15 @@ function EmptyState({
       className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-empty"
     >
-      <div
-        className="flex h-[120px] w-[88px] items-end justify-center"
+      <img
+        src="/user-testing-empty.png"
+        alt=""
+        width={196}
+        height={250}
+        aria-hidden
         data-testid="user-testing-empty-illustration"
-      >
-        {/* origin-bottom so the scale grows upward from the character's feet
-            and the row keeps its baseline. */}
-        <span className="origin-bottom scale-[2]">
-          <PersonaPixelAvatar
-            seed="user-testing-empty-state"
-            shapeIndex={1}
-            paletteIndex={5}
-            size="lg"
-          />
-        </span>
-      </div>
+        className="h-[250px] w-[196px] max-w-full object-contain [image-rendering:pixelated]"
+      />
       <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
         A study starts with a link you send. Users open it, use your server
