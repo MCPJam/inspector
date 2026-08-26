@@ -149,7 +149,7 @@ function RebuildButton({
   return (
     <button
       type="button"
-      onClick={onRebuild}
+      onClick={() => onRebuild()}
       disabled={busy}
       className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-muted/50 disabled:opacity-60"
     >

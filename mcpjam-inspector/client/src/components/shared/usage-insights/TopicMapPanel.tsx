@@ -1380,7 +1380,7 @@ export function TopicMapPanel({
             type="button"
             variant="outline"
             disabled={rebuildDisabled(latestRun) || rebuildBusy}
-            onClick={onRebuild}
+            onClick={() => onRebuild()}
           >
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
             {rebuildButtonLabel(latestRun)}
@@ -1558,7 +1558,7 @@ export function TopicMapPanel({
                     snapshot.stats.unmappedSessionCount,
                   )}
                   disabled={rebuildDisabled(latestRun) || rebuildBusy}
-                  onClick={onRebuild}
+                  onClick={() => onRebuild()}
                 >
                   <RefreshCw
                     className={cn(
