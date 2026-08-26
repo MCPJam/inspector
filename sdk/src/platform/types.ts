@@ -308,6 +308,16 @@ export interface PlatformTurnUsage {
 export interface PlatformChatTurn {
   sessionId: string | null;
   turnId: string;
+  /**
+   * The project this turn ran in.
+   *
+   * A CONTINUATION does not send one — it is read off the session row — so
+   * without this a caller holding only the turn cannot say where the session
+   * lives, and the session permalink cannot be composed. That is not
+   * hypothetical: it is the one operation whose scope is never resolved
+   * locally, so nothing else in the response or the context carries it.
+   */
+  projectId: string;
   reply?: string;
   finishReason?: string | null;
   toolCalls?: PlatformTurnToolCall[];
