@@ -395,12 +395,59 @@ async function resolveServersByName(
   const page = await client.listProjectServers({ projectId }, { signal });
   const byId = new Map(page.items.map((server) => [server.id, server]));
   const byName = new Map(page.items.map((server) => [server.name, server]));
+  // Exact first, then folded — the order `resolveConfiguredServerIds` uses, so
+  // two servers differing only by case still resolve to the one actually named.
+  const byFoldedName = new Map<string, (typeof page.items)[number]>();
+  for (const server of page.items) {
+    const key = foldServerName(server.name);
+    if (!byFoldedName.has(key)) byFoldedName.set(key, server);
+  }
   const resolvedServers: Array<{ id: string; name: string }> = [];
-  for (const selector of selectors) {
-    const hit = byId.get(selector) ?? byName.get(selector);
+  for (const rawSelector of selectors) {
+    const selector = rawSelector.trim();
+    if (!selector) continue;
+    const hit =
+      byId.get(selector) ??
+      byName.get(selector) ??
+      byFoldedName.get(foldServerName(selector));
     if (hit) resolvedServers.push({ id: hit.id, name: hit.name });
   }
   return resolvedServers;
+}
+
+/**
+ * A server DISPLAY NAME, folded the way the runtime folds it.
+ *
+ * `resolveConfiguredServerIds` (mcpjam-inspector/server/services/evals-runner.ts)
+ * trims a server reference and then matches it exactly, falling back to a
+ * case-insensitive match. A preflight that only matched exactly would be
+ * STRICTER THAN THE THING IT GATES: a suite naming `github` for a project
+ * server called `GitHub` would have every deterministic call reported
+ * unresolved and the run refused, when the runtime would have resolved it and
+ * executed. Refusing a run that works is as much a defect here as approving one
+ * that does not.
+ *
+ * IDS ARE NEVER FOLDED. An id is an exact identifier rather than a label, and
+ * two ids differing only by case are two different servers.
+ */
+function foldServerName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * The server a step's display name refers to, exact match winning over folded.
+ */
+function serverByDisplayName<T extends { name: string }>(
+  servers: readonly T[],
+  name: string
+): T | undefined {
+  const wanted = name.trim();
+  return (
+    servers.find((candidate) => candidate.name === wanted) ??
+    servers.find(
+      (candidate) => foldServerName(candidate.name) === foldServerName(wanted)
+    )
+  );
 }
 
 // ── the check ────────────────────────────────────────────────────────────────
@@ -519,9 +566,7 @@ export async function validateImportToolReferences(
         ? target.servers.find(
             (candidate) => candidate.id === reference.step.serverId
           )
-        : target.servers.find(
-            (candidate) => candidate.name === reference.step.serverName
-          );
+        : serverByDisplayName(target.servers, reference.step.serverName);
       if (!server) {
         findings.push(
           finding(reference, {

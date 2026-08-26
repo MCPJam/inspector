@@ -1718,6 +1718,97 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("unavailable discovery refuses a selected case without blaming its file", async () => {
+    const fixture = await startFixture();
+    try {
+      // `--all-targets` cannot enumerate the target set before the write, so
+      // every deterministic reference comes back UNCHECKED rather than missing.
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--all-targets"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        // Refusing is right — not being able to look is a reason to stop. But
+        // the reason must be the real one: "could not be checked", never "does
+        // not resolve", which would send someone to fix a file that is fine.
+        assert.match(run.stdout + run.stderr, /could not be checked/);
+        assert.doesNotMatch(
+          run.stdout + run.stderr,
+          /name a deterministic tool that does not resolve/
+        );
+        assert.deepEqual(fixture.fromFileBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("unavailable discovery never rewrites an unselected case's claim", async () => {
+    const fixture = await startFixture();
+    try {
+      // `c_hint` is prompt-only, so selecting it leaves the imported case
+      // unselected — the path that rewrites claims. Discovery is unavailable
+      // under `--all-targets`, so nothing was actually checked.
+      const withPromptSibling = IMPORTED_ENABLED_MISSING.replace(
+        "cases:\n",
+        `cases:
+  - id: c_hint
+    title: Prompt only
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Say hello.
+`
+      );
+      await withSuiteFile(withPromptSibling, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(fixture.baseUrl, file, "--all-targets", "--case", "c_hint"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // Whatever else happens, the converter's claim must survive: "we could
+        // not enumerate the targets" is not evidence that a tool is missing,
+        // and recording `unresolved` on the strength of it would have MCPJam
+        // assert something it never checked — permanently, in the hosted row.
+        const written = [...fixture.batchBodies, ...fixture.updateBodies];
+        const serialized = JSON.stringify(written);
+        assert.doesNotMatch(serialized, /"unresolved"/, serialized);
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a server named in different case resolves, as it does at run time", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "GitHub" }],
+      toolsByServer: { GitHub: ["render_refund"] },
+    });
+    try {
+      // `resolveConfiguredServerIds` matches a server reference exactly and
+      // then case-insensitively, so this run executes. A preflight matching
+      // only exactly would refuse a run the runtime resolves fine.
+      // The case whose tool is genuinely absent stays DISABLED: this test is
+      // about the server name resolving, not about a missing tool.
+      const lowercased = IMPORTED_WITH_TOOL_CALLS.replace(/billing/g, "github");
+      await withSuiteFile(lowercased, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--server", "GitHub"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.doesNotMatch(run.stdout + run.stderr, /does not resolve/);
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a host pinning a server the project lost refuses, and says so", async () => {
     const fixture = await startFixture({
       servers: [{ id: "srv_billing", name: "billing" }],

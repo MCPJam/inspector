@@ -322,15 +322,24 @@ export function selectedAuthoredCaseIds(
  *     case writes, before the launch. Half a synced suite plus a run that was
  *     going to fail anyway is worse than a clean refusal, and the caller has
  *     paid for nothing.
- *   - **Imported, not selected → rewrite and persist.** The claim becomes
- *     `unresolved` with a note saying what did not resolve. The case is still
- *     written — a disabled row keeps its hosted history — and the hosted record
- *     now says what MCPJam actually found, rather than still asserting the
- *     converter's original claim about a tool that is not there.
+ *   - **Imported, not selected, reference CONFIRMED missing → rewrite and
+ *     persist.** The claim becomes `unresolved` with a note saying what did not
+ *     resolve. The case is still written — a disabled row keeps its hosted
+ *     history — and the hosted record now says what MCPJam actually found,
+ *     rather than still asserting the converter's original claim about a tool
+ *     that is not there.
  *   - **Native, not selected → untouched.** A case authored here never acquires
  *     an `import` block. Manufacturing provenance for it would turn "somebody
  *     wrote this by hand" into "something converted this", permanently, on the
  *     strength of a missing tool.
+ *
+ * A `TOOL_DISCOVERY_UNAVAILABLE` finding still REFUSES a selected case — not
+ * being able to look is a reason to stop, not a reason to proceed — but it
+ * never rewrites a claim. "We could not enumerate the targets" is not evidence
+ * that a tool is missing, and recording `unresolved` on the strength of it
+ * would destroy the converter's provenance to assert something MCPJam never
+ * checked. That is the exact failure this whole feature exists to prevent, in
+ * the one place where MCPJam is the one making the false claim.
  */
 export function applyUnresolvedReferences(params: {
   cases: ResolvedEvalSuiteFileCase[];
@@ -352,9 +361,20 @@ export function applyUnresolvedReferences(params: {
       imported: testCase.import !== undefined,
       findings: byCase.get(testCase.id) ?? [],
     }));
+    // A case blocked ONLY because discovery was unavailable is refused with the
+    // reason it was actually refused for. Telling someone their tool does not
+    // exist when the truth is "we could not look" sends them to rewrite a file
+    // that is fine.
+    const onlyUnavailable = detail.every((entry) =>
+      entry.findings.every(
+        (found) => found.code === "TOOL_DISCOVERY_UNAVAILABLE"
+      )
+    );
     throw cliError(
       "IMPORT_REFERENCE_UNRESOLVED",
-      `${blocked.length} selected case(s) name a deterministic tool that does not resolve against this run's target. Nothing was written and no run was started.\n` +
+      (onlyUnavailable
+        ? `${blocked.length} selected case(s) make a deterministic tool call that could not be checked, because this run's targets cannot be enumerated before the suite is written. Nothing was written and no run was started.\n`
+        : `${blocked.length} selected case(s) name a deterministic tool that does not resolve against this run's target. Nothing was written and no run was started.\n`) +
         detail
           .flatMap((entry) =>
             entry.findings.map(
@@ -368,9 +388,14 @@ export function applyUnresolvedReferences(params: {
   }
 
   return params.cases.map((testCase) => {
-    const found = byCase.get(testCase.id);
+    // Only CONFIRMED missing references rewrite a claim. A case whose findings
+    // are all `TOOL_DISCOVERY_UNAVAILABLE` was never actually checked against
+    // an inventory, so its claim stands as authored.
+    const found = byCase
+      .get(testCase.id)
+      ?.filter((entry) => entry.code === "TOOL_REFERENCE_UNRESOLVED");
     // Native cases are left exactly as authored — see the docblock.
-    if (!found || testCase.import === undefined) return testCase;
+    if (!found?.length || testCase.import === undefined) return testCase;
     return {
       ...testCase,
       import: {
