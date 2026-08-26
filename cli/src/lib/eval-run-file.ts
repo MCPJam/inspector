@@ -16,7 +16,10 @@ import {
   type ResolvedEvalSuiteFileCase,
   type SuiteFileLoadFailure,
 } from "@mcpjam/sdk";
-import { MAX_BATCH_CREATE_CASES } from "@mcpjam/sdk/contract";
+import {
+  MAX_BATCH_CREATE_CASES,
+  MAX_IMPORT_NOTE_CHARS,
+} from "@mcpjam/sdk/contract";
 import {
   projectResolutionError,
   resolveProject,
@@ -29,6 +32,11 @@ import {
   type RunEvalSuiteInput,
   type RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
+import {
+  findingsByCaseId,
+  validateImportToolReferences,
+  type ImportToolFinding,
+} from "./eval-import-live-validation.js";
 import { cliError, usageError } from "./output.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
@@ -108,6 +116,12 @@ export function fileCaseToCreateBody(
     ...(testCase.assertions.length > 0
       ? { checks: { mode: "replace", list: testCase.assertions } }
       : {}),
+    // The converter's CLAIM, carried through to the hosted row.
+    //
+    // Omitted for a native case rather than sent as an empty block: "authored
+    // here" and "imported, claim unknown" are different facts, and once a case
+    // is persisted nothing downstream can tell them apart again.
+    ...(testCase.import ? { import: testCase.import } : {}),
   };
 }
 
@@ -132,6 +146,12 @@ export function fileCaseToUpdateBody(
       testCase.assertions.length > 0
         ? { mode: "replace", list: testCase.assertions }
         : null,
+    // Explicit `null` when the file dropped the block, for the same reason
+    // every other field above is restated: PATCH reads omission as "leave the
+    // stored value", so a re-sync of a file whose author deleted the import
+    // block would otherwise leave a stale claim describing a conversion that
+    // is no longer being asserted.
+    import: testCase.import ?? null,
   };
 }
 
@@ -212,6 +232,135 @@ function suiteFileLoadError(label: string, loaded: SuiteFileLoadFailure) {
       findings: [...loaded.findings],
     },
   );
+}
+
+/**
+ * The authored ids the launch will actually EXECUTE.
+ *
+ * Selection, not declaration: a disabled case is never selected, and with
+ * `--case` in play neither is an enabled case nobody named. This set is what
+ * separates "refuse the launch" from "write the corrected claim and move on",
+ * so it has to mirror {@link selectEnabledRunCases} exactly — a case this set
+ * calls selected but the launcher leaves out would refuse a run that was
+ * never going to touch it.
+ */
+export function selectedAuthoredCaseIds(
+  cases: readonly ResolvedEvalSuiteFileCase[],
+  selectors: readonly string[] | undefined,
+): Set<string> {
+  const enabled = cases.filter((testCase) => !testCase.disabled);
+  if (!selectors?.length) {
+    return new Set(enabled.map((testCase) => testCase.id));
+  }
+  const chosen = new Set<string>();
+  for (const selector of selectors) {
+    const hit = enabled.find(
+      (testCase) => testCase.id === selector || testCase.title === selector,
+    );
+    if (hit) chosen.add(hit.id);
+  }
+  return chosen;
+}
+
+/**
+ * Apply a completed live reference check to the cases the run is about to
+ * write, and refuse before any write when a case that WILL EXECUTE cannot.
+ *
+ * Three outcomes, and the difference between them is the whole point:
+ *
+ *   - **Selected and unresolved → refuse.** Before the suite write, before the
+ *     case writes, before the launch. Half a synced suite plus a run that was
+ *     going to fail anyway is worse than a clean refusal, and the caller has
+ *     paid for nothing.
+ *   - **Imported, not selected → rewrite and persist.** The claim becomes
+ *     `unresolved` with a note saying what did not resolve. The case is still
+ *     written — a disabled row keeps its hosted history — and the hosted record
+ *     now says what MCPJam actually found, rather than still asserting the
+ *     converter's original claim about a tool that is not there.
+ *   - **Native, not selected → untouched.** A case authored here never acquires
+ *     an `import` block. Manufacturing provenance for it would turn "somebody
+ *     wrote this by hand" into "something converted this", permanently, on the
+ *     strength of a missing tool.
+ */
+export function applyUnresolvedReferences(params: {
+  cases: ResolvedEvalSuiteFileCase[];
+  findings: readonly ImportToolFinding[];
+  /** The authored ids the run will actually execute. */
+  selectedCaseIds: ReadonlySet<string>;
+}): ResolvedEvalSuiteFileCase[] {
+  const byCase = findingsByCaseId(params.findings);
+  if (byCase.size === 0) return params.cases;
+
+  const blocked = params.cases.filter(
+    (testCase) =>
+      byCase.has(testCase.id) && params.selectedCaseIds.has(testCase.id)
+  );
+  if (blocked.length > 0) {
+    const detail = blocked.map((testCase) => ({
+      caseId: testCase.id,
+      title: testCase.title,
+      imported: testCase.import !== undefined,
+      findings: byCase.get(testCase.id) ?? [],
+    }));
+    throw cliError(
+      "IMPORT_REFERENCE_UNRESOLVED",
+      `${blocked.length} selected case(s) name a deterministic tool that does not resolve against this run's target. Nothing was written and no run was started.\n` +
+        detail
+          .flatMap((entry) =>
+            entry.findings.map(
+              (found) => `  ${found.pointer}: ${found.message}`
+            )
+          )
+          .join("\n"),
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      { unresolved: detail },
+    );
+  }
+
+  return params.cases.map((testCase) => {
+    const found = byCase.get(testCase.id);
+    // Native cases are left exactly as authored — see the docblock.
+    if (!found || testCase.import === undefined) return testCase;
+    return {
+      ...testCase,
+      import: {
+        status: "unresolved" as const,
+        // Lineage survives the rewrite: which source case this came from is a
+        // fact about the import, not about the claim being made for it.
+        ...(testCase.import.sourceCaseKey !== undefined
+          ? { sourceCaseKey: testCase.import.sourceCaseKey }
+          : {}),
+        note: unresolvedNote(testCase.import, found),
+      },
+    };
+  });
+}
+
+/**
+ * The note a rewritten claim carries, bounded at the contract's cap.
+ *
+ * Bounded by SLICING rather than by refusing: this note is generated, not
+ * authored, so an over-long one is MCPJam's problem to truncate and never a
+ * reason to fail a launch that is otherwise fine. The previous claim is quoted
+ * last so the truncation eats history rather than the finding that caused it.
+ */
+function unresolvedNote(
+  previous: NonNullable<ResolvedEvalSuiteFileCase["import"]>,
+  findings: readonly ImportToolFinding[],
+): string {
+  const reasons = findings
+    .map((entry) => `${entry.pointer} (${entry.toolName})`)
+    .join(", ");
+  const preamble =
+    `Marked unresolved by MCPJam at launch: the deterministic tool ` +
+    `reference(s) ${reasons} did not resolve against this run's target. ` +
+    `Re-state the claim once the reference resolves.`;
+  const before = previous.note?.trim();
+  const suffix =
+    before === undefined || before.length === 0
+      ? ` Previous claim: ${previous.status}.`
+      : ` Previous claim: ${previous.status} — ${before}`;
+  return `${preamble}${suffix}`.slice(0, MAX_IMPORT_NOTE_CHARS);
 }
 
 export async function syncFileOwnedCases(
@@ -563,6 +712,26 @@ export async function executeEvalRunFromFile(
 
   const sourceHash = sha256HexOfBuffer(params.source.buffer);
   const authored = loaded.authored;
+  const knobs = params.knobs;
+
+  // MANDATORY, and BEFORE the first write.
+  //
+  // Not opt-in: a converted case whose deterministic tool does not exist fails
+  // every iteration it is billed for, and the failure looks like a product bug
+  // rather than a conversion that lost a name. Placed above the suite write so
+  // a refusal costs nothing and leaves nothing half-synced.
+  const liveCheck = await validateImportToolReferences(context.client, {
+    projectId: project.id,
+    resolved: loaded.resolved,
+    knobs,
+    signal: context.signal,
+  });
+  const outgoingCases = applyUnresolvedReferences({
+    cases: loaded.resolved.cases,
+    findings: liveCheck.findings,
+    selectedCaseIds: selectedAuthoredCaseIds(loaded.resolved.cases, knobs.case),
+  });
+
   const servers = authored.target.servers ?? [];
   const synced = await context.client.syncFileOwnedEvalSuite(
     {
@@ -611,14 +780,13 @@ export async function executeEvalRunFromFile(
   const syncedCases = await syncFileOwnedCases(context.client, {
     projectId: project.id,
     suiteId: synced.suite.id,
-    cases: loaded.resolved.cases,
+    cases: outgoingCases,
     declaredCaseIds: new Set(
-      loaded.resolved.cases.map((testCase) => testCase.id),
+      outgoingCases.map((testCase) => testCase.id),
     ),
     signal: context.signal,
   });
 
-  const knobs = params.knobs;
   const hasExplicitTarget = Boolean(
     knobs.environment?.length ||
       knobs.host?.length ||
@@ -663,7 +831,7 @@ export async function executeEvalRunFromFile(
   }
   const runCases = selectEnabledRunCases(
     syncedCases.enabledCases,
-    loaded.resolved.cases,
+    outgoingCases,
     knobs.case,
   );
 

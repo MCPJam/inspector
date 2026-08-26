@@ -120,8 +120,10 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "is ACCEPTED (zod io:input), so a file this schema accepts is one the " +
       "SDK validator also accepts structurally. The zod validator remains the " +
       "authoritative superset: it additionally enforces cross-field rules " +
-      "(unique case ids, unique step ids within a case, and a per-case import " +
-      "block requiring top-level provenance) and a serialized-size cap on " +
+      "(unique case ids, unique step ids within a case, a per-case import " +
+      "block requiring top-level provenance, and a per-case import note " +
+      "being required when the claimed status is exact) and a " +
+      "serialized-size cap on " +
       "tool-call arguments, none of which JSON Schema can express. " +
       "Objects the suite file and the step union declare are closed " +
       "(additionalProperties: false). A tool call's own `arguments` object " +
@@ -171,8 +173,9 @@ export async function buildEvalSuiteSchemaArtifacts(): Promise<
  * The eval suite file's JSON Schema (draft 2020-12).
  *
  * STRUCTURAL contract only. Cross-field rules the zod validator enforces —
- * unique case ids, unique step ids within a case, and a per-case \`import\`
- * block requiring top-level \`provenance\` — do not project into JSON Schema.
+ * unique case ids, unique step ids within a case, a per-case \`import\` block
+ * requiring top-level \`provenance\`, and an \`import.note\` being required when
+ * \`import.status\` is \`"exact"\` — do not project into JSON Schema.
  * Validate with \`evalSuiteFileSchema\` when you have the SDK; use this when you
  * only have a JSON Schema validator.
  */

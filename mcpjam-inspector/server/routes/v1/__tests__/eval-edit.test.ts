@@ -215,6 +215,14 @@ function authoredCaseArgs(index = 0): any {
   return call?.[1]?.cases?.[index];
 }
 
+/** The args of the most recent `testSuites:updateTestCase` call. */
+function updateArgs(): any {
+  const calls = convexMutationMock.mock.calls.filter(
+    (c) => c[0] === "testSuites:updateTestCase"
+  );
+  return calls[calls.length - 1]?.[1];
+}
+
 /** Every case authored across all batch calls, in order. */
 function allAuthoredCaseArgs(): any[] {
   return convexMutationMock.mock.calls
@@ -2752,6 +2760,279 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:createTestCases"
       )
     ).toBe(false);
+  });
+
+  /**
+   * The per-case IMPORT CLAIM, across every public write and read.
+   *
+   * Asserted at the TRANSPORT boundary — the exact Convex mutation argument and
+   * the exact response body — rather than by "the request succeeded". `import`
+   * is built key-by-key out of a strict schema on the way in and picked
+   * field-by-field on the way out, so a route that dropped it would still 201
+   * and still look right; the only thing that catches it is reading what
+   * actually crossed each edge.
+   */
+  describe("per-case import claim", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+    const CLAIM = {
+      status: "exact",
+      sourceCaseKey: "upstream/refunds/duplicate-charge",
+      note: "1:1 with the upstream single-turn assertion form.",
+    };
+
+    it("forwards the claim on a single create", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        { title: "t", steps: [PROMPT_STEP], import: CLAIM }
+      );
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().import).toEqual(CLAIM);
+    });
+
+    it("forwards each case's own claim on a batch create", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+        {
+          cases: [
+            { title: "a", steps: [PROMPT_STEP], import: CLAIM },
+            {
+              title: "b",
+              steps: [PROMPT_STEP],
+              import: { status: "approximated", note: "Mapped to negative." },
+            },
+            // Native: no block at all. The batch must not manufacture one.
+            { title: "c", steps: [PROMPT_STEP] },
+          ],
+        }
+      );
+      expect(res.status).toBe(201);
+      const authored = allAuthoredCaseArgs();
+      expect(authored[0].import).toEqual(CLAIM);
+      expect(authored[1].import).toEqual({
+        status: "approximated",
+        note: "Mapped to negative.",
+      });
+      expect("import" in authored[2]).toBe(false);
+    });
+
+    it("forwards a claim on PATCH, and `null` to remove one", async () => {
+      const set = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { import: CLAIM }
+      );
+      expect(set.status).toBe(200);
+      expect(updateArgs().import).toEqual(CLAIM);
+
+      convexMutationMock.mockClear();
+      const cleared = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { import: null }
+      );
+      expect(cleared.status).toBe(200);
+      // `null` is the REMOVE instruction, and it has to survive as null: a
+      // route that coerced it to undefined would report success while leaving
+      // the stale claim on the row.
+      expect(updateArgs().import).toBeNull();
+    });
+
+    it("leaves the claim alone when PATCH omits it", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { title: "Renamed" }
+      );
+      expect(res.status).toBe(200);
+      // Omitted ≠ null. Sending `import: null` here would silently strip the
+      // provenance off every case anyone renames.
+      expect("import" in updateArgs()).toBe(false);
+    });
+
+    it("projects the stored claim back on a case read", async () => {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestCase")
+          return Promise.resolve({ ...CASE_DOC, import: CLAIM });
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { import?: unknown };
+      expect(body.import).toEqual(CLAIM);
+    });
+
+    it("omits `import` entirely for a natively authored case", async () => {
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      );
+      expect(res.status).toBe(200);
+      // Absent, not `null` and not an empty object: "authored here" and
+      // "imported, claim unknown" are different facts about a case.
+      expect("import" in ((await res.json()) as object)).toBe(false);
+    });
+
+    it("never publishes the acceptance bookkeeping stored beside the claim", async () => {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestCase")
+          return Promise.resolve({
+            ...CASE_DOC,
+            import: {
+              ...CLAIM,
+              acceptedBy: "user_9",
+              acceptedAt: 1756100000000,
+              acceptanceReason: "internal",
+              acceptedSourceHash: "deadbeef",
+            },
+          });
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      );
+      const body = (await res.json()) as { import?: Record<string, unknown> };
+      // The stored row is a superset of the public claim. Spreading it would
+      // publish internal columns the contract never promised and cannot
+      // un-publish once a client depends on them.
+      expect(body.import).toEqual(CLAIM);
+    });
+
+    it("reports an unreadable stored status as no claim at all", async () => {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestCase")
+          return Promise.resolve({
+            ...CASE_DOC,
+            import: { status: "definitely-not-a-status", note: "?" },
+          });
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      );
+      expect(res.status).toBe(200);
+      expect("import" in ((await res.json()) as object)).toBe(false);
+    });
+
+    it.each([
+      [
+        "an approval actor",
+        { status: "approximated", note: "ok", approvedBy: "user_9" },
+        "approvedBy",
+      ],
+      [
+        "an approval time",
+        { status: "approximated", note: "ok", approvedAt: 1756100000000 },
+        "approvedAt",
+      ],
+      [
+        "a frozen run decision",
+        {
+          status: "approximated",
+          note: "ok",
+          importRunDecision: { status: "approved_approximation" },
+        },
+        "importRunDecision",
+      ],
+      [
+        "an accepted-at column",
+        { status: "approximated", note: "ok", acceptedAt: 1 },
+        "acceptedAt",
+      ],
+    ] as const)(
+      "refuses %s smuggled into a create's claim (400, no mutation)",
+      async (_label, claim, key) => {
+        const res = await request(
+          "POST",
+          "/api/v1/projects/p1/eval-suites/suite_1/cases",
+          { title: "t", steps: [PROMPT_STEP], import: claim }
+        );
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as { code?: string; message?: string };
+        expect(json.code).toBe("VALIDATION_ERROR");
+        expect(json.message).toContain(key);
+        // Approval is a per-run decision the platform derives from the
+        // authenticated launcher. Stripping the field instead of refusing it
+        // would let a caller believe it had been honoured.
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("refuses an approval field on PATCH too", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { import: { status: "approximated", note: "ok", approvedBy: "u" } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses "exact" with no note', async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        { title: "t", steps: [PROMPT_STEP], import: { status: "exact" } }
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { message?: string };
+      // `exact` is CONVERTER-CLAIMED, not verified — so it has to cite the
+      // mapping rule that earns it.
+      expect(json.message).toContain("converter-asserted, not verified");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("accepts sourceCaseKey and note exactly at their caps", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        {
+          title: "t",
+          steps: [PROMPT_STEP],
+          import: {
+            status: "approximated",
+            sourceCaseKey: "k".repeat(512),
+            note: "n".repeat(2000),
+          },
+        }
+      );
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().import.sourceCaseKey).toHaveLength(512);
+      expect(authoredCaseArgs().import.note).toHaveLength(2000);
+    });
+
+    it.each([
+      ["sourceCaseKey", { status: "approximated", sourceCaseKey: "k".repeat(513) }],
+      ["note", { status: "approximated", note: "n".repeat(2001) }],
+    ] as const)("refuses %s one character over its cap", async (_l, claim) => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        { title: "t", steps: [PROMPT_STEP], import: claim }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses an unknown mapping status", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        {
+          title: "t",
+          steps: [PROMPT_STEP],
+          import: { status: "approximate" },
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("strict write bodies", () => {

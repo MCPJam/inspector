@@ -48,7 +48,11 @@ import {
   readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
-import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import {
+  evalSuiteFileCaseImportSchema,
+  IMPORT_MAPPING_STATUSES,
+  opaqueIdSchema,
+} from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
@@ -1573,7 +1577,45 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
   return steps;
 }
 
+/**
+ * The three CLAIM fields of a stored import record, and nothing else.
+ *
+ * The persisted row is a superset: alongside the claim it can carry acceptance
+ * bookkeeping the platform wrote (`acceptedBy`, `acceptedAt`, and friends).
+ * Spreading the stored object would publish internal fields the public contract
+ * never promised and cannot take back, so this picks the three fields by name
+ * and validates the status against the closed vocabulary rather than trusting
+ * whatever the row happens to hold.
+ *
+ * Returns `undefined` for a native case and for a row whose status is not one
+ * we know — an unreadable claim is reported as no claim rather than as a claim
+ * whose meaning the caller has to guess.
+ */
+function toPublicCaseImportClaim(
+  raw: unknown,
+): { status: string; sourceCaseKey?: string; note?: string } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const status = record.status;
+  if (
+    typeof status !== "string" ||
+    !(IMPORT_MAPPING_STATUSES as readonly string[]).includes(status)
+  ) {
+    return undefined;
+  }
+  return {
+    status,
+    ...(typeof record.sourceCaseKey === "string" && record.sourceCaseKey
+      ? { sourceCaseKey: record.sourceCaseKey }
+      : {}),
+    ...(typeof record.note === "string" && record.note
+      ? { note: record.note }
+      : {}),
+  };
+}
+
 function toCaseDto(testCase: CaseDoc) {
+  const importClaim = toPublicCaseImportClaim(testCase.import);
   return {
     id: String(testCase._id),
     // The EFFECTIVE declared identity — what the case answers to in a suite
@@ -1627,6 +1669,7 @@ function toCaseDto(testCase: CaseDoc) {
           },
         }
       : {}),
+    ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
   };
@@ -1904,6 +1947,24 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
+/**
+ * The per-case IMPORT CLAIM, as the public API accepts it.
+ *
+ * Reused verbatim from the suite-file contract rather than restated: a claim a
+ * converter can write into a YAML file is exactly a claim it can POST, and two
+ * spellings of the same object is how the file loader and the API end up
+ * disagreeing about whether a 512-character source key is legal.
+ *
+ * CLAIM-ONLY, and the closed object is the enforcement. `exact` here means
+ * CONVERTER-CLAIMED exact — MCPJam has verified nothing — so the acceptance
+ * side of the record (who approved, when, and why) is deliberately
+ * unrepresentable in a request body: approvals are per-run decisions the
+ * platform derives from the authenticated launcher, and a caller-supplied
+ * `approvedBy` would file one person's approval under another's name. A body
+ * that carries one is a 400, never a silently-stripped field.
+ */
+const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
+
 const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
@@ -1918,8 +1979,20 @@ const createCaseSchema = z.strictObject({
    * same request.
    */
   id: opaqueIdSchema.optional(),
+  /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
+  import: publicCaseImportSchema.optional(),
 });
-const updateCaseSchema = z.strictObject(publicCaseBodyShape);
+const updateCaseSchema = z.strictObject({
+  ...publicCaseBodyShape,
+  /**
+   * The converter's CLAIM about this case, or `null` to remove one.
+   *
+   * Omitted means unchanged; `null` means the case no longer carries a claim.
+   * The two are different requests and a PATCH that conflated them would erase
+   * provenance on every unrelated edit.
+   */
+  import: z.union([publicCaseImportSchema, z.null()]).optional(),
+});
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
@@ -2113,8 +2186,19 @@ const generateCasesSchema = z
  * body. `defaultModels` (resolved from the suite when the body omits models)
  * is only used for create — update leaves models untouched when omitted.
  */
+/**
+ * The case body either write path may hand to {@link buildCaseMutationArgs}.
+ *
+ * Create's `import` is a claim; PATCH's is a claim OR `null` (remove it), so
+ * the two schemas do not infer to one type. Widened here rather than casting at
+ * the PATCH call site, which would lose exactly the `null` this has to carry.
+ */
+type CaseMutationBody = Omit<z.infer<typeof createCaseSchema>, "import"> & {
+  import?: z.infer<typeof publicCaseImportSchema> | null;
+};
+
 function buildCaseMutationArgs(
-  body: z.infer<typeof createCaseSchema>,
+  body: CaseMutationBody,
   opts: {
     forCreate: boolean;
     defaultModels?: Array<{ model: string; provider: string }>;
@@ -2214,6 +2298,18 @@ function buildCaseMutationArgs(
       body.checks === null
         ? null
         : { mode: body.checks.mode, list: body.checks.list };
+
+  // The import CLAIM, forwarded by name.
+  //
+  // Explicit rather than spread through, because `args` is built key by key
+  // from a strict schema: a field nobody names here never reaches Convex, and
+  // "the claim silently didn't persist" is indistinguishable from "the case was
+  // authored natively" once the write has landed.
+  //
+  // `null` is a real value on PATCH (remove the claim) and is unrepresentable
+  // on create, where `createCaseSchema` rejects it before this runs — so
+  // `undefined` is the only "leave it alone", exactly as the mutation reads it.
+  if (body.import !== undefined) args.import = body.import;
 
   return args;
 }

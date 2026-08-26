@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  projectResolutionError,
   resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
@@ -41,6 +42,10 @@ import {
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import {
+  validateImportToolReferences,
+  type ImportToolFinding,
+} from "../lib/eval-import-live-validation.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -78,6 +83,7 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type ResolvedEvalSuiteFile,
   type StructuredCaseResult,
   type StructuredEvalRunInput,
   type StructuredRunReport,
@@ -2275,6 +2281,23 @@ type ValidateResult = {
     enabledCases: number;
   };
   findings: unknown[];
+  /**
+   * Present ONLY when `--project` was passed.
+   *
+   * A separate block rather than more entries in `findings`, because the two
+   * answer different questions: `findings` is "is this a valid suite file?",
+   * which is a property of the bytes and reproducible on any machine, and this
+   * is "does it resolve against THIS project right now?", which is a property
+   * of a live inventory that changes under you. Merging them would make a
+   * caller unable to tell a file it must edit from a project it must fix.
+   */
+  projectValidation?: {
+    project: { id: string; name: string };
+    /** Every target the file resolved to, so a finding's scope is readable. */
+    targets: string[];
+    valid: boolean;
+    findings: ImportToolFinding[];
+  };
 };
 
 /**
@@ -2291,15 +2314,84 @@ type ValidateResult = {
  * network round trip, and it is a later step's work. "Valid" here therefore
  * means "a valid suite file", never "this will run".
  */
-function runEvalValidate(options: { file: string }, command: Command): void {
+/**
+ * Findings from a live check, rendered the way `formatSuiteFileFindings`
+ * renders structural ones — same pointer-first shape, so a reader scanning both
+ * halves of a `--project` validation is reading one format, not two.
+ */
+export function formatImportToolFindings(
+  findings: readonly ImportToolFinding[]
+): string {
+  return findings
+    .map(
+      (entry) =>
+        `  ${entry.pointer}: ${entry.message} ` +
+        `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
+        `${entry.imported ? ", imported" : ""})`
+    )
+    .join("\n");
+}
+
+/**
+ * The live half of `eval validate --project`.
+ *
+ * Authenticates and resolves the named project with the same helpers every
+ * other cloud command uses, then runs the ONE shared reference check. A failure
+ * to authenticate, reach the project, or list a server's tools propagates as a
+ * command error: the file has not been judged, and saying it has would be a
+ * lie in the one direction that matters.
+ */
+async function runProjectValidation(
+  options: PlatformOptions & { project?: string },
+  command: Command,
+  resolved: ResolvedEvalSuiteFile
+): Promise<NonNullable<ValidateResult["projectValidation"]>> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = resolveCloudProjectArgs(options);
+  return runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const page = await client.listProjects({}, { signal });
+      const resolution = resolveProject(page.items, scope.project);
+      if (!resolution.ok) throw projectResolutionError(resolution.message);
+      const project = resolution.project;
+      const outcome = await validateImportToolReferences(client, {
+        projectId: project.id,
+        resolved,
+        signal,
+      });
+      return {
+        project: { id: project.id, name: project.name },
+        targets: outcome.targets.map((target) => target.label),
+        valid: outcome.findings.length === 0,
+        findings: outcome.findings,
+      };
+    }
+  );
+}
+
+async function runEvalValidate(
+  options: PlatformOptions & { file: string; project?: string },
+  command: Command
+): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
 
   if (loaded.ok) {
+    // Keyed off the FLAG, never off the resolved project scope. A linked
+    // directory or an `MCPJAM_PROJECT` in the environment must not silently
+    // turn the one offline command in this CLI into a networked one —
+    // somebody validating a file on a plane would get an auth error for a
+    // question that needs no auth.
+    const projectValidation =
+      options.project === undefined
+        ? undefined
+        : await runProjectValidation(options, command, loaded.resolved);
     const result: ValidateResult = {
-      valid: true,
+      valid: projectValidation ? projectValidation.valid : true,
       file: label,
       suite: {
         id: loaded.authored.suite.id,
@@ -2308,17 +2400,33 @@ function runEvalValidate(options: { file: string }, command: Command): void {
         enabledCases: loaded.resolved.enabledCases.length,
       },
       findings: [],
+      ...(projectValidation ? { projectValidation } : {}),
     };
     if (globalOptions.format === "human") {
       const total = result.suite?.cases ?? 0;
       process.stdout.write(
-        `${label}: valid — suite ${result.suite?.id} ` +
+        `${label}: ${result.valid ? "valid" : "invalid"} — suite ${result.suite?.id} ` +
           `(${total} ${total === 1 ? "case" : "cases"}, ` +
           `${result.suite?.enabledCases} enabled)\n`
       );
-      return;
+      if (projectValidation && !projectValidation.valid) {
+        process.stdout.write(
+          `${projectValidation.findings.length} unresolved reference(s) ` +
+            `against project ${projectValidation.project.name}:\n` +
+            formatImportToolFindings(projectValidation.findings) +
+            "\n"
+        );
+      }
+    } else {
+      writeResult(result, globalOptions.format);
     }
-    writeResult(result, globalOptions.format);
+    // A completed live check that found unresolved references is a VERDICT on
+    // the file, so it takes the command's ordinary "file judged invalid" exit.
+    // An auth or network failure never reaches here — it threw, and threw as a
+    // command error.
+    if (projectValidation && !projectValidation.valid) {
+      setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
+    }
     return;
   }
 
@@ -3734,15 +3842,24 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("validate")
     .description(
-      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )
     .requiredOption(
       "--file <path>",
       "Suite file to validate, .yaml or .json (or - for stdin)"
     )
-    .action((options: { file: string }, command: Command) => {
-      runEvalValidate(options, command);
-    });
+    .option(
+      "--project <id-or-name>",
+      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline."
+    )
+    .action(
+      async (
+        options: PlatformOptions & { file: string; project?: string },
+        command: Command
+      ) => {
+        await runEvalValidate(options, command);
+      }
+    );
 
       evals
       .command("export")

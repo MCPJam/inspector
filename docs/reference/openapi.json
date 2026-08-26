@@ -11641,6 +11641,7 @@
                     "DUPLICATE_CONTENT",
                     "OVERRIDE_REASON_REQUIRED",
                     "INVALID_CASE",
+                    "INVALID_IMPORT",
                     "UNSTORABLE_ITEM",
                     "ITEM_TOO_LARGE"
                   ]

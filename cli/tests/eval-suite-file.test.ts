@@ -149,6 +149,64 @@ cases:
         prompt: Refund the duplicate charge on invoice 4471.
 `;
 
+/**
+ * The same suite, converted from an upstream runner rather than authored here.
+ *
+ * One case per mapping status, and a disabled one — the combination the sync
+ * path has to keep straight: every declared case is PERSISTED with its claim,
+ * and only the enabled ones are executed.
+ */
+const IMPORTED_SUITE_FILE = `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_billing
+  name: Billing smoke
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 5
+  passThreshold: 0.8
+  validity: {}
+cases:
+  - id: c_refund
+    title: Refunds a duplicate charge
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Refund the duplicate charge on invoice 4471.
+    import:
+      status: exact
+      sourceCaseKey: upstream/refunds/duplicate-charge
+      note: "1:1 with the upstream single-turn assertion form."
+  - id: c_window
+    title: Refuses to refund outside the window
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Refund the charge from 2019.
+    import:
+      status: approximated
+      sourceCaseKey: upstream/refunds/out-of-window
+      note: Upstream asserted on a rendered string; mapped to the negative-case rule.
+  - id: c_browser
+    title: Replays a recorded browser session
+    disabled: true
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Walk through the checkout flow.
+    import:
+      status: unsupported
+      note: Upstream drove a real browser; no counterpart here.
+provenance:
+  sourceHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  sourceFormat: upstream-evals
+  reportHash: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+`;
+
 // ── the hosted suite fixture ─────────────────────────────────────────────────
 
 type SuiteOverrides = Record<string, unknown>;
@@ -540,7 +598,7 @@ describe("eval validate", () => {
     });
   });
 
-  test("takes no --project: project-aware validation is a later step", async () => {
+  test("--project is an OPT-IN that authenticates; it is never implied", async () => {
     await withTempDir(async (dir) => {
       const file = path.join(dir, "suite.yaml");
       await writeFile(file, VALID_SUITE_FILE, "utf8");
@@ -562,8 +620,12 @@ describe("eval validate", () => {
           { telemetry: telemetryDisabled }
         )
       );
+      // With no credential the command fails as a CREDENTIAL problem, not as a
+      // verdict on the file: asking about a live project is a different
+      // question from asking whether the bytes are contract-valid, and a
+      // caller who cannot ask the first must not be told the answer to it.
       assert.notEqual(run.result.exitCode, 0);
-      assert.match(run.stderr, /unknown option '--project'/i);
+      assert.match(run.stdout + run.stderr, /Not logged in|api key/i);
     });
   });
 
@@ -2705,6 +2767,34 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(updated.isNegative, false);
     assert.equal(updated.checks, null);
     assert.equal(updated.expectedOutput, "");
+  });
+
+  test("case bodies carry the converter's claim, and clear it on re-sync", () => {
+    const imported = loadEvalSuiteFile(IMPORTED_SUITE_FILE);
+    assert.equal(imported.ok, true);
+    if (!imported.ok) return;
+    const claimed = imported.resolved.cases.find((c) => c.id === "c_refund")!;
+    assert.deepEqual(fileCaseToCreateBody(claimed).import, {
+      status: "exact",
+      sourceCaseKey: "upstream/refunds/duplicate-charge",
+      note: "1:1 with the upstream single-turn assertion form.",
+    });
+    assert.deepEqual(fileCaseToUpdateBody(claimed).import, {
+      status: "exact",
+      sourceCaseKey: "upstream/refunds/duplicate-charge",
+      note: "1:1 with the upstream single-turn assertion form.",
+    });
+
+    // A native case never acquires provenance it was not authored with.
+    const native = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(native.ok, true);
+    if (!native.ok) return;
+    const plain = native.resolved.cases[0];
+    assert.equal("import" in fileCaseToCreateBody(plain), false);
+    // …but the PATCH body states `null`, because omission on PATCH means
+    // "leave the stored value" — so a file whose author deleted the import
+    // block would otherwise re-sync onto a row still carrying the old claim.
+    assert.equal(fileCaseToUpdateBody(plain).import, null);
   });
 
   test("derived idempotency keys differ when run knobs differ", () => {
