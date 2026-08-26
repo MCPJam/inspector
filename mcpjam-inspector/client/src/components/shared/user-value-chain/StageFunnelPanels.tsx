@@ -7,13 +7,17 @@
  * add a User Testing scenario's sessions to a swarm run's: real people and a
  * persona rehearsal answer different questions, and neither is an eval trial.
  *
- * `ErrorBoundary` at every mount, matching the metric strips beside them:
- * `useQuery` against a query this deployment has not deployed yet THROWS, and
+ * These components call `useQuery` DURING THEIR OWN RENDER, which throws when
+ * the query is not deployed yet — and, in a test tree, when there is no
+ * `ConvexProvider` at all. An `ErrorBoundary` only catches what its
+ * DESCENDANTS throw, so the boundary has to live at the MOUNT SITE and wrap
+ * these components; one placed inside them would sit below the throw and
+ * catch nothing. That is the same shape `ScenarioSessionsMetricStrip` and
+ * `SwarmSessionsMetricStrip` are already mounted with, and it is what lets
  * these ship ahead of the backend that answers them.
  */
 
 import { useQuery } from "convex/react";
-import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { StageFunnel } from "./StageFunnel";
 import type { ChatSessionStageFunnel } from "./user-value-chain-types";
 
@@ -40,14 +44,12 @@ export function ScenarioStageFunnelPanel({
   if (!summary) return null;
 
   return (
-    <ErrorBoundary fallback={null}>
-      <StageFunnel
-        summary={summary}
-        title="User value chain"
-        populationLabel="Real User Testing sessions"
-        className={className}
-      />
-    </ErrorBoundary>
+    <StageFunnel
+      summary={summary}
+      title="User value chain"
+      populationLabel="Real User Testing sessions"
+      className={className}
+    />
   );
 }
 
@@ -68,16 +70,14 @@ export function SwarmRunStageFunnelPanels({
 }) {
   if (journeyRunIds.length === 0) return null;
   return (
-    <ErrorBoundary fallback={null}>
-      <div className={className}>
-        {journeyRunIds.map((journeyRunId) => (
-          <SwarmRunStageFunnelPanel
-            key={journeyRunId}
-            journeyRunId={journeyRunId}
-          />
-        ))}
-      </div>
-    </ErrorBoundary>
+    <div className={className}>
+      {journeyRunIds.map((journeyRunId) => (
+        <SwarmRunStageFunnelPanel
+          key={journeyRunId}
+          journeyRunId={journeyRunId}
+        />
+      ))}
+    </div>
   );
 }
 

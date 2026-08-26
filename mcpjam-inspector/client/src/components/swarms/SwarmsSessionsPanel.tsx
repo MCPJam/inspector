@@ -374,7 +374,9 @@ export function SwarmsSessionsPanel({
           population any single funnel can honestly describe. */}
       {runIdSet ? (
         <div className="shrink-0 space-y-2 px-4 pt-3">
-          <SwarmRunStageFunnelPanels journeyRunIds={[...runIdSet]} />
+          <ErrorBoundary fallback={null}>
+            <SwarmRunStageFunnelPanels journeyRunIds={[...runIdSet]} />
+          </ErrorBoundary>
         </div>
       ) : null}
 
