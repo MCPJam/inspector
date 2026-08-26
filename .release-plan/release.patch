@@ -1,272 +1,482 @@
-diff --git a/.changeset/eval-baseline-commit-sha.md b/.changeset/eval-baseline-commit-sha.md
+diff --git a/.changeset/agent-emitted-permalinks.md b/.changeset/agent-emitted-permalinks.md
 deleted file mode 100644
-index b8cc50cbc..000000000
---- a/.changeset/eval-baseline-commit-sha.md
+index bc801cc3c..000000000
+--- a/.changeset/agent-emitted-permalinks.md
 +++ /dev/null
-@@ -1,30 +0,0 @@
-----
--"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
-----
--
--evals: pin an eval baseline by source commit SHA
--
--`GET /eval-runs/:runId/compare` accepts `baseCommitSha`, resolved server-side
--to the completed run in that suite recorded against the commit. The compare
--DTO's `baseline` gains `commit_sha` as a policy, echoes the SHA back, and
--reports `matchCount`/`matchCountTruncated` when uniqueness could not be
--established — an absent count means the match was unambiguous, and a truncated
--count is a floor rather than a total.
--
--`mcpjam cloud eval gate` gains `--baseline-sha` and `eval compare` gains
--`--base-sha`, each mutually exclusive with its run-id counterpart. The kind is
--named by the flag rather than inferred: a Convex run id is an opaque string
--with no documented format, and an abbreviated commit SHA is indistinguishable
--from one, so a single guessing flag could silently compare against the wrong
--run. A SHA passed to `--baseline` is rejected with a pointer to the right flag.
--
--Gate provenance now records the requested selector and the run it resolved to,
--so an archived report can answer which run a commit compared against. A SHA
--that matches no completed run remains `incomplete` (exit 3), never a
--regression.
--
--Malformed baseline selections from the platform (`EVAL_COMPARE_BASELINE_CONFLICT`,
--`EVAL_COMPARE_BASELINE_INVALID`) now answer 400 with the platform's own message
--instead of a generic 500.
-diff --git a/.changeset/eval-gate-waivers.md b/.changeset/eval-gate-waivers.md
-deleted file mode 100644
-index eab125b7c..000000000
---- a/.changeset/eval-gate-waivers.md
-+++ /dev/null
-@@ -1,80 +0,0 @@
+@@ -1,37 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 -"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
 ----
 -
--Gate waivers end to end (Evals v2, Lane E, step E5b).
+-platform: durable resources return the app URL that owns them
 -
--An eval run's release gate can now be overridden by an authorized user, on the
--record, until an expiry they name — and the override is visible everywhere the
--gate is. The Lane E charter's words are "authorized actor, reason, expiry,
--affected policy/run, visible CI/report status; no silent or permanent waiver."
--The platform (mcpjam-backend #1141) owns the authorization, the required expiry
--and the 30-day cap. This is the half that owns **visible**.
+-A platform operation used to hand back a bare id, so an agent describing a
+-resource had to invent a URL for it — and the URL it invented carried no
+-project, which opens whichever project the READER last selected rather than
+-the one the agent was talking about.
 -
--**Nothing here makes a failing run pass.** The run keeps its own `result`, and
--the waiver is a separate record that every reader consults and reports
--separately. Two independent computations decide this verdict — the platform
--derives a GitHub Check Run conclusion from the persisted run, and the CLI
--recomputes its own gate client-side from public v1 GETs — so flipping the
--persisted result would green both with nothing saying why.
+-`@mcpjam/sdk/platform` now exports `buildAppPermalink` and one
+-resource-type → route table. The builder is pure and takes an explicit
+-`appOrigin` (the platform entrypoint reads no ambient configuration), composes
+-with `URL`/`URLSearchParams` so segments stay encoded and a route's own query
+-survives, and refuses an origin carrying credentials, a path prefix, or a
+-non-HTTP(S) scheme. `PlatformResourceType` is inferred from the table, so a
+-type cannot exist without a route.
 -
--`@mcpjam/sdk` widens the gate contract. `GateStatus` gains `waived` and
--`GateReport` gains a `waived` outcome plus a `waiver` field; `StructuredRunVerdict`
--gains `waived`; `StructuredCaseResult` gains `waiver`. New exports:
--`applyGateWaiver`, `isGateWaiverInForce`, `formatGateWaiverLine`,
--`GATE_WAIVER_REASON_NOTICE`, and the `GateWaiver` type. `waived` is deliberately
--NOT folded into `passed`: both exit 0, but collapsing them makes the difference
--unrecoverable one line later, which is the definition of a silent waiver.
+-`PlatformOperation` gains a REQUIRED `permalink` policy — `derive`, `response`
+-(for backend-minted links such as session search), or `none` with a typed
+-reason — so no operation can ship without the question being answered.
+-`PlatformOperationContext` gains an optional `onScopeResolved` receipt, fired
+-where a project selector is resolved, because callers usually pass a project
+-name or nothing at all and the id exists only afterwards.
 -
--`applyGateWaiver` upgrades **only** a real `failed` outcome. `incomplete` and
--`usage_error` are never waived — a waiver granted because the evals regressed is
--not consent to ship on a cancelled run, a wait timeout, or a flaked fetch, and
--turning exit 3 into exit 0 there is fail-open. The waiver is still attached in
--every case, so an artifact names it even when it decided nothing.
+-Permalinks never enter an operation's return type — they travel in an adapter
+-envelope — so no direct SDK caller has to change for them. ONE result shape
+-does change, additively: the eval-case operations now stamp `suiteId` on what
+-they return (`PlatformEvalCaseWithSuite`), because a case's route needs its
+-suite and the REST projection has never carried one. `PlatformSessionLink` is
+-now a `Pick` of the shared permalink shape — the same `{path, url}` wire
+-contract, derived rather than restated.
 -
--`@mcpjam/cli`'s `eval gate` reads the waiver off the run projection (no second
--round trip) and names **who** waived, **why**, and **until when** in all four
--outputs: the human report, `--reporter json-summary`, `--reporter junit-xml`
--(as `<skipped>`, JUnit's own third state — it does not fail the build, and it
--does not render as a clean green row), and `--reporter html` (its own violet
--badge and section, neither the green of a pass nor the red of a failure). The
--four exit codes are unchanged; `waived` joins `passed` at 0.
--
--The CLI re-derives the waiver's validity from `expiresAt` rather than trusting
--the platform's `active`. A Convex query is cached against the documents it read
--and time is not a document, so a lapsed waiver can be served as active until
--something writes to its row — the one failure that would silently turn a
--time-boxed waiver into a permanent one, on exactly the path this step builds.
--
--New subcommands `mcpjam cloud eval gate waive --run <id> --reason <text>
----expires-in <30m|12h|7d>` and `mcpjam cloud eval gate unwaive --run <id>
--[--waiver <id>]`. Both are manage-tier and server-enforced — the CLI does not
--pre-judge authorization — and `waive` prints the unredacted-storage notice
--before it accepts a reason. A bare `--expires-in 7` is rejected as ambiguous.
--`eval gate`'s `--run` moved from a commander-required option to one this command
--enforces itself, so the subcommands can dispatch; the exit code for a missing
--`--run` is unchanged at `2`.
--
--New v1 endpoints (`POST`/`GET` `…/eval-runs/{runId}/gate-waivers`, `DELETE
--…/gate-waivers/{waiverId}`) with strict bodies, and `EvalRun` gains `gateWaiver`
--— `null` rather than omitted, so a caller can tell "no waiver" from "an older
--deployment". Reading a waiver is available to anyone who can view the run, not
--only to those who can grant one. Three agent/MCP operations: `waive_eval_gate`,
--`get_eval_gate_waiver`, `revoke_eval_gate_waiver`.
--
--Two error-translation fixes in the v1 layer, both of which affect more than
--waivers. `ConvexError({ kind: 'forbidden' })` — how the platform raises every
--eval tier denial — carried no `code` field, so it matched no branch in
--`translateConvexWriteError` and reached the terminal 500: a deliberate refusal
--reported as our own bug, paged for, and handed to the caller as a generic
--internal error. It now answers 403 with the platform's own message, still
--honoring `adminFailureIsForbidden` for the resources that deliberately hide
--their gate. And the five `gate_waiver_*` refusal codes are recognized as 400s
--that forward the platform's copy verbatim, rather than falling through to a 500
--that strips the one sentence telling the caller what to do.
--
--`renderStructuredRunJUnitXml` gains a `skipped` attribute, emitted only when
--something was actually waived — never `skipped="0"`, which would be a wire
--change on every report ever rendered in exchange for saying nothing.
-diff --git a/.changeset/eval-run-decision-summary-contract.md b/.changeset/eval-run-decision-summary-contract.md
+-`mcpjam cloud` prints `View: <url>` after human output and carries a typed
+-`permalinks` array in `--format json`; `--quiet` is unchanged.
+diff --git a/.changeset/canonical-project-scoped-urls.md b/.changeset/canonical-project-scoped-urls.md
 deleted file mode 100644
-index 514c1ead3..000000000
---- a/.changeset/eval-run-decision-summary-contract.md
+index e42fa40f3..000000000
+--- a/.changeset/canonical-project-scoped-urls.md
 +++ /dev/null
-@@ -1,74 +0,0 @@
-----
--"@mcpjam/inspector": major
--"@mcpjam/sdk": major
--"@mcpjam/cli": major
-----
--
--One canonical eval run decision summary, shared by the API, Platform MCP and the CLI
--
--The six-stage user-value chain was eval metadata that each client interpreted for
--itself: the API returned stage rows, the CLI counted iterations and produced its
--own verdict, the Platform MCP server returned neither, and a model had to
--reconstruct the chain from raw tool calls. Three readings of one run is three
--chances to disagree about it.
--
--There is now one versioned contract — `evalRunDecisionSummarySchema` /
--`EvalRunDecisionSummary` in `@mcpjam/sdk/contract`, schema version 1 — assembled
--by a single function that the new API endpoint and every client call:
--
--- `GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` returns it,
--  with bounded diagnostic pagination. Additive: every existing run and iteration
--  response field is unchanged.
--- `get_eval_run` returns it on `decisionSummary` for terminal runs and tells the
--  model to read it before step results or a trace.
--- `eval run --wait`, `eval status`, `eval gate` and `eval compare` render it, and
--  human, JSON, JUnit and HTML now agree on the verdict, the counts and their
--  unit, the first failed stage, the failure category, the evidence and the next
--  action. JUnit carries it as `<system-out>` rather than dropping the chain.
--
--What the contract fixes, beyond having one of them:
--
--- **Counts say what they count.** `measurementUnit` is `caseVariant` under
--  verdict policy v2 and `trial` on a legacy run. A 3-case suite with 5
--  repetitions is legitimately 3 or 15, and the previous summary called both
--  "cases".
--- **The verdict is copied, never recomputed.** Under policy v2 the run's own
--  `EvalVerdictDecision` is the authority; the per-trial diagnostics are evidence
--  beneath it. The old summary derived a verdict by counting iterations, which
--  reported a case that passed 4 of 5 trials as one pass and one failure.
--- **`notEstablished` is a fourth verdict**, for a run that is unfinished, stopped
--  early, or whose decision could not be read — distinct from `inconclusive`,
--  which is a decision the validity phase reached.
--- **Evidence belongs to the claim it supports.** Span ids, prompt indexes and
--  reasons come from the first failed stage's row alone; the old summary unioned
--  them across the whole chain, handing back the evidence of every stage that
--  worked as the explanation of the one that did not.
--- **A partial page says so.** `diagnostics.complete` and `scannedIterations`
--  separate "nothing failed" from "we did not look".
--- Stage, state, category and reason labels are centralized beside the contract,
--  so human output reads `User value`, not `userValue`.
--
--`PlatformEvalIteration` gains an optional `caseId` — the case's SDK-declared id
--from the iteration's frozen snapshot, beside (never merged into) the stored
--`testCaseId`. Omitted, not nulled, when a run recorded none.
--
--Compatibility notes:
--
--- The reporter artifact's `decisionSummary` field now carries the canonical
--  object. It previously held an unversioned per-case summary; a consumer reading
--  `decisionSummary.passRate.percent` and `decisionSummary.cases[]` should read
--  `counts` (with its `measurementUnit`) and `diagnostics.items[]` instead. The
--  object now carries its own `schemaVersion`.
--- `eval status` prints the block for any terminal run that did not pass, rather
--  than only a failed one — `inconclusive` and undecided runs are the ones a
--  reader can least explain unaided — and prints it above the `View:` line.
--- `buildEvalDecisionSummary`, `buildEvalDecisionSummaryFromIterations` and
--  `formatEvalDecisionSummary` are unchanged and still exported, now deprecated.
--  Nothing in this repo calls them.
--- Exit codes are untouched, including `eval gate`'s four-code contract.
--
--Deployment order matters: the endpoint must be live before the new SDK and CLI
--are published. The published clients fall back to the same shared assembler over
--`getEvalRun` + `listEvalRunIterations` when the endpoint is absent, so an older
--or custom API deployment still gets the same object rather than a second
--opinion about the run.
-diff --git a/.changeset/evaluate-tab-behind-a-flag.md b/.changeset/evaluate-tab-behind-a-flag.md
-deleted file mode 100644
-index 9bdb29dbb..000000000
---- a/.changeset/evaluate-tab-behind-a-flag.md
-+++ /dev/null
-@@ -1,26 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Evaluate redesign returns as its own tab at `/evaluate`, behind `evaluate-enabled`
--
--The Evaluate landing page, full-page create-suite flow, and run-history suite
--overview have now been merged into the live `/evals` tab and reverted twice. The
--work is worth keeping; rewriting the shipped tab in place to get it is not.
--
--So it ships as a second tab instead. `/evaluate` is a separate route, a separate
--surface, and a separate sidebar item shown alongside Evaluate — nothing a user
--without the flag can reach behaves differently. The screens the redesign
--rewrote are duplicated under `components/evaluate/` rather than refactored into
--shared ones; the queries, mutations, run detail, and case editors are still the
--same `components/evals/` modules, so eval behaviour cannot drift between them.
--
--Three shared components take small additive changes instead of a fork:
--`SuiteIterationsView` gains an opt-in `suiteDetailOverview` prop (off for every
--existing caller), `EnvironmentComposer`'s `slots` prop now actually narrows the
--strip and its servers-pill wording is overridable, and `ServerGroupPicker`
--accepts a test id and an accessible name for its trigger. Every current caller
--renders exactly what it rendered before.
--
--The commit-keyed CI review stays on `/evals/runs`. When the redesign replaces
--the original, the old tab and the duplicated directory are deleted together.
-diff --git a/.changeset/protocol-pin-mismatch-error.md b/.changeset/protocol-pin-mismatch-error.md
-deleted file mode 100644
-index ee174c91e..000000000
---- a/.changeset/protocol-pin-mismatch-error.md
-+++ /dev/null
-@@ -1,20 +0,0 @@
+@@ -1,24 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
 ----
 -
--Report a legacy protocol-version pin mismatch as a version problem instead of "the server appears to be down"
+-Keep the active project in the URL of every project-owned screen
 -
--Pinning a stateful MCP protocol version (e.g. 2025-11-25) against a server that
--answers with a different one — Slack and HubSpot both answer 2025-06-18 — failed
--the connect with a generic 502 and "Couldn't reach the MCP server". Tools came
--back silently empty and reconnects looked like someone else's outage rather than
--the version setting they actually were.
+-`https://app.mcpjam.com/p/<projectId>/servers` is now the canonical form, and
+-the project segment stays in the address bar. Copy, refresh, Back/Forward,
+-bookmarks, a second tab, and an agent-returned link all reopen the project the
+-link was minted for instead of whatever project the reader's picker happened to
+-be parked on.
 -
--The `ProtocolVersionPinUnsupported` path that already produces a 424, names both
--versions, and offers "Change protocol version" only ever fired for modern
--(2026-07-28) pins: the detector bailed out for stateful pins, and the failure
--parser did not recognize the wording the upstream client uses when it refuses a
--server's `initialize` reply. Both now handle it, and the message names the
--version the server actually offered.
+-Opening a project URL selects that project — and its organization — before the
+-screen renders, so no screen ever shows one project's data under another
+-project's address. A project that is missing, deleted, or not yours keeps the
+-requested URL and shows one generic unavailable state; it never falls back to
+-another project's data, and it never reveals whether the project exists.
+-
+-Old links keep working. An unscoped path and the legacy `?project=<id>`
+-convention both normalize onto the canonical path with `replace`, preserving the
+-rest of the query and the hash; `?project=` is read but never minted again by
+-the app. Global and public surfaces — Settings, Organizations, Profile, embeds,
+-share tokens, the WorkOS and MCP OAuth callbacks — stay unscoped. An unknown URL
+-now renders an explicit not-found instead of quietly rendering Connect.
+diff --git a/.changeset/clients-apis-agent-surfaces.md b/.changeset/clients-apis-agent-surfaces.md
+deleted file mode 100644
+index e26ed82aa..000000000
+--- a/.changeset/clients-apis-agent-surfaces.md
++++ /dev/null
+@@ -1,50 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-clients: agent surfaces can edit clients, in the product's own vocabulary
+-
+-The UI's noun is **Client** — "a named, reusable configuration that defines how
+-MCPJam connects to and talks to your MCP servers". Every agent surface spoke
+-backend vocabulary instead (`/hosts`, `list_hosts…delete_host`,
+-`mcpjam cloud hosts …`), and the surfaces agents actually live on — the MCP
+-catalog, the agent operation registry — excluded client editing entirely.
+-Editing was also not robust: the only edit was a whole-config replace with no
+-partial patch and no concurrency token, so a caller that composed a replacement
+-from a stale read silently reverted whatever landed in between.
+-
+-**Naming.** `/api/v1/projects/:projectId/clients` is canonical, with `Client*`
+-schemas and a `Clients` tag; the operations are `list_clients`, `get_client`,
+-`create_client`, `update_client`, `delete_client`, `set_client_servers` and
+-`duplicate_client`; the CLI is `mcpjam cloud clients …`. The old `/hosts`
+-routes, `cloud hosts` commands and `listHosts…duplicateHost` SDK methods all
+-keep working as deprecated compatibility surfaces on their ORIGINAL shapes —
+-`/hosts` still returns `hostConfigId` where `/clients` returns `configId`, so
+-the compatibility types are distinct interfaces rather than an alias that would
+-change a runtime shape. Alias responses carry `Deprecation: true`.
+-
+-**Robust editing.** `PATCH /clients/:client` gains `set`: named fields applied
+-over the client's current config inside the write transaction, where absent
+-means keep and `null` means reset (for a required field) or clear (for an
+-optional one). Every config-affecting UPDATE — `update_client` and `set_client_servers`, not
+-the additive `create_client` / `duplicate_client`, which have no prior config to
+-be stale about — requires `expectedConfigId`, the content-addressed config id,
+-so the same id means byte-identical settings. Every rename requires
+-`expectedName`, because a rename does not rotate the config and config identity
+-is blind to a concurrent one. A stale token is a `409` carrying the current
+-value so the caller can re-read and retry. The canonical detail path takes a
+-client **name or ID**, resolved server-side, with the private User Testing
+-backing clients excluded by default exactly as the Clients tab excludes them.
+-
+-**Exposure.** The two reads and four bounded writes are on the MCP catalog;
+-`create_client` / `update_client` / `set_client_servers` are gated proposals on
+-the agent registry. The line is bounded, preconditioned overwrite versus
+-resource removal: `delete_client` stays off both surfaces. Annotations stay
+-honest — create and duplicate advertise `destructiveHint: false`, update and
+-set-servers advertise `true`. A gated client-write proposal freezes its target
+-to an exact id, verifies the caller's tokens against a server read before
+-minting, and pins the impact its approval copy quotes, so a consumer attached
+-between proposing and clicking conflicts rather than silently widening what a
+-human agreed to.
+diff --git a/.changeset/host-runner-temperature-rejecting-models.md b/.changeset/host-runner-temperature-rejecting-models.md
+deleted file mode 100644
+index 819bd8611..000000000
+--- a/.changeset/host-runner-temperature-rejecting-models.md
++++ /dev/null
+@@ -1,45 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-`HostRunner` no longer sends `temperature` to models that reject the field.
+-
+-Anthropic removed the sampling parameters starting with Opus 4.7: `temperature`
+-(and `top_p` / `top_k`) answer a 400 on Opus 4.7 and later, Sonnet 5, Fable 5,
+-and Mythos 5, rather than being ignored. Earlier families still accept them.
+-`HostRunner` spread `temperature` into every request whenever one was set, so a
+-host snapshot carrying the default was enough to fail the run outright. The key
+-is now omitted entirely for those models — absent, not `undefined`, since the
+-field being present at all is what fails.
+-
+-Bedrock is where this was reported, by a user whose security team requires it,
+-but Bedrock is only the surface: it serves the same models over the same
+-request surface, so an inference profile for an affected family fails
+-identically to a direct-Anthropic call.
+-
+-`modelRejectsTemperature` is the new export carrying that answer, from both
+-`@mcpjam/sdk` and `@mcpjam/sdk/browser`. It is a per-family "removed from this
+-version onward" threshold compared numerically, not a list of exact ids: the
+-removal is monotonic within a family, so an enumeration would silently regress
+-the moment Opus 4.9 ships. It recognizes one model under every id shape the
+-apps accept — hosted (`anthropic/claude-opus-4.7`), a Bedrock inference profile
+-(`us.anthropic.claude-opus-4-7-20260205-v1:0`), the inference-profile ARN that
+-embeds one, and bare (`claude-sonnet-5`).
+-
+-A family with no threshold of its own — Haiku today, and any name released after
+-this was written — is held to 5. Every family that reached a 5 generation dropped
+-the parameters at it, and the two ways of guessing cost different amounts: assume
+-a new family kept `temperature` and the request 400s and the model cannot be used
+-at all; assume it dropped them and the request succeeds at the provider's default
+-sampling. Every shipped Haiku is below 5 and keeps its temperature.
+-
+-An _application_ inference profile or provisioned-throughput ARN is a known gap:
+-it names an opaque resource rather than a model, so an affected family behind
+-one still sends the field. Resolving that needs a Bedrock API call rather than a
+-string match.
+-
+-The inspector's `modelSupportsTemperature` now answers from that same predicate
+-instead of its own id list, which recognized neither the Bedrock spellings nor
+-any version past the ones written down. The GPT-5 carve-out stays inspector-side,
+-since it is not a Claude family for the SDK predicate to have an opinion on.
+diff --git a/.changeset/hosted-claude-models-temperature.md b/.changeset/hosted-claude-models-temperature.md
+deleted file mode 100644
+index b8bc558e2..000000000
+--- a/.changeset/hosted-claude-models-temperature.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Hosted Claude models that reject `temperature` no longer carry one.
+-
+-`modelSupportsTemperature` exempted MCPJam-provided ids on the grounds that the
+-backend owns the request body it sends upstream. It does not strip the field —
+-it substitutes `0.7` for a non-numeric one — so a hosted id in an affected
+-family sent a sampling parameter Anthropic answers with a 400, and failed on its
+-first hosted turn. A hosted id now answers the same as the model it names.
+-
+-Which models reject the field is a per-family version threshold rather than a
+-list of ids: Opus 4.7 and later, Sonnet 5 and later, Fable 5 and later, and
+-Mythos 5 and later, with any family that has no threshold of its own held to 5.
+-Every shipped Haiku is below that and keeps its temperature. In the current
+-hosted catalog the threshold covers `anthropic/claude-opus-4.7`,
+-`anthropic/claude-opus-4.8`, `anthropic/claude-sonnet-5` and
+-`anthropic/claude-fable-5` — the field is omitted from their `/stream` body and
+-the temperature slider greys out for those rows. A later release in an affected
+-family, or a hosted `anthropic/claude-mythos-5` row, is covered by the same
+-threshold with no code change.
+-
+-This is the half the inspector owns: the backend still has to stop defaulting
+-`temperature` for those models, or the value it substitutes fails the request on
+-its own. Tracked separately; nothing else in the hosted payload changes, and
+-`hostConfig.temperature` stays numeric because chat ingestion falls back to the
+-requested value.
+-
+-The GPT-5 carve-out is unchanged in effect but now also applies to hosted
+-`openai/gpt-5*` ids, which the exemption had been shadowing.
+diff --git a/.changeset/hosted-doctor-connect-egress.md b/.changeset/hosted-doctor-connect-egress.md
+deleted file mode 100644
+index 2a1d21208..000000000
+--- a/.changeset/hosted-doctor-connect-egress.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Check the hosted doctor's target before anything dials it.
+-
+-The guarded `fetchFn` the doctor route passes covers the probe's requests and nothing else. `runServerDoctor` records a failed probe and connects anyway, and that connection goes out over an MCP transport that takes no fetch — so a target the guard refused was still dialed a moment later by the connection step, on hosted, for whoever holds a bearer token. Pointing a server row at `http://169.254.169.254/mcp` got a refused probe and a connect attempt against the metadata endpoint.
+-
+-The route now runs `assertAllowedHostedTargetUrl` on the resolved server URL before `runServerDoctor` is called at all — the same check the conformance routes make, with the same split between a blocked address (400, the caller's problem) and a resolver failure (503, ours). Outside hosted mode it is a no-op, so local and LAN doctor runs are unchanged.
+diff --git a/.changeset/inspector-oauth-probe-challenge-status.md b/.changeset/inspector-oauth-probe-challenge-status.md
+deleted file mode 100644
+index 983b9eb5a..000000000
+--- a/.changeset/inspector-oauth-probe-challenge-status.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop the OAuth debugger from rendering an accepted 403 challenge as a failure.
+-
+-The flow now continues past a 403 that carries a `WWW-Authenticate: Bearer` challenge, but the log surfaces still decided "was this exchange expected?" by re-testing `status === 401` on the probe step. A run that succeeded therefore drew a red step card, counted an error, and hoisted `403 Forbidden` into the step header — contradicting the warning sitting inside the same card that explains why the flow went on.
+-
+-All four sites now call `isUnauthenticatedProbeChallenge`, which the SDK exports over the same classification the probe step gates on. The predicate takes the step, status, and `WWW-Authenticate` header, so the UI cannot admit a 403 the flow rejected, or reject one it accepted. A bare 403, a 403 offering only a scheme OAuth cannot use, and a challenge on any other step all still read as errors.
+diff --git a/.changeset/oauth-response-error-is-an-auth-failure.md b/.changeset/oauth-response-error-is-an-auth-failure.md
+deleted file mode 100644
+index 26a9aada3..000000000
+--- a/.changeset/oauth-response-error-is-an-auth-failure.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Classify an OAuth error response from the user's authorization server as an
+-auth failure instead of an MCPJam internal error.
+-
+-`parseErrorResponse` (`oauth/browser-auth.ts`) turns a non-ok token, refresh, or
+-registration response into an `OAuthResponseError` whose message is the server's
+-`error_description` verbatim — no HTTP status, no errno, no prefix of ours.
+-`isAuthError` recognised auth by class name, numeric status, or message prose,
+-so an authorization server whose prose matched none of the patterns fell past
+-every branch and landed on the inspector's 500 `INTERNAL_ERROR` catch-all.
+-
+-In production this surfaced as 69 500s in seven hours across
+-`/api/web/tools/list`, `/api/web/chat-v2` and `/api/web/servers/validate` for a
+-single customer, whose authorization server was rejecting token refreshes with
+-`{"error":"invalid_grant","error_description":"Request context not available —
+-authentication or export lookup failed"}`. The phrase "authentication" appears
+-there only inside "authentication or export lookup failed", which is not the
+-`"authentication failed"` pattern. Their authorization server was reported to
+-them, and to the on-call, as an MCPJam outage.
+-
+-`isAuthError` now recognises the class by name. It is constructed on exactly one
+-path — a URL the *user* configured answering a token request with an OAuth error
+-body — so it identifies the failing hop positively rather than inferring
+-ownership from a generic error type. The verdict comes from the response shape,
+-which a third party cannot phrase its way out of; widening the message-pattern
+-list would have fixed one sentence out of an unbounded set written by other
+-people.
+-
+-Consequences at the four call sites:
+-
+-- the inspector maps it through the existing `403 UPSTREAM_AUTH_FAILED` branch,
+-  which already carries `upstreamAuthRequired` and the rationale for 403 over
+-  401. Being a 4xx it also reaches the browser with its body intact rather than
+-  being replaced at the edge;
+-- `isRetryableTransientError` stops retrying a rejected grant, which no retry
+-  can fix;
+-- `MCPClientManager` wraps it as an `MCPAuthError`, so OAuth escalation hooks in
+-  and the user is prompted to reconnect the server.
+-
+-`describeError` also reads the OAuth error code off the same class. It is kept
+-on `.code` rather than `error`/`error_code`, so `oauthBodySlug` found nothing to
+-key on and these failures resolved to `internal/unknown` — origin `ambiguous` —
+-regardless of what the server actually said. They now carry `oauth/invalid_grant`
+-(or the matching slug) and origin `user_config`.
+diff --git a/.changeset/probe-metadata-egress-dns.md b/.changeset/probe-metadata-egress-dns.md
+deleted file mode 100644
+index 342e4e9e6..000000000
+--- a/.changeset/probe-metadata-egress-dns.md
++++ /dev/null
+@@ -1,12 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Close the DNS and disclosure gaps in the probe's metadata destination guard.
+-
+-The guard added alongside the 403 challenge work checked IP literals. Two holes remained.
+-
+-`assertOutboundOAuthUrlAllowed` does no name resolution — by design, since it is browser-safe — so a challenge naming `https://metadata.attacker.example/prm` passed the check and the probe dialled whatever that hostname answered with, private addresses included. Resolving inside the probe is not available: `probeMcpServer` is exported from the worker entry, whose module graph has no Node builtins in it, and `node:dns` would be the first. So `runServerDoctor` now accepts a `fetchFn`, and the hosted doctor route passes `createGuardedFetch()` — the egress guard this repo already uses on the conformance routes, which resolves every hop, classifies every returned address, and forces `redirect: "manual"` underneath so a `Location` is checked before anything dials it. Outside hosted mode that guard is the identity function, so local and LAN probing is untouched. A new test bundles the worker entry and fails if any Node builtin enters its graph, which is what stops a future fix from relocating the resolver back into the probe.
+-
+-The redirect check was also too late to matter. It ran on the value `performRequest` returned, but `performRequest` had already read the body and written the response into the attempt object — and that object is in `transport.attempts`, which the hosted API returns to the caller. A probe pointed at a redirect landing on `169.254.169.254` reported `discoveryError: Refusing outbound OAuth fetch to private/reserved host` while handing back the internal document in the same payload. The check now runs inside `performRequest`, between the response arriving and anything being read from it, so a refused destination records an error and no response, and its body is never read. Refusing to consume a response and refusing to disclose it are not the same thing, and only the first was implemented.
+diff --git a/.changeset/releases-2026-08-25.md b/.changeset/releases-2026-08-25.md
+deleted file mode 100644
+index c8e74d0e4..000000000
+--- a/.changeset/releases-2026-08-25.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/sdk": minor
+----
+-
+-Release the latest Inspector, CLI, and SDK updates.
+diff --git a/.changeset/sandbox-origin-serves-only-sandbox.md b/.changeset/sandbox-origin-serves-only-sandbox.md
+deleted file mode 100644
+index 0d534a944..000000000
+--- a/.changeset/sandbox-origin-serves-only-sandbox.md
++++ /dev/null
+@@ -1,41 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+-"@mcpjam/widget-react": patch
+----
+-
+-The sandbox hostname now serves only the sandbox.
+-
+-`sandbox.mcpjam.com` is a second DNS name on the same service, and the server
+-answered every hostname identically — so the origin whose entire job is holding
+-untrusted widget content also served the app shell, its bundle, and `/api`.
+-`HOSTED_DEPLOYMENT.md` said the sandbox host "only needs to answer" the proxy
+-route; nothing enforced it. A host listed in the new `SANDBOX_HOSTS` (default
+-`sandbox.mcpjam.com,sandbox-staging.mcpjam.com`) now answers
+-`/api/web/apps/mcp-apps/sandbox-proxy` and `/health`, and 404s everything else.
+-`SANDBOX_HOSTS=""` turns the partition off.
+-
+-It also fixes the alert that surfaced this. The client's boot guard treated
+-`VITE_MCPJAM_SANDBOX_ORIGIN === window.location.origin` as a misconfigured
+-deploy, and a crawler walking our DNS names tripped it by loading the Inspector
+-on the sandbox hostname, where that equality holds by definition. No page can
+-tell that apart from an app deploy pointing its sandbox at itself: the browser
+-does not know which hostname it was supposed to be served as. That half of the
+-invariant moved to the server, which does — it logs once at boot and reports
+-`sandboxIsolation` on `/health`. The client guard keeps only the case a browser
+-can decide, hosted mode with no origin configured at all, and now lives in
+-`client/src/lib/sandbox-origin-fault.ts` where it is testable.
+-
+-`SandboxedIframe` had been walking straight through the condition the guard
+-flagged: a `sandboxOrigin` equal to the app's own origin produced a same-origin
+-"sandbox" with no warning. It now treats that as unset and takes the existing
+-warn-and-fall-back path, comparing canonical origins so a trailing slash, a
+-different case, or an explicit `:443` cannot spell past the check. The URL logic
+-is extracted as `resolveSandboxProxyUrl`, newly exported from
+-`@mcpjam/widget-react`.
+-
+-`SANDBOX_HOSTS` entries are validated as bare hostnames. One carrying a scheme,
+-a port, or a path can never match the `Host` the partition reads, so it is
+-dropped rather than left to report an isolation nobody checked.
+-
+-Cookies were never at risk — they are set without a `Domain=` attribute, so
+-`app.mcpjam.com` credentials never reached the sandbox host.
+diff --git a/.changeset/sdk-oauth-probe-403-challenge.md b/.changeset/sdk-oauth-probe-403-challenge.md
+deleted file mode 100644
+index e0849a56a..000000000
+--- a/.changeset/sdk-oauth-probe-403-challenge.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Continue the OAuth debugger's flow when a server challenges with 403 instead of 401.
+-
+-The debugger's second step sends an unauthenticated `initialize` and expects a 401 carrying `WWW-Authenticate`. A server that answers 403 instead dead-ended the flow with `Failed to request MCP server: Expected 401 Unauthorized but got HTTP 403: Forbidden` (Sentry INSPECTOR-CLIENT-21N). Two separate problems produced that line.
+-
+-The wrapper was wrong. A status mismatch was thrown inside the same `try` that covers the request itself, so the outer `catch` relabelled it "Failed to request MCP server" — a claim that the server was unreachable, when it had in fact replied. The step now throws `UnexpectedProbeStatusError`, which the `catch` rethrows untouched; genuine transport failures keep the original wrapper. That distinction is what the message was hiding, and it is now covered by a test per protocol version asserting each phrasing lands on the right failure.
+-
+-The 403 itself is worth continuing from. MCP requires 401 here, but servers fronted by a CDN or WAF, and those treating anonymous access as a scope failure (RFC 6750 §3.1 pairs 403 with `insufficient_scope`), answer 403 — and when that response still carries a Bearer challenge it supplies everything discovery needs. `shared/challenges.ts` already read exactly this pairing for step-up; the probe step now does too, advancing on the challenge and logging a warning that names the violation. This follows the bargain `addResourceMismatchWarning` already strikes: a debugger proceeds through non-compliant server behavior so the user can observe real behavior, but has to say so, because clients that decide to authenticate from the status code alone will never start OAuth against that server.
+-
+-A 403 with no challenge still fails, since there is nothing to discover from, but it no longer blames the MCP server's OAuth configuration. It reports that a proxy, WAF, or IP allowlist likely rejected the request before the MCP server saw it — the far more common cause, and one the previous "expected 401" phrasing sent people looking in the wrong place for. Both messages stay under the client reporter's 500-character cap, so the diagnostic survives into Sentry intact.
+-
+-Challenge grouping was fixed alongside it. `WWW-Authenticate: Bearer` with no auth-params is a valid challenge (RFC 7235 §4.1) and is what a WAF commonly sends, but the parser only opened a challenge on a `<scheme> <params>` segment, so a param-less scheme was folded into the preceding challenge's auth-params instead. A bare scheme token now opens its own challenge. This is the RFC reading and it is stricter than the old tolerant one: in a malformed `Bearer realm="x", scope, error="insufficient_scope"`, the trailing param now belongs to a `scope` challenge rather than to Bearer, so it no longer reads as a step-up. Tests pin that, since the tolerant behavior looks like the intuitive one to restore.
+-
+-All four protocol machines carried the same step and all four are fixed.
+-
+-The acceptance gate is exported. `classifyUnauthenticatedProbe`, `hasBearerChallenge`, and `isUnauthenticatedProbeChallenge` are now on the browser entrypoint, so surfaces that render the flow can ask whether an exchange was an expected challenge instead of re-deriving it from the status code and disagreeing with the step that accepted it.
+-
+-`probeMcpServer` carried the same 401-only gate on the connect path, on both the streamable-HTTP and SSE probes. A 403 with a Bearer challenge fell past them into the generic error branch, so a server the debugger could authenticate against was reported as an unexplained HTTP failure. Both probes now accept the challenge and report `oauth_required`. Acceptance is not silent: `ProbeOAuthDetails.nonCompliantChallengeStatus` records the status a challenge arrived on when MCP does not allow it there, and is absent for a compliant 401. The doctor's probe check reads it and names the status in its detail, so a server that only ever answers 403 is not reported as a clean OAuth requirement. The conformance suite is untouched and still fails a non-401 outright — that surface asserts the obligation, this one diagnoses it.
+-
+-That path also read its RFC 9728 pointer by matching `resource_metadata="…"` anywhere in the raw header, so it accepted one belonging to a different scheme's challenge, or sitting inside a quoted realm that only looked like one, and pointed discovery at a PRM URL the server never advertised for Bearer. It now reads the parsed Bearer challenge. That bug was reachable on the ordinary 401 path, not just the new one.
+-
+-`auth-scheme` and `auth-param` names are the same `token` production (RFC 7235 §2.1) and now share one definition in the parser. They had drifted: scheme tokens accepted the full `tchar` set while parameter names required a leading letter or underscore, so `Bearer 2fa="totp"` was tokenized as a Bearer auth-param and then recorded under the truncated name `fa`. A parameter whose name opens with a digit keeps that name.
+diff --git a/.changeset/sdk-probe-metadata-destination-guard.md b/.changeset/sdk-probe-metadata-destination-guard.md
+deleted file mode 100644
+index e47db490e..000000000
+--- a/.changeset/sdk-probe-metadata-destination-guard.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Guard the OAuth metadata destinations the probed server chooses.
+-
+-`probeMcpServer` fetched two URLs it took on trust from the server under test: the RFC 9728 `resource_metadata` pointer in the `WWW-Authenticate` challenge, and the `authorization_servers[0]` entry in the document that pointer returned. Neither was checked before the request went out, and requests follow redirects, so a hostile or misconfigured server could steer up to four outbound fetches at any destination it named — including cloud instance metadata at `169.254.169.254` or a service on the private network. The probe already stripped `Authorization` from metadata fetches, so credentials never leaked; the gap was the destination.
+-
+-That matters because the probe does not only run locally. `runServerDoctor` reaches it from the hosted Hono backend, on a route that allows guests, so the requests originate from MCPJam infrastructure.
+-
+-Both hops now go through `assertOutboundOAuthUrlAllowed`, the same RFC 6890 guard the OAuth state machines already apply to every request. A blocked destination is reported as `discoveryError` on the probe result rather than thrown, so the probe still returns `oauth_required` with everything it did learn, and the second hop keeps the protected-resource document it already fetched.
+-
+-The guard would break real usage if applied naively, so it carves out the origin the caller pointed the probe at: an http(s) metadata URL whose scheme and host match the configured server URL is always allowed, whatever address tier it is on. Scheme and host, not `URL.origin` — every non-special scheme reports the origin `"null"`, and `blob:https://host/…` reports the origin of the URL it wraps while having no host of its own, so an origin comparison let a `blob:` pointer at the server's own origin skip the guard. That keeps loopback and LAN-hosted MCP servers discovering their own metadata. Cross-origin destinations get the shared guard, with the loopback opt-in derived from the server URL — so a local server may hand off to an authorization server on another loopback port, while a public server can never reach the user's loopback. Tests pin every one of those cases, including a LAN server, since the carve-out is what a future tightening would most plausibly regress.
+-
+-Redirects are covered too: `performRequest` now reports the URL a response actually landed on, and metadata fetches re-check it before reading the body. As with the browser executor's final-URL revalidation, this refuses to consume the response rather than preventing the request.
+-
+-This bug predates the 403 challenge work — the previous regex-based parse fetched the same unvalidated URL — but that change widened the trigger, since a 403 now reaches discovery where only a 401 did before.
+diff --git a/.changeset/temperature-default-and-catalog-parameters.md b/.changeset/temperature-default-and-catalog-parameters.md
+deleted file mode 100644
+index 48b07872f..000000000
+--- a/.changeset/temperature-default-and-catalog-parameters.md
++++ /dev/null
+@@ -1,32 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-An omitted `temperature` reaches the provider omitted, and the model catalog
+-gets a say in whether the field is sent at all.
+-
+-`prepareChatV2` substituted `0.7` for a `temperature` the caller did not send,
+-so "no preference" was indistinguishable from "0.7 please" by the time the
+-request left. It now passes through untouched. The chat tab always sends its
+-slider value, so nothing changes there; the callers this frees are the SDK, the
+-API and the eval runner, which previously had no way to ask for a provider's own
+-default sampling. The persisted `hostConfig.temperature` still lands numeric —
+-`buildDirectHostConfig` falls back to the requested value, then to `0.7` — so
+-transcript rows and hostConfig dedupe are unaffected.
+-
+-`ModelDefinition` now carries `supportedParameters` from the hosted catalog DTO
+-(OpenRouter's `supported_parameters`), which the mapping had been dropping, and
+-`modelDefinitionSupportsTemperature` reads it. Hosted rows that report taking no
+-`temperature` lose the field without anyone adding their id to a list, which is
+-how the hardcoded `gpt-5` name stops being the only reasoning model handled.
+-
+-Catalog metadata may only withdraw the field, never restore it: an affected
+-Anthropic family answers a 400 whatever a row claims, so the id predicate stays
+-authoritative for those. Absent or empty `supportedParameters` means "the
+-catalog said nothing" rather than "accepts nothing" — BYOK, org, Ollama and
+-custom rows never carry it, and reading empty as a denial would strip
+-temperature from every model behind a stale cache.
+-
+-The temperature slider answers from the same predicate, so a model whose
+-catalog row withholds the field greys out instead of staying live over a value
+-the server goes on to drop.
 diff --git a/cli/package.json b/cli/package.json
-index 644e544db..27ee68c2e 100644
+index 27ee68c2e..e1d61677c 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "4.2.0",
-+  "version": "5.0.0",
+-  "version": "5.0.0",
++  "version": "5.1.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -274,46 +484,46 @@ index 644e544db..27ee68c2e 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^7.1.0",
-+    "@mcpjam/sdk": "^8.0.0",
+-    "@mcpjam/sdk": "^8.0.0",
++    "@mcpjam/sdk": "^8.1.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 1895f74d2..f599a3abb 100644
+index 471325d3c..29bd0a428 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.48.1",
-+  "version": "3.0.0",
+-  "version": "3.0.0",
++  "version": "3.1.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -132,7 +132,7 @@
+@@ -133,7 +133,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^7.1.1",
-+    "@mcpjam/sdk": "^8.0.0",
+-    "@mcpjam/sdk": "^8.0.0",
++    "@mcpjam/sdk": "^8.1.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index b9ccd2381..8df55d8eb 100644
+index 949c1b8ab..97ba0a3e1 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -61,9 +61,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "4.2.0",
-+      "version": "5.0.0",
+-      "version": "5.0.0",
++      "version": "5.1.0",
        "dependencies": {
--        "@mcpjam/sdk": "^7.1.0",
-+        "@mcpjam/sdk": "^8.0.0",
+-        "@mcpjam/sdk": "^8.0.0",
++        "@mcpjam/sdk": "^8.1.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -321,8 +531,8 @@ index b9ccd2381..8df55d8eb 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.48.1",
-+      "version": "3.0.0",
+-      "version": "3.0.0",
++      "version": "3.1.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -330,89 +540,55 @@ index b9ccd2381..8df55d8eb 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^7.1.1",
-+        "@mcpjam/sdk": "^8.0.0",
+-        "@mcpjam/sdk": "^8.0.0",
++        "@mcpjam/sdk": "^8.1.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37852,7 +37852,7 @@
+@@ -37869,7 +37869,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "7.1.1",
-+      "version": "8.0.0",
+-      "version": "8.0.0",
++      "version": "8.1.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -38283,10 +38283,10 @@
-     },
-     "vitest": {
-       "name": "@mcpjam/vitest",
--      "version": "0.1.3",
-+      "version": "0.1.4",
-       "license": "MIT",
-       "dependencies": {
--        "@mcpjam/sdk": "^7.0.0"
-+        "@mcpjam/sdk": "^8.0.0"
-       },
-       "devDependencies": {
-         "tsup": "^8.3.5",
-@@ -38299,11 +38299,11 @@
+@@ -38316,11 +38316,11 @@
      },
      "widget-react": {
        "name": "@mcpjam/widget-react",
--      "version": "0.1.8",
-+      "version": "0.1.9",
+-      "version": "0.1.9",
++      "version": "0.1.10",
        "license": "MIT",
        "dependencies": {
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^7.0.0",
-+        "@mcpjam/sdk": "^8.0.0",
+-        "@mcpjam/sdk": "^8.0.0",
++        "@mcpjam/sdk": "^8.1.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 0224fdce4..5c845a6ab 100644
+index 5c845a6ab..bce49762f 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "7.1.1",
-+  "version": "8.0.0",
+-  "version": "8.0.0",
++  "version": "8.1.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/vitest/package.json b/vitest/package.json
-index 153abce1f..381ad3fdb 100644
---- a/vitest/package.json
-+++ b/vitest/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/vitest",
--  "version": "0.1.3",
-+  "version": "0.1.4",
-   "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
-   "license": "MIT",
-   "type": "module",
-@@ -29,7 +29,7 @@
-     "vitest": ">=3.2.0 <4"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^7.0.0"
-+    "@mcpjam/sdk": "^8.0.0"
-   },
-   "devDependencies": {
-     "tsup": "^8.3.5",
 diff --git a/widget-react/package.json b/widget-react/package.json
-index 816ec2fb8..beb447455 100644
+index beb447455..f8c9b159e 100644
 --- a/widget-react/package.json
 +++ b/widget-react/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/widget-react",
--  "version": "0.1.8",
-+  "version": "0.1.9",
+-  "version": "0.1.9",
++  "version": "0.1.10",
    "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
    "license": "MIT",
    "type": "module",
@@ -420,8 +596,8 @@ index 816ec2fb8..beb447455 100644
    },
    "dependencies": {
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^7.0.0",
-+    "@mcpjam/sdk": "^8.0.0",
+-    "@mcpjam/sdk": "^8.0.0",
++    "@mcpjam/sdk": "^8.1.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "lucide-react": "^0.525.0",

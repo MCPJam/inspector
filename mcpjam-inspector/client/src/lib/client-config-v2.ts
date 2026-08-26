@@ -687,6 +687,23 @@ export function mergeMcpAppsCapabilities(
     base.cspResourceDomains || override.cspResourceDomains
       ? { ...base.cspResourceDomains, ...override.cspResourceDomains }
       : undefined;
+  // Two levels deep, so a shallow spread would let an override that names
+  // only `structuredContent` erase the preset's per-block-kind answers.
+  const toolResult =
+    base.toolResult || override.toolResult
+      ? {
+          ...base.toolResult,
+          ...override.toolResult,
+          ...(base.toolResult?.content || override.toolResult?.content
+            ? {
+                content: {
+                  ...base.toolResult?.content,
+                  ...override.toolResult?.content,
+                },
+              }
+            : {}),
+        }
+      : undefined;
   return {
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
@@ -705,6 +722,7 @@ export function mergeMcpAppsCapabilities(
     cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
     cspConnectDomains,
     cspResourceDomains,
+    toolResult,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
@@ -826,6 +844,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // A record, so emptiness is per-leaf: `{}` carries nothing (the
+    // canonicalizer drops it), but any boolean leaf is a real setting.
+    (profile.toolListChanged === undefined ||
+      Object.values(profile.toolListChanged).every(
+        (value) => value === undefined
+      )) &&
     !profile.apps &&
     !profile.extensions
   );
