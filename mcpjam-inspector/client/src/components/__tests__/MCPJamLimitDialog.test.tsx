@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -291,6 +291,87 @@ describe("MCPJamLimitDialog", () => {
         primary_action: "create_account",
         secondary_action: "see_plans",
       })
+    );
+  });
+
+  it("reports plan_limit_create_account_clicked from the treatment primary CTA", async () => {
+    const user = userEvent.setup();
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(
+      screen.getByRole("button", { name: /^create free account$/i })
+    );
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_create_account_clicked",
+      expect.objectContaining({ wall_kind: "guest_credits", variant: "treatment" })
+    );
+  });
+
+  it("reports plan_limit_see_plans_clicked from the treatment secondary CTA", async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByRole("button", { name: /^see paid plans$/i }));
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_see_plans_clicked",
+      expect.objectContaining({ wall_kind: "guest_credits", variant: "treatment" })
+    );
+    openSpy.mockRestore();
+  });
+
+  it("hides the treatment illustration if the asset fails to load", () => {
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    // The dialog renders through a portal on document.body, not the container.
+    const img = document.querySelector("img");
+    expect(img).not.toBeNull();
+    // A missing asset must degrade to no image, not a broken one.
+    fireEvent.error(img as HTMLImageElement);
+    expect((img as HTMLImageElement).style.display).toBe("none");
+  });
+
+  it("treats an empty flag value as control", () => {
+    guestVariantMock.mockReturnValue("");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("heading", {
+        name: /you've used up your free guest credits/i,
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^sign in$/i })
+    ).toBeInTheDocument();
+  });
+
+  it("freezes the variant for the opening even if the flag flips", () => {
+    guestVariantMock.mockReturnValue("treatment");
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "guest" });
+    const view = render(<MCPJamLimitDialog />);
+
+    // Flag resolves to a different value while the dialog is still open.
+    guestVariantMock.mockReturnValue("control");
+    view.rerender(<MCPJamLimitDialog />);
+
+    // Copy must not swap under the user...
+    expect(
+      screen.getByRole("heading", { name: /there's so much more to jam on/i })
+    ).toBeInTheDocument();
+    // ...and exactly one impression was recorded, still tagged treatment.
+    const impressions = trackMock.mock.calls.filter(
+      ([event]) => event === "plan_limit_dialog_shown"
+    );
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0]?.[1]).toEqual(
+      expect.objectContaining({ variant: "treatment" })
     );
   });
 

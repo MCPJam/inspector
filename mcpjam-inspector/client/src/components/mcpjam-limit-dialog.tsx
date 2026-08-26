@@ -9,7 +9,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagVariantKey } from "posthog-js/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   canManageOrgCredits,
   useOrganizationQueries,
@@ -52,13 +52,10 @@ export function MCPJamLimitDialog() {
   const { isAuthenticated } = useConvexAuth();
   // Normalize the multivariate flag to control/treatment. Undefined (flags not
   // yet loaded, PostHog disabled locally, or no experiment) falls to control.
-  // The guest wall only appears after a guest has spent their credits, so flags
-  // have long since resolved by the time it renders — no first-paint flip.
-  const guestVariant =
+  const rawGuestVariant =
     useFeatureFlagVariantKey(GUEST_WALL_FLAG) === "treatment"
       ? "treatment"
       : "control";
-  const isGuestTreatment = guestVariant === "treatment";
   // Look up the user's orgs as a fallback in case there is no stored
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
   // first by useOrganizationQueries.
@@ -67,12 +64,33 @@ export function MCPJamLimitDialog() {
   const appNavigate = useAppNavigate();
   const guestImpressionTrackedRef = useRef(false);
   const creditsImpressionTrackedRef = useRef(false);
+  // The variant actually shown to the guest, frozen for one dialog opening.
+  const [openGuestVariant, setOpenGuestVariant] = useState<
+    "control" | "treatment" | null
+  >(null);
 
   // Decide whether either variant is active before wiring billing hooks. This
   // component is mounted app-wide, so a closed dialog must not keep billing
   // and owner-member Convex subscriptions alive for the whole session.
   const showGuestDialog = !user && intent === "guest" && isOpen;
   const showTopupDialog = !!user && intent === "topup" && isOpen;
+
+  // Freeze the variant for the lifetime of one guest-wall opening. The wall
+  // only appears after a guest exhausts credits — well after flags resolve —
+  // but if the flag ever settled while the dialog was open, letting it flip
+  // would swap the copy under the user and, worse, record an impression
+  // variant that no longer matched what they saw, corrupting the A/B result.
+  // Capturing at open keeps render and analytics in lockstep, then resets on
+  // close.
+  useEffect(() => {
+    if (showGuestDialog) {
+      setOpenGuestVariant((prev) => prev ?? rawGuestVariant);
+    } else if (openGuestVariant !== null) {
+      setOpenGuestVariant(null);
+    }
+  }, [showGuestDialog, rawGuestVariant, openGuestVariant]);
+  const guestVariant = openGuestVariant ?? rawGuestVariant;
+  const isGuestTreatment = guestVariant === "treatment";
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
