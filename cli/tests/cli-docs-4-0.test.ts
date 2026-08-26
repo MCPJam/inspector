@@ -35,6 +35,7 @@ const MOVED_CLOUD_GROUPS = [
   "eval",
   "chat-sessions",
   "sessions",
+  "clients",
   "hosts",
   "environments",
   "capabilities",

@@ -442,6 +442,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   projects: Record<string, Project>;
   activeProjectId: string;
   onSwitchProject: (projectId: string) => void;
+  /**
+   * The switcher's per-row settings gear. Takes the project id because the
+   * gear opens THAT project's settings directly — `/p/<id>/project-settings`
+   * — rather than switching the active project and then navigating to
+   * whatever the settings route resolves to afterwards.
+   */
+  onOpenProjectSettings?: (projectId: string) => void;
   onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
@@ -467,6 +474,7 @@ export function MCPSidebar({
   projects,
   activeProjectId,
   onSwitchProject,
+  onOpenProjectSettings,
   onCreateProject,
   onDeleteProject,
   isLoadingProjects,
@@ -703,7 +711,20 @@ export function MCPSidebar({
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
             isLoading={isLoadingProjects || authResolving}
-            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            onNavigateToSettings={(projectId) => {
+              // Tracked with the SECTION, never the project id: this event is
+              // an aggregate over navigation, and an id would make it a
+              // per-customer series.
+              track("sidebar_nav_clicked", {
+                location: "mcp_sidebar",
+                section: "project-settings",
+              });
+              if (onOpenProjectSettings) {
+                onOpenProjectSettings(projectId);
+                return;
+              }
+              onNavigate?.("project-settings");
+            }}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={
