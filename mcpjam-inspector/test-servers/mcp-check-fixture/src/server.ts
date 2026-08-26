@@ -89,7 +89,7 @@ function textResult(text: string) {
 
 function callTool(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): { result?: unknown; error?: { code: number; message: string } } {
   switch (name) {
     case "echo": {
@@ -111,7 +111,7 @@ function callTool(
     case "server_info":
       return {
         result: textResult(
-          JSON.stringify({ name: "mcp-check-fixture", version: "1.0.0" })
+          JSON.stringify({ name: "mcp-check-fixture", version: "1.0.0" }),
         ),
       };
     default:
@@ -193,7 +193,19 @@ function handleRpc(request: JsonRpcRequest): {
           result: {
             protocolVersion: PROTOCOL_VERSION,
             capabilities: { tools: {} },
-            serverInfo: { name: "mcp-check-fixture", version: "1.0.0" },
+            // `icons` is inline so the fixture needs no network, and orange so
+            // a server-branded tool call is distinguishable at a glance from
+            // the monochrome /mcp.svg placeholder.
+            serverInfo: {
+              name: "mcp-check-fixture",
+              version: "1.0.0",
+              icons: [
+                {
+                  src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23e8590c'/%3E%3C/svg%3E",
+                  mimeType: "image/svg+xml",
+                },
+              ],
+            },
           },
         },
       };
@@ -274,7 +286,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 const server = createServer(async (req, res) => {
   const url = new URL(
     req.url ?? "/",
-    `http://${req.headers.host ?? "localhost"}`
+    `http://${req.headers.host ?? "localhost"}`,
   );
 
   // A plain liveness endpoint, for humans. The CHECK's health probe is the MCP
@@ -327,7 +339,7 @@ const server = createServer(async (req, res) => {
     }
     const bodies = parsed
       .map((entry) =>
-        isRpcRequest(entry) ? handleRpc(entry) : invalidRequest(entry)
+        isRpcRequest(entry) ? handleRpc(entry) : invalidRequest(entry),
       )
       .filter((entry) => entry.body !== undefined)
       .map((entry) => entry.body);
@@ -365,7 +377,7 @@ server.listen(PORT, HOST, () => {
   // `npm ci && npm run build` over nothing but typescript + @types/node, so that
   // import would not resolve once the file is copied out.
   process.stdout.write(
-    `mcp-check-fixture listening on http://${HOST}:${PORT}${MCP_PATH}\n`
+    `mcp-check-fixture listening on http://${HOST}:${PORT}${MCP_PATH}\n`,
   );
 });
 
