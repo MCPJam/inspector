@@ -326,3 +326,63 @@ export {
  * file above.
  */
 export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";
+
+// ── user-facing words for the closed vocabularies ────────────────────────────
+export {
+  DECISION_LABEL_VOCABULARIES,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  EVAL_VERDICT_DECISION_REASON_LABELS,
+  FAILURE_CATEGORY_LABELS,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  STAGE_REASON_LABELS,
+  STAGE_STATE_LABELS,
+  USER_VALUE_STAGE_LABELS,
+} from "./decision-labels.js";
+
+// ── the canonical run decision summary ───────────────────────────────────────
+export type {
+  EvalRunDecisionAssemblyInput,
+  EvalRunDecisionChain,
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionDiagnostics,
+  EvalRunDecisionEvidence,
+  EvalRunDecisionIterationInput,
+  EvalRunDecisionRunInput,
+  EvalRunDecisionSummary,
+  EvalRunDecisionSummarySchemaVersion,
+  EvalRunDecisionUndecided,
+  EvalRunDecisionUndecidedReason,
+  EvalRunDecisionVerdict,
+  EvalRunDecisionVerdictSource,
+  EvalRunMeasurementUnit,
+} from "./decision-summary.js";
+export {
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_ID,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  EVAL_RUN_DECISION_UNDECIDED_REASONS,
+  EVAL_RUN_DECISION_VERDICTS,
+  EVAL_RUN_DECISION_VERDICT_SOURCES,
+  EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+  EVAL_RUN_DECISION_VERDICT_LABELS,
+  EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
+  EVAL_RUN_MEASUREMENT_UNITS,
+  EVAL_RUN_MEASUREMENT_UNIT_LABELS,
+  assembleEvalRunDecisionSummary,
+  decisionDiagnosticFailureCategory,
+  decisionDiagnosticFirstFailedStage,
+  evalIterationTracePath,
+  evalRunDecisionChainSchema,
+  evalRunDecisionCountsSchema,
+  evalRunDecisionDiagnosticSchema,
+  evalRunDecisionDiagnosticsSchema,
+  evalRunDecisionEvidenceSchema,
+  evalRunDecisionSummarySchema,
+  evalRunDecisionSummaryStructuralSchema,
+  evalRunDecisionUndecidedReasonSchema,
+  evalRunDecisionUndecidedSchema,
+  evalRunDecisionVerdictSchema,
+  evalRunDecisionVerdictSourceSchema,
+  evalRunMeasurementUnitSchema,
+  measurementUnitLabel,
+} from "./decision-summary.js";
