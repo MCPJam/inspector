@@ -125,6 +125,37 @@ describe("useUsageInsights scope routing", () => {
       rebuildFns.get("chatSessions:rebuildScenarioInsights"),
     ).toHaveBeenCalledWith({ scenarioId: "cb-1" });
   });
+
+  // BB-107: a control wired `onClick={onRebuild}` hands React's synthetic event
+  // in here. Spreading `args` put the event's DOM refs in the mutation payload
+  // and Convex threw on the circular structure — so the scenario branch must
+  // pick the knobs, never forward whatever the caller passed.
+  it("rebuild() forwards only the knobs, not a caller's wider object", async () => {
+    const rebuildFns = new Map<string, ReturnType<typeof vi.fn>>();
+    mockUseMutation.mockImplementation((name: string) => {
+      const fn = rebuildFns.get(name) ?? vi.fn().mockResolvedValue({});
+      rebuildFns.set(name, fn);
+      return fn;
+    });
+
+    const eventShaped: Record<string, unknown> = {
+      force: true,
+      type: "click",
+      currentTarget: { tagName: "BUTTON" },
+    };
+    // Self-reference, like the event -> target -> ownerDocument chain that made
+    // the real payload unserializable.
+    eventShaped.nativeEvent = eventShaped;
+
+    const scenario = renderHook(() =>
+      useUsageInsights({ sourceId: "cb-1", filters: EMPTY_USAGE_FILTER }),
+    );
+    await scenario.result.current.rebuild(eventShaped as { force?: boolean });
+
+    expect(
+      rebuildFns.get("chatSessions:rebuildScenarioInsights"),
+    ).toHaveBeenCalledWith({ scenarioId: "cb-1", force: true });
+  });
 });
 
 describe("useGoalOutcomeDrilldown scope routing", () => {

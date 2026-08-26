@@ -1126,3 +1126,78 @@ describe("TopicMapPanel swarm empty / loading", () => {
   });
 });
 
+/**
+ * BB-107. Both rebuild controls were wired `onClick={onRebuild}`, which handed
+ * React's synthetic event in as the rebuild args — it spread into the Convex
+ * mutation and threw on serializing the event's DOM node. Reverting either
+ * call site to the bare handler must fail here.
+ */
+describe("TopicMapPanel rebuild controls", () => {
+  it("starts a rebuild from the graph toolbar with no arguments", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+
+    render(
+      <TopicMapPanel
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /rebuild clusters/i }));
+
+    expect(onRebuild).toHaveBeenCalledWith();
+  });
+
+  it("starts a rebuild from the empty state with no arguments", async () => {
+    mockUseScenarioTopicMap.mockReturnValue({
+      ...createDefaultScenarioTopicMapHookValue(),
+      snapshot: null,
+    });
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+
+    render(
+      <TopicMapPanel
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /rebuild clusters/i }));
+
+    expect(onRebuild).toHaveBeenCalledWith();
+  });
+
+  // The in-flight latch lives in useInsightsRebuild, so this pins the
+  // affordance rather than de-duplication: a busy button must not invite a
+  // click it will silently drop.
+  it("stops offering a rebuild while one is already in flight", async () => {
+    const user = userEvent.setup();
+    const onRebuild = vi.fn();
+
+    render(
+      <TopicMapPanel
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={onRebuild}
+        rebuildBusy
+      />,
+    );
+
+    const rebuild = screen.getByRole("button", { name: /rebuild clusters/i });
+    expect(rebuild).toBeDisabled();
+
+    await user.click(rebuild);
+
+    expect(onRebuild).not.toHaveBeenCalled();
+  });
+});
