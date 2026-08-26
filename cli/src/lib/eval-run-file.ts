@@ -569,6 +569,128 @@ export async function syncFileOwnedCases(
   };
 }
 
+/**
+ * Check every `--allow-approximated` selector against the cases this run will
+ * actually execute, BEFORE anything is written or billed.
+ *
+ * The backend re-checks all of this and remains authoritative — an approval it
+ * does not accept is refused there whatever this says. That is not a reason to
+ * skip it: a caller who mistyped a case id should hear about it before the
+ * suite is synced, not after a round trip that already wrote cases.
+ *
+ * Every rejection below names a DIFFERENT mistake on purpose. "Approval
+ * rejected" would be true of all six and useful for none:
+ *
+ *   - a native case has no claim to approve, so approving it is a
+ *     misunderstanding of what the flag does;
+ *   - a `exact` case needs no approval, and a receipt for a decision nobody
+ *     had to make is worse than no receipt;
+ *   - `unsupported` and `unresolved` cannot be approved into running at all —
+ *     approval is for a case whose behaviour was approximated, not for one
+ *     whose behaviour is missing;
+ *   - a disabled or unselected case is not in this run, so approving it grants
+ *     nothing;
+ *   - an unknown selector is a typo, and guessing which case was meant is how
+ *     an approval lands on the wrong one.
+ */
+export function assertApprovalsApplyToRun(params: {
+  cases: readonly ResolvedEvalSuiteFileCase[];
+  selectedCaseIds: ReadonlySet<string>;
+  approvals: { cases: string[]; reason: string } | undefined;
+}): void {
+  if (!params.approvals) return;
+  const byId = new Map(params.cases.map((entry) => [entry.id, entry]));
+  const problems: Array<{ case: string; code: string; message: string }> = [];
+  for (const selector of params.approvals.cases) {
+    const testCase = byId.get(selector);
+    if (!testCase) {
+      problems.push({
+        case: selector,
+        code: "UNKNOWN_CASE",
+        message: `"${selector}" is not a case id declared by this suite file. Approvals name the AUTHORED id (cases[].id), never a hosted row id or a title.`,
+      });
+      continue;
+    }
+    if (!testCase.import) {
+      problems.push({
+        case: selector,
+        code: "NATIVE_CASE",
+        message: `"${selector}" was authored here, not converted, so there is no import claim to approve.`,
+      });
+      continue;
+    }
+    if (testCase.import.status !== "approximated") {
+      problems.push({
+        case: selector,
+        code:
+          testCase.import.status === "exact"
+            ? "EXACT_NEEDS_NO_APPROVAL"
+            : "NOT_APPROVABLE",
+        message:
+          testCase.import.status === "exact"
+            ? `"${selector}" is claimed exact and needs no approval. Remove it — an approval on a case nobody had to approve is a receipt for a decision that never happened.`
+            : `"${selector}" is imported as "${testCase.import.status}", which cannot be approved into running. Approval covers a case whose behaviour was APPROXIMATED, not one whose behaviour is missing or unresolved.`,
+      });
+      continue;
+    }
+    if (!params.selectedCaseIds.has(selector)) {
+      problems.push({
+        case: selector,
+        code: testCase.disabled ? "CASE_DISABLED" : "CASE_NOT_SELECTED",
+        message: testCase.disabled
+          ? `"${selector}" is marked disabled in the suite file, so this run will not execute it and the approval grants nothing.`
+          : `"${selector}" is not among the cases this run executes (see --case), so the approval grants nothing.`,
+      });
+    }
+  }
+  if (problems.length === 0) return;
+  throw cliError(
+    "IMPORT_APPROVAL_INVALID",
+    `${problems.length} approval(s) do not apply to this run. Nothing was written and no run was started.\n` +
+      problems.map((entry) => `  ${entry.case}: ${entry.message}`).join("\n"),
+    SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    { approvals: problems },
+  );
+}
+
+/**
+ * Map approved AUTHORED ids onto the hosted rows the sync just produced.
+ *
+ * The backend addresses cases by hosted id, and the caller only ever names the
+ * id it authored. A selector that survived {@link assertApprovalsApplyToRun}
+ * and still has no hosted row means the sync did not produce one, which is a
+ * write that half-happened rather than a caller mistake — so it refuses loudly
+ * rather than launching an approval short.
+ */
+export function mapApprovalsToHostedCases(params: {
+  approvals: { cases: string[]; reason: string } | undefined;
+  enabledCases: ReadonlyArray<{ id: string; declaredId: string }>;
+}): Array<{ testCaseId: string; reason: string }> | undefined {
+  if (!params.approvals) return undefined;
+  const byDeclaredId = new Map(
+    params.enabledCases.map((entry) => [entry.declaredId, entry.id] as const),
+  );
+  const mapped: Array<{ testCaseId: string; reason: string }> = [];
+  const missing: string[] = [];
+  for (const declaredId of params.approvals.cases) {
+    const hosted = byDeclaredId.get(declaredId);
+    if (!hosted) {
+      missing.push(declaredId);
+      continue;
+    }
+    mapped.push({ testCaseId: hosted, reason: params.approvals.reason });
+  }
+  if (missing.length > 0) {
+    throw cliError(
+      "IMPORT_APPROVAL_UNMAPPED",
+      `Sync produced no hosted case for approved case(s) ${missing.join(", ")}; the run was not started.`,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      { missing },
+    );
+  }
+  return mapped;
+}
+
 export type EvalRunFileKnobs = {
   server?: string[];
   environment?: string[];
@@ -585,7 +707,19 @@ export type EvalRunFileKnobs = {
   matchOptions?: RunEvalSuiteInput["matchOptions"];
   idempotencyKey?: string;
   compose?: RunEvalSuiteInput["compose"];
+  /**
+   * Per-run approval of `approximated` imported cases, by AUTHORED case id.
+   *
+   * One reason covers every approval in one invocation, because they are one
+   * decision a human made once. Nothing here persists: a later run needs the
+   * flags again, which is the whole point — an approximation is approved for a
+   * RUN, never accepted for a case.
+   */
+  approvals?: { cases: string[]; reason: string };
 };
+
+/** The trimmed reason's bound, mirrored from the platform's own validator. */
+export const MAX_APPROVAL_REASON_LENGTH = 500;
 
 /**
  * File-run idempotency covers the bytes AND every knob that changes what
@@ -619,6 +753,18 @@ export function deriveFileRunIdempotencyKey(params: {
     minPassRate: params.knobs.minPassRate ?? null,
     matchOptions: params.knobs.matchOptions ?? null,
     compose: params.knobs.compose ?? null,
+    // AUTHORED ids, sorted — not the hosted row ids the sync happened to
+    // return. Two equivalent syncs of the same file can land on different
+    // hosted ids, and keying on those would make the same run with the same
+    // approvals look like a different run on a re-sync. Sorted so `--allow-
+    // approximated a --allow-approximated b` and the reverse are one key: flag
+    // ORDER is not a property of the run.
+    approvals: params.knobs.approvals
+      ? {
+          cases: [...params.knobs.approvals.cases].sort(),
+          reason: params.knobs.approvals.reason,
+        }
+      : null,
   });
 }
 
@@ -726,10 +872,23 @@ export async function executeEvalRunFromFile(
     knobs,
     signal: context.signal,
   });
+  const selectedCaseIds = selectedAuthoredCaseIds(
+    loaded.resolved.cases,
+    knobs.case,
+  );
   const outgoingCases = applyUnresolvedReferences({
     cases: loaded.resolved.cases,
     findings: liveCheck.findings,
-    selectedCaseIds: selectedAuthoredCaseIds(loaded.resolved.cases, knobs.case),
+    selectedCaseIds,
+  });
+  // Against the OUTGOING cases, not the authored ones: a case whose claim the
+  // live check just rewrote to `unresolved` cannot be approved as an
+  // approximation, and reading the pre-rewrite claim would let it through on
+  // the strength of a status that is no longer true.
+  assertApprovalsApplyToRun({
+    cases: outgoingCases,
+    selectedCaseIds,
+    approvals: knobs.approvals,
   });
 
   const servers = authored.target.servers ?? [];
@@ -835,6 +994,11 @@ export async function executeEvalRunFromFile(
     knobs.case,
   );
 
+  const importApprovals = mapApprovalsToHostedCases({
+    approvals: knobs.approvals,
+    enabledCases: syncedCases.enabledCases,
+  });
+
   const idempotencyKey = deriveFileRunIdempotencyKey({
     sourceHash,
     declaredSuiteId: authored.suite.id,
@@ -880,6 +1044,7 @@ export async function executeEvalRunFromFile(
         : {}),
       ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
       ...(knobs.compose ? { compose: knobs.compose } : {}),
+      ...(importApprovals ? { importApprovals } : {}),
     },
     {
       client: context.client,

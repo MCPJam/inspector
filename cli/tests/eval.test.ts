@@ -244,6 +244,15 @@ interface EvalFixtureOptions {
   runOneStatus?: "completed" | "cancelled";
   /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
   runOneIterationFetchError?: boolean;
+  /**
+   * The `importEligibility` projection `GET /eval-runs/run-1` reports.
+   *
+   * Absent means the field is OMITTED entirely — an older deployment with no
+   * opinion, which must behave exactly as it did before the field existed.
+   */
+  runOneImportEligibility?: Record<string, unknown>;
+  /** The active `gateWaiver` `GET /eval-runs/run-1` reports, if any. */
+  runOneGateWaiver?: Record<string, unknown>;
   /** Makes the run-disclosure endpoint answer 422 contract_unavailable. */
   disclosureUnavailable?: boolean;
   /**
@@ -1014,6 +1023,12 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          ...(options.runOneImportEligibility
+            ? { importEligibility: options.runOneImportEligibility }
+            : {}),
+          ...(options.runOneGateWaiver
+            ? { gateWaiver: options.runOneGateWaiver }
+            : {}),
           ...(result === "inconclusive"
             ? {
                 verdictPolicyVersion: 2,
@@ -3290,6 +3305,157 @@ test("eval gate writes its JUnit report before a gate-failure exit", async () =>
     assert.match(junit, /goal completion failed/);
   } finally {
     await fixture.close();
+  }
+});
+
+test("eval gate exits 3 on incomplete import evidence, even though the run PASSED", async () => {
+  // The run's own verdict is a clean pass and the policy is satisfied. The
+  // only thing stopping it is that its imported cases do not carry the
+  // decisions a gate would rely on — evidence eligibility, not a measurement
+  // of the server, so exit 3 rather than exit 1.
+  const fixture = await startEvalFixture({
+    runOneImportEligibility: {
+      status: "incomplete",
+      gateable: false,
+      importedCaseCount: 2,
+      claimedExactCaseIds: [],
+      approvedApproximationCaseIds: [],
+      approvedApproximationReceipts: [],
+      issues: [{ code: "APPROXIMATION_NOT_APPROVED", caseKey: "ui_abc" }],
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3, run.stdout + run.stderr);
+    const body = JSON.parse(run.stdout) as {
+      gate: {
+        outcome: string;
+        verdicts: Array<{ gate: string; status: string; message: string }>;
+      };
+      exitCode: number;
+    };
+    assert.equal(body.gate.outcome, "incomplete");
+    assert.equal(body.exitCode, 3);
+    assert.equal(body.gate.verdicts[0].gate, "import");
+    assert.equal(body.gate.verdicts[0].status, "non_gateable");
+    assert.match(body.gate.verdicts[0].message, /not a test failure/);
+    assert.match(body.gate.verdicts[0].message, /APPROXIMATION_NOT_APPROVED/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a waiver cannot buy a green release out of incomplete import evidence", async () => {
+  // The fail-open case, end to end. A waiver overrides a measured VERDICT;
+  // nothing was measured here, so there is nothing to override — and flipping
+  // exit 3 to 0 would let a waiver granted because the evals regressed become
+  // consent to ship on evidence nobody finished reviewing.
+  const fixture = await startEvalFixture({
+    runOneResult: "failed",
+    runOneImportEligibility: {
+      status: "incomplete",
+      gateable: false,
+      importedCaseCount: 1,
+      claimedExactCaseIds: [],
+      approvedApproximationCaseIds: [],
+      approvedApproximationReceipts: [],
+      issues: [{ code: "APPROXIMATION_NOT_APPROVED", caseKey: "ui_abc" }],
+    },
+    runOneGateWaiver: {
+      id: "wv_1",
+      suiteId: "suite-1",
+      runId: "run-1",
+      reason: "hotfix ships today; tracked in ENG-1",
+      expiresAt: Date.now() + 86_400_000,
+      createdAt: Date.now() - 1000,
+      createdBy: "usr_1",
+      createdByEmail: "alice@example.com",
+      active: true,
+      revokedAt: null,
+      policySnapshot: null,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 3, run.stdout + run.stderr);
+    const body = JSON.parse(run.stdout) as {
+      gate: { outcome: string; waiver?: { id: string } };
+    };
+    assert.equal(body.gate.outcome, "incomplete");
+    // …and the waiver is still ATTACHED, so the artifact names it even though
+    // it decided nothing.
+    assert.equal(body.gate.waiver?.id, "wv_1");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate is unchanged by legacy import evidence, and by none at all", async () => {
+  for (const eligibility of [
+    undefined,
+    {
+      status: "legacy",
+      gateable: true,
+      importedCaseCount: 0,
+      claimedExactCaseIds: [],
+      approvedApproximationCaseIds: [],
+      approvedApproximationReceipts: [],
+      issues: [],
+    },
+  ]) {
+    const fixture = await startEvalFixture(
+      eligibility ? { runOneImportEligibility: eligibility } : {},
+    );
+    try {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "gate",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--min-pass-rate-percent",
+            "100",
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      // A native suite gating green must keep gating green — both when the
+      // platform says "no imported cases" and when it says nothing at all.
+      assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+    } finally {
+      await fixture.close();
+    }
   }
 });
 

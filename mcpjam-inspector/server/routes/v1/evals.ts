@@ -1377,8 +1377,120 @@ function toRunDto(run: RunDoc) {
     // the run rather than to grant a waiver; a waiver its readers cannot see
     // is not a visible waiver.
     gateWaiver: toGateWaiverDto(run.gateWaiver),
+    // Whether this run's imported cases carry evidence a gate may rely on.
+    //
+    // OMITTED, not defaulted, when the platform did not report one: absence
+    // says "this deployment has no opinion", and `{status: "legacy"}` says
+    // "there were no imported cases". A gate that read the second where the
+    // first was true would vouch for a run nobody had checked.
+    ...toImportEligibilityProjection(run.importEligibility),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+  };
+}
+
+/**
+ * The eligibility projection, field by field, or nothing.
+ *
+ * Explicit rather than a spread of whatever the platform sent. This object
+ * decides whether a run may gate a deploy, so its shape is part of the public
+ * contract in a way a passthrough could not keep: an internal field added
+ * upstream would be published here without anyone deciding to, and a MALFORMED
+ * one would be republished as though it had been checked.
+ *
+ * A payload that fails these checks is dropped entirely rather than
+ * partially projected. A gate cannot tell a missing field from a satisfied
+ * one, so half a projection is worse than none — and none is already handled
+ * correctly downstream as "older deployment, behave as before".
+ */
+function toImportEligibilityProjection(
+  raw: unknown,
+): { importEligibility?: Record<string, unknown> } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const source = raw as Record<string, unknown>;
+  const status = source.status;
+  if (
+    status !== "legacy" &&
+    status !== "eligible" &&
+    status !== "incomplete"
+  ) {
+    return {};
+  }
+  if (typeof source.gateable !== "boolean") return {};
+  if (typeof source.importedCaseCount !== "number") return {};
+
+  const stringList = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+  const receipts = (Array.isArray(source.approvedApproximationReceipts)
+    ? source.approvedApproximationReceipts
+    : []
+  ).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const receipt = entry as Record<string, unknown>;
+    // Every field of a receipt is load-bearing — who, when, why, and for which
+    // case. A receipt missing any of them is not a weaker receipt; it is one a
+    // reader would have to guess at, so it is dropped rather than shown.
+    if (
+      typeof receipt.testCaseId !== "string" ||
+      typeof receipt.approvedBy !== "string" ||
+      typeof receipt.approvedAt !== "number" ||
+      typeof receipt.reason !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        testCaseId: receipt.testCaseId,
+        ...(typeof receipt.caseKey === "string"
+          ? { caseKey: receipt.caseKey }
+          : {}),
+        ...(typeof receipt.sourceCaseKey === "string"
+          ? { sourceCaseKey: receipt.sourceCaseKey }
+          : {}),
+        approvedBy: receipt.approvedBy,
+        approvedAt: receipt.approvedAt,
+        reason: receipt.reason,
+      },
+    ];
+  });
+
+  const issues = (Array.isArray(source.issues) ? source.issues : []).flatMap(
+    (entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const issue = entry as Record<string, unknown>;
+      if (typeof issue.code !== "string") return [];
+      return [
+        {
+          code: issue.code,
+          ...(typeof issue.testCaseId === "string"
+            ? { testCaseId: issue.testCaseId }
+            : {}),
+          ...(typeof issue.caseKey === "string"
+            ? { caseKey: issue.caseKey }
+            : {}),
+          ...(typeof issue.toolName === "string"
+            ? { toolName: issue.toolName }
+            : {}),
+        },
+      ];
+    },
+  );
+
+  return {
+    importEligibility: {
+      status,
+      gateable: source.gateable,
+      importedCaseCount: source.importedCaseCount,
+      claimedExactCaseIds: stringList(source.claimedExactCaseIds),
+      approvedApproximationCaseIds: stringList(
+        source.approvedApproximationCaseIds,
+      ),
+      approvedApproximationReceipts: receipts,
+      issues,
+    },
   };
 }
 
@@ -3050,6 +3162,25 @@ const createEvalRunGroupSchema = z.object({
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
   idempotencyKey: z.string().min(1).max(256).optional(),
   ephemeralEnvironment: z.boolean().optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted case id.
+   *
+   * The SAME approvals go to every target. A case's approximation is
+   * approximated the same way on each of them, so approving per target would
+   * make one human decision into N, and the caller who approved it once meant
+   * it once.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict(),
+    )
+    .min(1)
+    .optional(),
 })
   // STRICT, like every other v1 write body: the published contract says an
   // unknown key is invalid, and the two knobs this route deliberately omits
@@ -3305,6 +3436,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
             : {}),
           ...(body.ephemeralEnvironment === true
             ? { ephemeralEnvironment: true }
+            : {}),
+          ...(body.importApprovals
+            ? { importApprovals: body.importApprovals }
             : {}),
           // PER-TARGET run key derived from the group key. This is what makes a
           // replay after a crash mid-launch safe: each target dedupes at the

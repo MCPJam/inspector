@@ -17,9 +17,15 @@ import {
   mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
 } from "../src/lib/eval-gate.js";
-import { DEFAULT_MIN_EFFECT_SIZE, DEFAULT_MIN_SAMPLE_SIZE } from "@mcpjam/sdk";
+import {
+  applyGateWaiver,
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+} from "@mcpjam/sdk";
 import type { GateReport } from "@mcpjam/sdk";
 import type { PlatformRunCompare } from "@mcpjam/sdk/platform";
 
@@ -101,6 +107,141 @@ test("an infra-failed run's partial summary can never gate green", () => {
     }),
     3,
   );
+});
+
+// ── import evidence ──────────────────────────────────────────────────────────
+//
+// Import COMPLETENESS is evidence eligibility, not a measurement of the server
+// under test. Everything below turns on that one distinction: it makes the
+// outcome `incomplete` rather than `failed`, which is what puts it out of a
+// waiver's reach and out of exit 1.
+
+/** A run that would otherwise gate GREEN — so only the evidence can stop it. */
+function passingRun(importEligibility?: Record<string, unknown>): never {
+  return {
+    id: "run_1",
+    suiteId: "suite_1",
+    runNumber: 1,
+    status: "completed",
+    result: "passed",
+    summary: { total: 10, passed: 10, failed: 0, passRate: 1 },
+    ...(importEligibility ? { importEligibility } : {}),
+  } as never;
+}
+
+test("explicitly incomplete import evidence is not gateable, and not a failure", () => {
+  const report = reportForRun(
+    passingRun({
+      status: "incomplete",
+      gateable: false,
+      importedCaseCount: 2,
+      claimedExactCaseIds: [],
+      approvedApproximationCaseIds: [],
+      approvedApproximationReceipts: [],
+      issues: [
+        { code: "APPROXIMATION_NOT_APPROVED", caseKey: "ui_abc" },
+      ],
+    }),
+    undefined,
+    { minimumPassRate: 0.95 },
+  );
+  // Not `failed`: the run has not told us the server regressed, it has told us
+  // its own evidence cannot be relied on. Blaming the server under test for a
+  // conversion nobody finished reviewing would be the wrong sentence AND the
+  // wrong exit code.
+  assert.equal(report.outcome, "incomplete");
+  assert.equal(evalGateExitCode(report), 3);
+  assert.equal(report.verdicts[0].gate, "import");
+  assert.equal(report.verdicts[0].status, "non_gateable");
+  assert.match(report.verdicts[0].message, /not a test failure/);
+  // The issue codes reach the message, so an operator can act without a
+  // second command.
+  assert.match(report.verdicts[0].message, /APPROXIMATION_NOT_APPROVED/);
+});
+
+test("`gateable: false` blocks even under a status this CLI does not know", () => {
+  // The platform owns the decision. A state it adds later must fail CLOSED
+  // here rather than fall through to a verdict on the strength of an
+  // unrecognized string.
+  assert.equal(
+    importEvidenceBlocksGate(
+      passingRun({
+        status: "some-future-state",
+        gateable: false,
+        importedCaseCount: 1,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      }),
+    ),
+    true,
+  );
+});
+
+test("a waiver cannot convert incomplete import evidence into a pass", () => {
+  const waiver = {
+    id: "w_1",
+    reason: "Shipping the hotfix; evals reviewed by hand.",
+    expiresAt: Date.now() + 60_000,
+    createdAt: Date.now(),
+    createdBy: "user_1",
+    createdByEmail: "someone@example.test",
+    policySnapshot: null,
+  };
+  const waived = applyGateWaiver(
+    importIneligibleReport(
+      passingRun({
+        status: "incomplete",
+        gateable: false,
+        importedCaseCount: 1,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      }),
+    ),
+    waiver,
+  );
+  // A waiver overrides a measured VERDICT. Nothing was measured here, so there
+  // is nothing to override — and flipping exit 3 to 0 would turn a waiver
+  // granted for something else entirely into a green release.
+  assert.equal(waived.outcome, "incomplete");
+  assert.equal(evalGateExitCode(waived), 3);
+  // …and the waiver is still ATTACHED, so every artifact names it even though
+  // it changed nothing.
+  assert.equal(waived.waiver?.id, "w_1");
+});
+
+test("legacy and eligible evidence proceed through the ordinary verdict logic", () => {
+  for (const status of ["legacy", "eligible"] as const) {
+    const report = reportForRun(
+      passingRun({
+        status,
+        gateable: true,
+        importedCaseCount: status === "legacy" ? 0 : 2,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      }),
+      undefined,
+      { minimumPassRate: 0.95 },
+    );
+    assert.equal(report.outcome, "passed", status);
+  }
+});
+
+test("an older server that reports no eligibility at all changes nothing", () => {
+  // Absence is "this deployment has no opinion", NOT "there were no imported
+  // cases". Reading it as incomplete would fail every existing gate the moment
+  // this CLI shipped; reading it as eligible would vouch for evidence nobody
+  // checked. Behaving exactly as before is the only honest third answer.
+  assert.equal(importEvidenceBlocksGate(passingRun()), false);
+  const report = reportForRun(passingRun(), undefined, {
+    minimumPassRate: 0.95,
+  });
+  assert.equal(report.outcome, "passed");
 });
 
 test("percent flags convert to fractions at the boundary, exactly", () => {

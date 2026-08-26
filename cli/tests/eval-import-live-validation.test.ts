@@ -136,6 +136,93 @@ provenance:
   reportHash: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 `;
 
+/**
+ * One case per approvable/unapprovable shape, all enabled and all resolving.
+ *
+ * Every reference here EXISTS on the fixture server, so nothing in this file
+ * is refused for the unrelated reason — an approval test that failed because
+ * of a missing tool would be green for the wrong reason.
+ */
+const APPROVAL_SUITE = `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_billing
+  name: Billing smoke
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+cases:
+  - id: c_approx
+    title: Refuses to refund outside the window
+    steps:
+      - id: step-1
+        kind: toolCall
+        serverName: billing
+        toolName: render_refund
+        arguments: {}
+    import:
+      status: approximated
+      sourceCaseKey: upstream/refunds/out-of-window
+      note: Upstream asserted on a rendered string; mapped to the negative-case rule.
+  - id: c_approx_two
+    title: Also approximated
+    steps:
+      - id: step-1
+        kind: toolCall
+        serverName: billing
+        toolName: issue_refund
+        arguments: {}
+    import:
+      status: approximated
+      note: Second approximation, so one reason can cover two approvals.
+  - id: c_exact
+    title: Renders the refund widget
+    steps:
+      - id: step-1
+        kind: toolCall
+        serverName: billing
+        toolName: render_refund
+        arguments: {}
+    import:
+      status: exact
+      note: "1:1 with the upstream render assertion."
+  - id: c_unsupported
+    title: Replays a recorded browser session
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Walk through the checkout flow.
+    import:
+      status: unsupported
+      note: Upstream drove a real browser; no counterpart here.
+  - id: c_native
+    title: Authored here
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Refund the duplicate charge on invoice 4471.
+  - id: c_parked
+    title: Parked approximation
+    disabled: true
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Reconcile the partial refund.
+    import:
+      status: approximated
+      note: Parked while the upstream rubric is clarified.
+provenance:
+  sourceHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  sourceFormat: upstream-evals
+  reportHash: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+`;
+
 /** The same missing tool, but on an ENABLED case: the launch must refuse. */
 const IMPORTED_ENABLED_MISSING = IMPORTED_WITH_TOOL_CALLS.replace(
   "    disabled: true\n",
@@ -1024,6 +1111,304 @@ describe("eval run --file validates before it writes", () => {
         assert.deepEqual(fixture.fromFileBodies, []);
         assert.match(run.stdout + run.stderr, /cannot be enumerated/);
       });
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+// ── per-run approval of approximations ───────────────────────────────────────
+
+describe("eval run --file --allow-approximated", () => {
+  const REASON = "Reviewed against the upstream rubric on 2026-08-26.";
+
+  test("sends importApprovals against the HOSTED case ids, with the trimmed reason", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              "--allow-approximated",
+              "c_approx",
+              "c_approx_two",
+              "--approval-reason",
+              `   ${REASON}   `
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const launched = fixture.runBodies[0] as {
+          importApprovals?: Array<{ testCaseId: string; reason: string }>;
+        };
+        // Hosted row ids, not the authored ones the caller typed: the backend
+        // addresses cases by row id, and sending an authored id would be an
+        // approval it cannot match to anything.
+        assert.deepEqual(launched.importApprovals, [
+          { testCaseId: "row_c_approx", reason: REASON },
+          { testCaseId: "row_c_approx_two", reason: REASON },
+        ]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a selected approximation with no approval is left for the backend to refuse", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        // The CLI does not invent a client-side policy refusal here. The
+        // BACKEND owns whether an unapproved approximation may run, and a
+        // second implementation of that rule on this side would be one more
+        // thing to keep in step with it.
+        assert.equal(
+          (fixture.runBodies[0] as { importApprovals?: unknown })
+            .importApprovals,
+          undefined
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  for (const [label, selector, expected] of [
+    ["a native case", "c_native", /not converted/],
+    ["a claimed-exact case", "c_exact", /needs no approval/],
+    ["an unsupported case", "c_unsupported", /cannot be approved into running/],
+    ["a disabled case", "c_parked", /disabled/],
+    ["an unknown case", "c_nope", /not a case id declared/],
+  ] as const) {
+    test(`refuses an approval naming ${label}, before any write`, async () => {
+      const fixture = await startFixture();
+      try {
+        await withSuiteFile(APPROVAL_SUITE, async (file) => {
+          const run = await captureProcessOutput(() =>
+            main(
+              runArgv(
+                fixture.baseUrl,
+                file,
+                "--allow-approximated",
+                selector,
+                "--approval-reason",
+                REASON
+              ),
+              { telemetry: telemetryDisabled }
+            )
+          );
+          assert.equal(run.result.exitCode, 2, run.stdout);
+          assert.match(run.stdout + run.stderr, expected);
+          // Before the writes, so a mistyped approval costs nothing.
+          assert.deepEqual(fixture.fromFileBodies, []);
+          assert.deepEqual(fixture.batchBodies, []);
+          assert.deepEqual(fixture.runBodies, []);
+        });
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+
+  test("refuses an approval for a case --case left out of the run", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              "--case",
+              "c_approx",
+              "--allow-approximated",
+              "c_approx_two",
+              "--approval-reason",
+              REASON
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.match(run.stdout + run.stderr, /not among the cases this run executes/);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  for (const [label, args, expected] of [
+    [
+      "selectors with no reason",
+      ["--allow-approximated", "c_approx"],
+      /requires --approval-reason/,
+    ],
+    [
+      "a reason with no selectors",
+      ["--approval-reason", "because"],
+      /needs at least one --allow-approximated/,
+    ],
+    [
+      "a duplicate selector",
+      [
+        "--allow-approximated",
+        "c_approx",
+        "c_approx",
+        "--approval-reason",
+        "because",
+      ],
+      /more than once/,
+    ],
+    [
+      "a blank reason",
+      [
+        "--allow-approximated",
+        "c_approx",
+        "--approval-reason",
+        "   ",
+      ],
+      /must be 1-500 characters/,
+    ],
+  ] as const) {
+    test(`rejects ${label} as a usage error`, async () => {
+      const fixture = await startFixture();
+      try {
+        await withSuiteFile(APPROVAL_SUITE, async (file) => {
+          const run = await captureProcessOutput(() =>
+            main(runArgv(fixture.baseUrl, file, ...args), {
+              telemetry: telemetryDisabled,
+            })
+          );
+          assert.equal(run.result.exitCode, 2, run.stdout);
+          assert.match(run.stdout + run.stderr, expected);
+          assert.deepEqual(fixture.fromFileBodies, []);
+        });
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+
+  test("rejects a 501-character reason", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              "--allow-approximated",
+              "c_approx",
+              "--approval-reason",
+              "r".repeat(501)
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.match(run.stdout + run.stderr, /must be 1-500 characters/);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("the approvals change the run's idempotency key, and flag order does not", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const launch = (...args: string[]) =>
+          captureProcessOutput(() =>
+            main(runArgv(fixture.baseUrl, file, ...args), {
+              telemetry: telemetryDisabled,
+            })
+          );
+        await launch();
+        await launch(
+          "--allow-approximated",
+          "c_approx",
+          "c_approx_two",
+          "--approval-reason",
+          REASON
+        );
+        await launch(
+          "--allow-approximated",
+          "c_approx_two",
+          "c_approx",
+          "--approval-reason",
+          REASON
+        );
+        await launch(
+          "--allow-approximated",
+          "c_approx",
+          "c_approx_two",
+          "--approval-reason",
+          "A different justification entirely."
+        );
+        const keys = fixture.runBodies.map(
+          (body) => (body as { idempotencyKey: string }).idempotencyKey
+        );
+        assert.equal(keys.length, 4);
+        // Approving something is a different run from not approving it.
+        assert.notEqual(keys[0], keys[1]);
+        // …but the ORDER the flags were typed in is not a property of the run.
+        assert.equal(keys[1], keys[2]);
+        // The reason is part of the decision, so a different reason is a
+        // different run rather than a dedupe onto the first one's receipt.
+        assert.notEqual(keys[1], keys[3]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("refuses the flags on a --suite launch", async () => {
+    const fixture = await startFixture();
+    try {
+      const run = await captureProcessOutput(() =>
+        main(
+          [
+            "node",
+            "mcpjam",
+            "cloud",
+            "eval",
+            "run",
+            "--suite",
+            "Billing smoke",
+            "--project",
+            "Alpha",
+            "--allow-approximated",
+            "c_approx",
+            "--approval-reason",
+            REASON,
+            "--api-key",
+            "sk_test",
+            "--api-url",
+            fixture.baseUrl,
+            "--format",
+            "json",
+          ],
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.equal(run.result.exitCode, 2, run.stdout);
+      // A hosted suite's cases are not the ones this invocation authored, so
+      // an authored-id selector has nothing to resolve against. Accepting the
+      // flags and ignoring them would let somebody believe an approximation
+      // had been approved when the run refused it.
+      assert.match(run.stdout + run.stderr, /apply to a file run/);
+      assert.deepEqual(fixture.runBodies, []);
     } finally {
       await fixture.close();
     }

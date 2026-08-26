@@ -161,11 +161,81 @@ export function policyNeedsIterations(policy: GatePolicy): boolean {
   );
 }
 
+/**
+ * Whether a run's IMPORT evidence is too incomplete for it to gate anything.
+ *
+ * Three states, and the third is the reason this is a function rather than a
+ * boolean field read:
+ *
+ *   - ABSENT `importEligibility` — an Inspector/platform deployment that
+ *     predates the projection. It has no opinion, so behave exactly as before.
+ *     Reading absence as "incomplete" would make every existing gate fail the
+ *     moment this CLI shipped against an older server; reading it as
+ *     "eligible" would vouch for evidence nobody checked. "No opinion" is the
+ *     only honest reading, and the rollout gate is what stops us relying on it.
+ *   - `legacy` / `eligible` — proceed through the ordinary verdict logic.
+ *   - `incomplete`, or `gateable: false` — an EXPLICIT statement that the
+ *     evidence cannot be trusted.
+ *
+ * `gateable === false` is checked alongside the status rather than derived
+ * from it: the platform owns that decision, and a future state it adds must
+ * fail closed here rather than fall through to a verdict.
+ */
+export function importEvidenceBlocksGate(run: PlatformEvalRun): boolean {
+  const eligibility = run.importEligibility;
+  if (!eligibility) return false;
+  return eligibility.status === "incomplete" || eligibility.gateable === false;
+}
+
+/**
+ * The report for a run whose import evidence is explicitly incomplete.
+ *
+ * `incomplete`, never `failed`. Import completeness is EVIDENCE ELIGIBILITY,
+ * not a measurement of the server: the run has not told us anything regressed,
+ * it has told us its own evidence cannot be relied on. Reporting it as a
+ * verdict failure would blame the server under test for a conversion nobody
+ * finished reviewing — and, worse, would make it waivable, because a waiver
+ * overrides a measured verdict and `applyGateWaiver` deliberately refuses to
+ * touch `incomplete`.
+ */
+export function importIneligibleReport(run: PlatformEvalRun): GateReport {
+  const eligibility = run.importEligibility;
+  const issues = eligibility?.issues ?? [];
+  const detail =
+    issues.length === 0
+      ? ""
+      : `: ${issues
+          .map((issue) =>
+            [issue.code, issue.caseKey ?? issue.testCaseId, issue.toolName]
+              .filter(Boolean)
+              .join(" "),
+          )
+          .join("; ")}`;
+  return {
+    outcome: "incomplete",
+    scoreIntegrity: "unknown",
+    verdicts: [
+      {
+        gate: "import",
+        status: "non_gateable",
+        message:
+          `run is not gateable: its import evidence is incomplete` +
+          `${detail}. This is not a test failure — the run's imported cases ` +
+          `do not carry the decisions a gate would rely on. Re-run with the ` +
+          `approvals the cases need, or with the unsupported cases excluded.`,
+      },
+    ],
+  };
+}
+
 export function reportForRun(
   run: PlatformEvalRun,
   iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined,
   policy: GatePolicy
 ): GateReport {
+  // BEFORE the verdict logic, not merged with it: a run whose evidence is
+  // ineligible has no verdict to combine with anything.
+  if (importEvidenceBlocksGate(run)) return importIneligibleReport(run);
   return evaluateGates(gateInputFromPlatformRun(run, iterations), policy);
 }
 

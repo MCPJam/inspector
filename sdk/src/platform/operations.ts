@@ -2622,6 +2622,7 @@ function runKnobBody(
     excludeSkills?: boolean;
     idempotencyKey?: string;
     sourceHash?: string;
+    importApprovals?: Array<{ testCaseId: string; reason: string }>;
   },
   caseIds: string[] | undefined
 ): Record<string, unknown> {
@@ -2638,6 +2639,13 @@ function runKnobBody(
       : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+    // Forwarded UNCHANGED to every target of a grouped launch. A case's
+    // approximation is approximated the same way on each of them, so an
+    // approval that covered only the first target would refuse the rest of a
+    // launch the caller approved once and meant once.
+    ...(input.importApprovals?.length
+      ? { importApprovals: input.importApprovals }
+      : {}),
   };
 }
 
@@ -3215,6 +3223,37 @@ const composeRunTargetInput = z
     "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
 
+/**
+ * One per-run approval of an approximated import.
+ *
+ * The caller supplies the id and the reason and NOTHING ELSE. A
+ * caller-supplied approver would file one person's approval under another's
+ * name, and a caller-supplied timestamp could be backdated past the edit that
+ * invalidated the claim — so both are derived server-side, and this object has
+ * no field for either.
+ */
+const importApprovalsSchema = z
+  .array(
+    z
+      .object({
+        testCaseId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Hosted test-case id (not the authored/declared case id)."),
+        reason: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500)
+          .describe(
+            "Why this approximation is acceptable for this run. An override with no stated reason is indistinguishable from an accident."
+          ),
+      })
+      .strict()
+  )
+  .min(1);
+
 const RUN_KNOB_FIELDS = {
   repetitions: z
     .number()
@@ -3277,6 +3316,11 @@ const RUN_KNOB_FIELDS = {
     .optional()
     .describe(
       "SHA-256 hex of the suite-file bytes that launched this run. Set by `eval run --file`; a UI or API launch that did not come from a file omits it."
+    ),
+  importApprovals: importApprovalsSchema
+    .optional()
+    .describe(
+      "Approve `approximated` imported cases for THIS RUN ONLY. Each entry names a hosted test-case id and a reason (1-500 characters). The approver's identity and the approval time are derived by the server and frozen into the run's own snapshot — never supplied here. Approval does not persist: the next run of the same case needs a new one."
     ),
 } as const;
 

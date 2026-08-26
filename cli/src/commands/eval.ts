@@ -109,6 +109,7 @@ import {
 import {
   executeEvalRunFromFile,
   looksLikeVersionedSuiteFile,
+  MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
@@ -140,6 +141,8 @@ import {
   policyFromOptions,
   parseWaiverExpiry,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
@@ -1345,6 +1348,39 @@ async function runEvalGate(
           };
         }
 
+        // Import evidence, BEFORE any verdict is computed and before
+        // `--baseline` gets a chance to merge one in.
+        //
+        // Early-returned rather than folded into the threshold report because
+        // the merge ranks `failed` above `incomplete`: a baseline regression
+        // alongside ineligible evidence would surface as exit 1, reporting a
+        // measured verdict this run is explicitly not allowed to produce.
+        // A waiver cannot reach it either — `applyGateWaiver` refuses to touch
+        // `incomplete`, which is the property that keeps import completeness
+        // un-overridable.
+        if (importEvidenceBlocksGate(run)) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run,
+                );
+          return {
+            report: importIneligibleReport(run),
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
+          };
+        }
+
         // Assembled from the walk this gate already paid for, through the
         // canonical assembler. The gate's own verdict is untouched: this
         // EXPLAINS the run, it does not re-decide it, and the summary's verdict
@@ -2315,6 +2351,73 @@ type ValidateResult = {
  * means "a valid suite file", never "this will run".
  */
 /**
+ * Parse `--allow-approximated` / `--approval-reason` into the file-run knob.
+ *
+ * Every rule here is enforced BEFORE the launch, and each one exists because
+ * the alternative silently spends money or silently weakens the policy:
+ *
+ *   - **`--suite` rejects them.** A hosted suite's cases are not the ones this
+ *     invocation authored, so an authored-id selector has nothing to resolve
+ *     against. Accepting the flags and ignoring them would let somebody believe
+ *     an approximation had been approved when the run refused it.
+ *   - **Selectors require a reason, and a reason requires selectors.** An
+ *     override with no stated reason is indistinguishable from an accident,
+ *     and a reason with nothing to apply it to is a typo the caller wants to
+ *     hear about before the run starts, not after.
+ *   - **Duplicates refuse.** Naming a case twice is either a mistake or a
+ *     misunderstanding of what approving twice would mean; neither should be
+ *     resolved by quietly deduplicating.
+ *
+ * Returns `undefined` when neither flag was passed, which is the ordinary case
+ * and must stay indistinguishable from the pre-flag behaviour.
+ */
+export function parseApprovalFlags(options: {
+  suite?: string;
+  allowApproximated?: string[];
+  approvalReason?: string;
+}): { cases: string[]; reason: string } | undefined {
+  const selectors = options.allowApproximated ?? [];
+  const rawReason = options.approvalReason;
+  if (selectors.length === 0 && rawReason === undefined) return undefined;
+
+  if (options.suite) {
+    throw usageError(
+      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve."
+    );
+  }
+  if (selectors.length === 0) {
+    throw usageError(
+      "--approval-reason needs at least one --allow-approximated <case> to apply to."
+    );
+  }
+  if (rawReason === undefined) {
+    throw usageError(
+      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
+    );
+  }
+  const reason = rawReason.trim();
+  if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
+    throw usageError(
+      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
+    );
+  }
+  const seen = new Set<string>();
+  for (const selector of selectors) {
+    const trimmed = selector.trim();
+    if (trimmed.length === 0) {
+      throw usageError("--allow-approximated does not accept a blank case.");
+    }
+    if (seen.has(trimmed)) {
+      throw usageError(
+        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
+      );
+    }
+    seen.add(trimmed);
+  }
+  return { cases: [...seen], reason };
+}
+
+/**
  * Findings from a live check, rendered the way `formatSuiteFileFindings`
  * renders structural ones — same pointer-first shape, so a reader scanning both
  * halves of a `--project` validation is reading one format, not two.
@@ -2835,9 +2938,19 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--allow-approximated <case...>",
+        "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
+      )
+      .option(
+        "--approval-reason <text>",
+        "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server."
       ).action(
     async (
       options: PlatformOptions & {
+        allowApproximated?: string[];
+        approvalReason?: string;
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string[];
@@ -2891,6 +3004,7 @@ export function registerEvalCommands(program: Command): void {
       if (options.waitTimeout !== undefined && !options.wait) {
         throw usageError("--wait-timeout requires --wait.");
       }
+      const approvals = parseApprovalFlags(options);
       const globalOptions = getGlobalOptions(command);
       const reporter = parseReporterFormat(options.reporter);
       const waitTimeoutMs =
@@ -2998,6 +3112,7 @@ export function registerEvalCommands(program: Command): void {
                   ...(options.idempotencyKey
                     ? { idempotencyKey: options.idempotencyKey }
                     : {}),
+                  ...(approvals ? { approvals } : {}),
                   ...composeField(options),
                 },
               }
