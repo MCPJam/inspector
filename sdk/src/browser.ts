@@ -527,6 +527,17 @@ export {
   type StepUpAuthMode,
   type StepUpAction,
 } from "./oauth/state-machines/shared/challenges.js";
+// The unauthenticated probe's acceptance gate. Exported so the debugger UI
+// decides "is this exchange an expected challenge?" from the same rule the flow
+// advances on, rather than re-testing `status === 401` and painting an accepted
+// 403 as a failure.
+export {
+  classifyUnauthenticatedProbe,
+  hasBearerChallenge,
+  isUnauthenticatedProbeChallenge,
+  UNAUTHENTICATED_PROBE_STEP,
+  type UnauthenticatedProbeOutcome,
+} from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
