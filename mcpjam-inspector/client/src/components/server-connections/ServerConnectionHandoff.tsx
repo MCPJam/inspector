@@ -114,6 +114,15 @@ class HandoffCallError extends Error {
   }
 }
 
+function isUsedLinkError(error: unknown): boolean {
+  return (
+    error instanceof HandoffCallError &&
+    typeof error.details === "object" &&
+    error.details !== null &&
+    (error.details as { reason?: unknown }).reason === "REQUEST_NOT_FOUND"
+  );
+}
+
 async function call<T>(
   path: string,
   body?: unknown,
@@ -353,11 +362,7 @@ export function ServerConnectionHandoff() {
             : null;
         if (claimRefusal) setRefusal(claimRefusal);
         else {
-          setUsedLink(
-            route?.kind === "claim" &&
-              cause instanceof HandoffCallError &&
-              cause.status === 404,
-          );
+          setUsedLink(route?.kind === "claim" && isUsedLinkError(cause));
           setError(cause instanceof Error ? cause.message : String(cause));
         }
         return;
