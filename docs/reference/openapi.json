@@ -1973,6 +1973,72 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/decision-summary": {
+      "get": {
+        "operationId": "getEvalRunDecisionSummary",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get a run's decision summary",
+        "description": "The canonical, versioned run decision contract: the verdict and where it came from, the counts with the population they count, the run's own verdict decision when it has one, and one page of per-trial diagnostics carrying the user-value chain, the first failed stage, the failure category, evidence scoped to that stage, and one next action.\n\nADDITIVE and composed: it is the same two reads a caller could make by hand (`GET …/eval-runs/{runId}` and `GET …/iterations`), assembled once here so every client shares one reading of a run instead of inventing its own. `cursor` and `limit` page the DIAGNOSTICS using the same cursors the iterations endpoint issues, and `diagnostics.complete` says honestly whether the page you got is the run's whole non-passing set.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Iterations examined per page, 1–200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from a previous response's `diagnostics.nextCursor`. A page fetched with one is never reported as complete.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's decision summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunDecisionSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-runs/{runId}/compare": {
       "get": {
         "operationId": "compareEvalRun",
@@ -11047,6 +11113,15 @@
           "type": "string"
         }
       },
+      "includePrivateBacking": {
+        "name": "includePrivateBacking",
+        "in": "query",
+        "required": false,
+        "description": "Include clients that exist only as the private backing of a User Testing scenario. Excluded by default, matching the Clients tab; this is an administrative opt-in and applies to name resolution as well as to listing.",
+        "schema": {
+          "type": "boolean"
+        }
+      },
       "imageId": {
         "name": "imageId",
         "in": "path",
@@ -11154,15 +11229,6 @@
           "type": "string"
         },
         "description": "Gate waiver ID, as returned when the waiver was granted or read."
-      },
-      "includePrivateBacking": {
-        "name": "includePrivateBacking",
-        "in": "query",
-        "required": false,
-        "description": "Include clients that exist only as the private backing of a User Testing scenario. Excluded by default, matching the Clients tab; this is an administrative opt-in and applies to name resolution as well as to listing.",
-        "schema": {
-          "type": "boolean"
-        }
       }
     },
     "requestBodies": {
@@ -14850,7 +14916,12 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The STORED case row's database id. Changes if the case is recreated and means nothing outside this deployment; see `caseId` for the declared one."
+          },
+          "caseId": {
+            "type": "string",
+            "description": "The case's SDK-DECLARED id, read from the iteration's frozen `testCaseSnapshot` — the durable, author-chosen identity that survives the case row being recreated. ABSENT on a UI-authored case (which never declared one) and on runs predating declared ids; absence is not an error. Distinct from `testCaseId`, which is this deployment's row id, and NOT a join key into `verdictSummary.cases[].caseId`, which is a separately encoded identity the platform mints from whichever spelling the run knew."
           },
           "title": {
             "type": [
@@ -16891,6 +16962,29 @@
           }
         }
       },
+      "ClientImpact": {
+        "type": "object",
+        "description": "What a config edit to this client would follow. These are the DURABLE consumers that re-resolve the client's current config; past runs, per-turn traces and pinned eval-suite snapshots hold a config id and are unaffected. Direct playground and client-chat use follows the edit too and has no row to count.",
+        "required": [
+          "liveEnvironmentCount",
+          "scenarioAttachmentCount",
+          "activeLegacyJourneyCount"
+        ],
+        "properties": {
+          "liveEnvironmentCount": {
+            "type": "integer",
+            "description": "Non-archived project environments selecting this client."
+          },
+          "scenarioAttachmentCount": {
+            "type": "integer",
+            "description": "Scenario attachments re-materialized inside the edit transaction."
+          },
+          "activeLegacyJourneyCount": {
+            "type": "integer",
+            "description": "Active journeys with no environments that pin this client."
+          }
+        }
+      },
       "ClientPage": {
         "type": "object",
         "required": [
@@ -17077,6 +17171,176 @@
           }
         ],
         "additionalProperties": false
+      },
+      "ClientFieldSet": {
+        "type": "object",
+        "description": "Named fields to change, applied over the client's current config INSIDE the write transaction. Absent always means keep. `null` means \"make it go away\", and what that means depends on the field: a required field resets to its documented default, an optional one clears to absent. Object-valued fields are whole-object replacements, not merges — to change a deep knob, read the client, overlay the sub-object, and send it back whole. `hostStyle`, `clientCapabilities`, `hostContext` and server membership are deliberately not settable here (use a whole-`config` replacement, or the servers operation).",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "description": "Model id the client pins. Value only — there is no `null`, and a blank string is refused: a client that pins a model cannot be edited into one that does not."
+          },
+          "systemPrompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `\"\"`."
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `0.7`."
+          },
+          "requireToolApproval": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to reset this field to its canonical default. Default: `false`."
+          },
+          "connectionDefaults": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "headers",
+              "requestTimeout"
+            ],
+            "properties": {
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "requestTimeout": {
+                "type": "number"
+              }
+            },
+            "description": "Send `null` to reset this field to its canonical default. Default: empty headers and the platform's default request timeout."
+          },
+          "respectToolVisibility": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "progressiveToolDiscovery": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "harness": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "claude-code",
+              "codex",
+              null
+            ],
+            "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
+          },
+          "computer": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "personal"
+                ]
+              },
+              "toolset": {
+                "type": "string",
+                "enum": [
+                  "bash"
+                ]
+              },
+              "workdir": {
+                "type": "string"
+              }
+            },
+            "description": "Send `null` to clear this field back to absent. Attaching one requires the computers feature flag; detaching never does."
+          },
+          "builtInToolIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "skillSelection": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "`{ mode: \"all-visible\" }` or `{ mode: \"explicit\", skillIds: [...] }`. Send `null` to clear this field back to absent."
+          },
+          "modelVisibleMcpToolResults": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "mcpToolResultImageRendering": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "mcpProfile": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "hostCapabilitiesOverride": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          },
+          "chatUiOverride": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Send `null` to clear this field back to absent."
+          }
+        }
       },
       "ClientDeleted": {
         "type": "object",
@@ -23626,196 +23890,432 @@
           }
         }
       },
-      "ClientImpact": {
+      "EvalRunDecisionCounts": {
+        "description": "A tally WITH the population it counted. `measurementUnit` is never omitted and never inferred: under verdict policy v2 the counts are case-execution VARIANTS (repetitions are trials inside one, not members of it), and on a legacy run they are trials. A 3-case suite with 5 repetitions is legitimately 3 under one unit and 15 under the other, so a count reported without its unit is not a fact. On a `caseVariant` count every field is present and the three buckets sum to `total`; on a `trial` count each field is present only if the legacy run recorded it — absence stays absence rather than defaulting to zero.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "measurementUnit",
+              "total",
+              "passed",
+              "failed",
+              "inconclusive"
+            ],
+            "properties": {
+              "measurementUnit": {
+                "type": "string",
+                "const": "caseVariant"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inconclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "`caseVariant` only. A legacy run has no such bucket."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "measurementUnit"
+            ],
+            "properties": {
+              "measurementUnit": {
+                "type": "string",
+                "const": "trial"
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EvalRunDecisionUndecided": {
         "type": "object",
-        "description": "What a config edit to this client would follow. These are the DURABLE consumers that re-resolve the client's current config; past runs, per-turn traces and pinned eval-suite snapshots hold a config id and are unaffected. Direct playground and client-chat use follows the edit too and has no row to count.",
+        "description": "Why no verdict was established. Present exactly when `verdictSource` is `none`.",
         "required": [
-          "liveEnvironmentCount",
-          "scenarioAttachmentCount",
-          "activeLegacyJourneyCount"
+          "reason"
         ],
         "properties": {
-          "liveEnvironmentCount": {
-            "type": "integer",
-            "description": "Non-archived project environments selecting this client."
+          "reason": {
+            "type": "string",
+            "enum": [
+              "runNotTerminal",
+              "runStatusNotAVerdict",
+              "runResultNotAVerdict",
+              "verdictSummaryUnavailable"
+            ],
+            "description": "`runNotTerminal` — still pending or running; poll it. `runStatusNotAVerdict` — a LEGACY run that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a policy-v2 run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided under policy v2 with no readable decision; there is no legacy fallback, because re-deciding a v2 run under percent-threshold semantics would answer a question nobody asked."
           },
-          "scenarioAttachmentCount": {
-            "type": "integer",
-            "description": "Scenario attachments re-materialized inside the edit transaction."
-          },
-          "activeLegacyJourneyCount": {
-            "type": "integer",
-            "description": "Active journeys with no environments that pin this client."
+          "detail": {
+            "type": "string",
+            "description": "The platform's own message, when it supplied one. Never synthesized."
           }
         }
       },
-      "ClientFieldSet": {
-        "type": "object",
-        "description": "Named fields to change, applied over the client's current config INSIDE the write transaction. Absent always means keep. `null` means \"make it go away\", and what that means depends on the field: a required field resets to its documented default, an optional one clears to absent. Object-valued fields are whole-object replacements, not merges — to change a deep knob, read the client, overlay the sub-object, and send it back whole. `hostStyle`, `clientCapabilities`, `hostContext` and server membership are deliberately not settable here (use a whole-`config` replacement, or the servers operation).",
-        "minProperties": 1,
-        "additionalProperties": false,
-        "properties": {
-          "modelId": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": ".*\\S.*",
-            "description": "Model id the client pins. Value only — there is no `null`, and a blank string is refused: a client that pins a model cannot be edited into one that does not."
-          },
-          "systemPrompt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Send `null` to reset this field to its canonical default. Default: `\"\"`."
-          },
-          "temperature": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "description": "Send `null` to reset this field to its canonical default. Default: `0.7`."
-          },
-          "requireToolApproval": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Send `null` to reset this field to its canonical default. Default: `false`."
-          },
-          "connectionDefaults": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": false,
+      "EvalRunDecisionChain": {
+        "description": "Whether this trial's user-value chain can be believed. `verified` — the stored derivation validated, and ONLY this state carries `stages`, `firstFailedStage` or `failureCategory`. `unverified` — a derivation was stored and did not validate; the chain and both claims derived from it are withheld, because they are assertions ABOUT rows that did not validate. `absent` — no derivation was stored at all, which is a different fact from one that was rejected.",
+        "oneOf": [
+          {
+            "type": "object",
             "required": [
-              "headers",
-              "requestTimeout"
+              "status",
+              "stages",
+              "analyzerVersion"
             ],
             "properties": {
-              "headers": {
+              "status": {
+                "type": "string",
+                "const": "verified"
+              },
+              "stages": {
+                "type": "array",
+                "description": "Always six rows, in chain order. `verified` only.",
+                "items": {
+                  "$ref": "#/components/schemas/StageResultRow"
+                }
+              },
+              "firstFailedStage": {
+                "type": "string",
+                "enum": [
+                  "connection",
+                  "discovery",
+                  "selection",
+                  "call",
+                  "response",
+                  "userValue"
+                ]
+              },
+              "failureCategory": {
+                "type": "string",
+                "enum": [
+                  "setup",
+                  "metadata",
+                  "selection",
+                  "arguments",
+                  "serverData",
+                  "userValue",
+                  "evaluator"
+                ],
+                "description": "The bucket this trial is grouped under. Present WITHOUT `firstFailedStage` for a setup abort or an evaluator error — both are real answers about a run that never reached a stage."
+              },
+              "analyzerVersion": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "analyzerVersionAhead": {
                 "type": "object",
-                "additionalProperties": {
+                "description": "Present when the rows came from an analyzer NEWER than the reader knows. Flagged, never rejected: blanking the chain every time the platform ships ahead of a pinned client would be worse than showing it with a caveat.",
+                "required": [
+                  "reported",
+                  "known"
+                ],
+                "properties": {
+                  "reported": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "known": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "unverified"
+              },
+              "analyzerVersion": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "analyzerVersionAhead": {
+                "type": "object",
+                "required": [
+                  "reported",
+                  "known"
+                ],
+                "properties": {
+                  "reported": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "known": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "absent"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EvalRunDecisionEvidence": {
+        "type": "object",
+        "description": "Where to look. For a measured failure the span ids, prompt indexes and reasons are read from the FIRST FAILED STAGE'S ROW and from nowhere else — unioning the passing stages in would hand back the evidence of everything that worked, labelled as the explanation of the thing that did not. A stage-less outcome (setup abort, evaluator error) keeps a stage-less locator rather than inventing a stage to hang the link on.",
+        "required": [
+          "runId",
+          "iterationId",
+          "tracePath"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "iterationId": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ],
+            "description": "The stage this evidence was read from. Absent when none was established."
+          },
+          "spanIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "promptIndexes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tracePath": {
+            "type": "string",
+            "description": "The iteration-trace endpoint's path RELATIVE TO THE API ROOT (e.g. `/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace`), so it resolves against any deployment's base URL rather than baking one host into a stored artifact."
+          }
+        }
+      },
+      "EvalRunDecisionDiagnostic": {
+        "type": "object",
+        "description": "One non-passing TRIAL, as evidence beneath the run's verdict. These are never counted as cases and never override the run's or a case's verdict: under policy v2 a case can pass with a failing trial in it, and a reader who tallies these rows instead of reading `decision.cases` has re-derived a different verdict from the same run.",
+        "required": [
+          "iterationId",
+          "iterationNumber",
+          "status",
+          "chain",
+          "evidence",
+          "nextAction"
+        ],
+        "properties": {
+          "iterationId": {
+            "type": "string"
+          },
+          "iterationNumber": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "caseId": {
+            "type": "string",
+            "description": "The case's SDK-declared id, when the run recorded one. NOT a join key into `decision.cases[].caseId`."
+          },
+          "testCaseId": {
+            "type": "string",
+            "description": "The stored case row id."
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "LIFECYCLE, not verdict."
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed"
+            ],
+            "description": "Task verdict once terminal. Absent when the trial never produced one."
+          },
+          "chain": {
+            "$ref": "#/components/schemas/EvalRunDecisionChain"
+          },
+          "expected": {
+            "type": "object",
+            "required": [
+              "toolNames"
+            ],
+            "properties": {
+              "toolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "observed": {
+            "type": "object",
+            "properties": {
+              "toolNames": {
+                "type": "array",
+                "items": {
                   "type": "string"
                 }
               },
-              "requestTimeout": {
-                "type": "number"
-              }
-            },
-            "description": "Send `null` to reset this field to its canonical default. Default: empty headers and the platform's default request timeout."
-          },
-          "respectToolVisibility": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Send `null` to clear this field back to absent."
-          },
-          "progressiveToolDiscovery": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Send `null` to clear this field back to absent."
-          },
-          "harness": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              "claude-code",
-              "codex",
-              null
-            ],
-            "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
-          },
-          "computer": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": false,
-            "required": [
-              "kind"
-            ],
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "personal"
-                ]
-              },
-              "toolset": {
-                "type": "string",
-                "enum": [
-                  "bash"
-                ]
-              },
-              "workdir": {
+              "failure": {
                 "type": "string"
               }
-            },
-            "description": "Send `null` to clear this field back to absent. Attaching one requires the computers feature flag; detaching never does."
+            }
           },
-          "builtInToolIds": {
-            "type": [
-              "array",
-              "null"
-            ],
+          "evidence": {
+            "$ref": "#/components/schemas/EvalRunDecisionEvidence"
+          },
+          "nextAction": {
+            "type": "string",
+            "description": "One operator action, keyed on the failure category alone. With no category it says to go and look rather than naming a system, because nothing established which one is involved."
+          }
+        }
+      },
+      "EvalRunDecisionDiagnostics": {
+        "type": "object",
+        "description": "One page of diagnostics, with its completeness stated rather than implied. `complete` is true ONLY when `items` is the whole non-passing set for the run: a page reached through a cursor is never complete however few rows follow it. `scannedIterations` is how many trials this page examined, which is what separates \"we looked at 50 and none failed\" from \"we did not look\" — both otherwise render as an empty `items`.",
+        "required": [
+          "items",
+          "complete",
+          "scannedIterations"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
             "items": {
-              "type": "string"
-            },
-            "description": "Send `null` to clear this field back to absent."
+              "$ref": "#/components/schemas/EvalRunDecisionDiagnostic"
+            }
           },
-          "skillSelection": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true,
-            "description": "`{ mode: \"all-visible\" }` or `{ mode: \"explicit\", skillIds: [...] }`. Send `null` to clear this field back to absent."
+          "complete": {
+            "type": "boolean"
           },
-          "modelVisibleMcpToolResults": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true,
-            "description": "Send `null` to clear this field back to absent."
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass back as `cursor`. Absent on the last page."
           },
-          "mcpToolResultImageRendering": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true,
-            "description": "Send `null` to clear this field back to absent."
+          "scannedIterations": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EvalRunDecisionSummary": {
+        "type": "object",
+        "description": "The canonical run decision contract (schema version 1): what the run decided, in what unit it counted, and what evidence sits under the non-passing trials. START HERE when a run did not pass.\n\nIt EXPLAINS the verdict and never DECIDES it. Under verdict policy v2 the authority is the run's own decision — its verdict, rates, validity phase, reasons, per-case stability and mixed-verdict flags are copied after validation and never recomputed from the trials; `counts` is a tally of `decision.cases[].verdict` and nothing more.\n\n`verdict` has a fourth value the run verdict vocabulary does not: `notEstablished` means no verdict exists at all (the run is unfinished, stopped early, or its decision could not be read). It is not a failure and not `inconclusive` — `inconclusive` is a decision the validity phase reached, and this is the absence of any decision.",
+        "required": [
+          "schemaVersion",
+          "runId",
+          "runStatus",
+          "verdict",
+          "verdictSource",
+          "diagnostics"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
           },
-          "mcpProfile": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true,
-            "description": "Send `null` to clear this field back to absent."
+          "runId": {
+            "type": "string"
           },
-          "hostCapabilitiesOverride": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "additionalProperties": true,
-            "description": "Send `null` to clear this field back to absent."
+          "runStatus": {
+            "type": "string",
+            "description": "The run's lifecycle status, verbatim. Not a verdict."
           },
-          "chatUiOverride": {
-            "type": [
-              "object",
-              "null"
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "notEstablished"
+            ]
+          },
+          "verdictSource": {
+            "type": "string",
+            "enum": [
+              "policyV2",
+              "legacy",
+              "none"
             ],
-            "additionalProperties": true,
-            "description": "Send `null` to clear this field back to absent."
+            "description": "`policyV2` — the run's own decision, carried on `decision`; `verdict` is its verdict. `legacy` — a percent-threshold run predating policy v2; there is no decision object and any counts are trials. `none` — no verdict; `verdict` is `notEstablished` and `undecided` says why."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/EvalRunDecisionCounts"
+          },
+          "decision": {
+            "type": "object",
+            "description": "The run's authoritative v2 verdict decision, copied verbatim after validation — the same shape as `EvalRun.verdictSummary`, published at https://mcpjam.com/schemas/eval-verdict-policy/v2.json. Present exactly when `verdictSource` is `policyV2`."
+          },
+          "undecided": {
+            "$ref": "#/components/schemas/EvalRunDecisionUndecided"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/EvalRunDecisionDiagnostics"
           }
         }
       }
