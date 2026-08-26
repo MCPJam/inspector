@@ -108,28 +108,81 @@ describe("the router mounts every route it registers", () => {
     expect(index?.element).toBeUndefined();
   });
 
+  /** The mounted loader for a path in the `p/:projectId` sub-tree. */
+  function projectLoader(path: string | null) {
+    const child = (projectSubtree().children ?? []).find((candidate) =>
+      path === null ? candidate.index : candidate.path === path
+    );
+    const loader = child?.loader as ((args: any) => unknown) | undefined;
+    expect(loader).toBeTypeOf("function");
+    return loader!;
+  }
+
+  const VALID_PROJECT_ID = "k5700000000000000000000000a";
+
   it("does not redirect a malformed bare project prefix out of the boundary", async () => {
     // Loaders run BEFORE anything renders, so a redirect here escapes the
     // boundary entirely: `/p/none` would land on the unscoped legacy route and
     // adopt the viewer's own project — the user asks for one project and
     // silently gets another's home, while `/p/none/servers` reports itself
     // unavailable. The two have to agree.
-    const index = (projectSubtree().children ?? []).find(
-      (child) => child.index
-    );
-    const loader = index?.loader as ((args: any) => unknown) | undefined;
-    expect(loader).toBeTypeOf("function");
+    const loader = projectLoader(null);
 
-    const malformed = await loader!({ params: { projectId: "none" } });
-    expect(malformed).toBeNull();
+    expect(await loader({ params: { projectId: "none" } })).toBeNull();
 
     // A usable id still redirects to project home.
-    const valid = (await loader!({
-      params: { projectId: "k5700000000000000000000000a" },
+    const valid = (await loader({
+      params: { projectId: VALID_PROJECT_ID },
     })) as Response;
     expect(valid).toBeInstanceOf(Response);
+    expect(valid.headers.get("Location")).toBe(`/p/${VALID_PROJECT_ID}/home`);
+  });
+
+  it.each([
+    ["a null id", null],
+    ["an empty id", ""],
+    ["a missing param", undefined],
+    ["a local placeholder", "none"],
+    ["a local uuid", "3f1a2b4c-5d6e-7f80-9012-3456789abcde"],
+    ["an uppercase id", "K5700000000000000000000000A"],
+  ])("refuses to redirect the bare prefix for %s", async (_case, projectId) => {
+    // Every one of these reaches the loader as a path segment the contract
+    // rejects, and the failure mode is identical for all of them: any redirect
+    // at all leaves the boundary. `buildProjectPath` would refuse to put the
+    // id back in the canonical position and hand back a bare `/home`.
+    expect(await projectLoader(null)({ params: { projectId } })).toBeNull();
+  });
+
+  it("keeps a malformed project's legacy alias inside the boundary", async () => {
+    // `/p/none/clients` used to redirect to the unscoped `/hosts`, where the
+    // root normalizer adopted the viewer's own project. Same escape as the
+    // bare prefix, one loader over — which is why the guard now lives in the
+    // wrapper every loader in this sub-tree goes through, not in each loader.
+    const loader = projectLoader("clients");
+    expect(await loader({ params: { projectId: "none" } })).toBeNull();
+
+    const valid = (await loader({
+      params: { projectId: VALID_PROJECT_ID },
+    })) as Response;
+    expect(valid.headers.get("Location")).toBe(`/p/${VALID_PROJECT_ID}/hosts`);
+  });
+
+  it("does not redirect a malformed project's /ci-evals to itself", async () => {
+    // The rewrite is an anchored `^/ci-evals`, which matches nothing in
+    // `/p/none/ci-evals`. The loader handed back the path it was given, so the
+    // route redirected to itself — a loop rather than the unavailable state.
+    const loader = projectLoader("ci-evals/*");
+    const request = new Request("http://localhost/p/none/ci-evals/abc");
+    expect(await loader({ params: { projectId: "none" }, request })).toBeNull();
+
+    const valid = (await loader({
+      params: { projectId: VALID_PROJECT_ID },
+      request: new Request(
+        `http://localhost/p/${VALID_PROJECT_ID}/ci-evals/abc`
+      ),
+    })) as Response;
     expect(valid.headers.get("Location")).toBe(
-      "/p/k5700000000000000000000000a/home"
+      `/p/${VALID_PROJECT_ID}/evals/runs/abc`
     );
   });
 

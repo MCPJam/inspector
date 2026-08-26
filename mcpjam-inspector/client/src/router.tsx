@@ -286,26 +286,48 @@ const ROUTE_ELEMENTS: Record<
 };
 
 /**
- * Scope-aware redirect loader.
+ * The wrapper EVERY loader in the `p/:projectId` sub-tree goes through.
  *
- * A legacy alias registered under `/p/<id>` must redirect WITHIN that project:
- * `/p/A/clients` → `/p/A/hosts`, not `/hosts` (which would bounce through the
- * legacy normalizer and re-resolve the project from persisted state — the
- * long way round to the same place, with a chance of landing somewhere else).
+ * It does two things, and both are things a loader gets wrong by omission —
+ * which is why this is a wrapper applied to all of them rather than a rule
+ * each loader is trusted to remember. Loaders run BEFORE anything renders, so
+ * a loader that redirects has already escaped `ProjectRouteBoundary`; nothing
+ * downstream can put the user back inside it.
+ *
+ * 1. A URL claiming a project the path contract rejects gets NO redirect at
+ *    all. `/p/none/clients` would otherwise redirect to the unscoped `/hosts`,
+ *    the root legacy normalizer would adopt the viewer's own project, and
+ *    someone who asked for one project would silently land in another's — while
+ *    `/p/none/servers`, which has no loader, correctly reports itself
+ *    unavailable. Returning null leaves the URL alone so the boundary renders
+ *    the same generic unavailable state for both.
+ *
+ *    It also breaks a redirect loop: `ciEvalsRedirect` rewrites an anchored
+ *    `^/ci-evals`, which matches nothing in `/p/none/ci-evals`, so the loader
+ *    handed back the path it was given and redirected the route to itself.
+ *
+ * 2. A redirect that comes back unscoped is re-scoped to the project in the
+ *    URL. A legacy alias under `/p/A` must land WITHIN A: `/p/A/clients` →
+ *    `/p/A/hosts`, not `/hosts` (which bounces through the legacy normalizer
+ *    and re-resolves the project from persisted state — the long way round to
+ *    the same place, with a chance of landing somewhere else).
+ *
+ * Both read the project from `params`, not from the request URL: the param is
+ * what the router matched, and it keeps the wrapper callable without a Request.
  */
-function withProjectScopedRedirect(
+function withProjectScopedLoader(
   loader: (args: any) => unknown
 ): (args: any) => unknown {
   return async (args: any) => {
+    const projectId = String(args.params?.projectId ?? "");
+    if (!isProjectIdShape(projectId)) return null;
     const result = await loader(args);
     if (!(result instanceof Response)) return result;
     if (result.status < 300 || result.status >= 400) return result;
     const location = result.headers.get("Location");
     if (!location) return result;
     if (parseProjectPath(location)) return result;
-    const scoped = parseProjectPath(new URL(args.request.url).pathname);
-    if (!scoped) return result;
-    return redirect(buildProjectPath(scoped.projectId, location));
+    return redirect(buildProjectPath(projectId, location));
   };
 }
 
@@ -368,29 +390,26 @@ function buildRouteChildren() {
       // `/p/<id>` alone is not a destination — project HOME is. Redirecting
       // rather than rendering Home here keeps one canonical URL per screen.
       //
-      // A MALFORMED id is not redirected at all. `buildProjectPath` refuses to
-      // put one in the canonical position, so it would hand back the bare
-      // `/home` — and loaders run before anything renders, so `/p/none` would
-      // leave the boundary entirely, land on the unscoped legacy route, and
-      // adopt the viewer's own project. The user asked for one project and
-      // silently got another's home, while `/p/none/servers` correctly
-      // reported itself unavailable. Falling through to the boundary is what
-      // makes those two agree.
+      // Through the same wrapper as every other loader here, so the malformed
+      // case cannot drift between them: it was fixed on this loader first and
+      // was still live on `clients` and `ci-evals` until the guard moved into
+      // the wrapper.
       return {
         index: true as const,
-        loader: ({ params }: any) => {
-          const projectId = String(params.projectId ?? "");
-          if (!isProjectIdShape(projectId)) return null;
-          return redirect(
-            buildProjectPath(projectId, PROJECT_HOME_RELATIVE_PATH)
-          );
-        },
+        loader: withProjectScopedLoader(({ params }: any) =>
+          redirect(
+            buildProjectPath(
+              String(params.projectId),
+              PROJECT_HOME_RELATIVE_PATH
+            )
+          )
+        ),
       };
     }
     return routeChildFor(route, {
       ...rendered,
       ...(rendered.loader
-        ? { loader: withProjectScopedRedirect(rendered.loader) }
+        ? { loader: withProjectScopedLoader(rendered.loader) }
         : {}),
     });
   });
