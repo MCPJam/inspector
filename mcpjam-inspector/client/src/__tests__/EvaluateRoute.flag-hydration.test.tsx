@@ -87,8 +87,10 @@ afterEach(() => {
  * the `Navigate` marker mocked above still renders, and with no project in the
  * URL the target is the plain logical path these assertions expect.
  */
-function renderRoute(element: React.ReactElement) {
-  return render(<MemoryRouter>{element}</MemoryRouter>);
+function renderRoute(element: React.ReactElement, initialPath = "/evaluate") {
+  return render(
+    <MemoryRouter initialEntries={[initialPath]}>{element}</MemoryRouter>
+  );
 }
 
 describe("EvaluateRoute — evaluate-enabled guard", () => {
@@ -126,5 +128,23 @@ describe("EvaluateRoute — evaluate-enabled guard", () => {
     const nav = screen.getByTestId("navigate");
     expect(nav).toHaveAttribute("data-to", routePaths.evals);
     expect(screen.queryByTestId("evaluate-tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps the project in the URL when the flag bounces a scoped visit", () => {
+    // A flagged-out user who lands on a teammate's `/p/<id>/evaluate` link must
+    // arrive at THAT project's Evals tab. Dropping the prefix here would send
+    // them to whichever project the shell resolves from storage — the exact
+    // cross-project leak the canonical URLs exist to prevent.
+    //
+    // The id has to be Convex-shaped ([a-z0-9]{16,64}); `parseProjectPath`
+    // rejects anything else, so a placeholder like "project-1" would silently
+    // make this assertion pass for the wrong reason.
+    const projectId = "k5700000000000000000000000a";
+    flagState = false;
+    renderRoute(<EvaluateRoute />, `/p/${projectId}/evaluate`);
+    expect(screen.getByTestId("navigate")).toHaveAttribute(
+      "data-to",
+      `/p/${projectId}${routePaths.evals}`
+    );
   });
 });
