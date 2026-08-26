@@ -114,6 +114,15 @@ export default defineConfig(({ mode }) => {
   return {
     root: clientDir,
     envDir: rootDir,
+    // Vite would derive this from the nearest package.json, so every dev server
+    // started from this package shares one dep cache. The OAuth debugger e2e
+    // runs two at once, and the second one's re-optimization answers the first
+    // one's in-flight chunk request with `504 (Outdated Optimize Dep)` — the
+    // page never mounts. `CLIENT_CACHE_DIR` gives each server its own.
+    cacheDir: path.resolve(
+      rootDir,
+      env.CLIENT_CACHE_DIR || "node_modules/.vite",
+    ),
     plugins: [
       react(),
       tailwindcss(),
