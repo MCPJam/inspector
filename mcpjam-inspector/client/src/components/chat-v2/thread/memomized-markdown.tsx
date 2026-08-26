@@ -4,10 +4,12 @@ import {
   memo,
   useContext,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import { Streamdown, defaultUrlTransform, type UrlTransform } from "streamdown";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { cn } from "@/lib/utils";
 
 // Per-surface markdown rendering knobs for surfaces that inline content
 // authored elsewhere — e.g. the MCPJam Agent home, which streams docs from
@@ -77,9 +79,10 @@ const MAX_MARKDOWN_NESTING = 200;
 // Backstop for inputs that are merely enormous rather than deep.
 const MAX_MARKDOWN_CHARS = 512_000;
 
-// Cheap O(n) upper bound on nesting: `>` markers are one level each, leading
-// whitespace is over-counted at 4 columns per level. Over-counting only costs
-// a plain-text render, so it errs on the safe side.
+// Cheap O(n) proxy over the three nesting axes: `>` markers (one level each),
+// indentation (two columns per level, marked's tightest list nesting), and
+// `*`/`_` runs (two delimiters per emphasis level). Over-counting a deeply
+// indented code block only costs a plain-text render.
 function blockNestingDepth(markdown: string): number {
   let max = 0;
   let i = 0;
@@ -94,10 +97,28 @@ function blockNestingDepth(markdown: string): number {
       else break;
       i += 1;
     }
-    const depth = markers + (columns >> 2);
-    if (depth > max) max = depth;
-    while (i < markdown.length && markdown[i] !== "\n") i += 1;
+    // Longest `*`/`_` run on the line. marked's inline lexer recurses once per
+    // emphasis pair, so `"*".repeat(5000) + "x" + "*".repeat(5000)` overflows
+    // the stack — and the leading-whitespace scan above scores it 0.
+    let run = 0;
+    let longestRun = 0;
+    let previous = "";
+    while (i < markdown.length && markdown[i] !== "\n") {
+      const char = markdown[i];
+      if (char === "*" || char === "_") {
+        run = char === previous ? run + 1 : 1;
+        previous = char;
+        if (run > longestRun) longestRun = run;
+      } else {
+        run = 0;
+        previous = "";
+      }
+      i += 1;
+    }
     i += 1;
+
+    const depth = markers + (columns >> 1) + (longestRun >> 1);
+    if (depth > max) max = depth;
   }
   return max;
 }
@@ -127,7 +148,7 @@ function PlainTextMarkdown({
 }) {
   return (
     <pre
-      className={`whitespace-pre-wrap break-words font-sans ${className ?? ""}`}
+      className={cn("whitespace-pre-wrap break-words font-sans", className)}
       data-testid="markdown-plain-text"
     >
       {content}
@@ -167,9 +188,17 @@ function MarkdownBlocks({
   content: string;
   className?: string;
 }) {
-  const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
+  // One-way fuse per message, mirroring the boundary above. `useMemo` is keyed
+  // on the whole streaming content, so without it a payload that only the
+  // `try/catch` catches re-enters marked.lexer on every tick.
+  const failed = useRef(false);
+  const blocks = useMemo(
+    () => (failed.current ? null : parseMarkdownIntoBlocks(content)),
+    [content],
+  );
 
   if (blocks === null) {
+    failed.current = true;
     return <PlainTextMarkdown content={content} className={className} />;
   }
 
