@@ -267,3 +267,98 @@ describe("ConvertSessionDialogCore", () => {
     );
   });
 });
+
+/**
+ * D8f2 — the content-transfer acknowledgement.
+ *
+ * Three things worth pinning: it is asked ONLY when the server says so, it is
+ * REQUIRED rather than advisory, and an unticked box sends nothing. That last
+ * one matters most: a client that sent `true` regardless would stamp an audit
+ * record saying a person decided something they were never shown.
+ */
+describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => {
+  const ACK_DETAIL: PromoteSessionDetailState = {
+    ...READY_DETAIL,
+    requiresContentTransferAcknowledgement: true,
+  };
+
+  const ackCheckbox = () =>
+    screen.getByRole("checkbox", {
+      name: /copies a tester's content into a durable test case/i,
+    });
+
+  it("does not ask when the server did not say to", () => {
+    renderCore();
+    expect(
+      screen.queryByText(/Someone else wrote this transcript/i)
+    ).toBeNull();
+  });
+
+  it("asks when the server says this is someone else's transcript", () => {
+    renderCore({ detail: ACK_DETAIL });
+    expect(
+      screen.getByText(/Someone else wrote this transcript/i)
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/copies a tester's own words into a test case/i)
+    ).toBeTruthy();
+  });
+
+  it("is never pre-ticked", () => {
+    renderCore({ detail: ACK_DETAIL });
+    expect(ackCheckbox().getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("BLOCKS submit until it is ticked, rather than warning", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const submit = screen.getByRole("button", {
+      name: "Promote to test case",
+    });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(ackCheckbox());
+    expect(submit.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("is keyboard reachable and toggleable, and its label is the hit target", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    // A real control, not a div with a click handler: it takes focus and the
+    // accessible name comes from a <label htmlFor> bound to its own id.
+    expect(checkbox.getAttribute("id")).toBe("content-transfer-ack");
+    expect(checkbox.getAttribute("aria-describedby")).toBe(
+      "content-transfer-consequence"
+    );
+    checkbox.focus();
+    expect(document.activeElement).toBe(checkbox);
+
+    fireEvent.keyDown(checkbox, { key: " ", code: "Space" });
+    fireEvent.click(checkbox);
+    expect(checkbox.getAttribute("data-state")).toBe("checked");
+  });
+
+  it("sends the acknowledgement once it is ticked", async () => {
+    importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
+    renderCore({ detail: ACK_DETAIL });
+    fireEvent.click(ackCheckbox());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Promote to test case" })
+    );
+    await waitFor(() => expect(importAction).toHaveBeenCalled());
+    expect(importAction.mock.calls[0][0]).toMatchObject({
+      contentTransferAcknowledged: true,
+    });
+  });
+
+  it("sends NOTHING when it was never asked for", async () => {
+    importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
+    renderCore();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Promote to test case" })
+    );
+    await waitFor(() => expect(importAction).toHaveBeenCalled());
+    expect(importAction.mock.calls[0][0]).not.toHaveProperty(
+      "contentTransferAcknowledged"
+    );
+  });
+});
