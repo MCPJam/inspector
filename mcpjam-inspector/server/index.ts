@@ -10,6 +10,7 @@ import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
+import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -144,6 +145,10 @@ import {
   applyHostedPartition,
   mountHostedOpenRoutes,
 } from "./middleware/hosted-partition";
+import {
+  applySandboxHostPartition,
+  assertSandboxIsolation,
+} from "./middleware/sandbox-host-partition";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -406,7 +411,8 @@ app.use("*", async (c, next) => {
 });
 
 // ===== SECURITY MIDDLEWARE STACK =====
-// Order matters: headers -> origin validation -> strict partition -> session auth
+// Order matters: headers -> origin validation -> host partition -> strict
+// partition -> session auth
 
 // 1. Security headers (always applied)
 app.use("*", securityHeadersMiddleware);
@@ -414,14 +420,24 @@ app.use("*", securityHeadersMiddleware);
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
-// 3. Hosted mode partition blocks legacy API families (health + public
+// 3. Sandbox-host partition: a DNS name that exists to hold untrusted widget
+// content serves the sandbox proxy and /health, and 404s the rest — no app
+// shell, no assets, no API. Mounted here rather than in the production static
+// block below because the API routers mount before that block.
+applySandboxHostPartition(app);
+
+// 4. Hosted mode partition blocks legacy API families (health + public
 // catalog exempt). Shared with server/app.ts via applyHostedPartition — keep
 // the allowlist in middleware/hosted-partition.ts, not inline here.
 if (HOSTED_MODE) {
   applyHostedPartition(app);
+  // Whether widget content actually has an origin of its own is a fact about
+  // the DEPLOY, not about any page: only this process knows which hostnames it
+  // was supposed to answer as. Loud, and deliberately not fatal.
+  assertSandboxIsolation();
 }
 
-// 4. Session authentication (blocks unauthorized API requests)
+// 5. Session authentication (blocks unauthorized API requests)
 app.use("*", sessionAuthMiddleware);
 
 // ===== END SECURITY MIDDLEWARE =====
@@ -836,6 +852,7 @@ const server = serve({
 // class the 08-11 Cloudflare 502 fell into. Must be attached before traffic
 // arrives; it also owns the `clientError` response (see the module).
 attachSocketDiagnostics(server);
+startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 

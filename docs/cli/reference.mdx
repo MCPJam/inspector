@@ -456,9 +456,37 @@ The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `un
 
 ---
 
-## `cloud hosts` commands
+## `cloud clients` commands
 
-Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+Manage the clients saved in your hosted MCPJam projects — the named, reusable
+configurations that define how MCPJam connects to and talks to your MCP servers.
+Every `clients` command that contacts Cloud requires an `sk_` API key (via
+`--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior
+`mcpjam cloud login`. `clients templates` is the exception: it prints the
+built-in template list from the bundled SDK and needs no credential.
+
+`mcpjam cloud hosts …` still works as a command alias, and every command accepts
+`--host` as a deprecated spelling of `--client`. Passing both `--client` and
+`--host` is a usage error rather than a silent precedence rule.
+
+### Editing safely: `configId` and `expectedConfigId`
+
+A client's config is immutable and content-addressed: `configId` identifies the
+exact settings, so the same id means byte-identical settings. Every config edit
+takes the `configId` you last read as `expectedConfigId`, and a rename takes the
+`name` you last read as `expectedName`. If someone else edited the client since
+you read it, the write is refused with a `409` naming the current value instead
+of silently reverting their edit.
+
+The loop is always the same:
+
+```bash
+mcpjam cloud clients get --client "Claude"        # note configId + name
+mcpjam cloud clients update --client "Claude" \
+  --set temperature=0.2 --expected-config-id hc_01J8...
+```
+
+On a conflict, re-run `get` and retry with the fresh value.
 
 ### Shared platform flags
 
@@ -467,51 +495,115 @@ Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands requ
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `cloud hosts templates`
+### `cloud clients templates`
 
-List the built-in host templates usable with `mcpjam cloud hosts create --template`. No additional flags.
+List the built-in templates usable with `mcpjam cloud clients create --template`. No additional flags.
 
-### `cloud hosts list`
+### `cloud clients list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `cloud hosts get`
+Clients that exist only as the private backing of a User Testing scenario are
+omitted, matching the Clients tab.
+
+### `cloud clients get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `cloud hosts create`
+Returns the resolved config, the `configId` every edit takes, and `impact` — the
+live environments, scenario attachments and active legacy journeys a config edit
+would follow.
+
+### `cloud clients create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--name <name>` | Yes | Display name for the new host |
+| `--name <name>` | Yes | Display name for the new client |
 | `--project <id-or-name>` | No | Project name or ID |
-| `--template <id>` | No | Built-in template ID (see `hosts templates`), e.g. `claude`, `chatgpt`, `cursor` |
+| `--template <id>` | No | Built-in template ID (see `clients templates`), e.g. `claude`, `chatgpt`, `cursor` |
 | `--theme <theme>` | No | Theme for the seeded config: `light` or `dark` (template only) |
-| `--file <path>` | No | Host config v2 JSON file (or `-` for stdin) |
-| `--json <json>` | No | Inline host config v2 JSON (or `@file`, or `-`) |
+| `--file <path>` | No | Client config v2 JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline client config v2 JSON (or `@file`, or `-`) |
 
 Provide either `--template` or `--file`/`--json`, not both.
 
-### `cloud hosts update`
+### `cloud clients update`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
-| `--name <name>` | No | New display name |
-| `--file <path>` | No | Replacement host config v2 JSON (or `-` for stdin) |
-| `--json <json>` | No | Inline replacement host config v2 JSON (or `@file`, or `-`) |
+| `--name <name>` | No | New display name (requires `--expected-name`) |
+| `--expected-name <name>` | With `--name` | The `name` you last read |
+| `--expected-config-id <id>` | With any config edit | The `configId` you last read |
+| `--set <key=value>` | No | Set one field. Repeatable |
+| `--unset <key>` | No | Clear an optional field, or reset a required one to its default. Repeatable |
+| `--file <path>` | No | Replacement client config v2 JSON (or `-` for stdin) |
+| `--json <json>` | No | Inline replacement client config v2 JSON (or `@file`, or `-`) |
 
-### `cloud hosts delete`
+Use either `--set`/`--unset` or `--file`/`--json`, not both. Prefer `--set`: a
+whole-config replacement composed from a stale read reverts anything that landed
+in between.
+
+#### `--set` field types
+
+Values are parsed by the FIELD, never guessed from what the value looks like —
+so `--set systemPrompt='{"a":1}'` sets that literal string, and a
+`--set temperature=0.2x` typo fails locally instead of reaching the API as a
+string.
+
+| Field | Value | `--unset` |
+|-------|-------|-----------|
+| `modelId` | string | Not allowed — a client cannot be edited into one that pins no model |
+| `systemPrompt` | string | Resets to `""` |
+| `temperature` | number | Resets to `0.7` |
+| `requireToolApproval` | `true` \| `false` | Resets to `false` |
+| `connectionDefaults` | JSON object | Resets to the platform defaults |
+| `respectToolVisibility` | `true` \| `false` | Clears |
+| `progressiveToolDiscovery` | `true` \| `false` | Clears |
+| `harness` | string (`claude-code` \| `codex`) | Clears |
+| `computer` | JSON object | Clears |
+| `builtInToolIds` | JSON array | Clears |
+| `skillSelection` | JSON object | Clears |
+| `modelVisibleMcpToolResults` | JSON object | Clears |
+| `mcpToolResultImageRendering` | JSON object | Clears |
+| `mcpProfile` | JSON object | Clears |
+| `hostCapabilitiesOverride` | JSON object | Clears |
+| `chatUiOverride` | JSON object | Clears |
+
+Object-valued fields are whole-object replacements, not merges. To change a deep
+knob, read the client, overlay the sub-object, and send the whole object back.
+
+### `cloud clients servers`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--host <id-or-name>` | Yes | Host name or ID |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--server-ids <id,...>` | Yes | Comma-separated required server IDs |
+| `--expected-config-id <id>` | Yes | The `configId` you last read |
+| `--optional-server-ids <id,...>` | No | Comma-separated optional server IDs |
+| `--project <id-or-name>` | No | Project name or ID |
+
+This REPLACES the server set: every server you leave out is detached.
+
+### `cloud clients duplicate`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--name <name>` | No | Name for the new client |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud clients delete`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ---
@@ -1198,11 +1290,12 @@ run before evaluating it.
 | `--no-gating-score-errors` | No | Fail if any gating scorer errored |
 | `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
 | `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
-| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. SHA baselines are not supported yet — pass a run id |
-| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` |
-| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` |
-| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` |
-| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` |
+| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. Mutually exclusive with `--baseline-sha` |
+| `--baseline-sha <sha>` | No | Baseline **source commit SHA**, resolved server-side to the completed run in this suite recorded against it. Mutually exclusive with `--baseline` |
+| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` or `--baseline-sha` |
+| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
+| `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
+| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
@@ -1211,24 +1304,68 @@ run before evaluating it.
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
 
-**`--baseline`.** Passing a run ID fetches the same run comparison
-`cloud eval compare` uses and folds a regression verdict into the same report
-and exit code as the threshold flags above — `--baseline` alone enables the
-pass-rate regression gate with its default tuning; the four tuning flags need
-`--baseline` to mean anything and are a usage error without it. A case set
-that changed, was added or removed, or ran an unequal iteration count between
-the two runs makes the whole-run pass-rate and p95-latency gates
+**`--baseline` / `--baseline-sha`.** Either flag fetches the same run
+comparison `cloud eval compare` uses and folds a regression verdict into the
+same report and exit code as the threshold flags above — either one alone
+enables the pass-rate regression gate with its default tuning; the four tuning
+flags need a baseline to mean anything and are a usage error without one. A
+case set that changed, was added or removed, or ran an unequal iteration count
+between the two runs makes the whole-run pass-rate and p95-latency gates
 non-gateable (exit `3`) rather than a silent pass or a misread regression;
 the deterministic per-case regression gate is exempt and can still fail
-(exit `1`) on a matching case. SHA baselines (`--baseline <sha>`) are not
-supported yet and are rejected as a usage error.
+(exit `1`) on a matching case.
+
+The two are **mutually exclusive** — passing both is a usage error (exit `2`).
+There is deliberately no single flag that guesses which kind you meant: a
+Convex run ID is an opaque string with no documented format, and an
+abbreviated commit SHA is indistinguishable from one by construction, so the
+kind is named by the flag rather than inferred. A commit SHA passed to
+`--baseline` is rejected with a pointer to `--baseline-sha` instead of being
+sent as a doomed run lookup.
+
+A SHA that matches no completed run in the suite is **not** an error: it is the
+ordinary "no baseline" outcome, `incomplete` (exit `3`), which means the
+comparison established nothing — never a regression. When the SHA matched more
+than one eligible run, or the lookup was truncated before it could prove
+uniqueness, the gate report's baseline provenance records `baselineMatchCount`
+alongside `baselineMatchCountTruncated`; the count is a **floor**, not a total,
+so the two are always read together. An absent count means the match was
+unambiguous.
+
+Baseline provenance records both what was requested and what it resolved to —
+`requestedBaselineKind`, `requestedBaselineRunId` or
+`requestedBaselineCommitSha`, the backend-echoed `resolvedBaselineCommitSha`,
+and the resolved `baseRunId` — so an archived report can answer "which run did
+commit X compare against?" without the invocation that produced it. There is no
+automatic baseline selection: a baseline is compared only when one is pinned.
+
+**Gate waivers.** A run whose gate failed can be overridden by an authorized
+user, on the record, until an expiry they name — see
+[`cloud eval gate waive`](#cloud-eval-gate-waive) below. When a waiver is in
+force, `eval gate` reports the outcome as **`waived`** and exits `0`.
+
+`waived` is deliberately not the same as `passed`. The run keeps its own failed
+result, the failing verdicts stay in the report, and the waiver — **who** granted
+it, **why**, and **until when** — is named in every output format: the human
+report, `json-summary`, `junit-xml` (as a `<skipped>` element on the gate
+testcase, which does not fail the build and does not render as a clean green
+row), and `html` (its own badge and section, neither green nor red).
+
+Only a real verdict failure can be waived. An `incomplete` gate — a cancelled
+run, a `--wait` timeout, a network failure, non-gateable score evidence — keeps
+exit `3` no matter what waiver is on the run: a waiver granted because the evals
+regressed is not consent to ship on an infrastructure failure. A `usage_error`
+keeps exit `2` for the same reason.
+
+The CLI also re-derives the waiver's expiry itself rather than trusting the
+platform's `active` flag, so a lapsed waiver cannot keep a gate green.
 
 **Exit codes.** `eval gate` is the command that fails a build, so it is the one
 that maps a verdict onto an exit code. It keeps four:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Every requested gate passed |
+| `0` | Every requested gate passed, **or** a failed gate was waived |
 | `1` | An eval **verdict** failed. Reserved for exactly that |
 | `2` | Usage error — an unknown scorer, or a threshold out of range |
 | `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable (its score evidence did not verify) |
@@ -1243,6 +1380,62 @@ remapping it to the six-code scheme would invert pipelines that already
 retry on `3`. This is a deliberate compatibility exception for v1 — a
 six-code migration for `gate` is deferred behind a future opt-in flag, kept
 here so the exception stays documented rather than silently diverging.
+
+### `cloud eval gate waive`
+
+Override a **failing** run's gate until an expiry you name. Requires the manage
+tier, enforced by the platform — whoever launched the run gets no exception for
+having launched it.
+
+This does **not** make the run pass. The run keeps its `result`, and the waiver
+is reported by both things that read the gate: the GitHub Check Run and
+`eval gate` itself.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--reason <text>` | Yes | Why the gate is being overridden. Max 500 characters |
+| `--expires-in <duration>` | Yes | How long the waiver lasts: `30m`, `12h`, `7d`. Capped at 30 days |
+
+```bash
+mcpjam cloud eval gate waive --run run_123 --reason "hotfix ships today; regression tracked in ENG-4821" --expires-in 3d
+```
+
+<Warning>
+**The reason is stored unredacted, for the life of the suite.** It is readable
+by anyone who can see the suite and has no independent retention window. Never
+paste secrets, tokens, or customer data into it. The CLI prints this notice
+before it accepts a reason.
+</Warning>
+
+A bare number is rejected: `--expires-in 7` is ambiguous between seven minutes
+and seven days, and the difference is a gate that reopens before lunch or three
+weeks later. The 30-day cap is enforced by the platform, so the refusal names
+the cap and what to do instead.
+
+Waiving a run that already has a waiver in force is a **conflict**, not a second
+waiver: the existing one is reported back and is left untouched, because two
+active waivers would make "which reason is on the check" a race.
+
+### `cloud eval gate unwaive`
+
+Revoke a waiver, putting the gate and the GitHub Check Run back.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--waiver <id>` | No | Waiver to revoke. Omit to revoke whichever is in force over `--run` |
+
+```bash
+mcpjam cloud eval gate unwaive --run run_123
+```
+
+Idempotent. A second revoke reports the **original** revocation rather than
+restamping it — that is a success, not an error, and it preserves the record of
+who actually ended the waiver. An already-expired waiver can still be revoked;
+the audit trail distinguishes "this was wrong" from "this ran out".
 
 ### `cloud eval trace`
 

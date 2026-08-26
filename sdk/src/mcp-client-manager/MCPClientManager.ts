@@ -91,6 +91,8 @@ import {
   wrapTransportForLogging,
   wrapTransportForTaskResults,
   wrapTransportForFirstPageOnly,
+  wrapTransportForDroppedListChanged,
+  wrapFetchForNoListenChannel,
   wrapFetchForTaskRouting,
   TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
@@ -2614,12 +2616,15 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = this.applyFirstPageOnly(
+    const transport = this.applyDroppedListChanged(
       config,
-      wrapTransportForTaskResults(
-        logger
-          ? wrapTransportForLogging(serverId, logger, underlying)
-          : underlying
+      this.applyFirstPageOnly(
+        config,
+        wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, underlying)
+            : underlying
+        )
       )
     );
 
@@ -2749,12 +2754,15 @@ export class MCPClientManager {
       client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = this.applyFirstPageOnly(
+        const wrapped = this.applyDroppedListChanged(
           config,
-          wrapTransportForTaskResults(
-            logger
-              ? wrapTransportForLogging(serverId, logger, streamableTransport)
-              : streamableTransport
+          this.applyFirstPageOnly(
+            config,
+            wrapTransportForTaskResults(
+              logger
+                ? wrapTransportForLogging(serverId, logger, streamableTransport)
+                : streamableTransport
+            )
           )
         );
         await client.connect(wrapped, {
@@ -2842,19 +2850,26 @@ export class MCPClientManager {
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
-      fetch: this.buildTransportFetch(serverId, config),
+      // `listenGuard: false` — see `buildTransportFetch`. On this transport a
+      // GET SSE is the connection, not the listen channel, so `listens:false`
+      // is a documented no-op here rather than a connection failure (a real
+      // client on HTTP+SSE cannot not-listen either).
+      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = this.applyFirstPageOnly(
+      const wrapped = this.applyDroppedListChanged(
         config,
-        wrapTransportForTaskResults(
-          logger
-            ? wrapTransportForLogging(serverId, logger, sseTransport)
-            : sseTransport
+        this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, sseTransport)
+              : sseTransport
+          )
         )
       );
       await client.connect(wrapped, { timeout });
@@ -3678,7 +3693,20 @@ export class MCPClientManager {
    */
   private buildTransportFetch(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    /**
+     * Streamable HTTP only. The listen guard identifies the notification
+     * stream as "a GET with `Accept: text/event-stream`" — under Streamable
+     * HTTP that IS the standalone listen stream, but under the legacy
+     * `SSEClientTransport` the very same request is how the transport OPENS
+     * the connection (`_startOrAuth` in @modelcontextprotocol/client sends it
+     * through this injected fetch with that header). Guarding it there would
+     * 405 the connection itself and make every SSE-only server unreachable
+     * for any profile carrying `listens: false` — including the shipped
+     * ChatGPT template. Header inspection cannot separate the two cases, so
+     * the CALLER declares which transport is asking.
+     */
+    options?: { listenGuard?: boolean }
   ): typeof fetch {
     const httpLogger = this.resolveHttpLogger(config);
     // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
@@ -3686,11 +3714,17 @@ export class MCPClientManager {
     // added above it, and the logger has to record the bytes that guard sent.
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
-    return wrapFetchForTaskRouting(
-      httpLogger
-        ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
-        : baseFetch
-    );
+    const logged = httpLogger
+      ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
+      : baseFetch;
+    // ABOVE the logger deliberately: a refused listen stream never reaches the
+    // network, so logging it would invent a request that was not made. The
+    // absence in the log IS the observation.
+    const listenGuarded =
+      config.suppressListenChannel === true && options?.listenGuard !== false
+        ? wrapFetchForNoListenChannel(logged)
+        : logged;
+    return wrapFetchForTaskRouting(listenGuarded);
   }
 
   private cacheToolsMetadata(
@@ -4095,6 +4129,23 @@ export class MCPClientManager {
   ): Transport {
     return config.firstPageOnly === true
       ? wrapTransportForFirstPageOnly(transport)
+      : transport;
+  }
+
+  /**
+   * Drop `notifications/tools/list_changed` before the client sees it, for a
+   * host whose `mcpProfile.toolListChanged.refetches` is `false`.
+   *
+   * Composed alongside `applyFirstPageOnly` at every transport site: both are
+   * inbound-frame edits, and both belong outside the logging transport so the
+   * wire log keeps what the server really sent.
+   */
+  private applyDroppedListChanged(
+    config: { dropToolListChanged?: boolean },
+    transport: Transport
+  ): Transport {
+    return config.dropToolListChanged === true
+      ? wrapTransportForDroppedListChanged(transport)
       : transport;
   }
 

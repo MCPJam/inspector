@@ -395,6 +395,11 @@ describe("POST /v1/chat-sessions/messages", () => {
     expect(body.persisted.outcome).toBe("duplicate");
     expect(body.turnId).toBe("turn_7");
     expect(body.replay).toBe(true);
+    // A CONTINUATION never sends a project — this one comes off the session
+    // row. It is the only thing in the response that says where the session
+    // lives, and a caller composing the session's app URL has nothing else
+    // to read it from.
+    expect(body.projectId).toBe(PROJECT);
     // The lease claim is the ONLY mutation: no second turn, no second bill.
     expect(mutationMock).toHaveBeenCalledTimes(1);
     expect(mutationMock.mock.calls[0]![0]).toBe("chatSessions:claimTurnLease");

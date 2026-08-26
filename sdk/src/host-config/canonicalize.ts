@@ -105,6 +105,7 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "cspConnectDomains",
   "cspResourceDomains",
   "resourceCacheTtl",
+  "toolResult",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -846,6 +847,21 @@ function canonicalizeMcpProfile(
     }
   }
 
+  // Sibling to the enum-typed conformance knobs above, but a nested boolean
+  // record (two independently-measured facts) rather than a mode string.
+  // Same omit-when-absent discipline: absent -> spec-conforming, hashes
+  // stable.
+  if (input.toolListChanged !== undefined) {
+    const listChanged = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolListChanged",
+      input.toolListChanged,
+      ["listens", "refetches"]
+    );
+    if (Object.keys(listChanged).length > 0) {
+      out.toolListChanged = listChanged;
+    }
+  }
+
   // A legacy pin must be one of the versions accepted by initialize. Derive a
   // missing list because initialize needs one. Modern pins use server/discover
   // and are deliberately separate from the legacy initialize accept-list.
@@ -1008,6 +1024,21 @@ function canonicalizeMcpProfile(
           )[k];
         }
         sandboxOut.permissions = sortedPerms;
+      }
+
+      if (
+        (sandboxIn as { browserStorage?: unknown }).browserStorage !== undefined
+      ) {
+        const browserStorage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.browserStorage",
+          (sandboxIn as { browserStorage?: unknown }).browserStorage,
+          ["localStorage", "sessionStorage", "indexedDB"]
+        );
+        if (Object.keys(browserStorage).length > 0) {
+          (
+            sandboxOut as { browserStorage?: Record<string, boolean> }
+          ).browserStorage = browserStorage;
+        }
       }
 
       if (
@@ -1235,6 +1266,52 @@ function canonicalizeMcpProfile(
           );
           if (Object.keys(domains).length > 0) {
             mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
+        } else if (key === "toolResult") {
+          // Two levels: a flat `structuredContent` boolean and a nested
+          // `content` record of ContentBlock kinds. Both collapse to absent
+          // when empty so a probe that measured nothing hashes identically
+          // to a config that never mentioned the field.
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult must be a plain object"
+            );
+          }
+          for (const k of Object.keys(value)) {
+            if (k !== "structuredContent" && k !== "content") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult has unknown key "${k}"`
+              );
+            }
+          }
+          const toolResultOut: NonNullable<McpAppsCapabilities["toolResult"]> =
+            {};
+          if (value.structuredContent !== undefined) {
+            if (typeof value.structuredContent !== "boolean") {
+              throw new Error(
+                "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent must be a boolean"
+              );
+            }
+            toolResultOut.structuredContent = value.structuredContent;
+          }
+          if (value.content !== undefined) {
+            const content = canonicalBooleanCapabilityRecord(
+              "mcpProfile.apps.mcpAppsOverrides.toolResult.content",
+              value.content,
+              ["text", "image", "audio", "resource", "resourceLink"]
+            );
+            if (Object.keys(content).length > 0) {
+              toolResultOut.content = content;
+            }
+          }
+          if (Object.keys(toolResultOut).length > 0) {
+            const sortedToolResult = {} as typeof toolResultOut;
+            for (const k of Object.keys(toolResultOut).sort()) {
+              (sortedToolResult as Record<string, unknown>)[k] = (
+                toolResultOut as Record<string, unknown>
+              )[k];
+            }
+            mcpAppsOverridesOut.toolResult = sortedToolResult;
           }
         } else if (key === "widgetDisplayModeRequests") {
           if (

@@ -21,11 +21,28 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/server/valida
 import { createSessionToolRegistrar } from "./tools/sessionToolRegistrar.js";
 import { registerPlatformCatalogTools } from "./tools/platformTools.js";
 import { registerShowServersTool } from "./tools/showServers.js";
+import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
 
 const SERVER_INFO = {
   name: "MCPJam MCP",
   version: "0.2.0",
 } as const;
+
+/**
+ * What a model must do with the links these tools return.
+ *
+ * ONE rule, because it is the one this worker cannot enforce from the
+ * outside. Tool results carry a `permalinks` array and a matching text line;
+ * a model that instead assembles `app.mcpjam.com/<something>` from an id
+ * produces a URL with no project in it, which opens whichever project the
+ * READER last selected — a link that looks right, resolves, and shows the
+ * wrong data.
+ */
+const SERVER_INSTRUCTIONS = [
+  "Tool results may include a `permalinks` array; the text output repeats each one as a `Label: https://…` line.",
+  "Hand those URLs to the user EXACTLY as written. Never invent, shorten, or rewrite an MCPJam app URL, and never build one from an id — a hand-made link opens whichever project the reader last selected, not the one you are describing.",
+  "When a result has no permalink, give the id and say which MCPJam screen it lives on.",
+].join("\n");
 
 /**
  * Everything a platform tool needs from the request it is executing under.
@@ -36,7 +53,7 @@ const SERVER_INFO = {
 export interface PlatformToolContext {
   /** The bearer to authenticate Platform API calls with (see `getBearerToken`). */
   getBearerToken(): Promise<string | undefined>;
-  runtimeEnv: { PLATFORM_API_URL: string };
+  runtimeEnv: { PLATFORM_API_URL: string; MCPJAM_APP_ORIGIN: string };
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
@@ -136,6 +153,10 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
     ctx.requestInfo?.headers.get("cf-connecting-ip") ?? undefined;
 
   const server = new McpServer(SERVER_INFO, {
+    // The MCP equivalent of the hosted agent's prompt rule: this worker has no
+    // system prompt of its own, so `instructions` is the only place it can
+    // tell a model what to do with the URLs it hands back.
+    instructions: SERVER_INSTRUCTIONS,
     // The workerd default already resolves to this eval-free validator; passing
     // it explicitly pins that choice regardless of how the bundle is built.
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
@@ -143,7 +164,10 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
 
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
-    runtimeEnv: { PLATFORM_API_URL: requirePlatformApiUrl(env) },
+    runtimeEnv: {
+      PLATFORM_API_URL: requirePlatformApiUrl(env),
+      MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
+    },
   };
 
   const registrar = createSessionToolRegistrar(server);
@@ -202,6 +226,50 @@ function requirePlatformApiUrl(env: Env): string {
     throw new Error("Server misconfigured: PLATFORM_API_URL is not set");
   }
   return url;
+}
+
+/**
+ * Where a HUMAN opens the links this worker hands back.
+ *
+ * Explicit `MCPJAM_APP_ORIGIN` first. Falling back to the API URL's origin is
+ * not a guess: every configured environment serves the app and `/api/v1` from
+ * the same host, so a staging worker keeps minting staging links and a local
+ * one keeps minting localhost links without a config change. The hosted
+ * default is the last resort, and only reachable if `PLATFORM_API_URL` is
+ * itself unparseable — which `requirePlatformApiUrl` has already made
+ * unlikely.
+ *
+ * Never derived inside the SDK: `@mcpjam/sdk/platform` is runtime-agnostic and
+ * reads no ambient configuration, so every adapter answers this question for
+ * itself.
+ */
+function resolveAppOrigin(env: Env): string {
+  const explicit = env.MCPJAM_APP_ORIGIN?.trim();
+  if (explicit) {
+    try {
+      // PARSED, not trusted. `buildAppPermalink` rejects an origin with a path
+      // prefix, a query, credentials, or a non-http(s) scheme — and the
+      // adapter catches that rejection per link, so one malformed variable
+      // would silently strip every permalink from every tool result on the
+      // deployment, with nothing failing to point at the cause. Normalizing to
+      // `.origin` here also drops a trailing slash, which is the likeliest way
+      // for someone to write this by hand.
+      const parsed = new URL(explicit);
+      // The SCHEME too, not just parseability: `ftp://app.mcpjam.com` parses
+      // happily and `.origin` hands it straight back, so a protocol check is
+      // the difference between this guard working and merely appearing to.
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        return parsed.origin;
+      }
+    } catch {
+      // Fall through to the API origin rather than minting nothing at all.
+    }
+  }
+  try {
+    return new URL(requirePlatformApiUrl(env)).origin;
+  } catch {
+    return DEFAULT_MCPJAM_APP_ORIGIN;
+  }
 }
 
 /**

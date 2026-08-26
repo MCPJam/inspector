@@ -695,6 +695,145 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — toolListChanged / toolResult probe fields", () => {
+  it("round-trips both fields and omits them when absent", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false },
+          apps: {
+            mcpAppsOverrides: { toolResult: { structuredContent: false } },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      toolListChanged: { listens: false },
+      apps: { mcpAppsOverrides: { toolResult: { structuredContent: false } } },
+    });
+
+    const absent = canonicalizeHostConfigV2(base());
+    expect(absent.mcpProfile).toBeUndefined();
+  });
+
+  it("round-trips toolResult.content and sandbox.browserStorage", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              toolResult: {
+                structuredContent: true,
+                content: {
+                  text: true,
+                  image: false,
+                  audio: true,
+                  resource: false,
+                  resourceLink: true,
+                },
+              },
+            },
+            sandbox: {
+              browserStorage: {
+                localStorage: true,
+                sessionStorage: false,
+                indexedDB: true,
+              },
+            },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides?.toolResult).toEqual({
+      content: {
+        text: true,
+        image: false,
+        audio: true,
+        resource: false,
+        resourceLink: true,
+      },
+      structuredContent: true,
+    });
+    expect(c.mcpProfile?.apps?.sandbox?.browserStorage).toEqual({
+      localStorage: true,
+      sessionStorage: false,
+      indexedDB: true,
+    });
+  });
+
+  it("hashes an empty record the same as absent, so pre-feature configs keep their hash", async () => {
+    const emptyHash = await hash(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: {},
+          apps: {
+            mcpAppsOverrides: { toolResult: { content: {} } },
+            sandbox: { browserStorage: {} },
+          },
+        },
+      })
+    );
+    const absentHash = await hash(
+      base({ mcpProfile: { profileVersion: 1 } })
+    );
+    expect(emptyHash).toBe(absentHash);
+  });
+
+  it("throws on an unknown key rather than storing it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            toolListChanged: { subscribes: true } as never,
+          },
+        })
+      )
+    ).toThrow(/toolListChanged has unknown key "subscribes"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: { toolResult: { structured: true } as never },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult has unknown key "structured"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              mcpAppsOverrides: {
+                toolResult: { content: { video: true } } as never,
+              },
+            },
+          },
+        })
+      )
+    ).toThrow(/toolResult\.content has unknown key "video"/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpProfile: {
+            profileVersion: 1,
+            apps: {
+              sandbox: { browserStorage: { cookies: true } } as never,
+            },
+          },
+        })
+      )
+    ).toThrow(/sandbox\.browserStorage has unknown key "cookies"/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
   // Item 5: fail-fast on missing required record fields. The previous
   // `?? {}` coalescing silently merged undefined-cap rows with explicit-{}
