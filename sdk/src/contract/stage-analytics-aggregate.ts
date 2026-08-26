@@ -227,9 +227,16 @@ export function classifyStageAnalyticsTrial(
     };
   }
 
+  // Resolved from the chain's stamp, falling back to the measurements' own.
+  // A trial that carries only the latter is still a trial derived at that
+  // analyzer: reading just the top-level field would let a NEWER-source trial
+  // through the version gate and then stamp the row with the reader's version,
+  // which is the false-parity hole this whole check exists to close.
+  const observedAnalyzerVersion =
+    trial.stageAnalyzerVersion ?? trial.measurements?.stageAnalyzerVersion;
   if (
-    trial.stageAnalyzerVersion !== undefined &&
-    trial.stageAnalyzerVersion > readerStageAnalyzerVersion
+    observedAnalyzerVersion !== undefined &&
+    observedAnalyzerVersion > readerStageAnalyzerVersion
   ) {
     return { class: "version", detail: "chainVersionAhead" };
   }
@@ -530,8 +537,13 @@ export function aggregateStageAnalytics(
     }
 
     includedTrials += 1;
-    if (trial.stageAnalyzerVersion !== undefined) {
-      sourceAnalyzerVersions.add(trial.stageAnalyzerVersion);
+    // Same resolution as the version gate above — a trial stamped only on its
+    // measurements still contributes its analyzer version, or the row would
+    // report a source set it did not actually aggregate.
+    const observedAnalyzerVersion =
+      trial.stageAnalyzerVersion ?? trial.measurements?.stageAnalyzerVersion;
+    if (observedAnalyzerVersion !== undefined) {
+      sourceAnalyzerVersions.add(observedAnalyzerVersion);
     }
     if (trial.measurements !== undefined) {
       sourceMeasurementsVersions.add(trial.measurements.schemaVersion);

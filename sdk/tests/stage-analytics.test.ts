@@ -837,6 +837,40 @@ describe("the row itself", () => {
     expect(stageAnalyticsParityBlockers(uniform, uniform)).toEqual([]);
   });
 
+  test.each([
+    ["older", -1, true],
+    ["newer", 1, false],
+  ])(
+    "an %s measurement analyzer version counts even with no top-level stamp",
+    (_label, delta, included) => {
+      // A trial carrying the version only on its measurements is still a trial
+      // derived at that analyzer. Reading just the top-level field let a NEWER
+      // source through the version gate and then stamped the row with the
+      // reader's version — a false parity match.
+      const version = STAGE_ANALYZER_VERSION + delta;
+      const stageResults = chainOf({});
+      const row = aggregate([
+        trial({
+          stageResults,
+          stageAnalyzerVersion: undefined,
+          measurements: {
+            ...deriveStageMeasurements({ stageResults }),
+            stageAnalyzerVersion: version,
+          },
+        }),
+      ]);
+      if (included) {
+        expect(row.includedTrials).toBe(1);
+        expect(row.stageAnalyzerVersion).toBe(version);
+      } else {
+        expect(row.includedTrials).toBe(0);
+        expect(row.excludedTrialDetail.chainVersionAhead).toBe(1);
+        // Excluded, so it contributes no source version at all.
+        expect(row.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+      }
+    }
+  );
+
   test("a run with no included trials falls back to the reader's version", () => {
     // Zero observations make no semantic claim, so there is no source version.
     const row = aggregate([trial({ status: "cancelled" })]);
