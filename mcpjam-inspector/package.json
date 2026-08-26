@@ -36,6 +36,7 @@
   "files": [
     "bin",
     "dist",
+    "!dist/**/*.map",
     "assets/icon.ico",
     "assets/icon.icns",
     ".env.production",

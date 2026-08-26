@@ -5,9 +5,20 @@ import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+const clientOutDir = path.resolve(rootDir, "dist/client");
+// `sentryVitePlugin` globs its sourcemap paths with no `cwd`, so they resolve
+// against `process.cwd()` — `mcpjam-inspector/` under `npm run build:client -w
+// @mcpjam/inspector` — and not against the Vite root. The relative globs that
+// used to live here (`../dist/client/assets/**`) therefore resolved to the
+// REPO root, one level above the real output, and matched nothing. The plugin
+// reports that as a warning, not an error, so the build stayed green while
+// uploading no maps and deleting none. Absolute, and POSIX-separated because
+// glob does not accept Windows separators in a pattern.
+const clientOutGlobBase = clientOutDir.replace(/\\/g, "/");
 const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
@@ -111,6 +122,12 @@ if (typeof sdkVersion !== "string" || sdkVersion.trim() === "") {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, rootDir, "");
 
+  // Sentry `dist`. Set by whichever pipeline runs this build; a checkout that
+  // names no surface is `local`, and an unrecognised one throws — same
+  // reasoning as the `sdkVersion` guard above. Only the surfaces that build
+  // `dist/client` are accepted; the Electron renderer has its own config.
+  const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
+
   return {
     root: clientDir,
     envDir: rootDir,
@@ -134,10 +151,10 @@ export default defineConfig(({ mode }) => {
         // Must match the `release` the SDK inits with (`__APP_VERSION__`).
         // Without this the plugin invents its own release name from git and
         // the uploaded source maps never resolve against runtime events.
-        release: { name: appVersion },
+        release: { name: appVersion, dist: buildSurface },
         sourcemaps: {
-          assets: ["../dist/client/assets/**"],
-          filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"],
+          assets: [`${clientOutGlobBase}/assets/**`],
+          filesToDeleteAfterUpload: [`${clientOutGlobBase}/assets/**/*.map`],
         },
       }),
     ],
@@ -256,12 +273,13 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: path.resolve(rootDir, "dist/client"),
+      outDir: clientOutDir,
       sourcemap: true,
       emptyOutDir: true,
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SURFACE__: JSON.stringify(buildSurface),
       __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },
   };
