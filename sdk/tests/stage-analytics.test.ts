@@ -128,6 +128,38 @@ describe("stageRate — 0/0 is never a number", () => {
     expect(measuredPassRate(stageOf(row, "call")).state).toBe("notMeasured");
     expect(reachRate(stageOf(row, "call")).state).toBe("notMeasured");
   });
+
+  test("a run with NO TRIALS AT ALL still produces a valid row", () => {
+    // A run cancelled before its first iteration existed, or one whose every
+    // case was filtered or disabled. Ordinary outcomes, not error states.
+    //
+    // The `overall` slice must be present even here: it is the one slice every
+    // reader is promised and the schema requires exactly one. Built lazily by
+    // the first trial, a zero-trial run emitted `slices: []` and a row that
+    // failed this contract's own validator — turning an honest "nothing to
+    // measure" into an integrity failure at the write boundary.
+    const row = aggregate([]);
+    const parsed = evalStageAnalyticsSchema.safeParse(row);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.success).toBe(true);
+
+    const overall = overallOf(row);
+    expect(overall.includedTrials).toBe(0);
+    expect(row.totalTrials).toBe(0);
+    expect(row.slices).toHaveLength(1);
+    // No dimension values were observed, so none are invented — an "unknown
+    // model" row would invite a comparison against it.
+    expect(row.slices.map((s) => s.slice.dimension)).toEqual(["overall"]);
+
+    // Zero everywhere, and every rate notMeasured rather than 0.
+    for (const stage of USER_VALUE_STAGES) {
+      const tally = stageOf(row, stage);
+      expect(tally).toMatchObject({ applicable: 0, reached: 0, measured: 0 });
+      expect(measurementCoverageRate(tally).state).toBe("notMeasured");
+      expect(measuredPassRate(tally).state).toBe("notMeasured");
+      expect(reachRate(tally).state).toBe("notMeasured");
+    }
+  });
 });
 
 describe("the three formulas", () => {

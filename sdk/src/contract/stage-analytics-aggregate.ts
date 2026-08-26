@@ -401,6 +401,25 @@ export function aggregateStageAnalytics(
   }
 
   /**
+   * The `overall` slice exists from the start, before any trial is seen.
+   *
+   * Every other slice is created lazily by the trial that needs it, which is
+   * correct for dimension values — no trials means no models and no hosts to
+   * name, and inventing an "unknown" row would invite a comparison against it.
+   * `overall` is NOT a dimension value though: it is the one slice every reader
+   * is promised, and the schema requires exactly one of it.
+   *
+   * Created eagerly because a run with ZERO includable trials is a real and
+   * ordinary outcome — a run cancelled before its first iteration existed, or
+   * one whose every case was filtered or disabled. Left lazy, such a run
+   * produced `slices: []` and a row that failed this contract's own validator,
+   * turning an honest "nothing to measure" into an integrity failure at the
+   * write boundary. An empty overall funnel is the correct answer: zero
+   * everywhere, and every rate `notMeasured`.
+   */
+  sliceFor("overall", { dimension: "overall" }, "");
+
+  /**
    * Which slices one trial belongs to.
    *
    * A dimension whose value the trial does not carry produces NO slice for that
