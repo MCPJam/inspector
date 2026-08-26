@@ -288,12 +288,13 @@ export function SwarmsTab({
     () => parseSwarmSessionParams(window.location.search),
     []
   );
-  // Session deep-links open the flat Sessions browser; a run-only link needs
-  // the Journeys matrix / live stream, so it lands there. Everything else
-  // starts on the Overview.
+  // Session AND run deep-links open the flat Sessions browser: it is the only
+  // surface that still reads a run, and it takes the run as a filter
+  // (`journeyRunIds`) rather than dropping it. A persona-only link opens the
+  // library. Everything else starts on the Overview.
   const [viewMode, setViewMode] = useState<SwarmViewMode>(() => {
-    if (deepLink.threadId) return "sessions";
-    if (deepLink.runId || deepLink.personaRefId) return "journeys";
+    if (deepLink.threadId || deepLink.runId) return "sessions";
+    if (deepLink.personaRefId) return "journeys";
     // `?view=` is how leaving the create flow names its landing view, so a
     // reload of that URL lands in the same place.
     const requested = new URLSearchParams(window.location.search).get("view");
@@ -1278,6 +1279,9 @@ export function SwarmsTab({
               onPersonaRefIdChange={setSessionsPersonaFilter}
               initialThreadId={deepLink.threadId}
               runLabels={swarmRunLabels}
+              journeyRunIds={
+                deepLink.runId ? [deepLink.runId] : undefined
+              }
             />
           </main>
         )}

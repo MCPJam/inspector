@@ -514,10 +514,13 @@ export function NewSwarmCreateFlow({
 
   // The project's standing clustering settings. Only subscribed when the row
   // is actually rendered — an older backend without the query would otherwise
-  // make every create flow subscribe to a function that does not exist.
+  // make every create flow subscribe to a function that does not exist, and
+  // while the row is hidden there is nothing to feed.
   const insightsTuning = useQuery(
     SWARM_QUERIES.getSwarmInsightsTuning as any,
-    onSetInsightsTuning ? ({ projectId } as any) : "skip"
+    SHOW_INSIGHT_GROUPING && onSetInsightsTuning
+      ? ({ projectId } as any)
+      : "skip"
   ) as { tuning: ClusterTuning; source: string } | null | undefined;
 
   const handleSaveInsightsTuning = useCallback(
