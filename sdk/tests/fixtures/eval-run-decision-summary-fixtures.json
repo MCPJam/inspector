@@ -2304,7 +2304,7 @@
               }
             ],
             "error": "arguments rejected",
-            "stageAnalyzerVersion": 5,
+            "stageAnalyzerVersion": 6,
             "caseId": "c_ahead",
             "stageResults": [
               {
@@ -2466,10 +2466,10 @@
                 ],
                 "firstFailedStage": "call",
                 "failureCategory": "arguments",
-                "analyzerVersion": 5,
+                "analyzerVersion": 6,
                 "analyzerVersionAhead": {
-                  "reported": 5,
-                  "known": 4
+                  "reported": 6,
+                  "known": 5
                 }
               },
               "expected": {

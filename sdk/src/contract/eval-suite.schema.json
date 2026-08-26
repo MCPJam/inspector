@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcpjam.com/schemas/eval-suite/v1.json",
   "title": "MCPJam eval suite file (schemaVersion 1)",
-  "description": "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, and a per-case import block requiring top-level provenance) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
+  "description": "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, a per-case import block requiring top-level provenance, and a per-case import note being required when the claimed status is exact) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
   "type": "object",
   "properties": {
     "schemaVersion": { "type": "string", "const": "1" },
@@ -1059,8 +1059,12 @@
                 "type": "string",
                 "enum": ["exact", "approximated", "unsupported", "unresolved"]
               },
-              "sourceCaseKey": { "type": "string", "minLength": 1 },
-              "note": { "type": "string", "minLength": 1 }
+              "sourceCaseKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "note": { "type": "string", "minLength": 1, "maxLength": 2000 }
             },
             "required": ["status"],
             "additionalProperties": false

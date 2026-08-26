@@ -15,6 +15,7 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalSuiteFileCaseImport,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -732,6 +733,15 @@ export interface PlatformEvalRun {
    * predate the envelope.
    */
   judges?: PlatformEvalRunJudges;
+  /**
+   * Whether this run's imported cases carry evidence a gate may rely on.
+   *
+   * ABSENT means an API deployment that predates import eligibility — a
+   * different fact from `legacy`, and one a gate must treat as "no opinion,
+   * behave as before" rather than as "no imported cases". Present on the
+   * detail response; lists stay compact.
+   */
+  importEligibility?: PlatformImportEligibility;
 }
 
 /**
@@ -1434,8 +1444,90 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here. ABSENT means natively authored — a different fact from
+   * "imported, faithfulness unknown", and one nothing downstream can recover
+   * once the two are conflated.
+   */
+  import?: PlatformEvalCaseImportClaim;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * What a converter CLAIMED about one imported case.
+ *
+ * `exact` is CONVERTER-CLAIMED exact: the converter says it applied a
+ * structural mapping rule, cited in `note`. MCPJam has NOT verified semantic
+ * equivalence and this field is not evidence that it did — user-facing copy
+ * must say "claimed exact", never "verified" or "accepted".
+ *
+ * Claim-only in both directions. Who approved an approximation, when, and why
+ * is a PER-RUN decision that lives on the run's frozen snapshot
+ * ({@link PlatformImportApprovalReceipt}), never on the case: an approval
+ * stored on a case would outlive the run it was granted for and the edit that
+ * invalidated it.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated. A claim a
+ * converter writes into a file is exactly a claim the API carries, so a second
+ * spelling here is only an opportunity for the two to disagree about what a
+ * claim is — and the disagreement would surface at somebody's ingest, not ours.
+ */
+export type PlatformEvalCaseImportClaim = EvalSuiteFileCaseImport;
+
+/**
+ * One frozen approval of an approximated import, as the run recorded it.
+ *
+ * Every field here was written by the SERVER at launch. The launcher supplied
+ * a case id and a reason; the actor and the timestamp were derived, and the
+ * whole record was frozen into the run's own case snapshot. Reading it back
+ * therefore tells you what was true at launch, which is the only question a
+ * receipt can honestly answer — never what the case's current claim says.
+ */
+export interface PlatformImportApprovalReceipt {
+  testCaseId: string;
+  caseKey?: string;
+  sourceCaseKey?: string;
+  approvedBy: string;
+  approvedAt: number;
+  reason: string;
+}
+
+/** One reason a run's import evidence is incomplete. */
+export interface PlatformImportEligibilityIssue {
+  /** Stable machine-readable code from the platform. */
+  code: string;
+  testCaseId?: string;
+  caseKey?: string;
+  toolName?: string;
+}
+
+/**
+ * Whether a run's imported cases carry evidence a gate may rely on.
+ *
+ * Computed by the platform from the run's OWN frozen snapshot, never from the
+ * suite's current cases — those can be edited after the run, and recomputing
+ * from them would let an edit retroactively change what a finished run is
+ * allowed to prove.
+ *
+ * The three states are not two:
+ *
+ *   - `legacy` — the run contains no imported cases at all. Every pre-import
+ *     run, and every native run forever. Gateable, behaviour unchanged.
+ *   - `eligible` — imported cases, every one carrying a valid frozen decision.
+ *   - `incomplete` — imported evidence that cannot be trusted. NOT a failure:
+ *     the run is simply not gateable, and reporting it as a failed verdict
+ *     would describe a server defect the run never observed.
+ */
+export interface PlatformImportEligibility {
+  status: "legacy" | "eligible" | "incomplete";
+  gateable: boolean;
+  importedCaseCount: number;
+  claimedExactCaseIds: string[];
+  approvedApproximationCaseIds: string[];
+  approvedApproximationReceipts: PlatformImportApprovalReceipt[];
+  issues: PlatformImportEligibilityIssue[];
 }
 
 /** A note about a batch write that changes nothing about what was written. */

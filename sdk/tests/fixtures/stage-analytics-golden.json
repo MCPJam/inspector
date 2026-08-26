@@ -1,0 +1,833 @@
+{
+  "schemaVersion": 1,
+  "measurementUnit": "trial",
+  "runId": "run_golden",
+  "suiteId": "suite_golden",
+  "runGroupId": "group_golden",
+  "configRevision": "cfg_golden",
+  "caseSetFingerprint": "cases_golden",
+  "organizationId": "org_1",
+  "projectId": "proj_1",
+  "runCompletedAt": 1700000100000,
+  "sourceIterationCount": 7,
+  "sourceMaxUpdatedAt": 1700000090000,
+  "stageAnalyzerVersion": 4,
+  "measurementsSchemaVersion": 1,
+  "materializationState": "provisional",
+  "createdAt": 1700000150000,
+  "updatedAt": 1700000200000,
+  "includedTrials": 4,
+  "excludedTrials": {
+    "lifecycle": 1,
+    "integrity": 1,
+    "version": 1
+  },
+  "totalTrials": 7,
+  "excludedTrialDetail": {
+    "cancelled": 1,
+    "chainUnverified": 1,
+    "chainVersionAhead": 1
+  },
+  "slices": [
+    {
+      "slice": {
+        "dimension": "overall"
+      },
+      "includedTrials": 4,
+      "excludedTrials": {
+        "lifecycle": 1,
+        "integrity": 1,
+        "version": 1
+      },
+      "failureCategories": [
+        {
+          "category": "selection",
+          "count": 1
+        }
+      ],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 4,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 4,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 4,
+          "reached": 4,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 4,
+          "passed": 3,
+          "failed": 1,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": [
+            {
+              "reason": "missingToolCall",
+              "count": 1
+            }
+          ],
+          "latency": {
+            "unit": "ms",
+            "basis": "evidence_span_union",
+            "sampleCount": 1,
+            "totalMs": 800,
+            "minMs": 800,
+            "maxMs": 800
+          }
+        },
+        {
+          "stage": "call",
+          "applicable": 4,
+          "reached": 3,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 3,
+          "passed": 3,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 4,
+          "reached": 3,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 3,
+          "passed": 3,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 3,
+          "reached": 2,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 1,
+          "notApplicable": 1,
+          "excluded": {
+            "notMeasured": 1,
+            "notApplicable": 1
+          },
+          "reasons": [
+            {
+              "reason": "judgePending",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "intent",
+        "intent": "search"
+      },
+      "includedTrials": 2,
+      "excludedTrials": {
+        "lifecycle": 1
+      },
+      "failureCategories": [
+        {
+          "category": "selection",
+          "count": 1
+        }
+      ],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 1,
+          "failed": 1,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": [
+            {
+              "reason": "missingToolCall",
+              "count": 1
+            }
+          ],
+          "latency": {
+            "unit": "ms",
+            "basis": "evidence_span_union",
+            "sampleCount": 1,
+            "totalMs": 800,
+            "minMs": 800,
+            "maxMs": 800
+          }
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "intent",
+        "intent": null
+      },
+      "includedTrials": 2,
+      "excludedTrials": {
+        "integrity": 1,
+        "version": 1
+      },
+      "failureCategories": [],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 1,
+          "reached": 1,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 0,
+          "passed": 0,
+          "failed": 0,
+          "notMeasured": 1,
+          "notApplicable": 1,
+          "excluded": {
+            "notMeasured": 1,
+            "notApplicable": 1
+          },
+          "reasons": [
+            {
+              "reason": "judgePending",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "model",
+        "provider": "anthropic",
+        "model": "claude"
+      },
+      "includedTrials": 2,
+      "excludedTrials": {},
+      "failureCategories": [
+        {
+          "category": "selection",
+          "count": 1
+        }
+      ],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 1,
+          "failed": 1,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": [
+            {
+              "reason": "missingToolCall",
+              "count": 1
+            }
+          ],
+          "latency": {
+            "unit": "ms",
+            "basis": "evidence_span_union",
+            "sampleCount": 1,
+            "totalMs": 800,
+            "minMs": 800,
+            "maxMs": 800
+          }
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "model",
+        "provider": "openai",
+        "model": "gpt"
+      },
+      "includedTrials": 2,
+      "excludedTrials": {},
+      "failureCategories": [],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 1,
+          "reached": 1,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 0,
+          "passed": 0,
+          "failed": 0,
+          "notMeasured": 1,
+          "notApplicable": 1,
+          "excluded": {
+            "notMeasured": 1,
+            "notApplicable": 1
+          },
+          "reasons": [
+            {
+              "reason": "judgePending",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "host",
+        "hostKey": "host_a",
+        "hostName": "Emulated",
+        "executionEngine": "emulated"
+      },
+      "includedTrials": 2,
+      "excludedTrials": {},
+      "failureCategories": [
+        {
+          "category": "selection",
+          "count": 1
+        }
+      ],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 1,
+          "failed": 1,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": [
+            {
+              "reason": "missingToolCall",
+              "count": 1
+            }
+          ],
+          "latency": {
+            "unit": "ms",
+            "basis": "evidence_span_union",
+            "sampleCount": 1,
+            "totalMs": 800,
+            "minMs": 800,
+            "maxMs": 800
+          }
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 2,
+          "reached": 1,
+          "notReached": 1,
+          "reachUnknown": 0,
+          "measured": 1,
+          "passed": 1,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "slice": {
+        "dimension": "host",
+        "hostKey": "host_b",
+        "hostName": "Claude Code",
+        "executionEngine": "harness:claude-code"
+      },
+      "includedTrials": 2,
+      "excludedTrials": {},
+      "failureCategories": [],
+      "stages": [
+        {
+          "stage": "connection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "discovery",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "selection",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "call",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "response",
+          "applicable": 2,
+          "reached": 2,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 2,
+          "passed": 2,
+          "failed": 0,
+          "notMeasured": 0,
+          "notApplicable": 0,
+          "excluded": {},
+          "reasons": []
+        },
+        {
+          "stage": "userValue",
+          "applicable": 1,
+          "reached": 1,
+          "notReached": 0,
+          "reachUnknown": 0,
+          "measured": 0,
+          "passed": 0,
+          "failed": 0,
+          "notMeasured": 1,
+          "notApplicable": 1,
+          "excluded": {
+            "notMeasured": 1,
+            "notApplicable": 1
+          },
+          "reasons": [
+            {
+              "reason": "judgePending",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "setup": [
+    {
+      "phase": "connection",
+      "uniqueAttempts": 1,
+      "failedAttempts": 1,
+      "serverAttributedFailures": 1,
+      "impactedTrials": 3,
+      "latency": {
+        "unit": "ms",
+        "basis": "setup_phase_wall",
+        "sampleCount": 1,
+        "totalMs": 2500,
+        "minMs": 2500,
+        "maxMs": 2500
+      }
+    }
+  ]
+}
