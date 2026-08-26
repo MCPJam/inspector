@@ -50,6 +50,7 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
@@ -273,6 +274,7 @@ export function SuiteIterationsView({
   onShowCasesSidebar,
   omitSuiteHeader = false,
   suiteDetailOverview = false,
+  evaluateDecisionSummary = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -351,6 +353,15 @@ export function SuiteIterationsView({
    * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
    */
   suiteDetailOverview?: boolean;
+  /**
+   * Evaluate (New) only: read and render D9's canonical run decision summary
+   * on run detail and on the suite's run history.
+   *
+   * OFF by default, and the default is what keeps `/evals` byte-identical:
+   * with this false nothing here subscribes, so a non-Evaluate mount issues
+   * exactly zero decision-summary requests. Only `EvaluateTab` passes it.
+   */
+  evaluateDecisionSummary?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -1047,6 +1058,23 @@ export function SuiteIterationsView({
       onEditTestCase={onEditTestCase}
       alwaysShowEditIterationRows={alwaysShowEditIterationRows}
       runTrendData={runTrendData}
+      decisionSummarySlot={
+        // Only Evaluate opts in, and only with a project id in hand: the read
+        // is per-project and the browser never resolves or guesses one.
+        evaluateDecisionSummary && projectId ? (
+          <RunDecisionSummarySection
+            projectId={projectId}
+            run={selectedRunDetails}
+            enabled
+            onViewTrace={({ runId, iterationId }) =>
+              // `tracePath` is an API path, not an app route. Navigate through
+              // the app's own run-detail entry point instead, scoped to the
+              // iteration the evidence names.
+              navigation.toRunDetail(suite._id, runId, iterationId)
+            }
+          />
+        ) : undefined
+      }
     />
   ) : null;
 
@@ -1239,6 +1267,8 @@ export function SuiteIterationsView({
                   runningTestCaseId={runningTestCaseId}
                   evalRunsDisabledReason={evalRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
+                  projectId={projectId}
+                  decisionSummaryEnabled={evaluateDecisionSummary}
                 />
               </motion.div>
             ) : showFoldedUnifiedDashboard ? (

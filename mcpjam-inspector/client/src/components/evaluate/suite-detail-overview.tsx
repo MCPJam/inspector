@@ -40,8 +40,12 @@ import {
   suiteRunBlockedReason,
   type RunHistoryVerdict,
   type SuiteRunHistoryFilters,
+  type SuiteRunHistoryRow,
 } from "./suite-detail-model";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import { RunDecisionVerdictBadge } from "../evals/run-decision-summary-card";
+import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -105,6 +109,8 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  projectId = null,
+  decisionSummaryEnabled = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -127,6 +133,13 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /** Threaded from `EvaluateTab`; never resolved in the browser. */
+  projectId?: string | null;
+  /**
+   * Read D9's canonical verdict for terminal rows. OFF by default: with it
+   * false this table issues no decision-summary requests at all.
+   */
+  decisionSummaryEnabled?: boolean;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [filters, setFilters] = useState<SuiteRunHistoryFilters>({
@@ -410,7 +423,7 @@ export function SuiteDetailOverview({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleRows.map((row) => (
+                {visibleRows.map((row, index) => (
                   <TableRow
                     key={row.runId}
                     data-testid={`suite-run-row-${row.runId}`}
@@ -424,14 +437,16 @@ export function SuiteDetailOverview({
                       {row.dateLabel}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={cn(
-                          "text-xs font-medium uppercase tracking-wide",
-                          VERDICT_TEXT_TONE[row.verdict],
-                        )}
-                      >
-                        {row.verdictLabel}
-                      </span>
+                      <SuiteRunVerdictCell
+                        row={row}
+                        projectId={projectId}
+                        enabled={decisionSummaryEnabled}
+                        // The first page is on screen the moment the table
+                        // paints, so it reads eagerly. Everything "Show all"
+                        // reveals waits to be scrolled to — otherwise one
+                        // click would ask for the entire history at once.
+                        lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
+                      />
                     </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
@@ -739,6 +754,54 @@ function SuiteEmptyCasesHero({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The verdict for one run-history row.
+ *
+ * CANONICAL WINS. `row.verdict` is derived in the browser from iteration rows
+ * — a second reading of a run that already decided for itself — and the moment
+ * a validated summary is in hand it replaces that derivation outright,
+ * `inconclusive` and "no verdict" included. The local label survives only as
+ * the pre-canonical placeholder, and on a non-terminal row (which has no
+ * decision to read) as the lifecycle it always was.
+ */
+function SuiteRunVerdictCell({
+  row,
+  projectId,
+  enabled,
+  lazy,
+}: {
+  row: SuiteRunHistoryRow;
+  projectId: string | null;
+  enabled: boolean;
+  lazy: boolean;
+}) {
+  const [visibilityRef, hasBeenVisible] = useHasBeenVisible<HTMLSpanElement>();
+  const terminal = isTerminalEvalRunStatus(row.status);
+  const { summary } = useEvalRunDecisionBadge({
+    projectId,
+    runId: row.runId,
+    enabled: enabled && terminal && (!lazy || hasBeenVisible),
+    revision: row.revision,
+  });
+
+  return (
+    <span ref={lazy ? visibilityRef : undefined}>
+      {summary ? (
+        <RunDecisionVerdictBadge summary={summary} />
+      ) : (
+        <span
+          className={cn(
+            "text-xs font-medium uppercase tracking-wide",
+            VERDICT_TEXT_TONE[row.verdict],
+          )}
+        >
+          {row.verdictLabel}
+        </span>
+      )}
+    </span>
   );
 }
 

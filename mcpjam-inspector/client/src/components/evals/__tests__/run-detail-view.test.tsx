@@ -189,6 +189,47 @@ describe("RunDetailView", () => {
     expect(root).not.toHaveClass("overflow-hidden");
   });
 
+  /**
+   * The decision-summary card is opt-in through a SLOT, and the default is
+   * what keeps `/evals` and the CI surfaces exactly as they were: they pass
+   * no slot, so they render no card and — because the fetch lives inside the
+   * slotted component, not here — issue no decision-summary request either.
+   */
+  it("renders no decision summary when no slot is passed", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+      />
+    );
+
+    expect(screen.queryByTestId("run-decision-summary")).toBeNull();
+  });
+
+  it("renders a passed decision-summary slot above the run metadata", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+        decisionSummarySlot={<div data-testid="decision-slot">decided</div>}
+      />
+    );
+
+    expect(screen.getByTestId("decision-slot")).toBeInTheDocument();
+  });
+
   it("renders the Export action even when the accuracy hero is hidden (folded run detail)", async () => {
     const onExportTraces = vi.fn();
     render(
