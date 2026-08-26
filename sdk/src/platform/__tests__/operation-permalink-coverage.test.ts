@@ -46,6 +46,12 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   get_readiness_run: "conformance/readiness/:runId",
   list_readiness_runs: "conformance/readiness/:runId",
   get_readiness_report: "conformance/readiness/:runId",
+  // Saved swarm DEFINITIONS: `/swarms/:swarmId` addresses a launched wave, so
+  // a definition's id on that route renders an empty run detail.
+  list_swarms: "swarms/definitions/:swarmId",
+  get_swarm: "swarms/definitions/:swarmId",
+  create_swarm: "swarms/definitions/:swarmId",
+  update_swarm: "swarms/definitions/:swarmId",
   get_persona: "swarms/personas/:personaId",
   create_persona: "swarms/personas/:personaId",
   update_persona: "swarms/personas/:personaId",
@@ -129,9 +135,6 @@ describe("every catalog operation declares a permalink policy", () => {
       "generate_eval_cases",
       "create_project",
       "create_persona",
-      "create_swarm",
-      "get_swarm",
-      "list_swarms",
       "launch_journey_run",
       "start_conformance_run",
       "get_conformance_run",

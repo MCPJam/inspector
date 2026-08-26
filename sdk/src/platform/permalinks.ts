@@ -262,17 +262,19 @@ export const PLATFORM_PERMALINK_ROUTES = {
     label: "View conformance run",
     segments: ["conformance", "runs", ":id"],
   },
-  /** A swarm (a saved fan-out definition). */
-  swarm: {
-    label: "Open swarm",
-    segments: ["swarms", ":id"],
-  },
   /**
    * One launched wave.
    *
    * `/swarms/<runId>` with the run id as the FIRST segment after `/swarms/`:
    * the client routes on that segment, so `/swarms/runs/<id>` would resolve
    * to a run named literally "runs" and dead-link the recipient.
+   *
+   * NOTE the asymmetry with the saved swarm DEFINITION, which deliberately has
+   * no entry here. `:swarmId` reads as a launched wave — `SwarmRunDetail`
+   * resolves it against the project's runs — so a saved swarm's id on this
+   * route renders an empty run detail. The two share a path shape and mean
+   * different things, which is exactly the confusion the registry exists to
+   * settle in one place.
    */
   journey_run: {
     label: "View swarm run",

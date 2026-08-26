@@ -858,20 +858,6 @@ function environmentRef(environment: {
   };
 }
 
-/** One swarm. */
-function swarmRef(swarm: {
-  id: string;
-  projectId: string;
-  name: string;
-}): PlatformResourceRef {
-  return {
-    type: "swarm",
-    id: swarm.id,
-    projectId: swarm.projectId,
-    label: `Open ${swarm.name}`,
-  };
-}
-
 // ── Named-resource resolution ────────────────────────────────────────
 
 /**
@@ -10025,13 +10011,9 @@ export const listSwarmsOperation: PlatformOperation<
   description:
     "Swarm containers group journeys authored together and hold their shared execution config. A journey does not need one — but a project authored through the app will have them, so list here to match what a human would see.",
   readOnly: true,
-  permalink: derivePermalinks((result) =>
-    result.items.map((swarm) => ({
-      type: "swarm" as const,
-      id: swarm.id,
-      projectId: swarm.projectId,
-      label: `Open ${swarm.name}`,
-    }))
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/definitions/:swarmId` route. `/swarms/:swarmId` reads as a launched WAVE — SwarmRunDetail resolves it against the project's runs — so a saved swarm's id there renders an empty run detail rather than the definition."
   ),
   inputSchema: listPersonasInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -10058,7 +10040,10 @@ export const getSwarmOperation: PlatformOperation<
   title: "Get one MCPJam swarm container",
   description: "One swarm container: its name, defaults and fan-out.",
   readOnly: true,
-  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/definitions/:swarmId` route. `/swarms/:swarmId` reads as a launched WAVE — SwarmRunDetail resolves it against the project's runs — so a saved swarm's id there renders an empty run detail rather than the definition."
+  ),
   inputSchema: swarmSelectorInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
@@ -10104,7 +10089,10 @@ export const createSwarmOperation: PlatformOperation<
     "Create a container to author journeys under. Creating one runs nothing. Behind the sandboxes-enabled beta.",
   readOnly: false,
   risk: "none",
-  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/definitions/:swarmId` route. `/swarms/:swarmId` reads as a launched WAVE — SwarmRunDetail resolves it against the project's runs — so a saved swarm's id there renders an empty run detail rather than the definition."
+  ),
   inputSchema: createSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
@@ -10158,7 +10146,10 @@ export const updateSwarmOperation: PlatformOperation<
     "Edit a swarm container. sessionsPerTarget and maxTurns must be sent together — they are one config object upstream.",
   readOnly: false,
   risk: "none",
-  permalink: derivePermalinks((result) => [swarmRef(result.swarm)]),
+  permalink: noPermalink(
+    "route-not-addressable",
+    "No `swarms/definitions/:swarmId` route. `/swarms/:swarmId` reads as a launched WAVE — SwarmRunDetail resolves it against the project's runs — so a saved swarm's id there renders an empty run detail rather than the definition."
+  ),
   inputSchema: updateSwarmInput,
   async execute(input, { client, signal, onScopeResolved }) {
     requireConfigPair(input);

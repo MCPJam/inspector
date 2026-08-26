@@ -87,6 +87,16 @@ describe("route mappings", () => {
     ).toBe(`/sessions?session=qh7fem&project=${PROJECT}`);
   });
 
+  it("has no route for a saved swarm, whose id reads as a run", () => {
+    // `/swarms/:swarmId` mounts the WAVE detail, which resolves the id against
+    // the project's runs — so a saved swarm definition's id there renders an
+    // empty run detail. `journey_run` keeps the route because a wave is what
+    // it actually addresses; the two shared a path shape and did not share a
+    // meaning.
+    expect(isPlatformResourceType("swarm")).toBe(false);
+    expect(isPlatformResourceType("journey_run")).toBe(true);
+  });
+
   it("has no route for a readiness run, which nothing can address", () => {
     // Deliberately absent, not an oversight. `/conformance?readinessRun=` was
     // in this table and no client code reads that parameter — the readiness
@@ -97,13 +107,10 @@ describe("route mappings", () => {
     expect(isPlatformResourceType("readiness_run")).toBe(false);
   });
 
-  it("addresses a conformance run, a swarm, a wave and a scenario", () => {
+  it("addresses a conformance run, a wave and a scenario", () => {
     expect(
       build({ type: "conformance_run", id: "cr_1", projectId: PROJECT }).path
     ).toBe(`/conformance/runs/cr_1?project=${PROJECT}`);
-    expect(build({ type: "swarm", id: "sw_1", projectId: PROJECT }).path).toBe(
-      `/swarms/sw_1?project=${PROJECT}`
-    );
     // A wave/journey run takes the FIRST segment after /swarms/ — the client
     // routes on it, so `/swarms/runs/<id>` would dead-link.
     expect(
@@ -216,10 +223,10 @@ describe("required scope and parents", () => {
       build({
         type: "eval_case",
         id: "c_1",
-        parent: { type: "swarm", id: "sw_1" },
+        parent: { type: "chat_session", id: "cs_1" },
         projectId: PROJECT,
       })
-    ).toThrow(/nests under eval_suite, not swarm/);
+    ).toThrow(/nests under eval_suite, not chat_session/);
   });
 
   it("refuses an empty id", () => {
@@ -353,6 +360,50 @@ describe("policy application", () => {
     );
     expect(permalinks).toHaveLength(1);
     expect(errors).toHaveLength(1);
+  });
+
+  it("drops a response permalink that is not an absolute http(s) URL", () => {
+    // `PlatformSessionLink` only promises a string, and the backend mints
+    // these — so a relative or `javascript:` url would otherwise be rendered
+    // verbatim into a tool result for a model to pass on as openable.
+    const errors: unknown[] = [];
+    const permalinks = derivePermalinksFor(
+      {
+        name: "search_sessions",
+        permalink: {
+          kind: "response",
+          permalinks: () => [
+            {
+              path: "/sessions?session=ok",
+              url: `${ORIGIN}/sessions?session=ok`,
+              label: "Open session",
+              resource: { type: "chat_session" as const, id: "ok" },
+            },
+            {
+              path: "/sessions?session=relative",
+              url: "/sessions?session=relative",
+              label: "Open session",
+              resource: { type: "chat_session" as const, id: "relative" },
+            },
+            {
+              path: "/sessions?session=script",
+              url: "javascript:alert(1)",
+              label: "Open session",
+              resource: { type: "chat_session" as const, id: "script" },
+            },
+          ],
+        },
+        execute: async () => ({}),
+      },
+      {},
+      {},
+      { appOrigin: ORIGIN },
+      (error) => errors.push(error)
+    );
+    expect(permalinks.map((permalink) => permalink.resource.id)).toEqual([
+      "ok",
+    ]);
+    expect(errors).toHaveLength(2);
   });
 
   it("returns nothing for a `none` policy without calling anything", () => {

@@ -61,6 +61,8 @@ import {
   createEvalSuiteOperation,
   derivePermalinksFor,
   runEvalSuiteOperation,
+  withPermalinkEnvelope,
+  type PlatformPermalink,
   type PlatformResourceType,
 } from "@mcpjam/sdk/platform";
 import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
@@ -171,34 +173,21 @@ const CREATE_OPERATION_PREFIXES = [
 ] as const;
 
 /**
- * The resources one WRITE produced, as links the host can render.
+ * Where one operation's result can be opened, for EVERY operation.
  *
- * Read off the operation's own permalink policy rather than a name check for
- * `create_eval_suite` and a hand-built URL. Two things follow: an operation
- * added later contributes its links without touching this file, and the URL
- * agrees with the one the MCP worker, the CLI and the approval path hand out,
- * because all four ask the same builder.
- *
- * CREATES only, not every write. A read's rows are not "created" — a
- * `list_project_servers` turn reporting twenty created resources would be
- * describing the project rather than what it did — and neither is an EDIT:
- * `update_eval_suite` and `name_environment` change a row that already
- * existed, and the public contract (`AgentTurnResponse.createdResources`) and
- * the Slack renderer both say "created". Saying it of an edit is a lie the
- * host then renders as one.
+ * Read off the operation's own permalink policy rather than a name check and a
+ * hand-built URL. Two things follow: an operation added later contributes its
+ * links without touching this file, and the URL agrees with the one the MCP
+ * worker, the CLI and the approval path hand out, because all four ask the
+ * same builder.
  */
-function createdResourcesFor(
+function permalinksFor(
   operation: AnyPlatformOperation,
   result: unknown,
   input: unknown,
   projectId: string
-): CreatedResource[] {
-  if (operation.readOnly || !CREATE_OPERATION_PREFIXES.some((prefix) =>
-    operation.name.startsWith(prefix)
-  )) {
-    return [];
-  }
-  const permalinks = derivePermalinksFor(
+): PlatformPermalink[] {
+  return derivePermalinksFor(
     operation,
     result,
     input,
@@ -207,12 +196,41 @@ function createdResourcesFor(
       resolvedScope: { projectId },
     },
     (error, operationName) => {
-      logger.warn("[v1/agent] could not build a created-resource link", {
+      logger.warn("[v1/agent] could not build a permalink", {
         operation: operationName,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   );
+}
+
+/**
+ * The subset of those links that names a resource the turn BROUGHT INTO EXISTENCE.
+ *
+ * CREATES only, not every write. A read's rows are not "created" — a
+ * `list_project_servers` turn reporting twenty created resources would be
+ * describing the project rather than what it did — and neither is an EDIT:
+ * `update_eval_suite` and `name_environment` change a row that already
+ * existed, and the public contract (`AgentTurnResponse.createdResources`) and
+ * the Slack renderer both say "created". Saying it of an edit is a lie the
+ * host then renders as one.
+ *
+ * The MODEL still sees every permalink through the tool-result envelope; this
+ * narrower list is what the HOST renders as created-resource blocks.
+ */
+function createdResourcesFrom(
+  operation: AnyPlatformOperation,
+  permalinks: readonly PlatformPermalink[],
+  result: unknown
+): CreatedResource[] {
+  if (
+    operation.readOnly ||
+    !CREATE_OPERATION_PREFIXES.some((prefix) =>
+      operation.name.startsWith(prefix)
+    )
+  ) {
+    return [];
+  }
   // The NAME matters beyond display: `offerRunsForCreatedSuites` matches a
   // model-authored `suite` argument against it, and a model names a suite it
   // just created by name as often as by id.
@@ -766,15 +784,28 @@ export function buildAgentApiToolSet(opts: {
             client,
             signal: abortSignal,
           });
-          opts.created.push(
-            ...createdResourcesFor(
-              operation,
-              result,
-              parsed.data,
-              opts.projectId
-            )
+          // Derived from the RAW result, before either transform below
+          // reshapes it.
+          const permalinks = permalinksFor(
+            operation,
+            result,
+            parsed.data,
+            opts.projectId
           );
-          return capForModel(stripProjectSwitchingMetadata(result));
+          opts.created.push(
+            ...createdResourcesFrom(operation, permalinks, result)
+          );
+          // The MODEL sees them too, which is what the system prompt's
+          // "hand the user that url" rule refers to. Without this the rule
+          // named a field this surface never emitted, and a read like
+          // `list_project_servers` gave the model nothing but ids — the exact
+          // situation that had it inventing app URLs.
+          const forModel = stripProjectSwitchingMetadata(result);
+          return capForModel(
+            permalinks.length > 0
+              ? withPermalinkEnvelope(forModel, permalinks)
+              : forModel
+          );
         } catch (error) {
           if (abortSignal?.aborted) {
             return { error: `${operation.title} was cancelled.` };

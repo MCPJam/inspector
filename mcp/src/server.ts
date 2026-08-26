@@ -254,7 +254,13 @@ function resolveAppOrigin(env: Env): string {
       // deployment, with nothing failing to point at the cause. Normalizing to
       // `.origin` here also drops a trailing slash, which is the likeliest way
       // for someone to write this by hand.
-      return new URL(explicit).origin;
+      const parsed = new URL(explicit);
+      // The SCHEME too, not just parseability: `ftp://app.mcpjam.com` parses
+      // happily and `.origin` hands it straight back, so a protocol check is
+      // the difference between this guard working and merely appearing to.
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        return parsed.origin;
+      }
     } catch {
       // Fall through to the API origin rather than minting nothing at all.
     }

@@ -202,7 +202,13 @@ export function ProjectEnvironmentsRoute({
     const wanted = routeEnvironmentId?.trim() ?? null;
     setSelectedId((current) => (current === wanted ? current : wanted));
     if (wanted) setCreating(false);
-  }, [routeEnvironmentId]);
+    // `projectId` is a dependency because the project-switch reset above
+    // CLEARS `selectedId` while the route keeps its id — which is exactly what
+    // a cross-project `?project=` permalink does. Without it the target
+    // survives in the URL, resolves as `found`, and the screen still renders
+    // the collection: the wrong-resource landing, on the one journey the
+    // permalink was built for.
+  }, [projectId, routeEnvironmentId]);
 
   const routeState = resolvePermalinkTarget(
     routeEnvironmentId,

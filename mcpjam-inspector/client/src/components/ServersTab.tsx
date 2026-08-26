@@ -2021,13 +2021,32 @@ export function ServersTab({
   // component servers never appear in that grid (the backend excludes
   // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
   // this section is the only place their health is visible on Connect.
-  const renderPluginsSection = () =>
-    isPluginsEnabled ? (
-      <PluginsSection
-        projectId={sharedProjectIdForHostScope}
-        expandedPluginId={routePluginId ?? null}
-      />
-    ) : null;
+  const renderPluginsSection = () => {
+    if (isPluginsEnabled) {
+      return (
+        <PluginsSection
+          projectId={sharedProjectIdForHostScope}
+          expandedPluginId={routePluginId ?? null}
+        />
+      );
+    }
+    // The flag is a per-viewer PostHog rollout, and `list_project_plugins` is
+    // NOT flag-gated — so an agent working for someone inside the rollout can
+    // hand a `/servers/plugins/:pluginId` link to someone outside it. Dropping
+    // the section silently would render ordinary Connect and never mention
+    // that the link went nowhere. Same message as a missing plugin: whether
+    // the resource exists is not something this screen should disclose.
+    if (!routePluginId) return null;
+    return (
+      <div
+        role="status"
+        data-testid="plugin-permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("plugin")}
+      </div>
+    );
+  };
 
   /**
    * What a permalink to a gone-or-forbidden resource renders.
