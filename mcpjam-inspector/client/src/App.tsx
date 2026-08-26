@@ -3548,6 +3548,14 @@ export default function App() {
         : undefined;
     const supportsMrtr =
       activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+    const suppressListenChannel =
+      activeMcpProfile?.toolListChanged?.listens === false
+        ? (true as const)
+        : undefined;
+    const dropToolListChanged =
+      activeMcpProfile?.toolListChanged?.refetches === false
+        ? (true as const)
+        : undefined;
 
     return {
       clientInfo,
@@ -3559,6 +3567,8 @@ export default function App() {
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      suppressListenChannel,
+      dropToolListChanged,
       xaaPolicy,
     };
   }, [
