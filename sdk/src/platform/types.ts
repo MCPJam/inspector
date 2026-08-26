@@ -7,6 +7,7 @@
  * additive fields are non-breaking and must be ignored, never relied on
  * being absent.
  */
+import type { PlatformPermalink } from "./permalinks.js";
 import type { ServerDoctorResult } from "../server-doctor-core.js";
 import type {
   EvaluationConfigSnapshot,
@@ -307,6 +308,16 @@ export interface PlatformTurnUsage {
 export interface PlatformChatTurn {
   sessionId: string | null;
   turnId: string;
+  /**
+   * The project this turn ran in.
+   *
+   * A CONTINUATION does not send one — it is read off the session row — so
+   * without this a caller holding only the turn cannot say where the session
+   * lives, and the session permalink cannot be composed. That is not
+   * hypothetical: it is the one operation whose scope is never resolved
+   * locally, so nothing else in the response or the context carries it.
+   */
+  projectId: string;
   reply?: string;
   finishReason?: string | null;
   toolCalls?: PlatformTurnToolCall[];
@@ -431,7 +442,11 @@ export interface PlatformWidgetRender {
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */
-export type PlatformSessionSourceType = "direct" | "scenario" | "eval" | "swarm";
+export type PlatformSessionSourceType =
+  | "direct"
+  | "scenario"
+  | "eval"
+  | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -447,13 +462,21 @@ export interface PlatformSessionParentRef {
   scenarioId?: string;
 }
 
-/** Where a human goes to read a session. Always present. */
-export interface PlatformSessionLink {
-  /** App-relative path, including `?project=`. */
-  path: string;
-  /** Absolute URL for the same target. */
-  url: string;
-}
+/**
+ * Where a human goes to read a session. Always present.
+ *
+ * A PROJECTION of `PlatformPermalink`, not a widening of it: the wire
+ * contract for `/v1/sessions` rows is exactly `{path, url}` today, and adding
+ * `label`/`resource` as REQUIRED fields would make every older backend's
+ * response fail a client that trusted the type. Deriving it from
+ * `PlatformPermalink` instead of restating the two fields is what stops the
+ * shared permalink shape and the session wire shape from drifting apart —
+ * rename `path` there and this stops compiling here.
+ *
+ * The backend may later add `label`/`resource` as OPTIONAL fields without
+ * breaking a client built against this.
+ */
+export type PlatformSessionLink = Pick<PlatformPermalink, "path" | "url">;
 
 /**
  * One row of the unified, cross-surface sessions feed
@@ -861,7 +884,10 @@ export interface PlatformDisclosedModel {
  * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
  * a fourth runtime kind.
  */
-export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
+export type PlatformDisclosureEngine =
+  | "emulated"
+  | "mixed"
+  | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.

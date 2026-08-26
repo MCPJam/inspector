@@ -152,7 +152,11 @@ import {
   installRegistryServerOperation,
   uninstallRegistryServerOperation,
   ALL_OPERATIONS,
+  formatPermalinkLines,
+  runOperationWithPermalinks,
+  withPermalinkEnvelope,
   type PlatformOperation,
+  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
@@ -712,8 +716,33 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   });
 
   try {
-    const payload = await operation.execute(input, { client });
-    return toolSuccess(transformPayload ? transformPayload(payload) : payload);
+    // Permalinks are derived from the RAW result, before any widget transform
+    // reshapes it: a policy reading a tagged widget payload would be reading a
+    // shape it was never written against.
+    const { result, permalinks } = await runOperationWithPermalinks(
+      operation,
+      input,
+      { client },
+      {
+        appOrigin: context.runtimeEnv.MCPJAM_APP_ORIGIN,
+        // A dropped link is otherwise invisible: derivation never fails the
+        // operation, so without this a broken policy or a malformed origin
+        // silently removes every permalink and nothing anywhere says so.
+        onError: (error, operationName) => {
+          console.error(
+            `[platform-tools] could not build a permalink for ${operationName}:`,
+            error instanceof Error ? error.message : String(error)
+          );
+        },
+      }
+    );
+    return toolSuccess(
+      withPermalinkEnvelope(
+        transformPayload ? transformPayload(result) : result,
+        permalinks
+      ),
+      permalinks
+    );
   } catch (error) {
     return toolError(
       describeOperationError(error),
@@ -869,9 +898,23 @@ export function compactInsightsForModel<T extends object>(payload: T): T {
   return changed ? (out as T) : payload;
 }
 
-function toolSuccess(payload: object) {
+/**
+ * @param permalinks Rendered as ONE concise line each, above the JSON.
+ *
+ * Duplicated deliberately, and only here: hosts vary in whether they render
+ * `structuredContent` at all, so a permalink that existed only there would be
+ * invisible in some clients — and the model is meant to see it and hand it to
+ * the user verbatim. The lines lead so they survive the truncation below,
+ * which is exactly what a large list result would otherwise cut. The JSON
+ * itself is NOT re-scanned for permalinks: the array inside it is the same
+ * data, and printing both twice would spend the model's budget on URLs.
+ */
+function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
   payload = compactInsightsForModel(payload);
-  let text = JSON.stringify(payload, null, 2);
+  const header = permalinks.length
+    ? `${formatPermalinkLines(permalinks)}\n\n`
+    : "";
+  let text = `${header}${JSON.stringify(payload, null, 2)}`;
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
       text.length - MODEL_TEXT_CAP

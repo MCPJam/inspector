@@ -32,6 +32,7 @@ import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
+import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
@@ -99,6 +100,12 @@ export async function createHonoApp() {
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
   logGradingEngineModeOnce();
+
+  // Under Electron this process IS the main process, and it is the one that
+  // ran out of heap in INSPECTOR-ELECTRON-W3 with no session telemetry at all.
+  // Started here rather than in `src/main.ts` so the npm-package server gets it
+  // too, and so the sampler sits next to the buffers it reports on.
+  startProcessVitalsSampler();
 
   // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
   // This is crucial when launched from GUI apps (Electron) where PATH is minimal

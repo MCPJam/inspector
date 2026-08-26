@@ -35,9 +35,11 @@ import {
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  buildAppPermalink,
   type CreateEvalSuiteInput,
   type PlatformEvalRunDisclosure,
   type PlatformOperation,
+  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
@@ -554,15 +556,24 @@ function writeRunLink(
   if (format !== "human") return;
   const suiteId = run.suiteId?.trim();
   const runId = run.runId?.trim();
-  if (!suiteId || !runId) return;
-  const query = run.projectId?.trim()
-    ? `?project=${encodeURIComponent(run.projectId.trim())}`
-    : "";
-  process.stdout.write(
-    `View: ${webOrigin}/evals/suite/${encodeURIComponent(
-      suiteId
-    )}/runs/${encodeURIComponent(runId)}${query}\n`
-  );
+  const projectId = run.projectId?.trim();
+  if (!suiteId || !runId || !projectId) return;
+  let permalink: PlatformPermalink;
+  try {
+    permalink = buildAppPermalink(
+      {
+        type: "eval_run",
+        id: runId,
+        parent: { type: "eval_suite", id: suiteId },
+        projectId,
+      },
+      { appOrigin: webOrigin }
+    );
+  } catch {
+    // A convenience line may never fail a command that already succeeded.
+    return;
+  }
+  process.stdout.write(`View: ${permalink.url}\n`);
 }
 
 /** Judge keys the CLI knows how to label, in the order it prints them. */

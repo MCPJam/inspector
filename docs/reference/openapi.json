@@ -23285,6 +23285,7 @@
         "required": [
           "sessionId",
           "turnId",
+          "projectId",
           "persisted",
           "origin"
         ],
@@ -23299,6 +23300,10 @@
           "turnId": {
             "type": "string",
             "description": "Minted by the turn lease and used by the ingest dedupe, so it names the same turn in both."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "The project this turn ran in. On a continuation the caller never sent it \u2014 it comes off the session row \u2014 so this is the only place the response names the session's project."
           },
           "reply": {
             "type": "string"

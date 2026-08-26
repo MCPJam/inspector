@@ -51,7 +51,10 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
+import {
+  modelDefinitionSupportsTemperature,
+  type ModelDefinition,
+} from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -70,8 +73,6 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
-
-const DEFAULT_TEMPERATURE = 0.7;
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here
@@ -1354,8 +1355,19 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = modelSupportsTemperature(modelDefinition.id)
-    ? temperature ?? DEFAULT_TEMPERATURE
+  //
+  // An omitted temperature stays omitted rather than becoming 0.7, so a caller
+  // that expressed no preference gets the provider's own default instead of one
+  // this file invented. The chat UI always sends its slider value (0.7 until
+  // moved), so this only changes programmatic callers — the SDK, the API and the
+  // eval runner — which previously could not request default sampling at all.
+  //
+  // The persisted `hostConfig.temperature` is unaffected and stays numeric:
+  // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
+  const resolvedTemperature = modelDefinitionSupportsTemperature(
+    modelDefinition
+  )
+    ? temperature
     : undefined;
 
   // 5. Message scrubber

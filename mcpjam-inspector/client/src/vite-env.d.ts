@@ -17,3 +17,5 @@ interface ImportMeta {
 }
 
 declare const __APP_VERSION__: string;
+/** Sentry `dist` — which build emitted this bundle. See `SENTRY_BUILD_SURFACES`. */
+declare const __BUILD_SURFACE__: import("../../shared/sentry-config").SentryBuildSurface;

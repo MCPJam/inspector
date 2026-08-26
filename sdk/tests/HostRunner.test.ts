@@ -973,6 +973,30 @@ describe("HostRunner", () => {
       expect(callArgs.onStepFinish).toBeInstanceOf(Function);
     });
 
+    it("omits temperature entirely for a model that rejects the field", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        // A Bedrock inference profile for an affected family — the shape the
+        // original report came in under.
+        model: "bedrock/us.anthropic.claude-opus-4-7-20260205-v1:0",
+        apiKey: "test-key",
+        temperature: 0.3,
+      });
+
+      await agent.run("What is 2+2?");
+
+      // Not a falsy check: `temperature: undefined` still serializes the key,
+      // and the key being present at all is what Anthropic 400s on.
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs).not.toHaveProperty("temperature");
+    });
+
     it("should handle empty usage data", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Response",

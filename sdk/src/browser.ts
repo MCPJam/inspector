@@ -1021,3 +1021,4 @@ export type {
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
+export { modelRejectsTemperature } from "./model-sampling-support.js";
