@@ -70,6 +70,33 @@ describe("MemoizedMarkdown", () => {
     );
   });
 
+  it("gives a different document a fresh attempt after a failed parse", () => {
+    // SkillFileViewer mounts MemoizedMarkdown with no key, so switching file
+    // reuses this instance. The latch must not outlive the content it fired on.
+    const { rerender } = render(<MemoizedMarkdown content="LEXER_THROWS a" />);
+    expect(screen.getByTestId("markdown-plain-text")).toBeInTheDocument();
+
+    rerender(<MemoizedMarkdown content={"# Another file\n\nFine.\n"} />);
+
+    expect(screen.getAllByTestId("streamdown").length).toBeGreaterThan(0);
+  });
+
+  it("gives a different document a fresh attempt after a renderer throw", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const { rerender } = render(
+      <MemoizedMarkdown content="THROW_ON_RENDER a" />,
+    );
+    expect(screen.getByTestId("markdown-plain-text")).toBeInTheDocument();
+
+    rerender(<MemoizedMarkdown content={"# Another file\n\nFine.\n"} />);
+
+    expect(screen.getAllByTestId("streamdown").length).toBeGreaterThan(0);
+    consoleError.mockRestore();
+  });
+
   it("splits ordinary markdown into Streamdown blocks", () => {
     render(<MemoizedMarkdown content={"# Title\n\nA paragraph.\n"} />);
 

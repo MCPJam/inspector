@@ -210,17 +210,31 @@ function MarkdownBlocks({
 }
 
 export const MemoizedMarkdown = memo(
-  ({ content, className }: { content: string; className?: string }) => (
-    // The fuse: a throw here used to unmount the whole route through the
-    // router's errorElement, taking the conversation with it. Once tripped it
-    // stays on plain text for this message, which still shows every character.
-    <ErrorBoundary
-      name="markdown-render"
-      fallback={<PlainTextMarkdown content={content} className={className} />}
-    >
-      <MarkdownBlocks content={content} className={className} />
-    </ErrorBoundary>
-  ),
+  ({ content, className }: { content: string; className?: string }) => {
+    // Both fuses below latch for the life of their instance — ErrorBoundary
+    // through `hasError`, MarkdownBlocks through its ref. Callers reuse one
+    // instance across unrelated documents (SkillFileViewer switches file with
+    // no key), so remount when the content stops being the same message
+    // streaming in. A prefix is what tells the two apart.
+    const previousContent = useRef("");
+    const documentGeneration = useRef(0);
+    if (!content.startsWith(previousContent.current)) {
+      documentGeneration.current += 1;
+    }
+    previousContent.current = content;
+
+    return (
+      // The fuse: a throw here used to unmount the whole route through the
+      // router's errorElement, taking the conversation with it.
+      <ErrorBoundary
+        key={documentGeneration.current}
+        name="markdown-render"
+        fallback={<PlainTextMarkdown content={content} className={className} />}
+      >
+        <MarkdownBlocks content={content} className={className} />
+      </ErrorBoundary>
+    );
+  },
   (prevProps, nextProps) => {
     if (prevProps.content !== nextProps.content) return false;
     if (prevProps.className !== nextProps.className) return false;
