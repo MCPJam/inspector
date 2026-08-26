@@ -1667,6 +1667,48 @@ describe("tier derives from operation.risk", () => {
         "approval to grant an override should not be able to withdraw one " +
         "unasked.",
     },
+    create_client: {
+      tier: "gated",
+      reason:
+        "risk is none (additive — nothing that exists changes) so this would " +
+        "derive direct, but a client IS the execution surface later turns " +
+        "run on, and minting one unasked puts a row in the project's client " +
+        "list that somebody has to notice and clean up. Gated keeps it " +
+        "symmetric with update_client: an agent that needs approval to EDIT " +
+        "a client should not be able to create one silently.",
+    },
+    update_client: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded (an edit replaces settings that " +
+        "are currently in force), but the exclusion rule is about removals " +
+        "an approval cannot make recoverable, and this is not one: the write " +
+        "is compare-and-set on the client's content-addressed configId, its " +
+        "target is frozen to an exact id at proposal time, and the impact " +
+        "the approval card quotes is preconditioned transactionally — a " +
+        "consumer added between proposing and clicking conflicts instead of " +
+        "widening what was agreed to. Editing a client is the product's own " +
+        "primary noun; excluding it would leave the agent surfaces the only " +
+        "ones that cannot touch it.",
+    },
+    set_client_servers: {
+      tier: "gated",
+      reason:
+        "Same as update_client, and it is the narrower operation of the " +
+        "two: it can only replace the server set, composed server-side from " +
+        "the client's current config, and it takes the same config token. " +
+        "Excluding it while gating the general edit would mean an agent may " +
+        "propose changing anything about a client EXCEPT its servers.",
+    },
+    duplicate_client: {
+      tier: "excluded",
+      reason:
+        "risk is none (additive) so this would derive direct, but " +
+        "duplicating a client is roster housekeeping rather than a turn " +
+        "concern: nothing in a turn needs a second copy of a configuration, " +
+        "and create_client covers the case where the agent genuinely needs " +
+        "a new one. Available on REST, the CLI and MCP.",
+    },
     start_conformance_run: {
       tier: "gated",
       reason:
@@ -1774,7 +1816,6 @@ describe("tier derives from operation.risk", () => {
     "connect_project_server",
     "create_eval_case",
     "create_eval_suite",
-    "create_host",
     "create_project",
     "create_project_environment",
     "create_project_server",
@@ -1782,20 +1823,16 @@ describe("tier derives from operation.risk", () => {
     "create_tunnel",
     "delete_eval_case",
     "delete_eval_suite",
-    "delete_host",
     "delete_project",
     "delete_project_server",
     "delete_sandbox_image",
-    "duplicate_host",
     "promote_sandbox_image",
     "reset_computer",
     "restore_project_environment",
     "set_eval_suite_environments",
     "set_eval_suite_schedule",
-    "set_host_servers",
     "update_eval_case",
     "update_eval_suite",
-    "update_host",
     "update_project",
     "update_project_environment",
     "update_project_server",
@@ -1804,11 +1841,11 @@ describe("tier derives from operation.risk", () => {
   ]);
 
   /**
-   * The 35 writes above predate `risk`. This number may only go DOWN — if
+   * The 30 writes above predate `risk`. This number may only go DOWN — if
    * you are raising it to admit a new unclassified write, classify the write
    * instead; that is one field in the SDK catalog.
    */
-  const UNCLASSIFIED_WRITES_CEILING = 35;
+  const UNCLASSIFIED_WRITES_CEILING = 30;
 
   it("pins the unclassified legacy writes — the list only shrinks", () => {
     const unclassified = ALL_OPERATIONS.filter(
@@ -1905,6 +1942,7 @@ const EXPECTED_PROMPT_NOTES = [
       "- `diagnostics` is one PAGE and one KIND of claim. When `diagnostics.complete` is false, more failing trials went unexamined — say so instead of presenting the page as the run's failures, and pass `diagnosticsCursor` to continue. And a diagnostic says WHERE the chain stopped, not why: `firstFailedStage` is a location and `failureCategory` a bucket, so neither authorizes proposing a server change on its own.",
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
   "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",
+  "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
   "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
@@ -1920,6 +1958,11 @@ const EXPECTED_PROMPT_NOTES = [
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
   "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+  "- `create_client` mints a NEW client and changes nothing that exists. To change an existing one, use `update_client` — never create a near-duplicate to work around a failed edit.",
+  "- Editing a client is a three-step loop: call `get_client` first; echo its `configId` back as `expectedConfigId` (and its `name` as `expectedName` when you are renaming); on a conflict, re-read and retry with the fresh values. Never guess a token.",
+  "- Prefer `set` over `config`. `set` changes named fields over the client's CURRENT config inside the write transaction; `config` replaces everything and will revert any edit made since you read it. In `set`, absent means keep and `null` means reset-or-clear.",
+  "- A client edit changes what every later run of every environment, scenario and journey on it executes. Say what you are changing and what it affects before proposing it.",
+  "- `set_client_servers` REPLACES the server set: every server you leave out is detached. Read the current list with `get_client` first, and send `expectedConfigId` from the same read.",
   "- `set_share_mode` changes who can open a shared scenario, conformance run, or eval run. `anyone_with_link` includes guests as browser sessions, not verified individuals.",
 ];
 
