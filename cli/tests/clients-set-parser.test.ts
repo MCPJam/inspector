@@ -75,16 +75,54 @@ test("an unknown field names the settable ones", () => {
   assert.throws(() => parseSetPair("nope=1"), /modelId/);
 });
 
+/**
+ * A field table is a plain object, so `TABLE[field]` answers truthy for every
+ * key `Object.prototype` carries. That made `--set constructor=x` pass the
+ * "is this a known field?" guard, fall through the kind switch, and return
+ * `undefined` — which crashed the caller on destructuring instead of producing
+ * a usage error — and made `--unset __proto__` blame the field for having no
+ * cleared state rather than for not existing. Own-property lookup fixes both,
+ * and is what keeps a user-supplied key off the prototype chain.
+ */
+test("inherited Object.prototype keys are unknown fields, not known ones", () => {
+  for (const key of ["constructor", "toString", "__proto__", "valueOf"]) {
+    assert.throws(
+      () => parseSetPair(`${key}=x`),
+      new RegExp(`Unknown client field "${key.replace("__", "__")}"`),
+      `--set ${key} should be an unknown field`
+    );
+    assert.throws(
+      () => buildSetBlock(undefined, [key]),
+      /Unknown client field/,
+      `--unset ${key} should be an unknown field`
+    );
+  }
+});
+
+test("the built set block cannot reach Object.prototype", () => {
+  const block = buildSetBlock(["temperature=0.2"], undefined)!;
+  assert.equal(Object.getPrototypeOf(block), null);
+  // Still ordinary JSON — nothing downstream can tell the difference.
+  assert.equal(JSON.stringify(block), '{"temperature":0.2}');
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+});
+
 test("--set without an `=` is a usage error", () => {
   assert.throws(() => parseSetPair("temperature"), /expects key=value/);
   assert.throws(() => parseSetPair("=0.2"), /expects key=value/);
 });
 
+// The block is a null-prototype object (see the pollution test below), which
+// `deepEqual` distinguishes from a literal — so these compare CONTENT by
+// spreading into a plain object. The prototype itself is asserted separately.
 test("--unset sends null, which the API reads as reset-or-clear", () => {
-  assert.deepEqual(buildSetBlock(undefined, ["temperature", "harness"]), {
-    temperature: null,
-    harness: null,
-  });
+  assert.deepEqual(
+    { ...buildSetBlock(undefined, ["temperature", "harness"]) },
+    {
+      temperature: null,
+      harness: null,
+    }
+  );
 });
 
 test("--unset modelId fails locally rather than travelling to be refused", () => {
@@ -108,8 +146,11 @@ test("no --set and no --unset produces no set block at all", () => {
 });
 
 test("--set and --unset combine into one block", () => {
-  assert.deepEqual(buildSetBlock(["temperature=0.2"], ["harness"]), {
-    temperature: 0.2,
-    harness: null,
-  });
+  assert.deepEqual(
+    { ...buildSetBlock(["temperature=0.2"], ["harness"]) },
+    {
+      temperature: 0.2,
+      harness: null,
+    }
+  );
 });

@@ -157,6 +157,28 @@ const SETTABLE_FIELDS: Readonly<
 
 const SETTABLE_FIELD_LIST = Object.keys(SETTABLE_FIELDS).join(", ");
 
+/**
+ * Look a field up by OWN property, never by plain indexing.
+ *
+ * `SETTABLE_FIELDS[field]` answers truthy for every key `Object.prototype`
+ * carries — `constructor`, `toString`, `__proto__` — so `--set constructor=x`
+ * passed the "is this a known field?" guard, fell through the kind switch with
+ * `spec.kind === undefined`, and returned `undefined`, which crashed the caller
+ * on destructuring instead of producing the usage error this parser promises.
+ * `--unset __proto__` reached the wrong branch too and blamed the field for
+ * having "no cleared state" rather than for not existing.
+ *
+ * An own-property check is also what keeps a user-supplied key from ever
+ * reaching an assignment target that could walk the prototype chain.
+ */
+function fieldSpec(
+  field: string
+): (typeof SETTABLE_FIELDS)[string] | undefined {
+  return Object.hasOwn(SETTABLE_FIELDS, field)
+    ? SETTABLE_FIELDS[field]
+    : undefined;
+}
+
 function unknownFieldError(field: string): never {
   throw usageError(
     `Unknown client field "${field}". Settable fields: ${SETTABLE_FIELD_LIST}.`
@@ -171,7 +193,7 @@ export function parseSetPair(pair: string): [string, unknown] {
   }
   const field = pair.slice(0, separator).trim();
   const raw = pair.slice(separator + 1);
-  const spec = SETTABLE_FIELDS[field];
+  const spec = fieldSpec(field);
   if (!spec) unknownFieldError(field);
 
   switch (spec.kind) {
@@ -216,13 +238,17 @@ export function buildSetBlock(
   setPairs: string[] | undefined,
   unsetFields: string[] | undefined
 ): Record<string, unknown> | undefined {
-  const set: Record<string, unknown> = {};
+  // A null-prototype object: every key written below is user-supplied, and a
+  // plain `{}` would let one of them land on `Object.prototype` if the
+  // own-property guard above were ever weakened. Serialized to JSON the same
+  // way, so nothing downstream can tell the difference.
+  const set: Record<string, unknown> = Object.create(null);
   for (const pair of setPairs ?? []) {
     const [field, value] = parseSetPair(pair);
     set[field] = value;
   }
   for (const field of unsetFields ?? []) {
-    const spec = SETTABLE_FIELDS[field];
+    const spec = fieldSpec(field);
     if (!spec) unknownFieldError(field);
     if (!spec.unsettable) {
       throw usageError(
@@ -231,7 +257,7 @@ export function buildSetBlock(
         }.`
       );
     }
-    if (field in set) {
+    if (Object.hasOwn(set, field)) {
       throw usageError(
         `--set and --unset both name "${field}"; pass one of them.`
       );
