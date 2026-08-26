@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 /**
  * The icon on a tool-call header. A connected server that declares `icons` in
@@ -167,6 +167,15 @@ describe("ToolPart server branding", () => {
   it("falls back when rendered outside AppStateProvider", () => {
     appState.current = null;
     renderToolPart({ serverId: "branded" });
+    expect(icon()).toHaveAttribute("src", "/mcp.svg");
+  });
+
+  it("falls back to the generic mark when the server icon fails to load", () => {
+    appState.current = { servers: { branded: serverWithIcon("branded") } };
+    renderToolPart({ serverId: "branded" });
+    expect(icon()).toHaveAttribute("src", ICON_SRC);
+
+    fireEvent.error(icon());
     expect(icon()).toHaveAttribute("src", "/mcp.svg");
   });
 

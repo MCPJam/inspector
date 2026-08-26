@@ -200,6 +200,10 @@ export function ToolPart({
     ? connectedServers?.[serverId]?.initializationInfo?.serverVersion
         ?.icons?.[0]?.src
     : undefined;
+  // The src is a URL the server author chose, so it can 404 or be blocked.
+  // Same fallback shape as the registry cards (RegistryTab.tsx:1268).
+  const [serverIconFailed, setServerIconFailed] = useState(false);
+  const showServerIcon = Boolean(serverIconSrc) && !serverIconFailed;
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
@@ -944,15 +948,16 @@ export function ToolPart({
           <span className="inline-flex items-center gap-2 min-w-0">
             <img
               data-testid="tool-server-icon"
-              src={serverIconSrc ?? "/mcp.svg"}
+              src={showServerIcon ? serverIconSrc : "/mcp.svg"}
               alt=""
               role="presentation"
               aria-hidden="true"
+              onError={() => setServerIconFailed(true)}
               // /mcp.svg is monochrome and needs inverting to stay legible on a
               // dark background. A server's own icon is not ours to recolour —
               // inverting it would turn an orange mark blue.
               className={`${
-                serverIconSrc ? "h-3 w-3" : mcpIconClassName
+                showServerIcon ? "h-3 w-3" : mcpIconClassName
               } shrink-0`}
             />
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
