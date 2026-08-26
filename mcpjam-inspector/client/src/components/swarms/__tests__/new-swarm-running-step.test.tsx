@@ -265,7 +265,10 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(finding.textContent).toMatch(/never called the refund tool/);
 
     fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
-    expect(onOpenSession).toHaveBeenCalledWith("thread-fail");
+    // The criterion rides along with the session (BB-74): the wizard's line
+    // says what was found, and the run page this leaves for has to be able to
+    // repeat it rather than presenting an unexplained transcript.
+    expect(onOpenSession).toHaveBeenCalledWith("thread-fail", "crit-refund");
     expect(onLeave).not.toHaveBeenCalled();
   });
 });

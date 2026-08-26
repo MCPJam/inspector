@@ -661,6 +661,11 @@ export function SwarmsTab({
       if (errors.length > 0) {
         throw new Error(errors[0]!);
       }
+      // The group id minted above IS the new wave's route id
+      // (`swarmWaveRouteId`), so the detail page can offer a way into the run
+      // it just started instead of leaving the viewer on the one they
+      // relaunched from.
+      return { swarmRunGroupId };
     },
     [launchJourney]
   );
@@ -981,16 +986,24 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+          onOpenSession={({
+            sessionId,
+            swarmRunGroupId,
+            runLabels,
+            criterionId,
+          }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
               // The wave's own page, on the session that produced the finding.
               // It is a real URL, so this leave is reversible — and the run
-              // keeps streaming into that page while the user reads.
+              // keeps streaming into that page while the user reads. The
+              // criterion rides along so the page can name the finding rather
+              // than dropping the viewer into an unexplained transcript.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
                   session: sessionId,
+                  finding: criterionId,
                 })
               );
               return;

@@ -171,6 +171,17 @@ export function SwarmsSessionsPanel({
     prevInitialThreadRef.current = initialThreadId;
     appliedInitialRef.current = false;
     initialPagesPulledRef.current = 0;
+    // A URL that no longer names a session is a REQUEST to stop showing one.
+    // Only the deep link ever seeded this, and the effect below early-returns
+    // on a null target — so the panel kept the previous session open while the
+    // page around it acted as though it had been dismissed. That is what made
+    // "Back to the live run" look inert: the URL changed, the button that
+    // offered it disappeared with the `?session=` it keyed on, and the session
+    // the viewer asked to leave stayed on screen. An in-panel click does not
+    // touch the URL, so it never reaches this branch.
+    if (!initialThreadId) {
+      setSelectedThreadId(null);
+    }
   }
   useEffect(() => {
     if (appliedInitialRef.current || !initialThreadId) return;

@@ -2,6 +2,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -239,6 +240,9 @@ const runSessions: JourneySessionRow[] = [
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
+const mutationCalls: Array<{ name: string; args: unknown }> = [];
+/** Per-name mutation outcome; a test installs a rejection to exercise failure. */
+let mutationResult: (name: string, args: unknown) => unknown = () => ({});
 
 let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
@@ -262,12 +266,28 @@ vi.mock("convex/react", () => ({
         return undefined;
     }
   },
-  useMutation: () => vi.fn(),
+  // Recorded by NAME so a test can assert what a control actually wrote. The
+  // Swarms reads are string-keyed and cast through `as any`, so a renamed
+  // mutation would otherwise surface only as a button that silently does
+  // nothing.
+  useMutation: (name: string) => {
+    const spy = vi.fn(async (args: unknown) => {
+      mutationCalls.push({ name, args });
+      return mutationResult(name, args);
+    });
+    return spy;
+  },
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
   usePaginatedQuery: (name: string, args: unknown) => {
     paginatedCalls.push({ name, args });
-    if (name === "journeyRuns:listSessionsByJourneyRun") {
+    if (
+      name === "journeyRuns:listSessionsByJourneyRun" ||
+      // The Sessions panel reads the PROJECT feed. Serving it here is what lets
+      // a test see the focused-session viewer at all — without rows, the deep
+      // link never applies and the panel renders an empty list.
+      name === "journeyRuns:listSessionsByProject"
+    ) {
       return {
         results: runSessions,
         status: "Exhausted",
@@ -314,6 +334,7 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { toast } from "@/lib/toast";
 import { activeViewLabel } from "./swarms-tab-test-helpers";
 
 function withGroup(
@@ -346,6 +367,8 @@ beforeEach(() => {
   personasData = [persona];
   overviewThrows = false;
   launchJourneyRunMock.mockReset();
+  mutationCalls.length = 0;
+  mutationResult = () => ({});
   window.history.replaceState({}, "", "/swarms");
 });
 
@@ -963,5 +986,255 @@ describe("Swarm header body copy — per tab", () => {
 
     expect(screen.getByText(SWARM_PITCH)).toBeVisible();
     expect(screen.queryByText(PERSONAS_LINE)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * BB-74 — run state and navigation.
+ *
+ * Four failures in one flow, all of them about losing the thread of a run:
+ * following a live finding was a one-way trip, the way back did nothing
+ * visible, a returning viewer could not tell a live run from a finished one and
+ * could not stop one, and the launch confirmation reported an internal count
+ * instead of taking anyone to the run.
+ */
+describe("Swarm run state and navigation", () => {
+  /** The wave under `/swarms/run-2b`, with every run still going. */
+  function runningOverview(): SwarmOverview {
+    const [newest, second, ...rest] = overview.runs;
+    return {
+      ...overview,
+      runs: [
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "running",
+          summary: { total: 15, succeeded: 3, failed: 1, rateLimited: 0 },
+        },
+        ...rest,
+      ],
+    };
+  }
+
+  it("states the outcome when the viewer returns to a finished run", async () => {
+    renderTab("run-2b");
+
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    // The page used to render NOTHING once the run settled, so a returning
+    // viewer had no way to tell a finished run from a live one.
+    expect(state.getAttribute("data-run-state")).toBe("complete");
+    expect(
+      screen.getByTestId("swarm-run-detail-state-label").textContent
+    ).toBe("Complete");
+    expect(state.textContent).toMatch(/sessions succeeded/);
+    expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
+  });
+
+  it("closes the focused session when the viewer goes back to the run", async () => {
+    // THE reported bug: the button vanished and the session stayed on screen,
+    // because the panel seeded its selection from the URL once and never
+    // followed it again.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    expect(await screen.findByTestId("viewer")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
+
+    expect(window.location.search).toBe("?tab=sessions");
+    await waitFor(() => expect(screen.queryByTestId("viewer")).toBeNull());
+  });
+
+  it("offers the way back out of a session on a run that has already finished", async () => {
+    // The control existed only inside the live strip, so a finding followed
+    // after the run settled was a dead end.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    const back = await screen.findByTestId("swarm-run-detail-back-to-run");
+    expect(back.textContent).toMatch(/back to the run/i);
+  });
+
+  it("names the finding the viewer followed in on", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail&finding=crit-quick"
+    );
+    renderTab("run-2b");
+
+    const banner = await screen.findByTestId(
+      "swarm-run-detail-followed-finding"
+    );
+    expect(banner.getAttribute("data-criterion-id")).toBe("crit-quick");
+    expect(banner.textContent).toMatch(/Quick resolution/);
+    expect(banner.textContent).toMatch(/failed in 4 of 6 graded sessions/);
+  });
+
+  it("shows no finding banner for a criterion this wave does not carry", async () => {
+    // The URL carries an id, not a sentence, so an unknown or renamed criterion
+    // degrades to silence rather than to a stale claim.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail&finding=crit-gone"
+    );
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    expect(
+      screen.queryByTestId("swarm-run-detail-followed-finding")
+    ).toBeNull();
+  });
+
+  it("stops every running goal in the wave, once confirmed", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(
+        mutationCalls.filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+      ).toHaveLength(2)
+    );
+    // Both goals in the wave, by run id — a wave is N runs and the backend
+    // cancels one per call.
+    expect(
+      mutationCalls
+        .filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+        .map((c) => (c.args as { journeyRunId: string }).journeyRunId)
+        .sort()
+    ).toEqual(["run-2", "run-2b"].sort());
+    expect(toast.success).toHaveBeenCalledWith("Run stopped");
+  });
+
+  it("does not stop anything until the confirmation is taken", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+
+    // A stop cannot be undone — the queued sessions never run — so the trigger
+    // opens a confirmation rather than firing.
+    await screen.findByTestId("swarm-run-detail-stop-confirm");
+    expect(
+      mutationCalls.filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+    ).toHaveLength(0);
+  });
+
+  it("reports a stop it could not make instead of claiming the run stopped", async () => {
+    overviewData = runningOverview();
+    mutationResult = (name) => {
+      if (name === "journeyRuns:cancelJourneyRun") {
+        throw new Error("Run already completed; only a running run can be canceled.");
+      }
+      return {};
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Run already completed; only a running run can be canceled."
+      )
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("says Stopped, not Failed, to the viewer who stopped the run", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    // The wave settles the way a canceled run settles — `failed`, because the
+    // marker that separates a stop from a failure is not projected onto this
+    // read. Painting that red to the person who just pressed Stop says their
+    // action broke something.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).toBe("stopped");
+    expect(
+      screen.getByTestId("swarm-run-detail-state-label").textContent
+    ).toBe("Stopped");
+  });
+
+  it("confirms a new run in the viewer's terms and offers the run itself", async () => {
+    launchJourneyRunMock.mockResolvedValue({ status: "launched" });
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.at(-1)!;
+    // "Started 15 goals" reported a count and stranded the viewer on the run
+    // they had relaunched FROM.
+    expect(call[0]).toBe("New swarm run started — 2 goals");
+    const action = (
+      call[1] as { action?: { label: string; onClick: () => void } } | undefined
+    )?.action;
+    expect(action?.label).toBe("View run");
+
+    const groupId = (
+      launchJourneyRunMock.mock.calls[0]![0] as { swarmRunGroupId: string }
+    ).swarmRunGroupId;
+    expect(groupId).toBeTruthy();
+    action!.onClick();
+    expect(window.location.pathname).toBe(`/swarms/${groupId}`);
+  });
+
+  it("says Running on the list row, not just a coloured dot", async () => {
+    overviewData = runningOverview();
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    const row = waveRow("run-2b");
+    const pill = within(row).getByTestId("swarm-overview-run-state");
+    expect(pill.getAttribute("data-run-state")).toBe("running");
+    expect(pill.textContent).toBe("Running");
+  });
+
+  it("says Complete on a settled list row", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    const pill = within(waveRow("run-2b")).getByTestId(
+      "swarm-overview-run-state"
+    );
+    expect(pill.getAttribute("data-run-state")).toBe("complete");
+    expect(pill.textContent).toBe("Complete");
   });
 });
