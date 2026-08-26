@@ -191,6 +191,17 @@ describe("TestCasesOverview", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("renders nothing for a null claim, without throwing", async () => {
+      // A stored `null` and an absent field mean the same thing — this case was
+      // authored here — and a badge component that only guarded `undefined`
+      // would crash the whole overview on the first row a PATCH had cleared.
+      renderCases([{ ...baseCase, import: null }]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      expect(
+        within(row).queryByTestId(/^import-claim-/),
+      ).not.toBeInTheDocument();
+    });
+
     it("renders nothing for a status this build does not recognize", async () => {
       renderCases([
         { ...baseCase, import: { status: "probably-fine" } },

@@ -1,3 +1,4 @@
+import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type {
@@ -97,12 +98,11 @@ export type RunGroupQualityResult = {
  * Claim-only. Who approved an approximation, when, and why is a PER-RUN
  * decision frozen on the run ({@link EvalImportRunDecision},
  * {@link ImportApprovalReceipt}), never stored on the case.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated, so the
+ * four statuses cannot drift out of step with what a converter may write.
  */
-export type EvalCaseImportClaim = {
-  status: "exact" | "approximated" | "unsupported" | "unresolved";
-  sourceCaseKey?: string;
-  note?: string;
-};
+export type EvalCaseImportClaim = EvalSuiteFileCaseImport;
 
 /**
  * The run's FROZEN decision about one imported case, written at launch.

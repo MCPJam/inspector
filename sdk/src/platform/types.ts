@@ -15,6 +15,7 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalSuiteFileCaseImport,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -1467,14 +1468,13 @@ export interface PlatformEvalCase {
  * ({@link PlatformImportApprovalReceipt}), never on the case: an approval
  * stored on a case would outlive the run it was granted for and the edit that
  * invalidated it.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated. A claim a
+ * converter writes into a file is exactly a claim the API carries, so a second
+ * spelling here is only an opportunity for the two to disagree about what a
+ * claim is — and the disagreement would surface at somebody's ingest, not ours.
  */
-export interface PlatformEvalCaseImportClaim {
-  status: "exact" | "approximated" | "unsupported" | "unresolved";
-  /** The case's identity in the source system, when it had one. */
-  sourceCaseKey?: string;
-  /** Why the status is what it is — the rule cited, or what was lost. */
-  note?: string;
-}
+export type PlatformEvalCaseImportClaim = EvalSuiteFileCaseImport;
 
 /**
  * One frozen approval of an approximated import, as the run recorded it.

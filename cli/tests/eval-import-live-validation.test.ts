@@ -1620,6 +1620,44 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("an approval by authored id survives an unmappable --case selector", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              "--case",
+              "row_c_approx",
+              "--allow-approximated",
+              "c_approx",
+              "--approval-reason",
+              "Reviewed against the upstream rubric."
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // Widening the selection must not make the NOT-SELECTED refusal fire on
+        // a case that may well be in the run. Refusing here would block a
+        // launch the caller got right; the backend re-checks every approval
+        // against the cases the run actually executes.
+        assert.equal(run.result.exitCode, 0, run.stdout + run.stderr);
+        assert.deepEqual(
+          (
+            fixture.runBodies[0] as {
+              importApprovals?: Array<{ testCaseId: string }>;
+            }
+          ).importApprovals?.map((entry) => entry.testCaseId),
+          ["row_c_approx"]
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("an unmappable --case selector does not refuse an otherwise-clean run", async () => {
     const fixture = await startFixture({
       toolsByServer: { billing: ["render_refund", "render_gone"] },

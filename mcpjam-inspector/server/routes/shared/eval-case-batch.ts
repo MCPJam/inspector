@@ -20,6 +20,7 @@
  *     written into the random `ui_*` storage `caseKey`.
  */
 import { MAX_BATCH_CREATE_CASES, mintCaseId } from "@mcpjam/sdk/contract";
+import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
 
 /**
  * Cases accepted by one `createTestCases` call.
@@ -68,12 +69,12 @@ export type EvalCaseBatchItem = Record<string, unknown> & {
  *
  * `exact` is CONVERTER-CLAIMED exact — a mapping rule the converter says it
  * applied — and never an MCPJam verification of semantic equivalence.
+ *
+ * RE-EXPORTED from the suite-file contract rather than restated: a claim a
+ * converter writes into a file is exactly the claim this batch carries, and a
+ * second spelling is only an opportunity for the two to disagree.
  */
-export type EvalCaseImportClaim = {
-  status: "exact" | "approximated" | "unsupported" | "unresolved";
-  sourceCaseKey?: string;
-  note?: string;
-};
+export type EvalCaseImportClaim = EvalSuiteFileCaseImport;
 
 export interface CaseBatchCommittedEntry {
   /** Index into the ORIGINAL item list, not the chunk that carried it. */

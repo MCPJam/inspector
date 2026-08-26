@@ -97,6 +97,48 @@ describe("TestCaseListSidebar", () => {
     expect(screen.getAllByTestId(/^import-claim-/)).toHaveLength(2);
   });
 
+  it("renders no badge for a cleared, absent, or unrecognized claim", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[
+          // A PATCH that cleared the claim stores `null`; an absent field means
+          // the case was authored here. Both mean "no badge", and a component
+          // that guarded only `undefined` would crash the sidebar on the first
+          // cleared row.
+          { ...baseCase, import: null },
+          { ...baseCase, _id: "case-2", title: "Native case" },
+          // A status from a newer writer is shown as nothing rather than as a
+          // guessed label — a made-up badge would read as an assertion MCPJam
+          // never made.
+          {
+            ...baseCase,
+            _id: "case-3",
+            title: "Future case",
+            import: { status: "probably-fine" },
+          },
+        ]}
+        suiteId="suite-1"
+        selectedTestId="case-1"
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        suite={baseSuite}
+        onRunTestCase={vi.fn()}
+        runningTestCaseId={null}
+        connectedServerNames={new Set(["asana"])}
+      />,
+    );
+
+    expect(screen.queryAllByTestId(/^import-claim-/)).toHaveLength(0);
+    // …and the rows themselves still rendered, so this is "no badge", not
+    // "the list blew up".
+    expect(screen.getByText("Future case")).toBeInTheDocument();
+  });
+
   it("disables selected-case run when no case is selected", () => {
     renderWithProviders(
       <TestCaseListSidebar
