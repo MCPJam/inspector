@@ -700,6 +700,25 @@ export const evalStageAnalyticsStructuralSchema = z
     suiteId: z.string().min(1),
     /** Present when the run is grouped for comparison (a matrix, a schedule). */
     runGroupId: z.string().min(1).optional(),
+    /**
+     * The run's authored-configuration revision, frozen at run start.
+     *
+     * One of the three identities a parity claim requires. Two runs of the
+     * same suite under DIFFERENT authored configs measure different things —
+     * different cases, thresholds, predicates or intents — so their funnels
+     * are two observations, not a comparison. Absent on a run that recorded
+     * none, and absence BLOCKS parity rather than being assumed compatible.
+     */
+    configRevision: z.string().min(1).optional(),
+    /**
+     * A digest over the comparable case set this run actually measured.
+     *
+     * The third identity. Two runs can share a run group and a config revision
+     * and still have measured different case sets — a filtered re-run, a
+     * partially cancelled matrix leg — and a funnel compared across those is
+     * comparing different populations. Absent blocks parity, same rule.
+     */
+    caseSetFingerprint: z.string().min(1).optional(),
     organizationId: z.string().min(1).optional(),
     workspaceId: z.string().min(1).optional(),
     projectId: z.string().min(1).optional(),
@@ -878,7 +897,24 @@ export function reachRate(tally: EvalStageTally): EvalStageRate {
  * comparison.
  */
 export const EVAL_STAGE_PARITY_BLOCKERS = [
+  /**
+   * One or both rows record no run group.
+   *
+   * Distinct from `differentRunGroup`, and the more dangerous of the two: two
+   * ungrouped runs compare EQUAL under a naive `a === b`, so an equality-only
+   * check reports "comparable" for two arbitrary runs that share nothing. An
+   * unknown identity is never a matching identity.
+   */
+  "missingRunGroup",
   "differentRunGroup",
+  /** One or both rows record no authored-config revision. */
+  "missingConfigIdentity",
+  /** The two runs were configured differently, so they measured different things. */
+  "differentConfigIdentity",
+  /** One or both rows record no case-set digest. */
+  "missingCaseSetIdentity",
+  /** The two runs measured different case populations. */
+  "differentCaseSetIdentity",
   "differentAnalyzerVersion",
   "differentMeasurementsVersion",
   "differentMeasurementUnit",
@@ -900,14 +936,27 @@ export type EvalStageParityBlocker =
 /**
  * Can these two rows be compared? Returns the blockers; empty means yes.
  *
- * `provisional` is a blocker rather than a caveat: a comparison against a row
- * that is still being rebuilt can invert between two page loads, and a reader
- * has no way to tell that happened.
+ * "Parity" is a CLAIM, and drawing two funnels beside each other IS the claim.
+ * So an empty result has to mean "these measured comparable things", not merely
+ * "nothing I checked differed".
+ *
+ * Every identity is therefore required to be PRESENT AND EQUAL, never just
+ * non-conflicting. An unknown identity is not a matching one: two runs that both
+ * record no run group compare equal under `a === b` while sharing nothing at
+ * all, and an equality-only check would hand back "comparable" for an arbitrary
+ * pair. The same goes for config revision and case set — the D5 rule is that
+ * run-group, config, case set and analyzer version must all be compatible, and
+ * three of those cannot be checked by comparing `undefined` to `undefined`.
+ *
+ * `provisional` and `mixedSourceVersions` are properties of a row on its own
+ * rather than of the pair, and are checked that way.
  */
 export function stageAnalyticsParityBlockers(
   a: Pick<
     EvalStageAnalyticsV1,
     | "runGroupId"
+    | "configRevision"
+    | "caseSetFingerprint"
     | "stageAnalyzerVersion"
     | "measurementsSchemaVersion"
     | "measurementUnit"
@@ -918,8 +967,43 @@ export function stageAnalyticsParityBlockers(
   b: typeof a
 ): EvalStageParityBlocker[] {
   const blockers: EvalStageParityBlocker[] = [];
-  // Checked FIRST, and on each row independently: a mixed row is incomparable
-  // to anything at all, so this does not depend on how the two rows relate.
+
+  // Each identity: absent on either side blocks, and only then is a mismatch
+  // meaningful to report. Missing and different are separate blockers because
+  // they call for different answers — "we cannot tell" versus "these differ".
+  const identities = [
+    {
+      values: [a.runGroupId, b.runGroupId],
+      missing: "missingRunGroup",
+      different: "differentRunGroup",
+    },
+    {
+      values: [a.configRevision, b.configRevision],
+      missing: "missingConfigIdentity",
+      different: "differentConfigIdentity",
+    },
+    {
+      values: [a.caseSetFingerprint, b.caseSetFingerprint],
+      missing: "missingCaseSetIdentity",
+      different: "differentCaseSetIdentity",
+    },
+  ] as const satisfies readonly {
+    values: readonly [string | undefined, string | undefined];
+    missing: EvalStageParityBlocker;
+    different: EvalStageParityBlocker;
+  }[];
+
+  for (const identity of identities) {
+    const [left, right] = identity.values;
+    if (left === undefined || right === undefined) {
+      blockers.push(identity.missing);
+      continue;
+    }
+    if (left !== right) blockers.push(identity.different);
+  }
+
+  // A row that aggregates more than one source version is incomparable to
+  // anything, itself included — checked per row, not between them.
   if (
     [a, b].some(
       (row) =>
@@ -929,7 +1013,7 @@ export function stageAnalyticsParityBlockers(
   ) {
     blockers.push("mixedSourceVersions");
   }
-  if (a.runGroupId !== b.runGroupId) blockers.push("differentRunGroup");
+
   if (a.stageAnalyzerVersion !== b.stageAnalyzerVersion) {
     blockers.push("differentAnalyzerVersion");
   }

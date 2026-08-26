@@ -4,6 +4,8 @@
   "runId": "run_golden",
   "suiteId": "suite_golden",
   "runGroupId": "group_golden",
+  "configRevision": "cfg_golden",
+  "caseSetFingerprint": "cases_golden",
   "organizationId": "org_1",
   "projectId": "proj_1",
   "runCompletedAt": 1700000100000,

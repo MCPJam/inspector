@@ -94,6 +94,8 @@ const INPUT: StageAnalyticsInput = {
     runId: "run_golden",
     suiteId: "suite_golden",
     runGroupId: "group_golden",
+    configRevision: "cfg_golden",
+    caseSetFingerprint: "cases_golden",
     organizationId: "org_1",
     projectId: "proj_1",
     runCompletedAt: 1_700_000_100_000,
@@ -211,6 +213,12 @@ describe("golden fixture", () => {
       chainVersionAhead: 1,
     });
     expect(actual.materializationState).toBe("provisional");
+    // All three parity identities present, so a consumer can tell a comparable
+    // row from one that merely does not conflict.
+    expect(actual.configRevision).toBe("cfg_golden");
+    expect(actual.caseSetFingerprint).toBe("cases_golden");
+    // Uniform source versions, so no mixed list.
+    expect(actual.sourceStageAnalyzerVersions).toBeUndefined();
 
     const overall = actual.slices.find((s) => s.slice.dimension === "overall")!;
     // Overlapping spans: 0-500 and 250-800 is 800ms of wall time, not 1050.

@@ -137,6 +137,10 @@ export type StageAnalyticsRunInput = {
   runId: string;
   suiteId: string;
   runGroupId?: string;
+  /** The run's frozen authored-config revision. Absent blocks parity. */
+  configRevision?: string;
+  /** Digest over the comparable case set this run measured. Absent blocks parity. */
+  caseSetFingerprint?: string;
   organizationId?: string;
   workspaceId?: string;
   projectId?: string;
@@ -620,21 +624,40 @@ export function aggregateStageAnalytics(
   }
 
   // ── setup: one attempt per run+phase, impact per trial ────────────────────
+  //
+  // The caller passes EVERY per-iteration copy of a run+phase signal, and the
+  // copies are expected identical because they are literally copies. When they
+  // are not, first-seen-wins would make the reported outcome, attribution and
+  // duration depend on read order — an `ok` copy followed by a `failed` one
+  // reporting `failedAttempts: 0` beside `impactedTrials: 1`, which is not just
+  // order-dependent but self-contradictory, and reversing the order changes the
+  // answer. So conflicting copies are RECONCILED by rules that do not depend on
+  // order and do not invent a fact:
+  //
+  //   - the attempt FAILED if any copy saw it fail (failure is the observation
+  //     that matters, and `impactedTrials` is already counted from the failed
+  //     copies, so this is what keeps the two consistent);
+  //   - attribution and the egress canary are read only from the FAILED copies,
+  //     and only when those agree — a disagreement is `unknown`, which is not
+  //     server-attributable;
+  //   - latency is a sample only when every copy reporting a duration reports
+  //     the SAME one. Otherwise no sample, the same rule every other timing in
+  //     this contract follows: a wrong number is worse than a missing one.
   const setupByPhase = new Map<
     SetupPhase,
-    { signal: StageAnalyticsSetupSignalInput; impacted: Set<string> }
+    {
+      copies: StageAnalyticsSetupSignalInput[];
+      impacted: Set<string>;
+    }
   >();
   for (const signal of input.setupSignals ?? []) {
     if (!(SETUP_PHASES as readonly string[]).includes(signal.phase)) continue;
     let entry = setupByPhase.get(signal.phase);
     if (entry === undefined) {
-      // FIRST-SEEN wins for the attempt's own facts. Every copy of a run+phase
-      // signal describes the same attempt, so they are expected identical; if
-      // they ever disagree, taking the first is deterministic and taking a
-      // "worst of" would invent an attempt that never happened.
-      entry = { signal, impacted: new Set() };
+      entry = { copies: [], impacted: new Set() };
       setupByPhase.set(signal.phase, entry);
     }
+    entry.copies.push(signal);
     // Impact, unlike the attempt, IS per trial — this union is the whole reason
     // N copies must yield N impacted trials and one attempt.
     if (signal.outcome === "failed" && signal.trialKey !== undefined) {
@@ -642,26 +665,51 @@ export function aggregateStageAnalytics(
     }
   }
 
+  /** The one value every entry agrees on, or `undefined` if they do not. */
+  function agreedValue<T>(values: readonly T[]): T | undefined {
+    const [first, ...rest] = values;
+    if (first === undefined) return undefined;
+    return rest.every((value) => value === first) ? first : undefined;
+  }
+
   const setup: EvalSetupTally[] = SETUP_PHASES.flatMap((phase) => {
     const entry = setupByPhase.get(phase);
     if (entry === undefined) return [];
-    const { signal, impacted } = entry;
-    const failed = signal.outcome === "failed";
-    const duration = signal.durationMs;
-    const hasSample =
-      typeof duration === "number" &&
-      Number.isFinite(duration) &&
-      duration >= 0;
+    const { copies, impacted } = entry;
+
+    const failedCopies = copies.filter((copy) => copy.outcome === "failed");
+    const failed = failedCopies.length > 0;
+
+    // Only the failed copies can attribute a failure, and only unanimously.
+    const attribution = failed
+      ? agreedValue(failedCopies.map((copy) => copy.attribution))
+      : undefined;
+    const egressVerified = failed
+      ? agreedValue(failedCopies.map((copy) => copy.egressVerified))
+      : undefined;
+
+    const durations = copies
+      .map((copy) => copy.durationMs)
+      .filter(
+        (value): value is number =>
+          typeof value === "number" && Number.isFinite(value) && value >= 0
+      );
+    const duration = durations.length > 0 ? agreedValue(durations) : undefined;
+
     return [
       {
         phase,
         uniqueAttempts: 1,
         failedAttempts: failed ? 1 : 0,
-        serverAttributedFailures: isServerAttributedSetupFailure(signal)
+        serverAttributedFailures: isServerAttributedSetupFailure({
+          outcome: failed ? "failed" : "ok",
+          attribution,
+          egressVerified,
+        })
           ? 1
           : 0,
         impactedTrials: impacted.size,
-        ...(hasSample
+        ...(duration !== undefined
           ? {
               latency: {
                 unit: LATENCY_UNIT,
@@ -773,6 +821,12 @@ export function aggregateStageAnalytics(
     runId: run.runId,
     suiteId: run.suiteId,
     ...(run.runGroupId !== undefined ? { runGroupId: run.runGroupId } : {}),
+    ...(run.configRevision !== undefined
+      ? { configRevision: run.configRevision }
+      : {}),
+    ...(run.caseSetFingerprint !== undefined
+      ? { caseSetFingerprint: run.caseSetFingerprint }
+      : {}),
     ...(run.organizationId !== undefined
       ? { organizationId: run.organizationId }
       : {}),

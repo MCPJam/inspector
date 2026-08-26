@@ -68,6 +68,12 @@ const trial = (
 const run = (over: Record<string, unknown> = {}) => ({
   runId: "run_1",
   suiteId: "suite_1",
+  // The three parity identities, supplied by default so aggregated rows are
+  // realistic — a row missing them is correctly incomparable, which would
+  // otherwise mask what a parity assertion is actually testing.
+  runGroupId: "group_1",
+  configRevision: "cfg-1",
+  caseSetFingerprint: "cases-1",
   materializationState: "final" as const,
   now: 1_700_000_000_000,
   readerStageAnalyzerVersion: STAGE_ANALYZER_VERSION,
@@ -630,6 +636,79 @@ describe("setup — one attempt per run+phase, impact per trial", () => {
     });
   });
 
+  test("conflicting copies reconcile the SAME way in either order", () => {
+    // The reported failure was: an `ok` copy followed by a `failed` one gave
+    // `failedAttempts: 0` beside `impactedTrials: 1` — self-contradictory —
+    // and reversing the order changed the answer.
+    const ok = {
+      phase: "connection" as const,
+      outcome: "ok" as const,
+      durationMs: 100,
+      trialKey: "a",
+    };
+    const bad = {
+      phase: "connection" as const,
+      outcome: "failed" as const,
+      attribution: "theirs" as const,
+      egressVerified: true,
+      durationMs: 3000,
+      trialKey: "b",
+    };
+
+    const forward = aggregate([trial()], {}, [ok, bad]).setup[0]!;
+    const reverse = aggregate([trial()], {}, [bad, ok]).setup[0]!;
+    expect(forward).toEqual(reverse);
+
+    // The attempt FAILED, because a copy saw it fail — which is what keeps
+    // `failedAttempts` consistent with the impacted trial counted from it.
+    expect(forward).toMatchObject({
+      uniqueAttempts: 1,
+      failedAttempts: 1,
+      impactedTrials: 1,
+    });
+    // The durations disagree, so there is NO sample rather than whichever one
+    // happened to be read first.
+    expect(forward.latency).toBeUndefined();
+  });
+
+  test("attribution needs unanimity among the failed copies", () => {
+    const failure = (over: Record<string, unknown>) => ({
+      phase: "connection" as const,
+      outcome: "failed" as const,
+      egressVerified: true,
+      trialKey: "t",
+      ...over,
+    });
+    // Agreeing copies attribute normally.
+    expect(
+      aggregate([trial()], {}, [
+        failure({ attribution: "theirs" }),
+        failure({ attribution: "theirs", trialKey: "u" }),
+      ]).setup[0]!.serverAttributedFailures
+    ).toBe(1);
+    // Disagreeing copies do NOT — an unresolved attribution is `unknown`, and
+    // blaming a server on a coin flip is the failure this rule prevents.
+    const split = aggregate([trial()], {}, [
+      failure({ attribution: "theirs" }),
+      failure({ attribution: "ours", trialKey: "u" }),
+    ]).setup[0]!;
+    expect(split.failedAttempts).toBe(1);
+    expect(split.serverAttributedFailures).toBe(0);
+  });
+
+  test("agreeing duplicate durations still yield exactly one sample", () => {
+    const copies = ["a", "b", "c"].map((trialKey) => ({
+      phase: "discovery" as const,
+      outcome: "ok" as const,
+      durationMs: 40,
+      trialKey,
+    }));
+    expect(aggregate([trial()], {}, copies).setup[0]!.latency).toMatchObject({
+      sampleCount: 1,
+      totalMs: 40,
+    });
+  });
+
   test("a phase with no signal produces no row at all", () => {
     expect(aggregate([trial()]).setup).toEqual([]);
   });
@@ -751,7 +830,10 @@ describe("the row itself", () => {
     expect(stageAnalyticsParityBlockers(row, uniform)).toContain(
       "mixedSourceVersions"
     );
-    // The uniform pair is still fine, so the blocker is not firing on everything.
+    // The blocker is specific to the mixed row, not firing on everything.
+    expect(stageAnalyticsParityBlockers(uniform, uniform)).not.toContain(
+      "mixedSourceVersions"
+    );
     expect(stageAnalyticsParityBlockers(uniform, uniform)).toEqual([]);
   });
 
@@ -788,10 +870,14 @@ describe("the row itself", () => {
 describe("parity", () => {
   const base = {
     runGroupId: "g1",
+    configRevision: "cfg-1",
+    caseSetFingerprint: "cases-1",
     stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
     measurementsSchemaVersion: 1,
     measurementUnit: "trial" as const,
     materializationState: "final" as const,
+    sourceStageAnalyzerVersions: undefined,
+    sourceMeasurementsSchemaVersions: undefined,
   };
 
   test("compatible rows have no blockers", () => {
@@ -800,6 +886,8 @@ describe("parity", () => {
 
   test.each([
     ["differentRunGroup", { runGroupId: "g2" }],
+    ["differentConfigIdentity", { configRevision: "cfg-2" }],
+    ["differentCaseSetIdentity", { caseSetFingerprint: "cases-2" }],
     ["differentAnalyzerVersion", { stageAnalyzerVersion: 99 }],
     ["differentMeasurementsVersion", { measurementsSchemaVersion: 2 }],
     ["provisional", { materializationState: "provisional" as const }],
@@ -809,14 +897,42 @@ describe("parity", () => {
     );
   });
 
-  test("an ungrouped pair is not silently declared comparable", () => {
-    // Both undefined DOES compare equal — that is deliberate; the blocker
-    // exists for a mismatch, and callers gate on run-group presence upstream.
-    expect(
-      stageAnalyticsParityBlockers(
-        { ...base, runGroupId: undefined },
-        { ...base, runGroupId: "g1" }
-      )
-    ).toContain("differentRunGroup");
+  test.each([
+    ["missingRunGroup", "runGroupId"],
+    ["missingConfigIdentity", "configRevision"],
+    ["missingCaseSetIdentity", "caseSetFingerprint"],
+  ] as const)(
+    "%s blocks when BOTH rows lack the identity",
+    (blocker, field) => {
+      // The dangerous case, and the one an equality check gets wrong: two
+      // `undefined`s compare equal, so `a === b` reports "comparable" for two
+      // arbitrary runs that share nothing at all. An unknown identity is never
+      // a matching identity.
+      const absent = { ...base, [field]: undefined };
+      expect(stageAnalyticsParityBlockers(absent, absent)).toContain(blocker);
+      // And when only one side lacks it.
+      expect(stageAnalyticsParityBlockers(absent, base)).toContain(blocker);
+      expect(stageAnalyticsParityBlockers(base, absent)).toContain(blocker);
+    }
+  );
+
+  test("an empty result means all three identities were present and equal", () => {
+    // The property that makes an empty result safe to render as a comparison.
+    expect(stageAnalyticsParityBlockers(base, base)).toEqual([]);
+    for (const field of [
+      "runGroupId",
+      "configRevision",
+      "caseSetFingerprint",
+    ] as const) {
+      const absent = { ...base, [field]: undefined };
+      expect(stageAnalyticsParityBlockers(absent, absent)).not.toEqual([]);
+    }
+  });
+
+  test("a mixed-source row blocks even against an identical row", () => {
+    const mixed = { ...base, sourceStageAnalyzerVersions: [3, 4] };
+    expect(stageAnalyticsParityBlockers(mixed, mixed)).toContain(
+      "mixedSourceVersions"
+    );
   });
 });
