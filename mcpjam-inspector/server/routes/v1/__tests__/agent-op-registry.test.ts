@@ -20,7 +20,7 @@ import {
   AGENT_OP_PROMPT_NOTES,
   AGENT_OP_REGISTRY,
   EXCLUDED_FROM_AGENT,
-  conformanceRunResource,
+  executedActionResource,
   proposalInputForIdempotency,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
@@ -1134,44 +1134,82 @@ describe("agent op registry", () => {
   });
 
   it("does not link a conformance resource when the result has no run id", () => {
-    const entry = gatedEntryFor(startConformanceRunOperation.name);
-    expect(entry?.proposal.resource?.({}, { projectId: "p1" })).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.({ run: {} }, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.({ runId: "" }, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(
-      entry?.proposal.resource?.(null, { projectId: "p1" })
-    ).toBeUndefined();
-    expect(conformanceRunResource(undefined, { projectId: "p1" })).toBeUndefined();
+    // Link derivation now runs off the OPERATION's permalink policy rather
+    // than a builder kept in this registry, so these assert the delegation:
+    // a result the policy cannot address yields no resource, and never a
+    // half-built URL.
+    const link = (result: unknown) =>
+      executedActionResource(startConformanceRunOperation, result, {}, {
+        projectId: "p1",
+      });
+    expect(link({})).toBeUndefined();
+    expect(link({ run: {} })).toBeUndefined();
+    expect(link({ run: { runId: "" } })).toBeUndefined();
+    expect(link(null)).toBeUndefined();
+    expect(link(undefined)).toBeUndefined();
 
     expect(
-      entry?.proposal.resource?.({ runId: "run_1" }, { projectId: "p1" })
+      link({ run: { runId: "run_1", projectId: "p1" } })
     ).toMatchObject({ type: "conformance_run", id: "run_1" });
+  });
+
+  it("returns undefined rather than throwing when a policy fails", () => {
+    // Link derivation runs AFTER the work is done. A policy that throws must
+    // cost the link and nothing else — the caller records `succeeded` from
+    // this value, and an exception escaping here would re-record an action
+    // that happened as failed.
+    const original = startConformanceRunOperation.permalink;
+    (startConformanceRunOperation as { permalink: unknown }).permalink = {
+      kind: "derive",
+      resources: () => {
+        throw new Error("bad policy");
+      },
+    };
+    try {
+      expect(
+        executedActionResource(
+          startConformanceRunOperation,
+          { run: { runId: "run_1", projectId: "p1" } },
+          {},
+          { projectId: "p1" }
+        )
+      ).toBeUndefined();
+    } finally {
+      (startConformanceRunOperation as { permalink: unknown }).permalink =
+        original;
+    }
   });
 
   it("links a GROUP launch to the group, not to one of its runs", () => {
     // The contract carries one resource. Linking the first run would hide a
     // sibling's failure — the one thing an approver of N paid runs needs.
-    const entry = gatedEntryFor(runEvalSuiteOperation.name);
-    const groupResource = entry?.proposal.resource?.(
-      { suite: { id: "ts_1" }, runGroupId: "grp_1", runId: "run_1" },
-      { projectId: "p1" }
-    );
+    const link = (result: unknown) =>
+      executedActionResource(runEvalSuiteOperation, result, {}, {
+        projectId: "p1",
+      });
+    const groupResource = link({
+      project: { id: "p1" },
+      suite: { id: "ts_1" },
+      runGroupId: "grp_1",
+      runId: "run_1",
+    });
     expect(groupResource).toMatchObject({
       type: "eval_run_group",
       id: "grp_1",
     });
     expect(groupResource?.url).toContain("view=runs");
 
-    const singleResource = entry?.proposal.resource?.(
-      { suite: { id: "ts_1" }, runId: "run_1" },
-      { projectId: "p1" }
-    );
+    const singleResource = link({
+      project: { id: "p1" },
+      suite: { id: "ts_1" },
+      runId: "run_1",
+    });
     expect(singleResource).toMatchObject({ type: "eval_run", id: "run_1" });
     expect(singleResource?.url).toContain("/runs/run_1");
+    // Both carry the project scope, which is the whole reason these are not
+    // assembled by hand at each call site.
+    expect(groupResource?.url).toContain("project=p1");
+    expect(singleResource?.url).toContain("project=p1");
   });
 
   it("caps the WHOLE description, not only the argument preview", () => {
@@ -1868,6 +1906,7 @@ const PROMPT_BEFORE_REGISTRY = [
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
+  "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",

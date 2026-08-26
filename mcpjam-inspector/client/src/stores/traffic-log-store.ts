@@ -27,6 +27,7 @@ import type {
 // for internal use and re-exported below so existing import sites are unchanged.
 import { extractMethod } from "@mcpjam/sdk/widget-runtime";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+import { truncateRpcPayload } from "@/shared/rpc-log-truncation";
 
 /**
  * The path of an exchange URL — the row label. The query string is dropped on
@@ -88,6 +89,23 @@ interface TrafficLogState {
 }
 
 const MAX_ITEMS = 1000;
+
+/**
+ * Per-row payload retention cap for the LOCAL rpc stream, mirroring
+ * `MAX_MESSAGE_BYTES` in `server/services/rpc-log-bus.ts`.
+ *
+ * `MAX_ITEMS` bounds the row COUNT and nothing else, which does not bound
+ * memory: 1000 rows of tool results carrying base64 images is how the renderer
+ * reached its own heap ceiling (INSPECTOR-ELECTRON-VJ on /tools and -VT on
+ * /playground, both dying in mark-compact, both `deployment: self_hosted`).
+ *
+ * Scoped to this ingest path rather than to `addMcpServerLog`, because only
+ * here is the size free: the SSE frame arrives as TEXT the browser already
+ * holds, so nothing has to be serialized to measure it. That text carries the
+ * event envelope as well as the payload, making the cap slightly conservative.
+ * Hosted-mode rows arrive from a different producer and are bounded there.
+ */
+const MAX_PAYLOAD_CHARS = 256 * 1024;
 
 export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   items: [],
@@ -336,6 +354,9 @@ export function subscribeToRpcStream(): () => void {
         if (data.type !== "rpc") return;
 
         const { serverId, direction, message, timestamp } = data;
+        // `message` stays transient and is collected right after this call;
+        // only the marker is retained. The method is still read off the real
+        // frame, so an oversized row keeps its label and its place in the list.
         useTrafficLogStore.getState().addMcpServerLog({
           ...(eventId ? { id: eventId } : {}),
           serverId: typeof serverId === "string" ? serverId : "unknown",
@@ -343,7 +364,10 @@ export function subscribeToRpcStream(): () => void {
             typeof direction === "string" ? direction.toUpperCase() : "",
           method: extractMethod(message),
           timestamp: timestamp ?? new Date().toISOString(),
-          payload: message,
+          payload:
+            evt.data.length > MAX_PAYLOAD_CHARS
+              ? truncateRpcPayload(message, MAX_PAYLOAD_CHARS)
+              : message,
         });
       } catch {
         // Ignore parse errors

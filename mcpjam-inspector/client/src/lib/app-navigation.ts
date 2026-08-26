@@ -139,6 +139,33 @@ export const routePaths = {
 
 export type RoutePath = (typeof routePaths)[keyof typeof routePaths] | string;
 
+/**
+ * Build the exact path for one saved MCP server on Connect.
+ *
+ * The app's own counterpart to the SDK permalink builder: agents mint
+ * `/servers/:serverId?project=` through `@mcpjam/sdk/platform`, and the screen
+ * itself round-trips selection through this so a copied URL from the address
+ * bar is the same URL an agent would hand out.
+ */
+export function buildProjectServerPath(serverId?: string | null): string {
+  if (!serverId) return routePaths.servers;
+  return `${routePaths.servers}/${encodeURIComponent(serverId)}`;
+}
+
+/** Build the exact path for one installed Agent Plugin, expanded on Connect. */
+export function buildProjectPluginPath(pluginId?: string | null): string {
+  if (!pluginId) return routePaths.servers;
+  return `${routePaths.servers}/plugins/${encodeURIComponent(pluginId)}`;
+}
+
+/** Build the exact path for one project environment's detail. */
+export function buildProjectEnvironmentPath(
+  environmentId?: string | null
+): string {
+  if (!environmentId) return routePaths.environments;
+  return `${routePaths.environments}/${encodeURIComponent(environmentId)}`;
+}
+
 /** Build a path that deep-links to a specific host's canvas, or to the hosts hub. */
 export function buildHostsPath(hostId?: string | null): string {
   if (!hostId) return routePaths.hosts;

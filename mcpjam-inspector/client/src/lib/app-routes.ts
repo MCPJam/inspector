@@ -64,6 +64,23 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "/", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "home", kind: "screen", surfaceId: "home", scope: "project" },
   { path: "servers", kind: "screen", surfaceId: "servers", scope: "project" },
+  // Exact permalink targets on Connect. Both render the same screen — the
+  // route param is what selects, so a link survives the auth-gate remounts a
+  // cold boot puts it through (same pattern as `user-testing/:scenarioId`).
+  // `servers/plugins/:pluginId` is deeper than `servers/:serverId`, so the
+  // two never compete: a two-segment URL can only be a server.
+  {
+    path: "servers/plugins/:pluginId",
+    kind: "screen",
+    surfaceId: "servers",
+    scope: "project",
+  },
+  {
+    path: "servers/:serverId",
+    kind: "screen",
+    surfaceId: "servers",
+    scope: "project",
+  },
   {
     path: "clients",
     kind: "redirect",
@@ -225,6 +242,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   {
     path: "environments",
+    kind: "screen",
+    surfaceId: "project-environments",
+    scope: "project",
+  },
+  {
+    path: "environments/:environmentId",
     kind: "screen",
     surfaceId: "project-environments",
     scope: "project",

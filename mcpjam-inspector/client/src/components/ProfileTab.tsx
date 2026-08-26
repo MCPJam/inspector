@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -90,7 +91,7 @@ export function ProfileTab() {
               // Remember where they were, so WorkOS returns them here rather
               // than to the app's front door.
               captureAppSignInReturnPath();
-              signIn();
+              signIn(permalinkSignInOptions());
             }}
             size="lg"
           >

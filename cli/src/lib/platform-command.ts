@@ -12,7 +12,13 @@
  * still declare leaf flags where they need them.
  */
 import type { Command } from "commander";
-import { PlatformApiError } from "@mcpjam/sdk/platform";
+import {
+  PlatformApiError,
+  runOperationWithPermalinks,
+  withPermalinkEnvelope,
+  type PlatformPermalink,
+  type PlatformPermalinkPolicy,
+} from "@mcpjam/sdk/platform";
 import {
   appendProjectLinkHint,
   resolveCloudProjectArgs,
@@ -300,6 +306,21 @@ export type BindOperationExtras<TOutput> = {
   formatHuman?: (result: TOutput) => string;
 };
 
+/**
+ * `View: <url>` per permalink, after the command's own human output.
+ *
+ * Human format only, and always LAST, so the payload a person is reading
+ * stays first. `--quiet` is deliberately unaffected: it suppresses the cloud
+ * CONTEXT announcement, not the command's own result — and the link is part
+ * of the result.
+ */
+function writeHumanPermalinks(permalinks: readonly PlatformPermalink[]): void {
+  if (permalinks.length === 0) return;
+  process.stdout.write(
+    `${permalinks.map((permalink) => `View: ${permalink.url}`).join("\n")}\n`
+  );
+}
+
 export function bindOperation<
   TOptions extends PlatformOptions,
   TInput,
@@ -307,11 +328,17 @@ export function bindOperation<
 >(
   command: Command,
   operation: {
+    name?: string;
+    permalink?: PlatformPermalinkPolicy<TInput, TOutput>;
     execute: (
       input: TInput,
       context: {
         client: ReturnType<typeof buildPlatformClient>["client"];
         signal: AbortSignal;
+        onScopeResolved?: (scope: {
+          projectId: string;
+          organizationId?: string;
+        }) => void;
       }
     ) => Promise<TOutput>;
   },
@@ -344,14 +371,45 @@ export function bindOperation<
     const inputOptions = resolved
       ? ({ ...options, project: resolved.project } as TOptions)
       : options;
+    // Permalinks come back alongside the result so both output formats can
+    // use them: human prints `View: <url>`, JSON carries the typed array.
+    // Derived from the RAW result, before `formatHuman` reshapes anything.
+    let permalinks: PlatformPermalink[] = [];
     const result = await runPlatformOperation(
       platformOptionsOf<TOptions>(invoked),
       globalOptions.timeout,
-      ({ client, signal }) =>
-        operation.execute(buildInput(inputOptions, ...positionals), {
-          client,
-          signal,
-        }),
+      async ({ client, signal, webOrigin }) => {
+        const input = buildInput(inputOptions, ...positionals);
+        if (!operation.permalink || !operation.name) {
+          return operation.execute(input, { client, signal });
+        }
+        const ran = await runOperationWithPermalinks<
+          TInput,
+          TOutput,
+          Parameters<typeof operation.execute>[1]
+        >(
+          {
+            name: operation.name,
+            permalink: operation.permalink,
+            execute: operation.execute,
+          },
+          input,
+          { client, signal },
+          {
+            appOrigin: webOrigin,
+            // stderr, so `--format json` stdout stays a parseable contract.
+            onError: (error, operationName) => {
+              process.stderr.write(
+                `mcpjam: could not build a permalink for ${operationName}: ${
+                  error instanceof Error ? error.message : String(error)
+                }\n`
+              );
+            },
+          }
+        );
+        permalinks = ran.permalinks;
+        return ran.result;
+      },
       {
         announce: bindExtras.announce ?? underCloud,
         quiet: globalOptions.quiet,
@@ -365,11 +423,24 @@ export function bindOperation<
             : {}),
       }
     );
-    if (bindExtras.formatHuman && globalOptions.format === "human") {
-      process.stdout.write(`${bindExtras.formatHuman(result)}\n`);
+    if (globalOptions.format === "human") {
+      if (bindExtras.formatHuman) {
+        process.stdout.write(`${bindExtras.formatHuman(result)}\n`);
+      } else {
+        writeResult(result, globalOptions.format);
+      }
+      writeHumanPermalinks(permalinks);
       return;
     }
-    writeResult(result, globalOptions.format);
+    // JSON carries the TYPED array instead of trailing prose: `--format json`
+    // bytes are a contract scripts parse, and a `View:` line appended to them
+    // would break every one of those parsers.
+    writeResult(
+      permalinks.length > 0
+        ? withPermalinkEnvelope(result, permalinks)
+        : result,
+      globalOptions.format
+    );
   });
 }
 

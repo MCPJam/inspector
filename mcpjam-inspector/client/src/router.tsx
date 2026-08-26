@@ -121,6 +121,11 @@ const ROUTE_ELEMENTS: Record<
   "/": { element: <HomeRoute /> },
   home: { element: <HomeRoute /> },
   servers: { element: <ServersRoute /> },
+  // Same element as `servers`: the route param selects, and re-mounting a
+  // different component for the deep-linked case would lose the connection
+  // state Connect has already built.
+  "servers/plugins/:pluginId": { element: <ServersRoute /> },
+  "servers/:serverId": { element: <ServersRoute /> },
   // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
   // renamed Client → Host). Route through `buildHostsPath` so the
   // `:hostId` deep-link is re-encoded exactly like canonical links
@@ -197,6 +202,7 @@ const ROUTE_ELEMENTS: Record<
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
   environments: { element: <EnvironmentsRoute /> },
+  "environments/:environmentId": { element: <EnvironmentsRoute /> },
   // `/sessions` — cross-surface project session feed. The route component
   // enforces the `unified-sessions-enabled` flag itself (redirects when off),
   // so registration here does not expose the dark feature.

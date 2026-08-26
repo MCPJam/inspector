@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -498,7 +499,7 @@ export function OrganizationsTab({
             // Remember where they were, so WorkOS returns them here rather
             // than to the app's front door.
             captureAppSignInReturnPath();
-            signIn();
+            signIn(permalinkSignInOptions());
           }}
         >
           Sign in
