@@ -3,6 +3,7 @@ import { HostOverlayBar } from "@/components/hosts/HostOverlayBar";
 import type { GlobalHostBarProps } from "@/components/Header";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { routePaths } from "@/lib/app-navigation";
+import { stripProjectFromPath } from "@/lib/project-route";
 
 export function GlobalHostBar({
   projectId,
@@ -17,13 +18,16 @@ export function GlobalHostBar({
   // the header instance so the control isn't duplicated. Mirrors HostsTab's
   // open-canvas condition:
   // on the hosts route with either a URL host id or a previewed fallback.
+  // Matched on the LOGICAL path: the live one is `/p/<projectId>/hosts/<id>`,
+  // and comparing that against `/hosts` would report "not on the hosts route"
+  // for every hosted visitor — duplicating the selector in the canvas.
+  const logicalPathname = stripProjectFromPath(location.pathname);
   const onHostsRoute =
-    location.pathname === routePaths.hosts ||
-    location.pathname.startsWith(`${routePaths.hosts}/`);
+    logicalPathname === routePaths.hosts ||
+    logicalPathname.startsWith(`${routePaths.hosts}/`);
   const urlHostId = onHostsRoute
-    ? (location.pathname
-        .slice(`${routePaths.hosts}/`.length)
-        .split("/")[0] || null)
+    ? (logicalPathname.slice(`${routePaths.hosts}/`.length).split("/")[0] ||
+      null)
     : null;
   if (onHostsRoute && (urlHostId || previewedHostId)) {
     return null;

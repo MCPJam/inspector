@@ -342,9 +342,12 @@ function evalSuiteTarget(
 /**
  * The run both run-ops produce, as a linkable resource.
  *
- * `?project=` makes the link self-describing: eval routes carry no project
- * segment, so without it the app renders whatever project the viewer's picker
- * was parked on — an empty state for everyone but the author.
+ * `?project=` makes the link self-describing. The app's canonical form is now
+ * `/p/<projectId>/...` and accepts both, normalizing this one onto the path on
+ * arrival; the emitters here stay legacy until the canonical routes are
+ * deployed (see the agent-permalink work). Without a project in the link at
+ * all, the app renders whatever project the viewer's picker was parked on —
+ * an empty state for everyone but the author.
  */
 function evalRunResource(
   result: unknown,

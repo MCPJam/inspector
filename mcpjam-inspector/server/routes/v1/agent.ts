@@ -128,9 +128,16 @@ export function isValidAgentActionId(actionId: string): boolean {
 }
 
 function suiteUrl(suiteId: string, projectId: string): string {
-  // `?project=` makes the link self-describing: eval routes carry no project
-  // segment, so without it the app renders whatever project the viewer's
-  // picker was parked on (an empty state for everyone but the author).
+  // `?project=` makes the link self-describing: without it the app renders
+  // whatever project the viewer's picker was parked on (an empty state for
+  // everyone but the author).
+  //
+  // The app's canonical form is now `/p/<projectId>/evals/suite/<id>`, and it
+  // accepts BOTH: this parameter normalizes onto that path on arrival. This
+  // emitter stays legacy until the canonical routes are deployed everywhere
+  // that opens these links — emitting a URL the production client cannot yet
+  // route is worse than emitting one it rewrites. See the agent-permalink
+  // work, which owns the switch.
   return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
     suiteId
   )}?project=${encodeURIComponent(projectId)}`;
