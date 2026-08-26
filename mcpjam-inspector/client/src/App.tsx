@@ -1397,7 +1397,7 @@ export function EvaluateRoute() {
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /evaluate directly. (Same tradeoff as SessionsRoute.)
   if (evaluateEnabled === false) {
-    return <Navigate to={routePaths.evals} replace />;
+    return <ScopedNavigate to={routePaths.evals} replace />;
   }
   if (evaluateEnabled === undefined) {
     return null;

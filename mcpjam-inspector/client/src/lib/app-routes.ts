@@ -423,32 +423,42 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   // Evaluate (New) — the flag-gated redesign. A sibling tree of `/evals`, so
   // the original tab's URLs are untouched. Suites lens only: the new landing's
   // Runs view is in-page state, and the commit lens stays on /evals/runs.
-  { path: "evaluate", kind: "screen", surfaceId: "evaluate" },
-  { path: "evaluate/create", kind: "screen", surfaceId: "evaluate" },
+  { path: "evaluate", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  {
+    path: "evaluate/create",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
   {
     path: "evaluate/suite/:suiteId",
     kind: "screen",
     surfaceId: "evaluate",
+    scope: "project",
   },
   {
     path: "evaluate/suite/:suiteId/edit",
     kind: "screen",
     surfaceId: "evaluate",
+    scope: "project",
   },
   {
     path: "evaluate/suite/:suiteId/runs/:runId",
     kind: "screen",
     surfaceId: "evaluate",
+    scope: "project",
   },
   {
     path: "evaluate/suite/:suiteId/test/:testId",
     kind: "screen",
     surfaceId: "evaluate",
+    scope: "project",
   },
   {
     path: "evaluate/suite/:suiteId/test/:testId/edit",
     kind: "screen",
     surfaceId: "evaluate",
+    scope: "project",
   },
   {
     path: "ci-evals",

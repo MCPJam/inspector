@@ -406,6 +406,9 @@ export const APP_SURFACES = [
     // behaviour untouched while this one is dogfooded. It is deleted (and its
     // routes folded into `evals`) once the redesign replaces the original.
     id: "evaluate",
+    // Same suites and same project-owned data as Evaluate — the redesign
+    // changes the screens, not who owns them.
+    scope: "project",
     canonicalPath: "/evaluate",
     routePatterns: [
       "evaluate",
