@@ -70,6 +70,18 @@ const listParamsSchema = z.object({ cursor: z.string().optional() }).loose();
 const getParamsSchema = z.object({ uri: z.string().min(1) }).loose();
 const looseResult = z.looseObject({});
 
+/**
+ * The media type for a skill file.
+ *
+ * `.yaml` matters: `mcpjam-eval-import` ships eval suites, and calling them
+ * `text/plain` misdescribes content a reader may want to parse.
+ */
+export function mimeTypeFor(uri: string): string {
+  if (uri.endsWith(".md")) return "text/markdown";
+  if (uri.endsWith(".yaml") || uri.endsWith(".yml")) return "application/yaml";
+  return "text/plain";
+}
+
 function entryFor(uri: string): SkillsBundleEntry {
   const entry = SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri);
   if (!entry) {
@@ -107,14 +119,18 @@ export function registerSkillsSurface(server: McpServer): void {
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
+    const mimeType = mimeTypeFor(uri);
     server.registerResource(
       uri,
       uri,
       {
-        mimeType: uri.endsWith(".md") ? "text/markdown" : "text/plain",
+        mimeType,
         description: "Agent Skill file served over MCP (SEP-2640).",
       },
-      async () => ({ contents: [{ uri, text }] })
+      // The SAME `mimeType` on the content, not only the registration — a
+      // reader takes the type from `contents[0]`, and MCPJam's own loader
+      // names it in the refusal for a non-text read.
+      async () => ({ contents: [{ uri, mimeType, text }] })
     );
   }
 }

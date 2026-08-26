@@ -32,6 +32,7 @@ import {
   SKILLS_EXTENSION_CAPABILITY,
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_CACHE_SCOPE,
+  mimeTypeFor,
 } from "../src/lib/skills-surface.js";
 // eslint-disable-next-line
 // @ts-expect-error Local build helper is implemented as plain ESM.
@@ -111,6 +112,22 @@ test("every SKILL.md passes full host verification", async () => {
     assert.equal(verified.frontmatter.name, entry.uri.split("/").at(-2));
     assert.ok(verified.frontmatter.description.length > 0);
     assert.ok(verified.body.length > 0);
+  }
+});
+
+test("skill files are typed, and eval suites are not called text/plain", () => {
+  // The same defect the worker had: a reader takes the type from
+  // `contents[0]`, so declaring one at registration and omitting it there
+  // tells two different stories about one file.
+  for (const entry of SKILLS_BUNDLE_ENTRIES) {
+    for (const resource of enumeratedResources(entry)!) {
+      const expected = resource.uri.endsWith(".md")
+        ? "text/markdown"
+        : resource.uri.endsWith(".yaml")
+          ? "application/yaml"
+          : "text/plain";
+      assert.equal(mimeTypeFor(resource.uri), expected, resource.uri);
+    }
   }
 });
 
