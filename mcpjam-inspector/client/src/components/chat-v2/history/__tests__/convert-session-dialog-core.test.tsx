@@ -66,6 +66,7 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+import userEvent from "@testing-library/user-event";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -324,18 +325,41 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     renderCore({ detail: ACK_DETAIL });
     const checkbox = ackCheckbox();
     // A native <button role="checkbox"> is what makes Space activate it and
-    // Tab reach it in a browser. jsdom does not synthesize a click from a
-    // keydown, so asserting on a fired Space event here would prove nothing
-    // about keyboard use — the element type is the real evidence.
+    // Tab reach it. The accessible name comes from a <label htmlFor> bound to
+    // this id, and the consequence is what a screen reader reads with it.
     expect(checkbox.tagName).toBe("BUTTON");
     expect(checkbox.getAttribute("id")).toBe("content-transfer-ack");
     expect(checkbox.getAttribute("aria-describedby")).toBe(
       "content-transfer-consequence"
     );
     expect(checkbox.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("is reachable and tickable by keyboard ALONE", async () => {
+    // `userEvent` models real keyboard semantics — Space on a focused button
+    // activates it — where a bare `fireEvent.keyDown` does not, because jsdom
+    // never synthesizes the click a browser would. No pointer event is fired
+    // anywhere in this test.
+    const user = userEvent.setup();
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    const submit = screen.getByRole("button", {
+      name: "Promote to test case",
+    });
+    expect(submit.hasAttribute("disabled")).toBe(true);
 
     checkbox.focus();
     expect(document.activeElement).toBe(checkbox);
+
+    await user.keyboard("[Space]");
+    expect(checkbox.getAttribute("data-state")).toBe("checked");
+    expect(submit.hasAttribute("disabled")).toBe(false);
+
+    // ...and back off again, so the box is genuinely operable rather than a
+    // one-way latch that happens to have been set.
+    await user.keyboard("[Space]");
+    expect(checkbox.getAttribute("data-state")).toBe("unchecked");
+    expect(submit.hasAttribute("disabled")).toBe(true);
   });
 
   it("the sentence is the hit target, not just the box", () => {

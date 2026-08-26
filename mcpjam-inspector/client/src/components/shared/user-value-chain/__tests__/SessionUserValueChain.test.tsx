@@ -271,6 +271,14 @@ describe("a row from a newer analyzer degrades, it never throws", () => {
     expect(document.body.textContent).toContain("invented");
   });
 
+  it("shows an unknown REASON rather than dropping the line", () => {
+    // This one fails differently from the others: an unrecognized reason with
+    // no fallback is falsy, so the whole line is omitted and the row loses the
+    // only thing that says why it landed where it did. Silence, not a blank.
+    render(<SessionUserValueChain derivation={alien} />);
+    expect(document.body.textContent).toContain("somethingNew");
+  });
+
   it("survives an unknown failure category too", () => {
     const { container } = render(
       <SessionUserValueChain

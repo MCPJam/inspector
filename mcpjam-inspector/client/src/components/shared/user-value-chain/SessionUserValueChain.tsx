@@ -105,7 +105,13 @@ const UNKNOWN_STATE_META = {
 
 function StageRow({ row }: { row: StageResultRow }) {
   const meta = STATE_META[row.state] ?? UNKNOWN_STATE_META;
-  const reason = row.reason ? STAGE_REASON_LABELS[row.reason] : null;
+  // Falls back to the wire spelling for the same reason the stage label does,
+  // and it matters MORE here: an unrecognized reason with no fallback is not
+  // rendered blank, it is not rendered at all — the line disappears, and the
+  // row silently loses the only thing that says WHY it landed where it did.
+  const reason = row.reason
+    ? STAGE_REASON_LABELS[row.reason] ?? row.reason
+    : null;
   const evidenceReasons = row.evidence?.predicateReasons ?? [];
 
   return (
