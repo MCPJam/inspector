@@ -128,10 +128,49 @@ describe("enqueue + batched flush", () => {
       loggedAt: "t",
       message: cyclic,
     });
-    await expect(flushHarnessRpcLogs()).resolves.not.toThrow();
+    await expect(flushHarnessRpcLogs()).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = lastFetchBody(fetchMock);
+    expect(body.entries[0].message).toMatchObject({
+      _truncated: true,
+      limitBytes: 16 * 1024,
+      // The envelope survives the cycle: the identifying scalar is copied and
+      // only the self-reference becomes a marker.
+      serverId: "srv-a",
+      self: { _truncated: true },
+    });
+  });
+
+  // The probe walks own properties, so a throwing getter reaches the sink's
+  // last line of defence. It has to name why the body is missing rather than
+  // fail the proxy request that produced it.
+  it("marks a message it cannot even walk as unserializable", async () => {
+    configure();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hostile = {};
+    Object.defineProperty(hostile, "boom", {
+      enumerable: true,
+      get() {
+        throw new Error("nope");
+      },
+    });
+
+    enqueueHarnessRpcLog({
+      serverId: "srv-a",
+      direction: "send",
+      loggedAt: "t",
+      message: hostile,
+    });
+    await expect(flushHarnessRpcLogs()).resolves.toBeUndefined();
 
     const body = lastFetchBody(fetchMock);
-    expect(body.entries[0].message).toMatchObject({ _truncated: true });
+    expect(body.entries[0].message).toEqual({
+      _truncated: true,
+      reason: "unserializable",
+    });
   });
 
   it("swallows a failing flush — never throws to the caller (observation-only)", async () => {

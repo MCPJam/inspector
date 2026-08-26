@@ -186,6 +186,43 @@ describe("traffic-log-store rpc stream (local mode)", () => {
     });
   });
 
+  // The ingest is fed by a network stream, so a frame that isn't a well-formed
+  // rpc event is a real input, not a hypothetical one. It must neither throw
+  // out of `onmessage` — which would kill the subscription for the rest of the
+  // session — nor leave a row behind.
+  it("ignores malformed SSE frames without recording a row", async () => {
+    const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const unsubscribe = subscribeToRpcStream();
+    const source = FakeEventSource.last!;
+    // Empty frame, unparseable frame, a bare `null`, and a well-formed event
+    // that is not an rpc one.
+    for (const data of ["", "not json", "null", '{"type":"heartbeat"}']) {
+      expect(() => source.onmessage?.({ data })).not.toThrow();
+    }
+    unsubscribe();
+
+    expect(useTrafficLogStore.getState().mcpServerItems).toHaveLength(0);
+  });
+
+  // A null or absent `message` is a degenerate frame, not a malformed one: the
+  // event itself parsed, so the row stays visible rather than disappearing
+  // silently, and truncation has to tolerate the empty body on the way past.
+  it("records an rpc event whose message is null", async () => {
+    const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const unsubscribe = subscribeToRpcStream();
+    const source = FakeEventSource.last!;
+    source.emit({ ...rpcFrame("rpc:null:1", 1), message: null });
+    unsubscribe();
+
+    const [item] = useTrafficLogStore.getState().mcpServerItems;
+    expect(item.payload).toBeNull();
+    expect(isTruncatedRpcPayload(item.payload)).toBe(false);
+  });
+
   it("still records events from a server that sends no eventId", async () => {
     const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
     useTrafficLogStore.getState().clear();

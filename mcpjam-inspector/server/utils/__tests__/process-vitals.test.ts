@@ -15,7 +15,20 @@ const MB = 1024 * 1024;
  * so the heap has to be stubbed to make the emit policy testable at all — the
  * alternative is allocating hundreds of megabytes inside a unit test.
  */
-async function loadVitals(heapSequence: number[]) {
+type HeapSpaces = () => {
+  space_name: string;
+  space_used_size: number;
+  space_size: number;
+}[];
+
+const DEFAULT_HEAP_SPACES: HeapSpaces = () => [
+  { space_name: "old_space", space_used_size: 700 * MB, space_size: 800 * MB },
+];
+
+async function loadVitals(
+  heapSequence: number[],
+  heapSpaces: HeapSpaces = DEFAULT_HEAP_SPACES,
+) {
   vi.resetModules();
   let index = 0;
   vi.doMock("node:v8", () => ({
@@ -27,13 +40,7 @@ async function loadVitals(heapSequence: number[]) {
         heap_size_limit: 4096 * MB,
         external_memory: 15 * MB,
       }),
-      getHeapSpaceStatistics: () => [
-        {
-          space_name: "old_space",
-          space_used_size: 700 * MB,
-          space_size: 800 * MB,
-        },
-      ],
+      getHeapSpaceStatistics: heapSpaces,
     },
   }));
   return import("../process-vitals.js");
@@ -130,6 +137,33 @@ describe("process vitals sampler", () => {
     // Capped at 10 and oldest-first, so it cannot become the leak it measures.
     expect(trend).toHaveLength(10);
     expect(trend[0]).toBeLessThan(trend[trend.length - 1]);
+  });
+
+  // A V8 build that names its spaces differently would otherwise report
+  // whatever the last space happened to be.
+  it("reports zero old-space numbers when V8 exposes no old_space", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB], () => []);
+
+    flushProcessVitals(0);
+
+    const [, payload] = event.mock.calls[0]!;
+    expect(payload.oldSpaceUsedBytes).toBe(0);
+    expect(payload.oldSpaceSizeBytes).toBe(0);
+    // The rest of the sample is still worth recording.
+    expect(payload.heapUsedBytes).toBe(500 * MB);
+  });
+
+  // The rule this sampler is built on: a telemetry timer must never be what
+  // takes the process down. A collection that throws produces no row and no
+  // exception rather than an unhandled throw inside the interval.
+  it("swallows a throwing collection instead of taking the process down", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB], () => {
+      throw new Error("v8 unavailable");
+    });
+
+    expect(() => flushProcessVitals(0)).not.toThrow();
+    expect(event).not.toHaveBeenCalled();
+    expect(setContext).not.toHaveBeenCalled();
   });
 
   it("reports peak heap, not just the current sample", async () => {

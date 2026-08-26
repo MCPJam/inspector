@@ -5,6 +5,7 @@ import {
   isFetchConnectionFailure,
   getFetchErrorCause,
   countToolsTokens,
+  getTokenizerPeak,
 } from "../tokenizer-helpers.js";
 
 describe("mapModelIdToTokenizerBackend", () => {
@@ -298,6 +299,29 @@ describe("countToolsTokens fallback behavior", () => {
 
     expect(serializations).toBe(1);
     expect(result).toBe(expected);
+  });
+
+  // The cap is a strict `>`: a payload sitting exactly on it still costs only
+  // the one envelope copy, and moving the boundary by a character would
+  // silently change which payloads get an exact count.
+  it("still calls the backend for a tools payload exactly at the size cap", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, tokenCount: 7 })
+    });
+    global.fetch = fetchSpy as unknown as typeof global.fetch;
+
+    const cap = 4 * 1024 * 1024;
+    const envelope = JSON.stringify([{ name: "huge", description: "" }]).length;
+    const tools = [{ name: "huge", description: "x".repeat(cap - envelope) }];
+    expect(JSON.stringify(tools)).toHaveLength(cap);
+    const skipsBefore = getTokenizerPeak().oversizeSkips;
+
+    const result = await countToolsTokens(tools, "claude-opus-4-1");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBe(7);
+    expect(getTokenizerPeak().oversizeSkips).toBe(skipsBefore);
   });
 
   it("skips the backend call for a tools payload past the size cap", async () => {

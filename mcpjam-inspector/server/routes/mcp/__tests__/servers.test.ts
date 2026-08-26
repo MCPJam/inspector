@@ -250,6 +250,10 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
     // Disconnect should not be called for already disconnected server
     expect(mcpClientManager.disconnectServer).not.toHaveBeenCalled();
     expect(mcpClientManager.removeServer).toHaveBeenCalled();
+    // A failed connect removes the entry down this path too, and its frames
+    // are the ones the Logs panel is open to show — so they are the ones most
+    // likely to be left behind.
+    expect(rpcLogBus.forgetServer).toHaveBeenCalledWith("disconnected-server");
   });
 
   it("continues removal even if disconnect fails", async () => {
@@ -267,6 +271,7 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
 
     // removeServer should still be called
     expect(mcpClientManager.removeServer).toHaveBeenCalledWith("server-1");
+    expect(rpcLogBus.forgetServer).toHaveBeenCalledWith("server-1");
   });
 });
 

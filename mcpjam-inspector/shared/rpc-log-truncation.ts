@@ -83,15 +83,24 @@ export function probeSerializedSize(
       bytes += 5;
       continue;
     }
+    // Both child loops re-check the budget as they go rather than enqueuing
+    // every child and testing at the top. A ten-million-element sparse array or
+    // an object with that many keys would otherwise build a ten-million-entry
+    // stack before the first check — the unbounded allocation this walk exists
+    // to avoid, reintroduced inside the avoidance.
     if (Array.isArray(node)) {
       bytes += 2 + node.length; // brackets + separators
-      for (const item of node) stack.push(item);
+      for (const item of node) {
+        if (bytes > budget) return { bytes, exceeded: true };
+        stack.push(item);
+      }
       continue;
     }
     bytes += 2; // braces
     for (const key in node) {
       if (!Object.hasOwn(node, key)) continue;
       bytes += key.length + 4; // quotes, colon, separator
+      if (bytes > budget) return { bytes, exceeded: true };
       stack.push((node as Record<string, unknown>)[key]);
     }
   }
@@ -106,9 +115,12 @@ export function probeSerializedSize(
  * Two things have to survive. `jsonrpc`, `id` and `method` are what the Logs
  * panel labels a row by and what correlates a frame to its HTTP exchange, and
  * all three are short scalars — the weight is always in `params` or `result`.
- * And the KEY of a dropped field has to stay, because `extractMethod` labels a
- * response by the presence of `result` or `error`; drop the key and every
- * truncated response reads as "unknown" instead of "result".
+ * `null` counts as one of those scalars: an error response to a frame that
+ * never parsed carries `id: null`, and replacing it with a marker would claim a
+ * body was dropped where there was none. And the KEY of a dropped field has to
+ * stay, because `extractMethod` labels a response by the presence of `result`
+ * or `error`; drop the key and every truncated response reads as "unknown"
+ * instead of "result".
  *
  * So: short own scalars are copied, and every other own field keeps its key
  * with a nested marker for its value. No knowledge of which frame shape
@@ -128,26 +140,33 @@ export function truncateRpcPayload(
   }
 
   const preserved: Record<string, unknown> = {};
+  let preservedBytes = 0;
   for (const key in payload) {
     if (!Object.hasOwn(payload, key)) continue;
     const value = (payload as Record<string, unknown>)[key];
     const isShortScalar =
+      value === null ||
       typeof value === "number" ||
       typeof value === "boolean" ||
       (typeof value === "string" && value.length <= MAX_PRESERVED_STRING_CHARS);
     // The nested marker carries no `limitBytes`; the top level states it once.
     preserved[key] = isShortScalar ? value : { _truncated: true };
+    // Stop building the envelope the moment it can no longer fit, rather than
+    // materializing one entry per key and rejecting the result afterwards: a
+    // pathologically wide frame would allocate the whole thing first.
+    preservedBytes +=
+      key.length + 4 + probeSerializedSize(preserved[key], limitBytes).bytes;
+    if (preservedBytes > limitBytes) return marker;
   }
   // Marker last: it must win over any same-named field on the frame.
   const truncated = { ...preserved, ...marker };
 
-  // The preserved envelope is itself unbounded in principle: one entry per own
-  // property, each up to MAX_PRESERVED_STRING_CHARS. A value with a
-  // pathological number of top-level keys would come back STILL over the limit
-  // — which is the one thing every caller relies on this not doing. Callers
-  // size their own storage on it (`harness-rpc-log-sink` guards a Convex
-  // document limit with it), so the ceiling has to hold for every input shape,
-  // not just for well-formed JSON-RPC frames.
+  // The loop above bails on the envelope's own size, but the marker fields it
+  // does not count still have to fit. Coming back STILL over the limit is the
+  // one thing every caller relies on this not doing — they size their own
+  // storage on it (`harness-rpc-log-sink` guards a Convex document limit with
+  // it), so the ceiling has to hold for every input shape, not just for
+  // well-formed JSON-RPC frames.
   return probeSerializedSize(truncated, limitBytes).exceeded
     ? marker
     : truncated;
