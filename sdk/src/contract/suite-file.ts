@@ -357,17 +357,42 @@ export type EvalSuiteFileProvenance = z.infer<
  * because "no import block" and "imported, faithfulness unknown" are different
  * facts and a default would erase the difference.
  */
+/**
+ * Reject a string that is only whitespace, WITHOUT trimming it.
+ *
+ * `.min(1)` counts characters, so `"   "` satisfies it — and for an import
+ * claim that is not a cosmetic problem. `import.note` is the cited mapping rule
+ * that EARNS an `exact` claim, and a blank one would let a converter claim
+ * exact while citing nothing: the case would then run with no approval at all
+ * and count toward a gateable run, which is precisely the audit evidence the
+ * note exists to carry.
+ *
+ * Rejecting rather than trimming, deliberately, on both counts: the platform's
+ * own validator rejects a blank value (`assertValidCase` in the backend's
+ * `evalSuiteFile.ts` tests `value.trim().length === 0`), so trimming here would
+ * make a file load locally and fail at ingest — the worst direction for a
+ * divergence. And the stored value stays byte-identical to what the author
+ * wrote, which is what keeps the canonical round-trip stable.
+ */
+function nonBlank(schema: z.ZodString, field: string) {
+  return schema.refine((value) => value.trim().length > 0, {
+    message: `import.${field} must not be blank`,
+  });
+}
+
 export const evalSuiteFileCaseImportSchema = z
   .object({
     status: importMappingStatusSchema,
     /** The case's identity in the source system, when it had one. */
-    sourceCaseKey: z
-      .string()
-      .min(1)
-      .max(MAX_IMPORT_SOURCE_CASE_KEY_CHARS)
-      .optional(),
+    sourceCaseKey: nonBlank(
+      z.string().min(1).max(MAX_IMPORT_SOURCE_CASE_KEY_CHARS),
+      "sourceCaseKey"
+    ).optional(),
     /** Why the status is what it is — the rule cited, or what was lost. */
-    note: z.string().min(1).max(MAX_IMPORT_NOTE_CHARS).optional(),
+    note: nonBlank(
+      z.string().min(1).max(MAX_IMPORT_NOTE_CHARS),
+      "note"
+    ).optional(),
   })
   .strict()
   .refine((value) => value.status !== "exact" || value.note !== undefined, {

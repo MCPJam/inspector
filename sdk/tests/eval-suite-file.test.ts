@@ -25,6 +25,7 @@ import { IMPORT_MAPPING_STATUSES } from "../src/contract/chain.js";
 import { TEST_STEP_KINDS } from "../src/contract/steps.js";
 import {
   EVAL_SUITE_SCHEMA_VERSION,
+  evalSuiteFileCaseImportSchema,
   evalSuiteFileSchema,
 } from "../src/contract/suite-file.js";
 import {
@@ -215,6 +216,28 @@ describe("eval suite file — cross-field rules", () => {
       "import.note one character over the 2000-character cap"
     );
     expect(note.some((message) => message.includes("2000"))).toBe(true);
+  });
+
+  it("refuses a blank note or source key, rather than trimming one", () => {
+    // `.min(1)` counts characters, so `"   "` passes it. On `exact` that is a
+    // policy hole: the note is the rule that EARNS the claim, and a case
+    // claiming exact while citing nothing runs with no approval at all.
+    const note = messagesFor("import.note that is only whitespace");
+    expect(note.some((message) => message.includes("must not be blank"))).toBe(
+      true
+    );
+    const key = messagesFor("import.sourceCaseKey that is only whitespace");
+    expect(key.some((message) => message.includes("must not be blank"))).toBe(
+      true
+    );
+    // REJECTED, not trimmed: the platform's validator rejects a blank value
+    // too, so trimming here would make a file load locally and fail at ingest.
+    expect(
+      evalSuiteFileCaseImportSchema.safeParse({
+        status: "approximated",
+        note: "  cited rule  ",
+      }).data?.note
+    ).toBe("  cited rule  ");
   });
 
   it("refuses an approval field smuggled into a case's import block", () => {

@@ -266,11 +266,19 @@ export function selectedAuthoredCaseIds(
   if (!selectors?.length) {
     return { ids: everyEnabled(), indeterminate: false };
   }
+  // ID BEFORE TITLE, across the whole set — the precedence
+  // {@link selectEnabledRunCases} uses. A per-case `id === s || title === s`
+  // scan takes whichever case comes FIRST IN THE FILE instead, so a selector
+  // matching an early case's title and a late case's id would resolve to a
+  // different case here than at launch: this stage would leave the case the run
+  // actually executes untouched, and refuse (or spare) one it never runs.
+  const byId = new Map(enabled.map((testCase) => [testCase.id, testCase]));
+  const byTitle = new Map(
+    enabled.map((testCase) => [testCase.title, testCase])
+  );
   const chosen = new Set<string>();
   for (const selector of selectors) {
-    const hit = enabled.find(
-      (testCase) => testCase.id === selector || testCase.title === selector
-    );
+    const hit = byId.get(selector) ?? byTitle.get(selector);
     // A selector that resolves to no authored case is either a hosted row id
     // (which the launcher accepts and this stage cannot map) or a typo the
     // launcher will reject later by name. Neither is "selects nothing", and
@@ -664,16 +672,27 @@ export function assertApprovalsApplyToRun(params: {
       });
       continue;
     }
+    // DISABLED is knowable from the file alone, with no selection involved, so
+    // it refuses even when the selection is indeterminate. Sharing the gate
+    // below would let a disabled-case approval past this stage and leave it to
+    // `mapApprovalsToHostedCases` — a vaguer verdict, reached after the writes
+    // this check exists to precede.
+    if (testCase.disabled) {
+      problems.push({
+        case: selector,
+        code: "CASE_DISABLED",
+        message: `"${selector}" is marked disabled in the suite file, so this run will not execute it and the approval grants nothing.`,
+      });
+      continue;
+    }
     if (
       params.selectionIsExact !== false &&
       !params.selectedCaseIds.has(selector)
     ) {
       problems.push({
         case: selector,
-        code: testCase.disabled ? "CASE_DISABLED" : "CASE_NOT_SELECTED",
-        message: testCase.disabled
-          ? `"${selector}" is marked disabled in the suite file, so this run will not execute it and the approval grants nothing.`
-          : `"${selector}" is not among the cases this run executes (see --case), so the approval grants nothing.`,
+        code: "CASE_NOT_SELECTED",
+        message: `"${selector}" is not among the cases this run executes (see --case), so the approval grants nothing.`,
       });
     }
   }

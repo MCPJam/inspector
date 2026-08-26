@@ -1562,6 +1562,95 @@ describe("the preflight checks what the run will actually execute", () => {
     }
   });
 
+  test("an explicitly empty host server set is validated as empty, not as omitted", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "billing" }],
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+      hosts: { "Claude Desktop": ["billing"] },
+    });
+    try {
+      // `servers: []` on a file host CLEARS the attachment before launch, so
+      // the run executes against nothing. Reading it as "omitted" would
+      // validate the host's current config — which has both tools — and start
+      // a run that cannot execute either.
+      const emptyHostServers = IMPORTED_ENABLED_MISSING.replace(
+        "target:\n  servers:\n    - name: billing\n",
+        "target:\n  servers:\n    - name: billing\n  hosts:\n    - name: Claude Desktop\n      servers: []\n"
+      );
+      await withSuiteFile(emptyHostServers, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file), { telemetry: telemetryDisabled })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.match(
+          run.stdout + run.stderr,
+          /is not part of host Claude Desktop/
+        );
+        assert.deepEqual(fixture.fromFileBodies, []);
+        // Nothing was listed: the target is empty, so there is no inventory to
+        // fetch and the reference fails on the missing server itself.
+        assert.deepEqual(fixture.toolListings, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a selector matching one case's title and another's id resolves by id", async () => {
+    const fixture = await startFixture();
+    try {
+      // `c_render`'s TITLE is the string `c_missing`, which is also the later
+      // case's authored ID. The launcher resolves ids before titles, so it runs
+      // `c_missing` — the one whose deterministic call does not resolve.
+      const collide = IMPORTED_ENABLED_MISSING.replace(
+        "    title: Renders the refund widget",
+        "    title: c_missing"
+      );
+      await withSuiteFile(collide, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--case", "c_missing"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        // A file-order scan would have picked the title match (`c_render`,
+        // which resolves) and let the run start; matching the launcher's
+        // id-first precedence refuses before any write.
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a host pinning a server the project lost refuses, and says so", async () => {
+    const fixture = await startFixture({
+      servers: [{ id: "srv_billing", name: "billing" }],
+      toolsByServer: { billing: ["render_refund", "render_gone"] },
+      // The host pins a server the project no longer lists.
+      hosts: { "Claude Desktop": ["billing", "retired"] },
+    });
+    try {
+      await withSuiteFile(IMPORTED_ENABLED_MISSING, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(runArgv(fixture.baseUrl, file, "--host", "Claude Desktop"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        // The inconsistency is in the PROJECT, not the file. Validating the
+        // narrowed set would still fail closed, but with the wrong sentence —
+        // sending the author to edit YAML that is fine.
+        assert.match(run.stdout + run.stderr, /no longer has/);
+        assert.doesNotMatch(run.stdout + run.stderr, /exposes no tool named/);
+        assert.deepEqual(fixture.fromFileBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("serverId wins over a stale serverName", async () => {
     const fixture = await startFixture({
       // Two servers; the one the step NAMES sorts first and has the tool, the
@@ -1614,6 +1703,40 @@ describe("the preflight checks what the run will actually execute", () => {
         assert.deepEqual(fixture.fromFileBodies, []);
         assert.deepEqual(fixture.batchBodies, []);
         assert.deepEqual(fixture.runBodies, []);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a disabled-case approval refuses even when the selection is indeterminate", async () => {
+    const fixture = await startFixture();
+    try {
+      await withSuiteFile(APPROVAL_SUITE, async (file) => {
+        const run = await captureProcessOutput(() =>
+          main(
+            runArgv(
+              fixture.baseUrl,
+              file,
+              // Unmappable selector ⇒ indeterminate selection.
+              "--case",
+              "row_c_approx",
+              "--allow-approximated",
+              "c_parked",
+              "--approval-reason",
+              "Reviewed against the upstream rubric."
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // `disabled` is knowable from the file alone, with no selection
+        // involved. Sharing the gate with the not-selected check would let this
+        // through to the post-sync mapping — a vaguer verdict, reached after
+        // the writes this stage exists to precede.
+        assert.equal(run.result.exitCode, 2, run.stdout);
+        assert.match(run.stdout + run.stderr, /marked disabled/);
+        assert.deepEqual(fixture.fromFileBodies, []);
+        assert.deepEqual(fixture.batchBodies, []);
       });
     } finally {
       await fixture.close();

@@ -243,7 +243,14 @@ export async function resolveValidationTargets(
     return Promise.all(
       target.hosts.map(async (host) => {
         const selector = host.id ?? host.name;
-        if (!host.servers?.length) {
+        // `undefined` and `[]` are DIFFERENT, and the suite-file contract says
+        // so in as many words ("an empty set is meaningful and preserved").
+        // Only an omitted list falls back to the host's current config; an
+        // explicitly empty one is forwarded to `updateEvalSuiteOperation`
+        // before launch and CLEARS the attachment, so treating it as omitted
+        // would validate against servers the run is about to remove and let a
+        // reference resolve against a set that no longer exists.
+        if (host.servers === undefined) {
           return hostTarget(
             client,
             params.projectId,
@@ -324,15 +331,26 @@ async function hostTarget(
       IMPORT_VALIDATION_EXIT_CODE
     );
   }
-  return {
-    label: `host ${displayName ?? host.name}`,
-    servers: await resolveServersByName(
-      client,
-      projectId,
-      serverIds.filter((id): id is string => typeof id === "string"),
-      signal
-    ),
-  };
+  const pinned = serverIds.filter((id): id is string => typeof id === "string");
+  const servers = await resolveServersByName(client, projectId, pinned, signal);
+  // A host pinning a server the project no longer has is an inconsistency in
+  // the PROJECT, not in the file. Silently validating against the narrowed set
+  // would still fail closed, but it would fail closed with the wrong sentence —
+  // reporting "your file names a tool that does not exist" and sending the
+  // author to edit YAML that is fine.
+  const missing = pinned.filter(
+    (id) => !servers.some((server) => server.id === id)
+  );
+  if (missing.length > 0) {
+    throw cliError(
+      "TOOL_DISCOVERY_UNAVAILABLE",
+      `Host "${host.name}" pins server(s) ${missing.join(
+        ", "
+      )} that this project no longer has, so the suite file's deterministic tool references could not be checked against it. Nothing was written.`,
+      IMPORT_VALIDATION_EXIT_CODE
+    );
+  }
+  return { label: `host ${displayName ?? host.name}`, servers };
 }
 
 async function environmentTarget(
