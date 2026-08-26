@@ -21,6 +21,27 @@ const ALLOWED = new Set([
   join(CLIENT_SRC, "components", "routing", "legacy-project-route-normalizer.tsx"),
 ]);
 
+/**
+ * The shapes a `project` query field is actually written in. Interpolation and
+ * a bare literal were the obvious two; the rest are the ways the same thing
+ * gets written when nobody is looking at this test — a `URLSearchParams`
+ * setter, an object literal handed to its constructor, single quotes, and a
+ * concatenation.
+ */
+const WRITER_PATTERNS: readonly RegExp[] = [
+  // `?project=${id}` / `&project=${id}`
+  /[?&]project=\$\{/,
+  // A `?project=`/`&project=` that ENDS a string literal — the concatenated
+  // form (`"/servers?project=" + id`) as well as a bare `"?project="`.
+  /[?&]project=["'`]/,
+  // `params.set("project", …)` / `.append('project', …)`
+  /\.(?:set|append)\(\s*["'`]project["'`]\s*,/,
+  // `new URLSearchParams({ project: … })`. Anchored to the constructor on
+  // purpose: a bare `project:` field matches every options bag and dispatch
+  // payload in the app, and a guard that cries wolf gets deleted.
+  /URLSearchParams\(\s*\{[^}]*\bproject\s*:/,
+];
+
 function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules" || entry === "__tests__") continue;
@@ -40,10 +61,10 @@ describe("no first-party client code mints ?project=", () => {
       if (ALLOWED.has(file)) continue;
       const source = readFileSync(file, "utf8");
       for (const [index, line] of source.split("\n").entries()) {
-        // Writers only: an interpolated or concatenated `project=` in a URL.
-        // A comment or a reader (`searchParams.get("project")`) is fine.
+        // Writers only. A comment, or a reader like
+        // `searchParams.get("project")`, is fine.
         if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
-        if (/[?&]project=\$\{/.test(line) || /"[?&]project="/.test(line)) {
+        if (WRITER_PATTERNS.some((pattern) => pattern.test(line))) {
           offenders.push(`${file.slice(CLIENT_SRC.length + 1)}:${index + 1}`);
         }
       }

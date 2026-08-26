@@ -11,7 +11,9 @@ const B = "k5700000000000000000000000b";
 
 function wrapperFor(initialPath: string) {
   return function Wrapper({ children }: { children: ReactNode }) {
-    return <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>;
+    return (
+      <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>
+    );
   };
 }
 
@@ -35,22 +37,38 @@ function inputFor(overrides: Partial<Input> = {}): Input {
   };
 }
 
+/**
+ * Same reason as the routing component tests: these wait on effect → switch →
+ * re-render chains, and RTL's 1s default is an idle-machine assumption that a
+ * contended CI shard does not honor.
+ */
+const RESOLUTION_TIMEOUT = { timeout: 5_000 } as const;
+
 describe("useProjectRouteCoordinator", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The history-driving test below leaves the window on a scoped path. Reset
+    // it so isolation does not depend on every later test supplying a router.
+    window.history.replaceState({}, "", "/");
   });
 
   it("is unscoped on a route with no project segment", () => {
-    const { result } = renderHook(() => useProjectRouteCoordinator(inputFor()), {
-      wrapper: wrapperFor("/settings"),
-    });
+    const { result } = renderHook(
+      () => useProjectRouteCoordinator(inputFor()),
+      {
+        wrapper: wrapperFor("/settings"),
+      }
+    );
     expect(result.current).toEqual({ status: "unscoped" });
   });
 
   it("is ready when the URL already names the active project", () => {
-    const { result } = renderHook(() => useProjectRouteCoordinator(inputFor()), {
-      wrapper: wrapperFor(`/p/${A}/servers`),
-    });
+    const { result } = renderHook(
+      () => useProjectRouteCoordinator(inputFor()),
+      {
+        wrapper: wrapperFor(`/p/${A}/servers`),
+      }
+    );
     expect(result.current).toEqual({ status: "ready", projectId: A });
   });
 
@@ -61,7 +79,10 @@ describe("useProjectRouteCoordinator", () => {
       { wrapper: wrapperFor(`/p/${B}/servers`) }
     );
     expect(result.current.status).toBe("resolving");
-    await waitFor(() => expect(switchProject).toHaveBeenCalledWith(B));
+    await waitFor(
+      () => expect(switchProject).toHaveBeenCalledWith(B),
+      RESOLUTION_TIMEOUT
+    );
   });
 
   it("fires one switch per requested project, not one per render", async () => {
@@ -69,13 +90,15 @@ describe("useProjectRouteCoordinator", () => {
     // keyed on that identity would re-fire the switch on every commit.
     const switchProject = vi.fn().mockResolvedValue(undefined);
     const input = inputFor({ switchProject });
-    const { rerender } = renderHook(
-      () => useProjectRouteCoordinator(input),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+    const { rerender } = renderHook(() => useProjectRouteCoordinator(input), {
+      wrapper: wrapperFor(`/p/${B}/servers`),
+    });
+    rerender();
+    rerender();
+    await waitFor(
+      () => expect(switchProject).toHaveBeenCalledTimes(1),
+      RESOLUTION_TIMEOUT
     );
-    rerender();
-    rerender();
-    await waitFor(() => expect(switchProject).toHaveBeenCalledTimes(1));
   });
 
   it("does not re-fire when the switch callback's identity changes", async () => {
@@ -98,7 +121,7 @@ describe("useProjectRouteCoordinator", () => {
       { wrapper: wrapperFor(`/p/${B}/servers`) }
     );
     for (let i = 0; i < 5; i += 1) rerender();
-    await waitFor(() => expect(calls).toEqual([B]));
+    await waitFor(() => expect(calls).toEqual([B]), RESOLUTION_TIMEOUT);
     expect(result.current.status).toBe("resolving");
   });
 
@@ -120,8 +143,9 @@ describe("useProjectRouteCoordinator", () => {
         ),
       { wrapper: wrapperFor(`/p/${B}/servers`) }
     );
-    await waitFor(() =>
-      expect(setActiveOrganizationId).toHaveBeenCalledWith("org_b")
+    await waitFor(
+      () => expect(setActiveOrganizationId).toHaveBeenCalledWith("org_b"),
+      RESOLUTION_TIMEOUT
     );
     // The project switch waits for the organization-filtered list to catch up.
     expect(switchProject).not.toHaveBeenCalled();
@@ -182,7 +206,10 @@ describe("useProjectRouteCoordinator", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     rerender({ pathname: path });
-    await waitFor(() => expect(switchProject).toHaveBeenCalledWith(B));
+    await waitFor(
+      () => expect(switchProject).toHaveBeenCalledWith(B),
+      RESOLUTION_TIMEOUT
+    );
     expect(result.current.status).toBe("resolving");
   });
 
@@ -219,7 +246,49 @@ describe("useProjectRouteCoordinator", () => {
       () => useProjectRouteCoordinator(inputFor({ switchProject })),
       { wrapper: wrapperFor(`/p/${B}/servers`) }
     );
-    await waitFor(() => expect(switchProject).toHaveBeenCalled());
+    await waitFor(
+      () => expect(switchProject).toHaveBeenCalled(),
+      RESOLUTION_TIMEOUT
+    );
     expect(result.current.status).toBe("resolving");
+  });
+
+  it("retries a switch that rejected for a transient reason", async () => {
+    // A switch disconnects the current project's servers first, and that can
+    // fail. Swallowing the rejection left the effect keyed on the same "switch
+    // to B", so it never ran again: an accessible project spun until the
+    // resolve budget expired and then reported itself unavailable.
+    const switchProject = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValue(undefined);
+    renderHook(() => useProjectRouteCoordinator(inputFor({ switchProject })), {
+      wrapper: wrapperFor(`/p/${B}/servers`),
+    });
+    await waitFor(
+      () => expect(switchProject).toHaveBeenCalledTimes(2),
+      RESOLUTION_TIMEOUT
+    );
+  });
+
+  it("gives up on a switch that keeps rejecting, rather than spinning", async () => {
+    // The retry above is bounded by the attempt cap, so a persistent failure
+    // reaches the same generic unavailable state a missing project does —
+    // without waiting out the 15s resolve budget first.
+    const switchProject = vi.fn().mockRejectedValue(new Error("persistent"));
+    const { result } = renderHook(
+      () => useProjectRouteCoordinator(inputFor({ switchProject })),
+      { wrapper: wrapperFor(`/p/${B}/servers`) }
+    );
+    await waitFor(
+      () =>
+        expect(result.current).toEqual({
+          status: "inaccessible",
+          requestedProjectId: B,
+        }),
+      RESOLUTION_TIMEOUT
+    );
+    // Bounded: the cap, not an unbounded retry loop.
+    expect(switchProject.mock.calls.length).toBeLessThanOrEqual(4);
   });
 });

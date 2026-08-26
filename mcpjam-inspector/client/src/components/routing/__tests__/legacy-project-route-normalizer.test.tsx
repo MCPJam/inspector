@@ -41,12 +41,24 @@ function currentPath(router: ReturnType<typeof createMemoryRouter>): string {
   return `${pathname}${search}${hash}`;
 }
 
+/**
+ * These assertions wait on a real chain — effect → `navigate` → re-render —
+ * and RTL's 1s default is tuned for an idle machine. CI runs four shards on a
+ * contended runner, where that chain has taken longer than a second: the
+ * failure showed the spinner still up and the URL not yet rewritten, i.e. the
+ * right outcome that had not arrived yet. Fail slow, not flaky.
+ */
+const NAVIGATION_TIMEOUT = { timeout: 5_000 } as const;
+
 describe("LegacyProjectRouteNormalizer", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("rewrites an unscoped path onto the viewer's project", async () => {
     const { router } = renderAt("/servers", resolved);
-    await waitFor(() => expect(currentPath(router)).toBe(`/p/${A}/servers`));
+    await waitFor(
+      () => expect(currentPath(router)).toBe(`/p/${A}/servers`),
+      NAVIGATION_TIMEOUT
+    );
   });
 
   it("prefers the link's ?project= over the viewer's persisted default", async () => {
@@ -56,8 +68,26 @@ describe("LegacyProjectRouteNormalizer", () => {
       `/evals/suite/X?project=${B}&view=runs#case`,
       resolved
     );
-    await waitFor(() =>
-      expect(currentPath(router)).toBe(`/p/${B}/evals/suite/X?view=runs#case`)
+    await waitFor(
+      () =>
+        expect(currentPath(router)).toBe(
+          `/p/${B}/evals/suite/X?view=runs#case`
+        ),
+      NAVIGATION_TIMEOUT
+    );
+  });
+
+  it("drops every repeat of the legacy parameter, not just the first", async () => {
+    // Links have been minted by more than one writer, and a redirect chain can
+    // append a second copy. Leaving one behind would put `?project=` back in a
+    // URL this migration is removing.
+    const { router } = renderAt(
+      `/evals/suite/X?project=${B}&project=${A}&view=runs`,
+      resolved
+    );
+    await waitFor(
+      () => expect(currentPath(router)).toBe(`/p/${B}/evals/suite/X?view=runs`),
+      NAVIGATION_TIMEOUT
     );
   });
 
@@ -82,15 +112,17 @@ describe("LegacyProjectRouteNormalizer", () => {
       isAuthLoading: false,
       isLoadingRemoteProjects: false,
     });
-    await waitFor(() =>
-      expect(screen.getByTestId("legacy-screen")).toBeInTheDocument()
+    await waitFor(
+      () => expect(screen.getByTestId("legacy-screen")).toBeInTheDocument(),
+      NAVIGATION_TIMEOUT
     );
   });
 
   it("treats the local placeholder as no project", async () => {
     renderAt("/servers", { ...resolved, activeProjectId: "none" });
-    await waitFor(() =>
-      expect(screen.getByTestId("legacy-screen")).toBeInTheDocument()
+    await waitFor(
+      () => expect(screen.getByTestId("legacy-screen")).toBeInTheDocument(),
+      NAVIGATION_TIMEOUT
     );
   });
 
@@ -103,14 +135,18 @@ describe("LegacyProjectRouteNormalizer", () => {
       isAuthLoading: false,
       isLoadingRemoteProjects: false,
     });
-    await waitFor(() => expect(currentPath(router)).toBe("/servers?keep=1"));
+    await waitFor(
+      () => expect(currentPath(router)).toBe("/servers?keep=1"),
+      NAVIGATION_TIMEOUT
+    );
     expect(screen.getByTestId("legacy-screen")).toBeInTheDocument();
   });
 
   it("normalizes once and does not loop", async () => {
     const { router } = renderAt("/servers?a=1#b", resolved);
-    await waitFor(() =>
-      expect(currentPath(router)).toBe(`/p/${A}/servers?a=1#b`)
+    await waitFor(
+      () => expect(currentPath(router)).toBe(`/p/${A}/servers?a=1#b`),
+      NAVIGATION_TIMEOUT
     );
     const settled = currentPath(router);
     await new Promise((resolve) => setTimeout(resolve, 20));

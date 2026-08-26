@@ -191,7 +191,6 @@ import { hasProjectDeepLinkParam } from "./lib/project-deep-link";
 import {
   buildProjectPath,
   isProjectIdShape,
-  isProjectScopedPath,
   readProjectPathSegment,
   stripProjectFromPath,
 } from "./lib/project-route";
@@ -3090,14 +3089,22 @@ export default function App() {
   // Same clobber hazard for a project-bearing entry — either shape. The
   // onboarding redirect would drop the path before it is normalized onto
   // `/p/<projectId>/...`, taking the destination the link named with it.
-  // A legacy `?project=` counts only when it is USABLE (a malformed one is
-  // stripped and must not suppress onboarding), and the suppression is
-  // transient either way: the normalizer resolves or gives up on the first
-  // render after project data settles.
+  //
+  // The path test asks whether the URL CLAIMS a project, not whether that
+  // claim is usable: `/p/<malformed>/servers` matches the `p/:projectId`
+  // route, and the boundary answers it with the generic inaccessible state.
+  // Testing for a well-formed id instead would let the onboarding redirect
+  // fire on exactly those URLs and replace the error with Playground — the
+  // requested URL gone, and no way to tell the user what was wrong with it.
+  //
+  // A legacy `?project=` still counts only when it is USABLE: that one is
+  // stripped rather than reported, so a malformed value must not suppress
+  // onboarding. Either way the suppression is transient — the normalizer
+  // resolves or gives up on the first render after project data settles.
   const hasProjectSwitchDeepLinkParam =
     typeof window !== "undefined" &&
     (hasProjectDeepLinkParam(window.location.search) ||
-      isProjectScopedPath(window.location.pathname));
+      readProjectPathSegment(window.location.pathname) !== null);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&

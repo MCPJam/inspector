@@ -42,6 +42,10 @@ test.describe("canonical project URLs", () => {
       await expect(page.getByTestId("app-shell")).toBeVisible({
         timeout: 30_000,
       });
+      // The shell alone would also mount for a URL that fell through to the
+      // catch-all, so the routing claim is these two together: a real screen
+      // matched, and the path was not rewritten.
+      await expect(page.getByTestId("route-not-found")).toHaveCount(0);
       expect(new URL(page.url()).pathname).toBe(path);
     });
   }
@@ -65,6 +69,11 @@ test.describe("canonical project URLs", () => {
       await expect(page.getByTestId("app-shell")).toBeVisible({
         timeout: 30_000,
       });
+      await expect(page.getByTestId("route-not-found")).toHaveCount(0);
+      // Not an exact-path assertion: a global route may legitimately redirect
+      // in this build (`/organizations` bounces when the local visitor has no
+      // organization). What must hold either way is that nothing here picked
+      // up a project prefix.
       expect(new URL(page.url()).pathname.startsWith("/p/")).toBe(false);
     });
   }

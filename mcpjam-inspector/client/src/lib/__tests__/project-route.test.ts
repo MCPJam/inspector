@@ -98,6 +98,27 @@ describe("readProjectPathSegment", () => {
   });
 });
 
+describe("readProjectPathSegment vs isProjectScopedPath", () => {
+  it("answers different questions, and callers must pick the right one", () => {
+    // The trap: `/p/none/servers` CLAIMS a project (the router matches
+    // `p/:projectId` and the boundary owes the visitor an error) but is not a
+    // USABLE project path. A guard that asks "is this scoped?" when it means
+    // "does this claim a project?" treats the URL as ordinary — which is how
+    // the first-run onboarding redirect came to replace an inaccessible
+    // project error with Playground, taking the requested URL with it.
+    for (const claimed of ["/p/none/servers", "/p/NOT-AN-ID/evals", "/p/x/"]) {
+      expect(readProjectPathSegment(claimed), claimed).not.toBeNull();
+      expect(isProjectScopedPath(claimed), claimed).toBe(false);
+    }
+    // A well-formed id answers yes to both.
+    expect(readProjectPathSegment(`/p/${A}/servers`)).toBe(A);
+    expect(isProjectScopedPath(`/p/${A}/servers`)).toBe(true);
+    // An unscoped path answers no to both.
+    expect(readProjectPathSegment("/servers")).toBeNull();
+    expect(isProjectScopedPath("/servers")).toBe(false);
+  });
+});
+
 describe("buildProjectPath", () => {
   it("builds the canonical shape", () => {
     expect(buildProjectPath(A, "/servers")).toBe(`${PROJECT_ROUTE_PREFIX}/${A}/servers`);

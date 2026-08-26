@@ -76,6 +76,16 @@ export function useProjectRouteCoordinator(
   const [budgetExceededFor, setBudgetExceededFor] = useState<string | null>(
     null
   );
+  /**
+   * Bumped when a switch REJECTS, so the effect below runs again.
+   *
+   * Without it a transient failure — the current project's servers refusing to
+   * disconnect, say — was terminal: the effect is keyed by what to do, that
+   * key does not change when the attempt fails, and the route sat spinning
+   * until the resolve budget expired and reported a perfectly accessible
+   * project as unavailable. The attempt cap does the bounding instead.
+   */
+  const [switchRetry, setSwitchRetry] = useState(0);
 
   const activeOrgProjectIds = useMemo(
     () => new Set(Object.keys(projects)),
@@ -114,6 +124,7 @@ export function useProjectRouteCoordinator(
     switchAttemptsRef.current = null;
     reportedRef.current = null;
     setBudgetExceededFor(null);
+    setSwitchRetry(0);
     requestedAtRef.current = requestedProjectId
       ? { projectId: requestedProjectId, at: Date.now() }
       : null;
@@ -143,7 +154,7 @@ export function useProjectRouteCoordinator(
       ? "none"
       : effect.kind === "switch-organization"
       ? `org:${effect.organizationId}`
-      : `project:${effect.projectId}`;
+      : `project:${effect.projectId}:${switchRetry}`;
   // The effect body reads everything through refs and depends ONLY on the
   // key. `switchProject` in particular is a `useCallback` over the live server
   // map, so its identity changes constantly — as a dependency it would re-run
@@ -184,8 +195,13 @@ export function useProjectRouteCoordinator(
     void switchProjectRef
       .current(projectId)
       .catch(() => {
-        // The boundary already shows the failure; a toast on top of it would
-        // just be a second copy of the same message.
+        // Retry rather than swallow: a switch can fail for a transient reason,
+        // and the effect key alone would never change to run it again. The
+        // attempt cap above turns a persistent failure into the inaccessible
+        // state instead of an endless spin. No toast — the boundary already
+        // shows the outcome, and a second copy of it helps nobody.
+        if (latestRequestedRef.current !== projectId) return;
+        setSwitchRetry((attempt) => attempt + 1);
       })
       .finally(() => {
         if (switchInFlightRef.current === projectId) {
