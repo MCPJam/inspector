@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { Streamdown, defaultUrlTransform, type UrlTransform } from "streamdown";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 // Per-surface markdown rendering knobs for surfaces that inline content
 // authored elsewhere — e.g. the MCPJam Agent home, which streams docs from
@@ -68,12 +69,70 @@ function buildUrlTransform(base: string | null): UrlTransform | undefined {
   };
 }
 
-function parseMarkdownIntoBlocks(markdown: string): string[] {
-  const tokens = marked.lexer(markdown);
-  if (tokens.length === 0) {
-    return [markdown];
+// INSPECTOR-CLIENT-253. Both marked (below) and Streamdown's remark pipeline
+// recurse once per level of block nesting, so `- x\n  ` + 2000 `>` — about 2KB,
+// and reachable verbatim from any MCP tool result — exhausts the JS stack.
+// Well under the ~1500-level cliff measured against marked 16.4.2.
+const MAX_MARKDOWN_NESTING = 200;
+// Backstop for inputs that are merely enormous rather than deep.
+const MAX_MARKDOWN_CHARS = 512_000;
+
+// Cheap O(n) upper bound on nesting: `>` markers are one level each, leading
+// whitespace is over-counted at 4 columns per level. Over-counting only costs
+// a plain-text render, so it errs on the safe side.
+function blockNestingDepth(markdown: string): number {
+  let max = 0;
+  let i = 0;
+  while (i < markdown.length) {
+    let columns = 0;
+    let markers = 0;
+    while (i < markdown.length) {
+      const char = markdown[i];
+      if (char === " ") columns += 1;
+      else if (char === "\t") columns += 4;
+      else if (char === ">") markers += 1;
+      else break;
+      i += 1;
+    }
+    const depth = markers + (columns >> 2);
+    if (depth > max) max = depth;
+    while (i < markdown.length && markdown[i] !== "\n") i += 1;
+    i += 1;
   }
-  return tokens.map((token) => token.raw);
+  return max;
+}
+
+// `null` means "too deep or too big to parse safely — render it as plain text".
+function parseMarkdownIntoBlocks(markdown: string): string[] | null {
+  if (markdown.length > MAX_MARKDOWN_CHARS) return null;
+  if (blockNestingDepth(markdown) > MAX_MARKDOWN_NESTING) return null;
+  try {
+    const tokens = marked.lexer(markdown);
+    if (tokens.length === 0) {
+      return [markdown];
+    }
+    return tokens.map((token) => token.raw);
+  } catch {
+    // Belt and braces for anything the depth scan under-counts.
+    return null;
+  }
+}
+
+function PlainTextMarkdown({
+  content,
+  className,
+}: {
+  content: string;
+  className?: string;
+}) {
+  return (
+    <pre
+      className={`whitespace-pre-wrap break-words font-sans ${className ?? ""}`}
+      data-testid="markdown-plain-text"
+    >
+      {content}
+    </pre>
+  );
 }
 
 const MemoizedMarkdownBlock = memo(
@@ -101,16 +160,38 @@ const MemoizedMarkdownBlock = memo(
 
 MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock";
 
-export const MemoizedMarkdown = memo(
-  ({ content, className }: { content: string; className?: string }) => {
-    const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
+function MarkdownBlocks({
+  content,
+  className,
+}: {
+  content: string;
+  className?: string;
+}) {
+  const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
 
-    return blocks.map((block, index) => (
-      <div className={className} key={`markdown-block_${index}`}>
-        <MemoizedMarkdownBlock content={block} />
-      </div>
-    ));
-  },
+  if (blocks === null) {
+    return <PlainTextMarkdown content={content} className={className} />;
+  }
+
+  return blocks.map((block, index) => (
+    <div className={className} key={`markdown-block_${index}`}>
+      <MemoizedMarkdownBlock content={block} />
+    </div>
+  ));
+}
+
+export const MemoizedMarkdown = memo(
+  ({ content, className }: { content: string; className?: string }) => (
+    // The fuse: a throw here used to unmount the whole route through the
+    // router's errorElement, taking the conversation with it. Once tripped it
+    // stays on plain text for this message, which still shows every character.
+    <ErrorBoundary
+      name="markdown-render"
+      fallback={<PlainTextMarkdown content={content} className={className} />}
+    >
+      <MarkdownBlocks content={content} className={className} />
+    </ErrorBoundary>
+  ),
   (prevProps, nextProps) => {
     if (prevProps.content !== nextProps.content) return false;
     if (prevProps.className !== nextProps.className) return false;
