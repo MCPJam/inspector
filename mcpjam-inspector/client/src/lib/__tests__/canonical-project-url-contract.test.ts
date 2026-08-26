@@ -65,19 +65,82 @@ function lineOfOffset(source: string, offset: number): number {
   return line;
 }
 
-function isCommentLine(line: string): boolean {
-  return /^\s*(\/\/|\*|\/\*)/.test(line);
+/**
+ * Blank out comments, keeping every other byte (and every newline) in place so
+ * offsets and line numbers still line up with the real file.
+ *
+ * The previous version asked "does the line this match STARTS on look like a
+ * comment?", which is right for `//` and for a JSDoc body but wrong for a
+ * plain block comment: in
+ *
+ *   an unstarred block-comment body — the opener on its own line, then
+ *   `new URLSearchParams({`, then `project: id,` —
+ *
+ * the constructor starts on a line that looks like ordinary code, so disabled
+ * code and documentation were reported as violations. A guard that fails an
+ * unrelated PR gets deleted, so it has to know where comments actually end.
+ *
+ * Strings are tracked but NOT blanked — the patterns match inside string
+ * literals, which is the whole point (`"/servers?project=" + id`). Tracking
+ * them is what keeps the `//` in `"https://example.com"` from opening a
+ * comment. Regex literals are not tracked: `/*` and `//` cannot begin one in
+ * valid JS, so there is nothing for them to swallow.
+ */
+function blankComments(source: string): string {
+  const out = source.split("");
+  let quote: string | null = null;
+  let index = 0;
+
+  const blank = (from: number, to: number) => {
+    for (let i = from; i < to && i < out.length; i += 1) {
+      if (out[i] !== "\n") out[i] = " ";
+    }
+  };
+
+  while (index < source.length) {
+    const char = source[index];
+    if (quote) {
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      index += 1;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      const end = source.indexOf("\n", index);
+      const stop = end === -1 ? source.length : end;
+      blank(index, stop);
+      index = stop;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      blank(index, stop);
+      index = stop;
+      continue;
+    }
+    index += 1;
+  }
+
+  return out.join("");
 }
 
 /** The offending `file:line` positions in one file's source. */
 export function findLegacyProjectQueryWriters(source: string): number[] {
-  const lines = source.split("\n");
+  const code = blankComments(source);
   const hits = new Set<number>();
 
-  for (const [index, line] of lines.entries()) {
-    // Writers only. A comment, or a reader like
-    // `searchParams.get("project")`, is fine.
-    if (isCommentLine(line)) continue;
+  // Writers only. A reader like `searchParams.get("project")` is fine, and
+  // anything inside a comment is already blank by here.
+  for (const [index, line] of code.split("\n").entries()) {
     if (LINE_WRITER_PATTERNS.some((pattern) => pattern.test(line))) {
       hits.add(index + 1);
     }
@@ -86,10 +149,8 @@ export function findLegacyProjectQueryWriters(source: string): number[] {
   for (const pattern of SOURCE_WRITER_PATTERNS) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
-    while ((match = pattern.exec(source)) !== null) {
-      const line = lineOfOffset(source, match.index);
-      // The constructor opening inside a comment is a doc example, not a call.
-      if (!isCommentLine(lines[line - 1] ?? "")) hits.add(line);
+    while ((match = pattern.exec(code)) !== null) {
+      hits.add(lineOfOffset(code, match.index));
     }
   }
 
@@ -137,6 +198,14 @@ describe("no first-party client code mints ?project=", () => {
         "\n"
       ),
     ],
+    [
+      "a writer on the line after a block comment closes",
+      "/* disabled\n*/ navigate(`/servers?project=${id}`);",
+    ],
+    [
+      "a writer in a string that also contains a //",
+      'navigate("https://app.dev/servers?project=" + id);',
+    ],
   ])("catches a writer spelled as %s", (_shape, source) => {
     expect(findLegacyProjectQueryWriters(source)).not.toEqual([]);
   });
@@ -155,8 +224,30 @@ describe("no first-party client code mints ?project=", () => {
     ["a commented-out writer", '// navigate(`/servers?project=${id}`);'],
     [
       "a doc example of the constructor",
-      [" * new URLSearchParams({", " *   project: id,", " * });"].join("\n"),
+      [
+        "/**",
+        " * new URLSearchParams({",
+        " *   project: id,",
+        " * });",
+        " */",
+      ].join("\n"),
     ],
+    [
+      "a block comment whose body is not starred",
+      [
+        "/*",
+        "new URLSearchParams({",
+        "  project: id,",
+        "});",
+        "navigate(`/servers?project=${id}`);",
+        "*/",
+      ].join("\n"),
+    ],
+    [
+      "a trailing block comment on a line of real code",
+      "const x = 1; /* new URLSearchParams({ project: id }) */",
+    ],
+    ["a URL whose scheme carries a //", 'const base = "https://x.dev/servers";'],
   ])("stays quiet on %s", (_shape, source) => {
     expect(findLegacyProjectQueryWriters(source)).toEqual([]);
   });
