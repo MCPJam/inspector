@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { ArrowLeft, ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -334,7 +334,10 @@ export function UserTestingScenarioCreateFlow({
             "hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           )}
         >
-          <ArrowLeft className="size-3.5" />
+          {/* Same chevron, same size as the Swarms create flow's back link:
+              two sibling flows reached the same way should not disagree
+              about which glyph means "back". */}
+          <ChevronLeft className="size-3.5" />
           User Testing
         </button>
 
