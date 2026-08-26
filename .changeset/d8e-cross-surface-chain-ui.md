@@ -14,7 +14,7 @@ outcome; it never replaces one. It refuses four things on purpose:
 - It does not collapse the three non-verdicts. "we did not check", "it does not
   apply" and "it never ran" get three different sentences, because one shared
   grey dot is how "we never checked" gets read as "it passed".
-- It never says "root cause". A first failed stage is *where* the chain
+- It never says "root cause". A first failed stage is _where_ the chain
   stopped, not why, and phrasing that suggests otherwise is how an operator
   ends up fixing the wrong system.
 - It does not hide staleness or absence. A chain whose evidence has moved is
