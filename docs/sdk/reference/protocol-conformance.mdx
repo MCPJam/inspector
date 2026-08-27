@@ -154,6 +154,30 @@ Check ids:
 - `get-stream-or-405` (2025 revisions only)
 - `session-id-visible-ascii` (2025 revisions only)
 - `post-response-content-type`
+- `modern-client-handshake` (2026-07-28 only)
+- `modern-server-discover` (2026-07-28 only)
+- `modern-result-type-present` (2026-07-28 only)
+- `modern-cacheable-result-hints` (2026-07-28 only)
+- `modern-cache-hint-coverage` (2026-07-28 only)
+- `modern-cache-hint-values-valid` (2026-07-28 only)
+- `modern-cache-scope-stable-across-pages` (2026-07-28 only)
+- `modern-protocol-version-header-mismatch` (2026-07-28 only)
+- `modern-method-header-mismatch` (2026-07-28 only)
+- `modern-name-header-mismatch` (2026-07-28 only)
+- `modern-unsupported-version-error` (2026-07-28 only)
+- `modern-missing-method-header-rejected` (2026-07-28 only)
+- `modern-header-names-case-insensitive` (2026-07-28 only)
+- `modern-undeclared-capability-error` (2026-07-28 only) — requires `inputRequiredProbe`; reports `could-not-run` without it
+- `modern-no-session-id` (2026-07-28 only) — reports `could-not-run` when no successful exchange occurred (e.g. every request returned 401)
+- `modern-removed-methods-not-found` (2026-07-28 only)
+- `modern-resource-not-found-invalid-params` (2026-07-28 only)
+- `modern-resource-read-no-empty-contents` (2026-07-28 only)
+- `modern-tool-output-schema-conformant` (2026-07-28 only) — requires `fixtures.toolCalls`; reports `could-not-run` without it
+- `modern-logs-require-log-level` (2026-07-28 only) — requires `logProbe`; reports `could-not-run` without it
+- `modern-subscription-ack-precedes-notifications` (2026-07-28 only)
+- `modern-subscription-filter-and-tagging` (2026-07-28 only)
+- `modern-subscription-graceful-close` (2026-07-28 only)
+- `wire-schema-valid`
 
 ## Result types
 
