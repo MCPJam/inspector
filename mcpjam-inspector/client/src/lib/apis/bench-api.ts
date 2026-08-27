@@ -18,22 +18,44 @@ import { authFetch } from "@/lib/session-token";
 const BASE = "/api/web/bench";
 
 /** One runnable slice of the bench, as the backend classified this target. */
+/**
+ * Mirrors the preflight response's `categories[]` exactly. `id` is the
+ * taxonomy category slug.
+ */
 export interface BenchCategory {
   id: string;
-  label: string;
+  title: string;
+  description: string;
+  /** The classifier's ranking, when this category was one of the ranked ones. */
+  confidence?: number;
+  /**
+   * False when no active definition exists for this category — offering it
+   * would produce a start request that can only be refused.
+   */
   runnable: boolean;
-  /** Why not, when `runnable` is false — safe to show verbatim. */
-  reason?: string;
-  toolCount?: number;
 }
 
 /** A named bundle of categories the score site offers as one choice. */
+/**
+ * Mirrors the preflight response's `tracks[]` exactly. `id` is
+ * `${profileId}@${version}` and is for display and selection; the QUOTE is
+ * priced from `profileId` (plus `version` as `profileVersion`), so both are
+ * carried separately rather than parsed back out of `id`.
+ */
 export interface BenchTrack {
   id: string;
-  label: string;
-  runnable: boolean;
-  categoryIds: string[];
-  reason?: string;
+  definitionId: string;
+  profileId: string;
+  version: string;
+  kind: string;
+  /** The taxonomy category this track exams, when it is category-scoped. */
+  categoryId?: string;
+  definitionHash: string;
+  /**
+   * True when the exam performs writes against the target, so the quote screen
+   * must take explicit consent before starting.
+   */
+  writesToTarget: boolean;
 }
 
 /** What the caller wants run. IDs come from the preflight response. */
@@ -43,9 +65,23 @@ export interface BenchSelection {
   actorIds?: string[];
 }
 
+/** What the caller agreed to before anything is spent against the target. */
+export interface BenchConsent {
+  authenticatedChecks?: boolean;
+  writeCases?: boolean;
+}
+
 export interface BenchPreflight {
+  /**
+   * The stable target the backend resolved or minted for this saved server.
+   * Quotes are priced against THIS, not against the server row — carry it
+   * into `quoteBench`.
+   */
+  benchmarkTargetId: string;
   /** Binds a later quote and run to the classification shown here. */
   receiptId: string;
+  /** The taxonomy the categories below were drawn from. */
+  taxonomyVersion?: string;
   /** True when the classification was served from cache rather than computed. */
   cached?: boolean;
   categories: BenchCategory[];
@@ -65,22 +101,58 @@ export interface BenchQuote {
   [key: string]: unknown;
 }
 
+/**
+ * The backend's own union, verbatim — see `BENCHMARK_RUN_STATUSES`. Three of
+ * these are terminal verdicts rather than one: a run that reached the end with
+ * a full evidence roster is `completed`, one that scored under a publication
+ * floor is `provisional`, and one whose evidence never arrived is
+ * `insufficient_evidence`. Collapsing them into a single "succeeded" is what a
+ * caller must NOT do — the distinction is the whole point of the scorer.
+ */
 export type BenchRunStatus =
   | "queued"
   | "running"
-  | "succeeded"
+  | "awaiting_evidence"
+  | "assembling"
+  | "completed"
+  | "provisional"
+  | "insufficient_evidence"
   | "failed"
   | "cancelled";
 
+/** The statuses after which polling should stop. */
+export const BENCH_TERMINAL_STATUSES: ReadonlySet<BenchRunStatus> = new Set([
+  "completed",
+  "provisional",
+  "insufficient_evidence",
+  "failed",
+  "cancelled",
+]);
+
+export function isBenchRunTerminal(status: BenchRunStatus): boolean {
+  return BENCH_TERMINAL_STATUSES.has(status);
+}
+
 export interface BenchRun {
-  runId: string;
+  benchmarkRunId: string;
   status: BenchRunStatus;
-  /** Present once the run has something shareable to point at. */
-  resultSecret?: string;
+  profile?: { id: string; version: string; definitionHash: string };
+  targetKey?: string;
+  verification?: string;
+  createdAt?: number;
   startedAt?: number;
-  finishedAt?: number;
-  progress?: Record<string, unknown>;
-  error?: string;
+  completedAt?: number;
+  failureCode?: string;
+  failureMessage?: string;
+  job?: Record<string, unknown>;
+  budget?: Record<string, unknown>;
+  /**
+   * Returned ONLY by the start call, and only by the invocation that actually
+   * stored its hash — the backend keeps a digest, so the plaintext exists
+   * exactly once and a poll can never hand it back. Whoever starts a run has
+   * to hold on to it; it is not recoverable from `/runs/:runId`.
+   */
+  resultSecret?: string;
 }
 
 /** The public artifact behind a result link. Shape is the backend's. */
@@ -147,9 +219,21 @@ export async function preflightBench(input: {
   );
 }
 
+/**
+ * `benchmarkTargetId` and `profileId` are NOT optional to the backend — it
+ * refuses the call without them. Both come out of the preflight response:
+ * the target id at its top level, the profile from whichever entry of
+ * `tracks` the caller picked. Quoting against the saved server row instead
+ * was the original mistake here; a quote is priced against the stable target
+ * and one exact exam definition.
+ */
 export async function quoteBench(input: {
   projectId: string;
   serverId: string;
+  benchmarkTargetId: string;
+  profileId: string;
+  profileVersion?: string;
+  consent?: BenchConsent;
   selection?: BenchSelection;
 }): Promise<BenchQuote> {
   return benchPost<BenchQuote>(
@@ -159,10 +243,19 @@ export async function quoteBench(input: {
   );
 }
 
+/**
+ * Starting a run is ACCEPTING a quote, so it carries the `quoteId` the quote
+ * call returned. The backend re-checks that quote's definition and consent
+ * hashes and refuses with a conflict if the exam moved underneath it — which
+ * is why a start cannot be assembled from the target alone.
+ */
 export async function startBenchRun(input: {
   projectId: string;
   serverId: string;
+  quoteId: string;
   receiptId: string;
+  consent?: BenchConsent;
+  idempotencyKey?: string;
   selection?: BenchSelection;
   preferences?: Record<string, unknown>;
 }): Promise<BenchRun> {
