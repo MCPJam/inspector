@@ -21308,6 +21308,13 @@
             "type": "integer",
             "description": "Tools the tool policy withheld."
           },
+          "unappliedCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Built-in tool ids the client's config requested that this surface did not run. Present only when the client configured at least one built-in tool id; absent when none were configured. Built-in tools such as `bash` require a computer-backed data plane that the `POST /chat-sessions/messages` surface does not stand up, so they are silently dropped at resolution. This field names the gap rather than leaving it invisible — the turn still runs with the MCP server's tools alone."
+          },
           "persisted": {
             "type": "object",
             "properties": {
