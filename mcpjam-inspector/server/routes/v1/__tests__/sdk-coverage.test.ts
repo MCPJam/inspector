@@ -152,6 +152,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/plugins": "listProjectPlugins",
   "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
 
+  // Cloud Skills (read-only)
+  "get /projects/{projectId}/skills": "listProjectSkills",
+  "get /projects/{projectId}/skills/{skillId}": "getProjectSkill",
+
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",
   "post /projects/{projectId}/images": "createImage",

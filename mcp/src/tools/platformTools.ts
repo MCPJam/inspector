@@ -69,6 +69,8 @@ import {
   getImageOperation,
   listEnvironmentsOperation,
   listProjectPluginsOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
@@ -273,6 +275,13 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // there is no excluded write operation to list because the SDK ships none.
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  // Cloud Skills: the READ half only, same policy as plugins — authoring is an
+  // app flow behind a beta gate and the SDK ships no skill write. These are
+  // here because skill IDs are load-bearing on this very catalog
+  // (set_eval_suite_environments, run_eval_suite's composed stacks), and an
+  // agent that cannot list them cannot use the tools that demand them.
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
