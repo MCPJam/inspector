@@ -30,6 +30,19 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
+/**
+ * WebMCP Inspector (a managed Chromium the user points at a page, so its
+ * WebMCP tools can be listed and invoked) — server-side kill switch. FORCED
+ * off in hosted mode: the browser runs on the machine running this inspector,
+ * and a hosted replica must never open one. `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors. The routes live under `/api/mcp/*`, which is itself mounted only
+ * when `!HOSTED_MODE`, so this is the second of two independent gates; the
+ * client-side gate is the `webmcp-inspector-enabled` PostHog flag.
+ */
+export const WEBMCP_INSPECTOR_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
 /**

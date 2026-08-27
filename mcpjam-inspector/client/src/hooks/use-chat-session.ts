@@ -154,6 +154,11 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
+import {
+  deferPageToolCallForApproval,
+  snapshotPageToolsForTurn,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -372,6 +377,13 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Offer this turn the WebMCP tools of the page the inspector currently has
+   * open. Off unless the caller opts in: a chat that silently gained tools from
+   * a browser session opened in another tab would be a surprise, and page tools
+   * run code on a third-party site.
+   */
+  usePageTools?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1865,6 +1877,11 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  // Read through a ref for the same reason the ids above are: the transport's
+  // body builder is created once and must see the CURRENT value at POST time,
+  // not the one captured when the transport was memoized.
+  const usePageToolsRef = useRef(false);
+  usePageToolsRef.current = options.usePageTools === true;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -2958,6 +2975,15 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP page tools, when the caller opted this turn into the tools
+          // of an open inspector session. Drained fresh at POST time for the
+          // same reason as `appTools`: the page may have registered or dropped
+          // tools since the last turn. `setAdvertisedPageTools` records what
+          // this turn advertised so an alias in the response resolves back to
+          // the tool it stood for.
+          ...(usePageToolsRef.current
+            ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -3031,7 +3057,7 @@ export function useChatSession(
     status,
     error,
     setMessages: baseSetMessages,
-    addToolApprovalResponse,
+    addToolApprovalResponse: sdkAddToolApprovalResponse,
     addToolOutput,
   } = useChat({
     id: chatSessionId,
@@ -3049,10 +3075,26 @@ export function useChatSession(
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
-    // resolve via the server's `execute` function); only client-fulfilled
-    // app aliases land here.
+    // resolve via the server's `execute` function); client-fulfilled app and
+    // page aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+
+      // WebMCP page tools: the model asked for a tool a real web page
+      // registered, and the browser session that owns that page lives in this
+      // app. Claim it synchronously and wait for the approval pill to fulfill
+      // it. AI SDK delivers tool-input-available before tool-approval-request,
+      // so invoking here would bypass the user's decision.
+      if (
+        deferPageToolCallForApproval({
+          toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+        })
+      ) {
+        return;
+      }
+
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
@@ -3215,6 +3257,19 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI/page tools are client-fulfilled. Their approval response must be
+  // routed through the shared defer/fulfill handler; a raw AI SDK approval
+  // response would leave a no-execute page tool without a result.
+  const addToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse: sdkAddToolApprovalResponse,
+        addToolOutput,
+      }),
+    [sdkAddToolApprovalResponse, addToolOutput],
+  );
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
