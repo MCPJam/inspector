@@ -115,6 +115,10 @@ writeFileSync(
 | `checkIds` | `MCPCheckId[]` | No | all checks | Restrict checks to specific ids |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch implementation |
 | `clientName` | `string` | No | SDK default | Custom MCP client name |
+| `protocolVersion` | `string` | No | | Pin to a specific MCP protocol version (`2025-03-26`, `2025-06-18`, `2025-11-25`, or `2026-07-28`). Absent means legacy era. |
+| `logProbe` | `{ toolName: string; arguments?: Record<string, unknown> }` | No | | Tool to call so the server emits log records, used by `modern-logs-require-log-level`. Without this, that check reports `could-not-run` — silence on an ordinary request cannot distinguish a conforming server from one that never logs. |
+| `inputRequiredProbe` | `{ toolName: string; arguments?: Record<string, unknown> }` | No | | Tool to call to trigger an `input_required` round trip, used by `modern-undeclared-capability-error`. Without this, that check reports `could-not-run`. |
+| `fixtures` | `MCPConformanceFixtures` | No | | Safe-to-execute tool calls and prompt renders that widen coverage for `modern-tool-output-schema-conformant` and `wire-schema-valid`. |
 
 ## Available categories and check ids
 
