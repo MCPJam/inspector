@@ -11214,6 +11214,10 @@
           "scenario": {
             "type": "string"
           },
+          "intent": {
+            "type": "string",
+            "description": "Optional authored analytics grouping label. Absent means unlabelled."
+          },
           "models": {
             "type": "array",
             "items": {
@@ -11430,6 +11434,10 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "description": "Optional authored analytics grouping label."
           },
           "models": {
             "type": "array",
@@ -11784,6 +11792,10 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": ["string", "null"],
+            "description": "Optional authored analytics grouping label. Omitted leaves the stored value unchanged; null clears it."
           },
           "models": {
             "type": "array",
