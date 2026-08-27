@@ -423,6 +423,52 @@ describe("useCrossHostData", () => {
     expect(cell?.failCount).toBe(1);
   });
 
+  it("carries per-run iteration counts on trend points", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRun("r1", "h1", 1000);
+    const run2 = makeRun("r2", "h1", 2000);
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i2", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+      makeIteration("i3", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i4", {
+        suiteRunId: "r2",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i5", {
+        suiteRunId: "r2",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run1, run2], iters, {
+        cellTrends: true,
+      }),
+    );
+    const series = result.current.matrix
+      .get("c1")
+      ?.get("h1::client-default")?.trendSeries;
+    expect(series?.map((p) => [p.passed, p.failed, p.total])).toEqual([
+      [2, 1, 3],
+      [2, 0, 2],
+    ]);
+  });
+
   it("buildCellTrendSeries supports uneven host histories", () => {
     const suite = makeSuite([
       { namedHostId: "h1", hostName: "MCPJam" },
