@@ -32,8 +32,14 @@
  * longer matches the one the claim resolved is refused rather than executed:
  * running the wrong exam under a profile's name is worse than not running it.
  *
- * SCOPE: eval children only. The conformance and auth-probe children, and the
- * write-manifest enforcement a `test_write` cell needs, are separate lanes.
+ * SCOPE: the eval matrix, the conformance child and the auth-probe child. The
+ * write-manifest enforcement a `test_write` cell needs is a separate lane.
+ *
+ * THE TWO NON-MODEL CHILDREN RUN FIRST. The probe and the conformance suite
+ * spend no model credits, so a run whose budget is exhausted — or which is
+ * cancelled halfway — still keeps the evidence that costs nothing. Running
+ * them after the matrix would make the cheapest, most reusable evidence the
+ * first thing a wind-down throws away.
  *
  * Gated by `BENCH_WORKER_ENABLED === '1'`. That gate stops this process from
  * CLAIMING work; the feature's own switch is the backend's
@@ -49,6 +55,13 @@ import {
   shouldSkipExecution,
 } from "../routes/shared/evals.js";
 import { createConcurrencyLimiter } from "./evals-runner.js";
+import { createConformanceFetch } from "../routes/shared/conformance.js";
+import { executePersistedConformanceRun } from "./conformance-run-executor.js";
+import {
+  runBenchmarkAuthProbe,
+  type BenchmarkProbeEvidence,
+} from "./bench-probe-child.js";
+import type { ConformanceSuiteKind, OAuthConformanceConfig } from "@mcpjam/sdk";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
 
@@ -126,6 +139,53 @@ export type BenchmarkEvalCell = {
 };
 
 /**
+ * Where the auth-probe child dials, resolved BACKEND-SIDE from the pinned
+ * target.
+ *
+ * The endpoint is data for the same reason a cell's model is: it is what the
+ * run's hashes pin, and a worker that derived it would make the observation
+ * un-reproducible from the pins.
+ */
+export type BenchmarkProbeSpec = {
+  serverUrl: string;
+};
+
+/**
+ * How to run the conformance child, resolved backend-side from the pinned
+ * definition.
+ *
+ * `oauth` is present only for a definition that pins an `oauth-headless` exam
+ * scope. Its `headlessCheckIds` names, BY ID, exactly which checks that exam
+ * grades — the list is part of the hashed manifest, so the denominator a
+ * scorecard is computed against is reproducible from the pins rather than from
+ * whatever the harness managed on the day.
+ */
+export type BenchmarkConformanceSpec = {
+  serverUrl: string;
+  suites: ConformanceSuiteKind[];
+  protocolVersion?: string;
+  engineVersion?: string;
+  oauth?: {
+    protocolVersion: OAuthConformanceConfig["protocolVersion"];
+    registrationStrategy: OAuthConformanceConfig["registrationStrategy"];
+    /**
+     * Headless only. Interactive OAuth needs a consent screen and a human, and
+     * a hosted benchmark has neither — the checks that leg would cover are
+     * recorded `could_not_run`, never faked.
+     */
+    auth: Extract<
+      OAuthConformanceConfig["auth"],
+      { mode: "headless" } | { mode: "client_credentials" }
+    >;
+    client?: OAuthConformanceConfig["client"];
+    scopes?: string;
+    customHeaders?: Record<string, string>;
+    redirectUrl?: string;
+    headlessCheckIds: string[];
+  };
+};
+
+/**
  * One rostered piece of evidence and its current status, as of the claim.
  *
  * The roster is what makes resume possible: a partially executed matrix is
@@ -153,6 +213,10 @@ export type BenchmarkRosterEntry = {
   testSuiteRunId?: string | null;
   /** Present on `eval_run` rows only. */
   evalCell?: BenchmarkEvalCell;
+  /** Present on `auth_probe` rows only. */
+  probeSpec?: BenchmarkProbeSpec;
+  /** Present on `conformance_run` rows only. */
+  conformanceSpec?: BenchmarkConformanceSpec;
 };
 
 /**
@@ -409,6 +473,72 @@ async function attachEvalEvidence(args: {
 }
 
 /**
+ * Bind a persisted conformance run to its rostered evidence row.
+ *
+ * The same route as an eval child, and the same reason for calling it on a
+ * FAILED child: the row carries the pointer and the backend derives the
+ * terminal status from the run itself.
+ */
+async function attachConformanceEvidence(args: {
+  job: ClaimedBenchmarkJob;
+  evidenceKey: string;
+  conformanceRunId: string;
+}): Promise<void> {
+  const { status, body } = await postServiceRoute(
+    `${BENCH_SERVICE_BASE}/evidence/attach`,
+    {
+      jobId: args.job.jobId,
+      benchmarkRunId: args.job.benchmarkRunId,
+      gen: args.job.leaseGeneration,
+      evidenceKey: args.evidenceKey,
+      conformanceRunId: args.conformanceRunId,
+    },
+  );
+  if (isLeaseLostResponse(status, body)) {
+    throw new LeaseLostError("attach rejected the lease generation");
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`conformance evidence attach rejected (${status})`);
+  }
+}
+
+/**
+ * File what the auth probe observed.
+ *
+ * Its own route rather than `evidence/attach`, because the probe has no child
+ * RUN to point at — the observation IS the evidence, and it is the only thing
+ * on the roster that can be stamped `mcpjam_verified` on the strength of this
+ * worker having made the request itself.
+ *
+ * A `failed` or `refused` payload is filed exactly like a completed one. The
+ * backend records the row unavailable from it; suppressing the call would
+ * leave the row `expected` and turn a refusal we know about into a coverage
+ * gap somebody has to sweep.
+ */
+async function attachProbeEvidence(args: {
+  job: ClaimedBenchmarkJob;
+  evidenceKey: string;
+  evidence: BenchmarkProbeEvidence;
+}): Promise<void> {
+  const { status, body } = await postServiceRoute(
+    `${BENCH_SERVICE_BASE}/evidence/probe`,
+    {
+      jobId: args.job.jobId,
+      benchmarkRunId: args.job.benchmarkRunId,
+      gen: args.job.leaseGeneration,
+      evidenceKey: args.evidenceKey,
+      ...args.evidence,
+    },
+  );
+  if (isLeaseLostResponse(status, body)) {
+    throw new LeaseLostError("probe attach rejected the lease generation");
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`probe evidence attach rejected (${status})`);
+  }
+}
+
+/**
  * Report that every child this worker owed has been launched and settled.
  *
  * This is the EXECUTION phase ending, not the run: the backend moves the run to
@@ -614,6 +744,111 @@ async function defaultRunEvalCell(
 export const defaultRunEvalCellForTests = () => defaultRunEvalCell;
 
 /**
+ * The conformance child's idempotency key, namespaced.
+ *
+ * `externalRunId` is a single namespace shared with every other surface that
+ * starts a conformance run (`api:<projectId>:<serverId>:<key>` is the /api/v1
+ * shape), so a benchmark key that did not say it was one could collide with a
+ * caller-supplied key and adopt somebody else's run.
+ */
+export function conformanceChildExternalRunId(
+  benchmarkRunId: string,
+  evidenceKey: string,
+): string {
+  return `benchmark:${evalChildIdempotencyKey(benchmarkRunId, evidenceKey)}`;
+}
+
+export type RunConformanceChildArgs = {
+  job: ClaimedBenchmarkJob;
+  entry: BenchmarkRosterEntry;
+  spec: BenchmarkConformanceSpec;
+};
+
+/**
+ * Run the pinned conformance suites as a persisted child.
+ *
+ * The OAuth suite is CONFIGURED here rather than excluded. `runConformance`
+ * refuses a requested `oauth` suite with no auth strategy, and the executor
+ * turns that into an explicit incomplete — so a definition that pins OAuth and
+ * a worker that quietly drops it produce a scorecard whose OAuth section is
+ * empty for a reason nobody recorded. The strategy is headless (or
+ * client_credentials): the checks a consent screen would be needed for come
+ * back `could_not_run`, which is the honest answer and the one the pinned
+ * `headlessCheckIds` scope makes visible.
+ */
+async function defaultRunConformanceChild(
+  args: RunConformanceChildArgs,
+): Promise<{ runId: string }> {
+  const { job, spec } = args;
+  const oauth: OAuthConformanceConfig | undefined = spec.oauth
+    ? {
+        serverUrl: spec.serverUrl,
+        protocolVersion: spec.oauth.protocolVersion,
+        registrationStrategy: spec.oauth.registrationStrategy,
+        auth: spec.oauth.auth,
+        ...(spec.oauth.client ? { client: spec.oauth.client } : {}),
+        ...(spec.oauth.scopes ? { scopes: spec.oauth.scopes } : {}),
+        ...(spec.oauth.customHeaders
+          ? { customHeaders: spec.oauth.customHeaders }
+          : {}),
+        ...(spec.oauth.redirectUrl
+          ? { redirectUrl: spec.oauth.redirectUrl }
+          : {}),
+        // Verifying the server REJECTS bad input is half of OAuth conformance,
+        // and these are the checks a headless run can actually reach.
+        oauthConformanceChecks: true,
+        // The suite dials URLs it DISCOVERS — authorization, token,
+        // registration and metadata endpoints all come out of the target's own
+        // documents — so the pinned endpoint is the one address that was ever
+        // checkable up front. Every hop goes through the guarded transport.
+        fetchFn: createConformanceFetch("OAuth endpoint"),
+      }
+    : undefined;
+
+  const result = await executePersistedConformanceRun({
+    convexToken: job.runnerBearer,
+    projectId: job.projectId,
+    server: { url: spec.serverUrl } as never,
+    suites: spec.suites,
+    source: "benchmark",
+    target: {
+      kind: "server",
+      serverId: job.serverId,
+      serverUrl: spec.serverUrl,
+    },
+    ...(spec.protocolVersion
+      ? { protocolVersion: spec.protocolVersion }
+      : {}),
+    ...(spec.engineVersion ? { engineVersion: spec.engineVersion } : {}),
+    ...(oauth ? { oauth } : {}),
+    ...(spec.oauth?.headlessCheckIds?.length
+      ? { oauthHeadlessCheckIds: spec.oauth.headlessCheckIds }
+      : {}),
+    actorLabel: `benchmark:${job.benchmarkRunId}`,
+    externalRunId: conformanceChildExternalRunId(
+      job.benchmarkRunId,
+      args.entry.evidenceKey,
+    ),
+  });
+  return { runId: result.runId };
+}
+
+export type RunAuthProbeArgs = {
+  job: ClaimedBenchmarkJob;
+  entry: BenchmarkRosterEntry;
+  spec: BenchmarkProbeSpec;
+};
+
+/** Observe the target's unauthenticated behaviour from our own infrastructure. */
+async function defaultRunAuthProbe(
+  args: RunAuthProbeArgs,
+): Promise<BenchmarkProbeEvidence> {
+  // No `allowLoopback`: a scorecard about a server nobody else can reach is
+  // not evidence, and the hosted guard refuses the address anyway.
+  return runBenchmarkAuthProbe({ serverUrl: args.spec.serverUrl });
+}
+
+/**
  * Test seam: the 404 convention is the whole reason this worker can ship
  * before the backend flag flips, and it lives at the wire.
  */
@@ -627,7 +862,11 @@ export const claimNextForTests = claimNext;
  */
 export type BenchExecutionDeps = {
   runEvalCell: typeof defaultRunEvalCell;
+  runConformanceChild: typeof defaultRunConformanceChild;
+  runAuthProbe: typeof defaultRunAuthProbe;
   attachEvidence: typeof attachEvalEvidence;
+  attachConformance: typeof attachConformanceEvidence;
+  attachProbe: typeof attachProbeEvidence;
   executionComplete: typeof reportExecutionComplete;
   abort: typeof abortJob;
   heartbeat: (
@@ -640,7 +879,11 @@ export type BenchExecutionDeps = {
 function defaultDeps(): BenchExecutionDeps {
   return {
     runEvalCell: defaultRunEvalCell,
+    runConformanceChild: defaultRunConformanceChild,
+    runAuthProbe: defaultRunAuthProbe,
     attachEvidence: attachEvalEvidence,
+    attachConformance: attachConformanceEvidence,
+    attachProbe: attachProbeEvidence,
     executionComplete: reportExecutionComplete,
     abort: abortJob,
     heartbeat: sendHeartbeat,
@@ -742,16 +985,22 @@ export async function executeClaimedJob(
     assertClaimExecutable(claimed);
     assertLeaseHeld();
 
-    const cells = claimed.roster
-      .filter(
-        (entry) =>
-          entry.kind === "eval_run" &&
-          entry.evalCell &&
-          // Terminal rows owe nothing. Launching one would pay a second time
-          // for evidence the run already holds.
-          !TERMINAL_EVIDENCE_STATUSES.has(entry.status),
-      )
-      .sort((a, b) => (a.evidenceKey < b.evidenceKey ? -1 : 1));
+    /**
+     * Rostered rows of one kind that still owe a child.
+     *
+     * Terminal rows owe nothing. Launching one would pay a second time for
+     * evidence the run already holds.
+     */
+    const owing = (kind: BenchmarkRosterEntry["kind"]) =>
+      claimed.roster
+        .filter(
+          (entry) =>
+            entry.kind === kind &&
+            !TERMINAL_EVIDENCE_STATUSES.has(entry.status),
+        )
+        .sort((a, b) => (a.evidenceKey < b.evidenceKey ? -1 : 1));
+
+    const cells = owing("eval_run").filter((entry) => entry.evalCell);
 
     // READ-ONLY FIRST, deliberately. A cancellation or an exhausted budget
     // stops launching wherever it lands, and the cells worth losing to that are
@@ -811,24 +1060,159 @@ export async function executeClaimedJob(
       }
     };
 
-    /** Collect a cell's failure without letting it abandon its siblings. */
-    const settle = async (entry: BenchmarkRosterEntry): Promise<void> => {
+    /**
+     * Run the auth-probe row: one bounded, unauthenticated observation made
+     * from our own infrastructure.
+     *
+     * A probe that could not run is FILED, not suppressed. The payload says
+     * `failed` or `refused` with a reason, and the backend records the row
+     * unavailable — writing nothing would leave it `expected`, which reads as
+     * a probe still to come rather than one that was refused.
+     */
+    const runAuthProbeRow = async (
+      entry: BenchmarkRosterEntry,
+    ): Promise<void> => {
+      if (windDown.reason || leaseLost) return;
+      const spec = entry.probeSpec;
+      if (!spec?.serverUrl) {
+        // Left `expected` for the backend's roster sweep to degrade into a
+        // coverage gap. Not fatal to the job: losing one pillar is not a
+        // reason to refuse the exam the payer bought.
+        logger.error(
+          "[bench] rostered auth probe carries no endpoint",
+          new JobUnexecutableError(
+            `rostered probe "${entry.evidenceKey}" carries no endpoint`,
+          ),
+          { ...logContext, evidenceKey: entry.evidenceKey },
+        );
+        return;
+      }
+      assertLeaseHeld();
+      let evidence: BenchmarkProbeEvidence;
       try {
-        await runCell(entry);
+        evidence = await deps.runAuthProbe({ job: claimed, entry, spec });
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        // The probe classifies every outcome it can into a payload, so a THROW
+        // is a defect on our side. Filing it as a failed probe is still the
+        // honest answer — what it must never become is a completed one.
+        logger.error("[bench] auth probe threw", error, {
+          ...logContext,
+          evidenceKey: entry.evidenceKey,
+        });
+        evidence = {
+          observedEndpoint: spec.serverUrl,
+          discovery: { resourceMetadataFound: false },
+          checks: [],
+          status: "failed",
+          failureReason:
+            error instanceof Error ? error.message : String(error),
+        };
+      }
+      assertLeaseHeld();
+      try {
+        await deps.attachProbe({
+          job: claimed,
+          evidenceKey: entry.evidenceKey,
+          evidence,
+        });
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        logger.error("[bench] attaching probe evidence failed", error, {
+          ...logContext,
+          evidenceKey: entry.evidenceKey,
+        });
+      }
+    };
+
+    /** Run the pinned conformance suites and bind the persisted run. */
+    const runConformanceRow = async (
+      entry: BenchmarkRosterEntry,
+    ): Promise<void> => {
+      if (windDown.reason || leaseLost) return;
+      const spec = entry.conformanceSpec;
+      if (!spec?.serverUrl || !(spec.suites?.length > 0)) {
+        logger.error(
+          "[bench] rostered conformance child carries no launch spec",
+          new JobUnexecutableError(
+            `rostered conformance "${entry.evidenceKey}" carries no launch spec`,
+          ),
+          { ...logContext, evidenceKey: entry.evidenceKey },
+        );
+        return;
+      }
+      let runId: string | null = null;
+      try {
+        assertLeaseHeld();
+        const result = await deps.runConformanceChild({
+          job: claimed,
+          entry,
+          spec,
+        });
+        runId = result.runId;
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        logger.error("[bench] conformance child could not be launched", error, {
+          ...logContext,
+          evidenceKey: entry.evidenceKey,
+        });
+      }
+      if (!runId) return;
+      assertLeaseHeld();
+      try {
+        await deps.attachConformance({
+          job: claimed,
+          evidenceKey: entry.evidenceKey,
+          conformanceRunId: runId,
+        });
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        logger.error("[bench] attaching conformance evidence failed", error, {
+          ...logContext,
+          evidenceKey: entry.evidenceKey,
+          runId,
+        });
+      }
+    };
+
+    /** Collect one child's failure without letting it abandon its siblings. */
+    const settle = async (
+      entry: BenchmarkRosterEntry,
+      run: (entry: BenchmarkRosterEntry) => Promise<void>,
+    ): Promise<void> => {
+      try {
+        await run(entry);
       } catch (error) {
         if (error instanceof LeaseLostError) {
           leaseLost ??= error;
           return;
         }
-        logger.error("[bench] cell aborted", error, {
+        logger.error("[bench] child aborted", error, {
           ...logContext,
-          cellId: entry.evalCell?.cellId,
+          evidenceKey: entry.evidenceKey,
         });
       }
     };
 
+    // The two non-model children first, and one at a time — see the module
+    // header. They cost no credits, so a wind-down should never be what throws
+    // them away; and running them concurrently would put two unauthenticated
+    // conversations on a target that did not ask for either.
+    for (const entry of owing("auth_probe")) {
+      assertLeaseHeld();
+      await settle(entry, runAuthProbeRow);
+    }
+    for (const entry of owing("conformance_run")) {
+      assertLeaseHeld();
+      await settle(entry, runConformanceRow);
+    }
+
+    assertLeaseHeld();
+
     const limit = createConcurrencyLimiter(MAX_CONCURRENT_READ_ONLY_CELLS);
-    await Promise.all(readOnly.map((entry) => limit(() => settle(entry))));
+    await Promise.all(
+      readOnly.map((entry) => limit(() => settle(entry, runCell))),
+    );
 
     assertLeaseHeld();
 
@@ -838,7 +1222,7 @@ export async function executeClaimedJob(
     // the target leaking another tenant's data.
     for (const entry of writing) {
       assertLeaseHeld();
-      await settle(entry);
+      await settle(entry, runCell);
     }
 
     assertLeaseHeld();
