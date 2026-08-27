@@ -127,12 +127,20 @@ loadSkill("local/code-review")  → your file
 loadSkill("code-review")        → the project's
 ```
 
-Ask for a bare name that more than one origin answers to and the tool refuses,
-naming the alternatives rather than guessing:
+**An exact reference always wins.** `code-review` *is* the project skill's
+reference, so asking for it is not ambiguous — it is a direct hit, and the local
+skill stays reachable under its own name. That is what keeps a project skill
+addressable no matter what you happen to have on disk.
+
+Ambiguity is the case where nothing is an exact hit: two *namespaced* skills
+share a name and no skill answers to the bare name itself — a plugin
+`docs-tools/code-review` alongside a local `local/code-review`, with no project
+`code-review`. There the tool refuses and names the alternatives rather than
+guessing:
 
 ```
-"code-review" is ambiguous — it matches "code-review" and "local/code-review".
-Use the full reference.
+"code-review" is ambiguous — it matches "docs-tools/code-review" and
+"local/code-review". Use the full reference.
 ```
 
 ## Skills an agent writes for itself

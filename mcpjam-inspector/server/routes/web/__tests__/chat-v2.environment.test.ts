@@ -528,7 +528,7 @@ describe("web chat-v2 — environment execution target", () => {
     expect(prepareChatV2Mock).not.toHaveBeenCalled();
   });
 
-  it("delivers ONLY the resolved skills to the emulated engine (no cloudSkills)", async () => {
+  it("delivers ONLY the resolved skills to the emulated engine", async () => {
     // The attribution probe answers the single-call shape: pv_1 contributed
     // env-server-2 and no skills, so the capability set carries no plugin
     // skills and no problems.
@@ -562,8 +562,10 @@ describe("web chat-v2 — environment execution target", () => {
       token
     );
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    // Project-wide cloud skills would double-deliver alongside the resolved set.
-    expect(args.cloudSkills).toBeUndefined();
+    // Captured, not live: the environment's spec already froze which server
+    // skills this turn gets, so composing the connected servers' live catalogs
+    // on top would deliver skills the capture deliberately excluded.
+    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
     // INS-3: the emulated engine now receives the whole EffectiveCapabilitySet
     // rather than a flat skill list, because its tools address skills by REF
     // (`<plugin>/<skill>` for a plugin skill). This environment pins no
@@ -609,7 +611,6 @@ describe("web chat-v2 — environment execution target", () => {
     // Emulated skill tools must NOT be advertised on a harness turn.
     const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
     expect(prepareArgs.skillsSource).toBeUndefined();
-    expect(prepareArgs.cloudSkills).toBeUndefined();
 
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
     expect(handlerArgs.harness).toBe("claude-code");

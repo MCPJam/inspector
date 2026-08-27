@@ -197,9 +197,15 @@ describe("the origin matrix", () => {
     expect(text).toBe("Base prompt.");
   });
 
-  it("refuses a bare name that two origins answer to", async () => {
+  it("keeps both origins of one name addressable, exact ref first", async () => {
     // The merged catalog's defining behaviour. Both skills are real and both
     // are reachable; the only wrong answer is silently picking one.
+    //
+    // The bare name is NOT ambiguous here: `code-review` is the project
+    // skill's own ref, so it is an exact hit. That ordering is deliberate —
+    // resolving names before refs would make a project skill unaddressable the
+    // moment a user happened to have a local file of the same name, which is
+    // the shadowing the namespacing exists to prevent.
     const result = await prepareChatV2({
       ...base,
       mcpClientManager: mockManager(),
@@ -220,6 +226,51 @@ describe("the origin matrix", () => {
     await expect(loadSkill.execute({ name: "code-review" })).resolves.toContain(
       "# Project"
     );
+    await expect(
+      loadSkill.execute({ name: "local/code-review" })
+    ).resolves.toContain("# Local");
+  });
+
+  it("refuses a bare name only when NOTHING answers to it exactly", async () => {
+    // Two namespaced origins, no project skill: now the bare name is a guess,
+    // and the tool names the alternatives instead of making it.
+    const result = await prepareChatV2({
+      ...base,
+      mcpClientManager: mockManager(),
+      skillsSource: {
+        kind: "resolved",
+        capabilities: capabilities({
+          localSkills: [LOCAL_SKILL],
+          pluginSkills: [
+            {
+              skillId: "sk_plugin",
+              ref: "docs-tools/code-review",
+              name: "code-review",
+              description: "Review code, the plugin's way.",
+              content: "# Plugin",
+              aggregateHash: "h3",
+              pluginName: "docs-tools",
+              channels: [] as never[],
+              files: [],
+            } as never,
+          ],
+        }),
+      },
+    } as never);
+    const loadSkill = (
+      result.allTools as unknown as Record<
+        string,
+        { execute: (input: unknown) => Promise<string> }
+      >
+    ).loadSkill;
+    const refusal = await loadSkill.execute({ name: "code-review" });
+    expect(refusal).toContain("ambiguous");
+    expect(refusal).toContain('"docs-tools/code-review"');
+    expect(refusal).toContain('"local/code-review"');
+    // And each is still reachable by its own ref.
+    await expect(
+      loadSkill.execute({ name: "docs-tools/code-review" })
+    ).resolves.toContain("# Plugin");
     await expect(
       loadSkill.execute({ name: "local/code-review" })
     ).resolves.toContain("# Local");

@@ -1609,7 +1609,6 @@ describe("prepareChatV2 — a live resolved source", () => {
     expect(result.enhancedSystemPrompt).toContain("Process PDFs");
     expect(result.allTools).toHaveProperty("loadSkill");
     expect(result.allTools).not.toHaveProperty("listSkills");
-    expect(result.skillsFetchFailed).toBeUndefined();
   });
 
   it("advertises no skill tools or stanza when the set is empty", async () => {

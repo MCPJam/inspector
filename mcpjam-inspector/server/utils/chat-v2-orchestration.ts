@@ -37,10 +37,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
   type CustomProviderConfig,
 } from "./chat-helpers.js";
-import {
-  getPinnedSkillToolsAndPrompt,
-  type SkillsFetchFailure,
-} from "./computers/cloud-skill-tools.js";
+import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import {
   SERVER_SKILLS_PROMPT_SECTION,
@@ -1126,12 +1123,6 @@ export interface PrepareChatV2Result {
    * not inherit MCPJam UI approval semantics from a discarded client entry.
    */
   effectiveUiTools: UiToolEntry[];
-  /**
-   * Set when the live-cloud catalog fetch threw or timed out. Distinguishes
-   * that skip from a genuine empty project (no marker). Session-sim can
-   * forward this as a `session_notice`.
-   */
-  skillsFetchFailed?: SkillsFetchFailure;
 }
 
 /**
@@ -1288,7 +1279,6 @@ export async function prepareChatV2(
   type SkillPrep = {
     tools: Record<string, unknown>;
     systemPromptSection: string;
-    skillsFetchFailed?: SkillsFetchFailure;
   };
   const skillPrep: SkillPrep = skillsSource
     ? skillsSource.kind === "pinned"
@@ -1312,11 +1302,8 @@ export async function prepareChatV2(
       // skill and a hosted one could never see a local file. A caller with no
       // skills says `{ kind: "none" }` and means it.
       { tools: {}, systemPromptSection: "" };
-  const {
-    tools: skillTools,
-    systemPromptSection: skillsPromptSection,
-    skillsFetchFailed,
-  } = skillPrep;
+  const { tools: skillTools, systemPromptSection: skillsPromptSection } =
+    skillPrep;
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
@@ -1622,6 +1609,5 @@ export async function prepareChatV2(
     progressivePlan,
     discoveryState,
     effectiveUiTools,
-    ...(skillsFetchFailed ? { skillsFetchFailed } : {}),
   };
 }

@@ -22,6 +22,7 @@ import type {
   RuntimeLocalSkill,
   RuntimeSkillFile,
 } from "../services/environments/effective-capabilities.js";
+import { LOCAL_SKILL_REF_NAMESPACE } from "../../shared/server-skill-refs";
 
 /**
  * Get all skills directories
@@ -239,9 +240,12 @@ export async function listLocalRuntimeSkills(): Promise<RuntimeLocalSkill[]> {
         skills.push({
           skillId: `local:${skillDir}`,
           // Namespaced, so a local `code-review` and a project `code-review`
-          // are separately addressable and a bare `code-review` is refused as
-          // ambiguous rather than silently resolved to one of them.
-          ref: `local/${parsed.name}`,
+          // are separately addressable rather than one shadowing the other.
+          // The bare name still resolves to the project skill — that IS its
+          // ref, and `loadSkill` matches an exact ref before it considers
+          // names — so namespacing costs the project skill nothing and buys
+          // the local one an address it did not have.
+          ref: `${LOCAL_SKILL_REF_NAMESPACE}/${parsed.name}`,
           name: parsed.name,
           description: parsed.description,
           content: parsed.content,

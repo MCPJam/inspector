@@ -438,9 +438,14 @@ export function pluginOriginByServerId(
  * Refs cannot collide ACROSS these two families — a project skill's ref is its
  * bare name and a local one is `local/<name>`, and a skill name cannot contain
  * a slash — so a collision here can only be within a family, which is what the
- * `usedRefs` pass catches. A local `code-review` alongside a project
- * `code-review` is not a collision but an AMBIGUITY, resolved where it belongs:
- * `loadSkill("code-review")` refuses and names both refs.
+ * `usedRefs` pass catches.
+ *
+ * A local `code-review` alongside a project `code-review` is therefore not a
+ * collision at all: they are two refs, both addressable. `loadSkill` resolves
+ * the exact ref first, so `code-review` is a direct hit on the project skill
+ * rather than an ambiguity — which is what keeps a project skill addressable
+ * regardless of what the user has on disk. The ambiguity refusal is for the
+ * case where NOTHING is an exact hit and two namespaced refs share a name.
  */
 export function buildLiveEffectiveCapabilities(args: {
   standaloneSkills?: RuntimeStandaloneSkill[];

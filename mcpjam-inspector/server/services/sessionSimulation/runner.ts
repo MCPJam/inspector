@@ -41,7 +41,10 @@ import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import {
   listCloudRuntimeSkills,
   shouldEnableCloudSkillTools,
+  skillsFailureFrom,
+  type SkillsFetchFailure,
 } from "../../utils/computers/cloud-skill-tools.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import {
   buildLiveEffectiveCapabilities,
   type EffectiveCapabilitySet,
@@ -300,12 +303,12 @@ export interface SyntheticHostRuntime {
   scenarioId?: string;
   /**
    * Authoritative pinned skills for an ENVIRONMENT-based swarm target
-   * (Project Environments, D3). `undefined` ⇒ legacy live-pool semantics
-   * (cloud skill tools / harness live fetch, unchanged). An array — possibly
-   * EMPTY, meaning deliberately skill-less — ⇒ skills come EXCLUSIVELY from
-   * these pinned artifacts: the emulated engine gets them via prepareChatV2
-   * `skillsSource` (never `cloudSkills`), and a harness turn gets them via the
-   * pinned harness path (never `fetchRuntimeSkills`, and NEVER through
+   * (Project Environments, D3). `undefined` ⇒ live-pool semantics: the project
+   * catalog as a resolved capability set, plus the connected servers' own
+   * skills. An array — possibly EMPTY, meaning deliberately skill-less — ⇒
+   * skills come EXCLUSIVELY from these pinned artifacts: the emulated engine
+   * gets them via prepareChatV2 `skillsSource`, and a harness turn gets them
+   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER through
    * prepareChatV2's pinned branch, which throws on harness).
    */
   pinnedSkills?: PinnedSkillArtifact[];
@@ -671,30 +674,39 @@ export async function runSyntheticHostSession(
     // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
     // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
     // approval-mode no-skills semantics (a headless visitor can't approve, same
-    // rationale as the cloudSkills gate above), and (c) HARNESS turns —
+    // rationale as the live-catalog gate above), and (c) HARNESS turns —
     // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
     // artifacts ride `pinnedHarnessSkills` on the drain instead.
     // The live arm, for a run with no pins: the project pool as a capability
     // set. Previously this was "pass nothing and let the orchestrator fall
     // through to its cloud branch"; that fallback is gone, so the source is
-    // now stated here. A catalog failure degrades to no skills rather than
-    // failing the run — a simulation that loses its skills is still a
-    // simulation, and `prepared.skillsFetchFailed` telemetry below records it.
+    // now stated here.
+    //
+    // A catalog failure degrades to a live set with no PROJECT skills — never
+    // to `{ kind: "none" }`. The source also carries `composeLiveServerSkills`,
+    // so collapsing it would take the connected servers' SEP-2640 skills down
+    // with the project's, and those never failed: losing skills we could not
+    // fetch is a degradation, losing skills we could is a bug. The failure is
+    // recorded here rather than read back off `prepared`, because the fetch now
+    // happens on this side of `prepareChatV2` and the orchestrator cannot know
+    // how it went.
     let liveCapabilities: EffectiveCapabilitySet | undefined;
+    let skillsFetchFailed: SkillsFetchFailure | undefined;
     // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
     // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
     // model would otherwise build a live set and hit the disjointness refusal.
     if (!harness && cloudSkillsEnabled && authHeader && projectId) {
+      const startedAt = Date.now();
+      let standaloneSkills: RuntimeStandaloneSkill[] = [];
       try {
-        liveCapabilities = buildLiveEffectiveCapabilities({
-          standaloneSkills: await listCloudRuntimeSkills({
-            authHeader,
-            projectId,
-          }),
+        standaloneSkills = await listCloudRuntimeSkills({
+          authHeader,
+          projectId,
         });
-      } catch {
-        liveCapabilities = undefined;
+      } catch (error) {
+        skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
       }
+      liveCapabilities = buildLiveEffectiveCapabilities({ standaloneSkills });
     }
 
     const skillsSource:
@@ -746,22 +758,21 @@ export async function runSyntheticHostSession(
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
       skillsSource,
-      ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
     });
 
-    if (prepared.skillsFetchFailed) {
+    if (skillsFetchFailed) {
       logger.warn("[sessionSimulation.runner] skills catalog fetch failed", {
         runId,
         chatSessionId,
-        errorClass: prepared.skillsFetchFailed.errorClass,
-        status: prepared.skillsFetchFailed.status,
-        latencyMs: prepared.skillsFetchFailed.latencyMs,
+        errorClass: skillsFetchFailed.errorClass,
+        status: skillsFetchFailed.status,
+        latencyMs: skillsFetchFailed.latencyMs,
       });
       emit?.({
         type: "session_notice",
         kind: "tool_suppressed",
         toolId: "skills",
-        message: prepared.skillsFetchFailed.message,
+        message: skillsFetchFailed.message,
       });
     }
 
