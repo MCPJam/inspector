@@ -4,20 +4,41 @@ import { describe, expect, it, vi } from "vitest";
 import type { BenchCategory, BenchTrack } from "@/lib/apis/bench-api";
 import { BenchCategorySelector } from "../BenchCategorySelector";
 
+/**
+ * The preflight response's own shape. A category is `{ id, title,
+ * description, confidence?, runnable }` and a track is
+ * `{ id, definitionId, profileId, version, kind, categoryId?, definitionHash,
+ * writesToTarget }` — there is no `label`, no `reason`, no `toolCount`, and no
+ * per-track `runnable`, because preflight only lists tracks that already have
+ * an active definition.
+ */
 const CATEGORIES: BenchCategory[] = [
-  { id: "crm", label: "CRM", runnable: true, toolCount: 9 },
-  { id: "tracker", label: "Issue tracker", runnable: true, toolCount: 4 },
+  { id: "crm", title: "CRM", description: "Contact and deal tools.", runnable: true },
+  {
+    id: "tracker",
+    title: "Issue tracker",
+    description: "Issues, sprints and boards.",
+    runnable: true,
+  },
   {
     id: "payments",
-    label: "Payments",
+    title: "Payments",
+    description: "Charges, refunds and payouts.",
     runnable: false,
-    reason: "No pinned exam for this category yet.",
   },
 ];
 
 const TRACKS: BenchTrack[] = [
-  { id: "standard", label: "Standard", runnable: true, categoryIds: ["crm"] },
-  { id: "deep", label: "Deep", runnable: false, categoryIds: ["crm"] },
+  {
+    id: "connector-bench/crm/standard@2026-08-01",
+    definitionId: "def_1",
+    profileId: "connector-bench/crm/standard",
+    version: "2026-08-01",
+    kind: "category",
+    categoryId: "crm",
+    definitionHash: "hash_1",
+    writesToTarget: false,
+  },
 ];
 
 function renderSelector(
@@ -27,7 +48,7 @@ function renderSelector(
     categories: CATEGORIES,
     tracks: TRACKS,
     selectedCategoryId: "crm",
-    selectedTrackId: "standard",
+    selectedTrackId: "connector-bench/crm/standard@2026-08-01",
     onSelectCategory: vi.fn(),
     onSelectTrack: vi.fn(),
     onContinue: vi.fn(),
@@ -99,19 +120,35 @@ describe("the receipt is shown as a proposal, with its reasoning", () => {
 describe("unrunnable options stay visible with their reason", () => {
   it("shows why a category cannot be run and refuses to select it", async () => {
     const props = renderSelector();
+    // The cause is ours to phrase: preflight reports `runnable: false` and
+    // sends no reason string, so inventing a per-category one would be
+    // presenting a message the backend never wrote.
     expect(
-      screen.getByText("No pinned exam for this category yet."),
+      screen.getByText("No exam has been published for this category yet."),
     ).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("Payments"));
     expect(props.onSelectCategory).not.toHaveBeenCalled();
   });
 
-  it("offers only runnable tracks", () => {
+  it("describes a category it CAN run instead of warning about it", () => {
+    renderSelector();
+    expect(screen.getByText("Contact and deal tools.")).toBeInTheDocument();
+  });
+
+  /**
+   * There is no per-track runnable flag to filter on: preflight lists only
+   * definitions that are active, so a track reaching this component is by
+   * construction one that can be run. The invariant worth holding is that
+   * every track handed in is offered — silently dropping one would strand a
+   * published exam with no way to select it.
+   */
+  it("offers every track preflight returned", () => {
     renderSelector();
     const tracks = screen.getByLabelText("Tracks");
-    expect(tracks).toHaveTextContent("Standard");
-    expect(tracks).not.toHaveTextContent("Deep");
+    for (const track of TRACKS) {
+      expect(tracks).toHaveTextContent(track.id);
+    }
   });
 });
 
