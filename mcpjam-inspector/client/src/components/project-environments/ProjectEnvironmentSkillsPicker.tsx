@@ -210,7 +210,11 @@ export function ProjectEnvironmentSkillsPicker({
                   skillId={skillId}
                   currentVersionNumber={skill.currentVersionNumber}
                   pinnedVersionId={pinnedVersionBySkillId.get(skillId) ?? null}
-                  disabled={disabled}
+                  // An ineligible skill's selection is rejected at save, so
+                  // choosing a revision for it leads nowhere. The row's
+                  // checkbox stays enabled (see `rowDisabled`) precisely so the
+                  // user can repair the selection by removing it.
+                  disabled={disabled || ineligible}
                   onChange={(versionId) => setVersionPin(skillId, versionId)}
                 />
               ) : null}

@@ -26,6 +26,9 @@ vi.mock("../../../utils/computers/cloud-skills", () => {
     updateCloudSkill: vi.fn(),
     deleteCloudSkill: vi.fn(),
     promoteCloudSkill: vi.fn(),
+    listCloudSkillVersions: vi.fn(),
+    getCloudSkillVersion: vi.fn(),
+    restoreCloudSkillVersion: vi.fn(),
   };
 });
 
@@ -36,6 +39,9 @@ import {
   createCloudSkill,
   deleteCloudSkill,
   promoteCloudSkill,
+  listCloudSkillVersions,
+  getCloudSkillVersion,
+  restoreCloudSkillVersion,
 } from "../../../utils/computers/cloud-skills";
 
 function createApp() {
@@ -80,7 +86,10 @@ describe("POST /api/web/skills/list", () => {
     const body = await res.json();
     expect(body.skills[0].name).toBe("pdf");
     expect(vi.mocked(listCloudSkills)).toHaveBeenCalledWith(
-      expect.objectContaining({ authHeader: "convex-jwt", projectId: "proj_1" }),
+      expect.objectContaining({
+        authHeader: "convex-jwt",
+        projectId: "proj_1",
+      }),
     );
   });
 
@@ -265,5 +274,139 @@ describe("POST /api/web/skills/delete + /promote", () => {
     });
     expect(res.status).toBe(200);
     expect((await res.json()).skill.sharing).toBe("project");
+  });
+});
+
+describe("POST /api/web/skills/versions/*", () => {
+  const VERSION = {
+    versionId: "v1",
+    versionNumber: 1,
+    versionHash: "h1",
+    contentHash: "c1",
+    name: "pdf",
+    description: "d",
+    fileCount: 0,
+    isCurrent: true,
+    createdByUserId: "u1",
+    createdAt: 1,
+  };
+
+  it("lists a skill's revisions", async () => {
+    vi.mocked(listCloudSkillVersions).mockResolvedValue([VERSION]);
+    const res = await post("/api/web/skills/versions/list", {
+      projectId: "proj_1",
+      skillId: "s1",
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).versions[0].versionNumber).toBe(1);
+    expect(vi.mocked(listCloudSkillVersions)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj_1" }),
+      "s1",
+    );
+  });
+
+  it("returns one revision in full", async () => {
+    vi.mocked(getCloudSkillVersion).mockResolvedValue({
+      ...VERSION,
+      content: "body",
+      files: [{ path: "scripts/run.py", size: 10, contentHash: "f1" }],
+    });
+    const res = await post("/api/web/skills/versions/get", {
+      projectId: "proj_1",
+      skillId: "s1",
+      versionId: "v1",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.version.content).toBe("body");
+    expect(body.version.files).toHaveLength(1);
+    expect(vi.mocked(getCloudSkillVersion)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj_1" }),
+      { skillId: "s1", versionId: "v1" },
+    );
+  });
+
+  it("restores a revision", async () => {
+    vi.mocked(restoreCloudSkillVersion).mockResolvedValue({
+      skillId: "s1",
+      projectId: "proj_1",
+      name: "pdf",
+      description: "d",
+      sharing: "project",
+      isOwner: false,
+      content: "restored",
+      aggregateHash: "h",
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const res = await post("/api/web/skills/versions/restore", {
+      projectId: "proj_1",
+      skillId: "s1",
+      versionId: "v1",
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).skill.content).toBe("restored");
+  });
+
+  it("rejects a request with no versionId", async () => {
+    const res = await post("/api/web/skills/versions/get", {
+      projectId: "proj_1",
+      skillId: "s1",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("maps an upstream failure to its status", async () => {
+    vi.mocked(listCloudSkillVersions).mockRejectedValue(
+      new CloudSkillsError("Skill not found", 404),
+    );
+    const res = await post("/api/web/skills/versions/list", {
+      projectId: "proj_1",
+      skillId: "gone",
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/web/skills/create — folder-import draft", () => {
+  const CREATED = {
+    skillId: "s2",
+    projectId: "proj_1",
+    name: "greeter",
+    description: "hi",
+    sharing: "user" as const,
+    isOwner: true,
+    content: "c",
+    aggregateHash: "h",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  it("forwards importPending so the attach commits the single v1", async () => {
+    vi.mocked(createCloudSkill).mockResolvedValue(CREATED);
+    const res = await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "greeter",
+      description: "hi",
+      content: "c",
+      importPending: true,
+    });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(createCloudSkill)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ importPending: true }),
+    );
+  });
+
+  it("omits it entirely for an ordinary create, preserving legacy behavior", async () => {
+    vi.mocked(createCloudSkill).mockResolvedValue(CREATED);
+    await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "greeter",
+      description: "hi",
+      content: "c",
+    });
+    const [, data] = vi.mocked(createCloudSkill).mock.calls[0]!;
+    expect(data).not.toHaveProperty("importPending");
   });
 });

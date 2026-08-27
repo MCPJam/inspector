@@ -160,6 +160,78 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
     });
   });
 
+  it("stays usable when the history request fails", async () => {
+    // A failed history load must not block the selection itself — the skill is
+    // still selected, it just can't offer revisions to choose from.
+    mockListSkillVersions.mockRejectedValue(new Error("network"));
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={{ mode: "explicit", skillIds: ["skill-refunds"] }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const control = await screen.findByLabelText("Version for skill-refunds");
+    fireEvent.focus(control);
+    await waitFor(() => expect(mockListSkillVersions).toHaveBeenCalled());
+    expect(control).toHaveValue("");
+    expect(screen.getByText("Latest (v4)")).toBeInTheDocument();
+  });
+
+  it("renders the empty state when the project has no shared skills", async () => {
+    mockListSkills.mockResolvedValue([]);
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/No shared skills in this project yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("accepts a null selection without crashing", async () => {
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={vi.fn()}
+      />,
+    );
+    // Nothing is checked, so no version control exists to show.
+    expect(await screen.findByLabelText("refunds")).not.toBeChecked();
+    expect(
+      screen.queryByLabelText("Version for skill-refunds"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables the version control for an ineligible selected skill", async () => {
+    // Its selection is rejected at save, so choosing a revision leads nowhere —
+    // but the checkbox stays live so the user can remove it and repair the
+    // selection.
+    mockListSkills.mockResolvedValue([
+      {
+        ...REFUNDS,
+        pinnability: { ok: false, reason: "not_shared" },
+      },
+    ]);
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={{ mode: "explicit", skillIds: ["skill-refunds"] }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByLabelText("Version for skill-refunds"),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("refunds")).not.toBeDisabled();
+  });
+
   it("keeps a pin selectable before its history has loaded", async () => {
     // Otherwise the control would render an unknown value, fall back to
     // Latest, and silently discard the pin on the next save.

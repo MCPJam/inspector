@@ -1755,11 +1755,15 @@ export interface PlatformRunCompare {
    * Which skills changed between the two runs — the configuration attribution
    * that usually explains the case-level differences beside it.
    *
-   * `null` when NEITHER run recorded pinned skills: two runs that predate skill
-   * pinning have nothing to say here, and an empty section would claim no
-   * skills were involved.
+   * Three states, and they mean different things:
+   *   - a section — these skills changed (or none did, with a count);
+   *   - `null` — NEITHER run recorded pinned skills, so there is nothing to
+   *     say; an empty section would claim no skills were involved;
+   *   - ABSENT — the deployment answering predates skill attribution entirely.
+   *     Optional for that reason: a client cannot assume every backend it talks
+   *     to has this, and a required field would make old responses unusable.
    */
-  skills: PlatformRunCompareSkills | null;
+  skills?: PlatformRunCompareSkills | null;
   cases: PlatformRunCompareCase[];
 }
 

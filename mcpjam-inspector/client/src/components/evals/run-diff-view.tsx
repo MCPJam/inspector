@@ -389,13 +389,19 @@ function SkillChangesSection({ skills }: { skills: EvalRunDiff["skills"] }) {
 }
 
 function SkillChangeRow({ change }: { change: EvalRunSkillChange }) {
-  // `versionDelta` is absent when a side predates versioning; fall back to the
-  // short hashes so a real change is never rendered as if nothing moved.
+  // Prefer the revision a run actually recorded, on either identity system.
+  // An ADDED or REMOVED skill never has a `versionDelta` — there is only one
+  // side — but it usually does know its revision, and `v2` says more to a
+  // reader than seven characters of hash. The hash is the fallback for a run
+  // that predates versioning, so a real change is never rendered as if nothing
+  // moved.
+  const sideDetail = (side: EvalRunSkillSide | undefined): string =>
+    revisionLabel(side) || shortHash(side);
   const detail =
     change.versionDelta ??
     (change.kind === "changed"
-      ? `${shortHash(change.base)} → ${shortHash(change.compare)}`
-      : shortHash(change.base ?? change.compare));
+      ? `${sideDetail(change.base)} → ${sideDetail(change.compare)}`
+      : sideDetail(change.base ?? change.compare));
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
@@ -430,6 +436,12 @@ function SkillChangeRow({ change }: { change: EvalRunSkillChange }) {
       ))}
     </div>
   );
+}
+
+/** `v4` from whichever identity system recorded it, or "" when neither did. */
+function revisionLabel(side: EvalRunSkillSide | undefined): string {
+  const version = side?.versionNumber ?? side?.serverSkillVersionNumber;
+  return version === undefined ? "" : `v${version}`;
 }
 
 /** First 7 chars of whichever hash identifies the COMPLETE artifact. */

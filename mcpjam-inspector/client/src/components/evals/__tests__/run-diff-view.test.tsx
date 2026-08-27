@@ -274,6 +274,32 @@ describe("RunDiffView — skill changes", () => {
     expect(await screen.findByText("abc1234 → 9998887")).toBeInTheDocument();
   });
 
+  it("shows an added skill's recorded revision rather than its hash", async () => {
+    // An added or removed skill has only one side, so it never carries a
+    // versionDelta — but it usually knows its revision, and `v2` says more to a
+    // reader than seven characters of hash.
+    renderWithSkills({
+      base: { excluded: false, count: 0 },
+      compare: { excluded: false, count: 1 },
+      changes: [
+        {
+          key: "serverSkill:lookup",
+          name: "lookup",
+          channels: ["mcp-server"],
+          kind: "added",
+          compare: {
+            contentHash: "server_skill_lookup_hash",
+            serverSkillVersionNumber: 2,
+          },
+        },
+      ],
+      unchangedCount: 0,
+    });
+
+    expect(await screen.findByText("v2")).toBeInTheDocument();
+    expect(screen.queryByText(/server_/)).not.toBeInTheDocument();
+  });
+
   it("renders nothing when no skills changed", async () => {
     // An empty card on every comparison is noise; silence is the right answer.
     renderWithSkills({
