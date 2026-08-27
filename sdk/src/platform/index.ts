@@ -456,6 +456,8 @@ export {
   restoreEnvironmentOperation,
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,

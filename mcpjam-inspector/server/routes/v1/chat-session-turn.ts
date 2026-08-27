@@ -540,6 +540,34 @@ function narrowTarget(
   return { selected, ...(names ? { names } : {}) };
 }
 
+/**
+ * serverId → user-assigned name, for namespacing SEP-2640 server-skill refs.
+ *
+ * Keyed by id rather than positional like `narrowTarget`'s `names`, so a
+ * half-populated name array cannot misalign anything: an entry with no name is
+ * simply absent, and `prepareChatV2` falls back to the server id for it. That
+ * fallback is safe but ugly — the id is host-assigned, which is the property
+ * that matters (a server must never get to choose the namespace its own skills
+ * are addressed under, so `serverInfo.name` is never a candidate) — it just
+ * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
+ * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * both of which the model and the user see.
+ *
+ * Returns `undefined` when nothing is labelled, so the call site can keep to
+ * the spread-only-when-present convention the rest of the options use.
+ */
+function serverLabelsFor(
+  selected: ReadonlyArray<{ id: string; name?: string }>,
+): Record<string, string> | undefined {
+  const labels: Record<string, string> = {};
+  for (const entry of selected) {
+    if (typeof entry.name === "string" && entry.name.length > 0) {
+      labels[entry.id] = entry.name;
+    }
+  }
+  return Object.keys(labels).length > 0 ? labels : undefined;
+}
+
 /** The two equivalent ways a caller says "run this turn with no tools". */
 function wantsNoTools(body: {
   maxToolCalls?: number;
@@ -888,6 +916,10 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const selectedServerIds = selected.map((entry) => entry.id);
+    // Built from the PAIRS, not from `selectedServerNames`: that array is
+    // all-or-nothing on purpose, so one unnamed server would strip the labels
+    // off every named one and send the whole turn back to raw ids.
+    const serverLabels = serverLabelsFor(selected);
 
     const modelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
@@ -904,7 +936,17 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(selectedServerNames ? { serverNames: selectedServerNames } : {}),
       },
       connectionSchema,
-      { timeoutMs: CONNECT_TIMEOUT_MS },
+      {
+        timeoutMs: CONNECT_TIMEOUT_MS,
+        // This surface emulates no host persona — it is MCPJam's own agent —
+        // and it ships the fulfiller, since `prepareChatV2` merges
+        // `withServerSkills`, which loads only through the verified read path
+        // in `server-skills.ts`. Without the declaration the extension can
+        // never be active: the model is handed no `listSkills` / `loadSkill`
+        // at all, so a server that serves skills is indistinguishable from one
+        // that does not.
+        advertiseSkillsExtension: true,
+      },
     );
     manager = connection.manager;
 
@@ -932,6 +974,10 @@ async function handleTurn(c: Context): Promise<Response> {
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      // Without this every server-skill ref is namespaced by the raw server
+      // id, in the `listSkills` catalog the model reads AND in the origin
+      // banner prepended to loaded skill content.
+      ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(pins.temperature !== undefined
@@ -1280,6 +1326,7 @@ export const __testing = {
   assertUnambiguousModelId,
   capToolCalls,
   narrowTarget,
+  serverLabelsFor,
   shouldReleaseLease,
   wantsNoTools,
   computeExcludedToolNames,

@@ -1243,12 +1243,23 @@ export async function prepareChatV2(
   const skillsArePinned =
     skillsSource?.kind === "pinned" ||
     skillsSource?.kind === "pinned-effective";
-  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
-  // falsify the snapshot claim. Harness is stripped from suite configs already;
-  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  // The two skill-delivery channels are deliberately DISJOINT, and this is the
+  // single point both funnel through. A harness turn materializes SKILL.md on
+  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // an emulated turn gets in-memory `loadSkill` tools from `skillsSource`.
+  // Delivering both would hand the model the same skill twice, by two mechanisms.
+  //
+  // So this is a CALLER contract, not a statement about what a harness can do:
+  // harness callers pass `{ kind: "none" }` here and put their pins on
+  // `pinnedHarnessSkills`. (Historical note: this once read "harness runs
+  // live-fetch skills" — that stopped being true when on-box pinned delivery
+  // landed, and the stale wording cost real debugging time. `run-harness-turn`
+  // does not call `fetchRuntimeSkills` at all in pinned mode.)
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+      "Harness turns receive pinned skills on box via `pinnedHarnessSkills`, " +
+        "not via `skillsSource`. Pass `skillsSource: { kind: 'none' }` for a " +
+        "harness turn — the two delivery channels are deliberately disjoint.",
     );
   }
   const modelContextTokens =
