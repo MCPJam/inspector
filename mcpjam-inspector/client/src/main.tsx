@@ -320,7 +320,18 @@ if (isInIframe) {
       );
   clearLegacyWorkosRefreshTokenStorage();
 
-  const convex = new ConvexReactClient(convexUrl);
+  // INVARIANT: this MUST stay below the `refreshBufferInterval` passed to
+  // <AuthKitProvider> below. Convex refetches at `exp - leeway`; if that lands
+  // before authkit's own refresh threshold (`exp - refreshBufferInterval`),
+  // authkit hands back the SAME still-valid token, Convex sees an unchanged
+  // token, settles into `notRefetching` — and never schedules another refetch.
+  // The refresh loop then dies silently and the token expires under a live
+  // socket. Raised from the 10s default so the retry ladder in
+  // `useUnifiedConvexAuth` (~5s worst case) still completes while the current
+  // token is valid.
+  const convex = new ConvexReactClient(convexUrl, {
+    authRefreshTokenLeewaySeconds: 60,
+  });
   normalizeInitialLegacyHashBookmark();
 
   const Providers = (
@@ -328,8 +339,34 @@ if (isInIframe) {
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
       devMode={WORKOS_DEV_MODE}
+      // Must stay ABOVE `authRefreshTokenLeewaySeconds` on the Convex client
+      // above — see the invariant documented there.
+      refreshBufferInterval={90}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+      }}
+      /**
+       * A refresh WorkOS actively rejected — the session is dead, and authkit
+       * has already wiped it and latched to its ERROR state. Without this the
+       * provider keeps `user` populated, so the app renders signed-in chrome
+       * over a connection Convex has already de-authenticated: every mounted
+       * query fires with no identity and crashes into an error boundary.
+       *
+       * `signIn()` navigates to WorkOS. When the browser still holds a valid
+       * SSO cookie — the common case for a transient server-side rejection —
+       * the user round-trips silently and comes back with a live session;
+       * otherwise they land on login, which is the honest state. Either way
+       * the navigation tears the tab down before the burst can surface.
+       *
+       * Only fires for an already-established session (authkit skips it from
+       * the INITIAL state), so a signed-out visitor is never redirected.
+       */
+      onRefreshFailure={({ signIn }) => {
+        reportCaught(new Error("WorkOS session refresh failed"), {
+          source: "workos_refresh_failure",
+          level: "warning",
+        });
+        void signIn();
       }}
       /**
        * Send a returning sign-in back where it started, when something asked
