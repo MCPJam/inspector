@@ -212,7 +212,7 @@ describe("the origin matrix", () => {
       },
     } as never);
     const loadSkill = (
-      result.allTools as Record<
+      result.allTools as unknown as Record<
         string,
         { execute: (input: unknown) => Promise<string> }
       >

@@ -29,8 +29,7 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
-import { CloudSkillsError, listCloudSkills } from "../computers/cloud-skills";
-import { CLOUD_SKILLS_FETCH_TIMEOUT_MS } from "../computers/cloud-skill-tools";
+import { listCloudSkills } from "../computers/cloud-skills";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
