@@ -188,6 +188,10 @@ Together with the inlined catalog, these tools let the LLM progressively load sk
 
 When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and shows them in the catalog alongside local and hosted skills. Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
 
+Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows — "this host and server never had a skills conversation" is a different fact from "this server has no skills".
+
+The tab's single refresh button reloads both the project skill store and all server skill catalogs at once. It remains visible even when the project store is hidden, since server skills are the only list in that case.
+
 ### Inspecting a server's skills from the CLI
 
 `mcpjam skills` asks a server what it serves and verifies the answer. It
