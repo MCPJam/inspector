@@ -151,4 +151,11 @@ describe("SwarmSessionsMetricStrip", () => {
       screen.queryByTestId("swarm-metric-sparkline-tool-errors"),
     ).toBeNull();
   });
+
+  it("renders a collapsible shell with a metrics toggle", () => {
+    metricsFixture = fullMetrics();
+    render(<SwarmSessionsMetricStrip projectId="proj-1" personaRefId={null} />);
+    expect(screen.getByTestId("swarm-sessions-metric-shell")).toBeTruthy();
+    expect(screen.getByTestId("swarm-sessions-metric-toggle")).toBeTruthy();
+  });
 });
