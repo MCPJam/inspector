@@ -102,6 +102,12 @@ function postPreflight(app: Hono, body: Record<string, unknown> = {}) {
   });
 }
 
+/**
+ * A start body the BACKEND would accept. `quoteId` is not decoration: the
+ * backend refuses `/internal/v1/bench/runs` without `quoteId`, `receiptId` and
+ * `serverId`, so a helper missing one of them would exercise a request the
+ * real system 400s.
+ */
 function startRun(app: Hono, headers: Record<string, string> = {}) {
   return app.request("/api/web/bench/runs", {
     method: "POST",
@@ -109,6 +115,7 @@ function startRun(app: Hono, headers: Record<string, string> = {}) {
     body: JSON.stringify({
       projectId: "proj_1",
       serverId: "srv_1",
+      quoteId: "quote_1",
       receiptId: "rcpt_1",
     }),
   });
@@ -401,7 +408,12 @@ describe("a backend that has not enabled benchmark runs", () => {
         {
           method: "POST",
           headers: AUTHED,
-          body: JSON.stringify({ projectId: "p", serverId: "s" }),
+          body: JSON.stringify({
+            projectId: "p",
+            serverId: "s",
+            benchmarkTargetId: "tgt_1",
+            profileId: "connector-bench/crm/standard",
+          }),
         },
       ],
       [
@@ -412,6 +424,7 @@ describe("a backend that has not enabled benchmark runs", () => {
           body: JSON.stringify({
             projectId: "p",
             serverId: "s",
+            quoteId: "q",
             receiptId: "r",
           }),
         },
@@ -625,6 +638,7 @@ describe("POST /api/web/bench/runs preferences", () => {
       body: JSON.stringify({
         projectId: "proj_1",
         serverId: "srv_1",
+        quoteId: "quote_1",
         receiptId: "rcpt_1",
         preferences,
       }),
@@ -779,7 +793,12 @@ describe("egress hardening", () => {
     const res = await app.request("/api/web/bench/quotes", {
       method: "POST",
       headers: AUTHED,
-      body: JSON.stringify({ projectId: "p", serverId: "s" }),
+      body: JSON.stringify({
+        projectId: "p",
+        serverId: "s",
+        benchmarkTargetId: "tgt_1",
+        profileId: "connector-bench/crm/standard",
+      }),
     });
 
     expect(res.status).toBe(502);
@@ -816,7 +835,12 @@ describe("backend verdict passthrough", () => {
     const res = await app.request("/api/web/bench/quotes", {
       method: "POST",
       headers: AUTHED,
-      body: JSON.stringify({ projectId: "p", serverId: "s" }),
+      body: JSON.stringify({
+        projectId: "p",
+        serverId: "s",
+        benchmarkTargetId: "tgt_1",
+        profileId: "connector-bench/crm/standard",
+      }),
     });
 
     expect(res.status).toBe(status);
@@ -847,9 +871,12 @@ describe("backend verdict passthrough", () => {
     const res = await app.request("/api/web/bench/runs", {
       method: "POST",
       headers: AUTHED,
+      // The quote id is what makes DEFINITION_CHANGED reachable at all: the
+      // backend raises it by re-checking THIS quote's definition hash.
       body: JSON.stringify({
         projectId: "p",
         serverId: "s",
+        quoteId: "q",
         receiptId: "r",
       }),
     });
@@ -869,9 +896,164 @@ describe("backend verdict passthrough", () => {
     const res = await app.request("/api/web/bench/quotes", {
       method: "POST",
       headers: AUTHED,
-      body: JSON.stringify({ projectId: "p", serverId: "s" }),
+      body: JSON.stringify({
+        projectId: "p",
+        serverId: "s",
+        benchmarkTargetId: "tgt_1",
+        profileId: "connector-bench/crm/standard",
+      }),
     });
 
     expect(res.status).toBe(502);
+  });
+});
+
+/**
+ * The relay and the backend are in different repositories, so nothing but a
+ * test makes them agree. These pin the fields `convex/benchmarkJobRoutes.ts`
+ * actually reads — it answers 400 when one is missing, which in the shipped
+ * flow lands immediately after preflight and cannot be retried around.
+ */
+describe("backend request contract", () => {
+  it("carries the target and profile into the quote, not just the server", async () => {
+    const fetchMock = jsonOk({ quoteId: "quote_1", totalCredits: 120 });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/quotes", {
+      method: "POST",
+      headers: AUTHED,
+      body: JSON.stringify({
+        projectId: "proj_1",
+        serverId: "srv_1",
+        benchmarkTargetId: "tgt_1",
+        profileId: "connector-bench/crm/standard",
+        profileVersion: "2026-08-01",
+        consent: { writeCases: true },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    // The three the backend requires, by name.
+    expect(sent.projectId).toBe("proj_1");
+    expect(sent.benchmarkTargetId).toBe("tgt_1");
+    expect(sent.profileId).toBe("connector-bench/crm/standard");
+    expect(sent.profileVersion).toBe("2026-08-01");
+    expect(sent.consent).toEqual({ writeCases: true });
+  });
+
+  it.each([
+    ["benchmarkTargetId", { profileId: "connector-bench/crm/standard" }],
+    ["profileId", { benchmarkTargetId: "tgt_1" }],
+  ])("refuses a quote missing %s instead of letting the backend 400", async (
+    _missing,
+    rest,
+  ) => {
+    const fetchMock = jsonOk({ quoteId: "quote_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/quotes", {
+      method: "POST",
+      headers: AUTHED,
+      body: JSON.stringify({
+        projectId: "proj_1",
+        serverId: "srv_1",
+        ...rest,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    // Refused here, so no credit-bearing call is made on a request that could
+    // only have been rejected.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("carries the quote being accepted into the start call", async () => {
+    const fetchMock = jsonOk({ benchmarkRunId: "brun_1", status: "queued" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    expect((await startRun(app)).status).toBe(200);
+
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(sent.quoteId).toBe("quote_1");
+    expect(sent.receiptId).toBe("rcpt_1");
+    expect(sent.serverId).toBe("srv_1");
+  });
+
+  it("refuses a start with no quoteId rather than commissioning unpriced work", async () => {
+    const fetchMock = jsonOk({ benchmarkRunId: "brun_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/runs", {
+      method: "POST",
+      headers: AUTHED,
+      body: JSON.stringify({
+        projectId: "proj_1",
+        serverId: "srv_1",
+        receiptId: "rcpt_1",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `/runs/get` is the ONE backend answer that nests its entity. Left nested,
+   * `status` is undefined on every poll — not an error, just a run that never
+   * appears to finish.
+   */
+  it("flattens the nested run envelope the poll route alone returns", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json(
+        {
+          ok: true,
+          run: {
+            benchmarkRunId: "brun_1",
+            status: "completed",
+            createdAt: 1,
+            completedAt: 2,
+          },
+        },
+        { status: 200 },
+      ),
+    ) as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/runs/brun_1", {
+      headers: AUTHED,
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("completed");
+    expect(body.benchmarkRunId).toBe("brun_1");
+    expect(body.completedAt).toBe(2);
+    // The wrapper is gone rather than sitting alongside its own contents.
+    expect(body.run).toBeUndefined();
+  });
+
+  it("passes a flat run through unchanged, so cancel is unaffected", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json(
+        { ok: true, benchmarkRunId: "brun_1", status: "cancelled" },
+        { status: 200 },
+      ),
+    ) as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/runs/brun_1/cancel", {
+      method: "POST",
+      headers: AUTHED,
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("cancelled");
+    expect(body.benchmarkRunId).toBe("brun_1");
   });
 });

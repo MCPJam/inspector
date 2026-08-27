@@ -256,7 +256,7 @@ export function BenchRunnerPage({
         setCategoryId(prefilledCategory);
         setTrackId(
           receipt.preferences?.trackSlug ??
-            receipt.tracks.find((entry) => entry.runnable)?.id ??
+            receipt.tracks[0]?.id ??
             null,
         );
         setSetup("idle");
@@ -287,13 +287,33 @@ export function BenchRunnerPage({
     [categoryId, trackId],
   );
 
+  /**
+   * The track the visitor picked, as the object rather than its id. A quote is
+   * priced from `profileId` + `version`; `track.id` is `profileId@version` and
+   * exists for display and selection, so it is looked up here rather than
+   * parsed apart.
+   */
+  const selectedTrack = useMemo(
+    () => preflight?.tracks.find((entry) => entry.id === trackId) ?? null,
+    [preflight, trackId],
+  );
+
   const requestQuote = useCallback(async () => {
-    if (!serverId || !projectId) return;
+    // A quote is priced against the stable TARGET and one exact exam, both of
+    // which come from preflight — not against the saved server row.
+    if (!serverId || !projectId || !preflight || !selectedTrack) return;
     setError(null);
     setDefinitionChanged(false);
     setQuoting(true);
     try {
-      const priced = await quoteBench({ projectId, serverId, selection });
+      const priced = await quoteBench({
+        projectId,
+        serverId,
+        benchmarkTargetId: preflight.benchmarkTargetId,
+        profileId: selectedTrack.profileId,
+        profileVersion: selectedTrack.version,
+        selection,
+      });
       setQuote(priced);
       // A fresh quote is a fresh manifest, so a consent given against the
       // previous one does not carry over. Re-ticking is the point.
@@ -303,16 +323,20 @@ export function BenchRunnerPage({
     } finally {
       setQuoting(false);
     }
-  }, [projectId, reportError, selection, serverId]);
+  }, [preflight, projectId, reportError, selectedTrack, selection, serverId]);
 
   const start = useCallback(async () => {
-    if (!serverId || !projectId || !preflight) return;
+    // Starting is ACCEPTING the quote, so there has to be one. The backend
+    // re-checks its definition and consent hashes and refuses the run if the
+    // exam moved between pricing and starting.
+    if (!serverId || !projectId || !preflight || !quote?.quoteId) return;
     setError(null);
     setStarting(true);
     try {
       const started = await startBenchRun({
         projectId,
         serverId,
+        quoteId: quote.quoteId,
         receiptId: preflight.receiptId,
         selection,
         preferences: {
@@ -323,7 +347,9 @@ export function BenchRunnerPage({
       setRun(started);
       // The run id in the URL is what makes refresh and resume free — this is
       // the only place it is minted, and nothing else is stored.
-      navigate(`${routePaths.embedBench}/${started.runId}`, { replace: true });
+      navigate(`${routePaths.embedBench}/${started.benchmarkRunId}`, {
+        replace: true,
+      });
     } catch (err) {
       if (err instanceof BenchDefinitionChangedError) {
         // Deliberately NOT re-quoted here. The visitor consented to a specific
@@ -353,7 +379,7 @@ export function BenchRunnerPage({
     if (!run) return;
     setCancelling(true);
     try {
-      setRun(await cancelBenchRun(run.runId));
+      setRun(await cancelBenchRun(run.benchmarkRunId));
     } catch (err) {
       reportError(err);
     } finally {

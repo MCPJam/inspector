@@ -96,7 +96,9 @@ export function BenchCategorySelector({
   }, [classification]);
 
   const unclassified = !classification?.ranked?.length;
-  const runnableTracks = tracks.filter((track) => track.runnable);
+  // Preflight only lists tracks that HAVE an active definition, so every
+  // track it returns is runnable; there is no flag to filter on.
+  const runnableTracks = tracks;
   const selectedCategory = ordered.find(
     (category) => category.id === selectedCategoryId,
   );
@@ -157,7 +159,7 @@ export function BenchCategorySelector({
                 )}
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-xs font-medium">{category.label}</span>
+                  <span className="text-xs font-medium">{category.title}</span>
                   {receipt ? (
                     <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                       {confidenceLabel(receipt.confidence)}
@@ -169,15 +171,13 @@ export function BenchCategorySelector({
                     {receipt.rationale}
                   </p>
                 ) : null}
-                {!category.runnable && category.reason ? (
+                {!category.runnable ? (
                   <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
-                    {category.reason}
+                    No exam has been published for this category yet.
                   </p>
-                ) : null}
-                {category.runnable && typeof category.toolCount === "number" ? (
+                ) : category.description ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    {category.toolCount} tool
-                    {category.toolCount === 1 ? "" : "s"} matched this category
+                    {category.description}
                   </p>
                 ) : null}
               </button>
@@ -208,7 +208,7 @@ export function BenchCategorySelector({
                     : "border-border/50 hover:bg-muted/20",
                 )}
               >
-                {track.label}
+                {track.id}
               </button>
             ))}
           </div>
