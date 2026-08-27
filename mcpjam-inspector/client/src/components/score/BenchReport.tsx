@@ -262,7 +262,11 @@ export function BenchReport({
 }) {
   const scorecard = result.scorecard;
   const sections = scorecard?.sections;
-  const publication = result.publication;
+  // On the SCORECARD, not the result. The backend nests lifecycle state with
+  // the document it describes, and a top-level read finds nothing — so this
+  // check was constantly false and a withdrawn score rendered as a live one,
+  // which is the single thing the banner below exists to prevent.
+  const publication = scorecard?.publication;
   const retracted =
     publication?.status === "deprecated" || publication?.status === "deleted";
 

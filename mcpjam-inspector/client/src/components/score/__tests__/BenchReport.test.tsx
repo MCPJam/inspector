@@ -160,16 +160,46 @@ describe("provenance and lifecycle labels", () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The lifecycle rides on the SCORECARD, which is where the backend nests it.
+   * Passed at the result's top level — as these cases used to — it type-checks
+   * (`BenchResult extends Record<string, unknown>`) and reads as `undefined`,
+   * so the banner never renders and the test passes while asserting nothing.
+   */
   it("labels a deprecated result instead of showing it as active", () => {
     render(
       <BenchReport
-        result={result(sectioned(), {
-          publication: { status: "deprecated", reason: "Superseded by v3." },
-        })}
+        result={result(
+          sectioned({
+            publication: { status: "deprecated", reason: "Superseded by v3." },
+          }),
+        )}
       />,
     );
     expect(screen.getByText(/was deprecated\./)).toBeInTheDocument();
     expect(screen.getByText("Superseded by v3.")).toBeInTheDocument();
+  });
+
+  it("labels a deleted result too, and says so without a reason", () => {
+    render(
+      <BenchReport
+        result={result(sectioned({ publication: { status: "deleted" } }))}
+      />,
+    );
+    expect(screen.getByText(/was deleted\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no longer appears in leaderboards/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an active scorecard with no withdrawal banner", () => {
+    render(
+      <BenchReport
+        result={result(sectioned({ publication: { status: "active" } }))}
+      />,
+    );
+    expect(screen.queryByText(/was deprecated\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/was deleted\./)).not.toBeInTheDocument();
   });
 });
 
