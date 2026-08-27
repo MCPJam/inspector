@@ -9,7 +9,7 @@ import {
   readJsonBody,
   WebRouteError,
 } from "./errors.js";
-import { getAttestedClientIp, getClientIp } from "../../utils/client-ip.js";
+import { getAttestedClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 
 /**
@@ -540,18 +540,31 @@ async function assertBenchBackendEnabled(): Promise<void> {
 
 /**
  * The per-IP spend key the backend meters guests by. Hashed here so the raw
- * address never reaches Convex; omitted when it cannot be produced, so an
- * unresolvable IP falls back to the backend's cookie-only bucket instead of
+ * address never reaches Convex; omitted when no address can be VOUCHED for, so
+ * such a caller falls back to the backend's cookie-only bucket instead of
  * pooling unrelated guests together.
  *
- * `getClientIp`, NOT the attested address the limiters above key on, and the
- * difference is deliberate: this is a forwarded hint the backend accepts only
- * alongside our service token and re-validates under its own trust rules,
- * whereas a local rate-limit key is state a caller could otherwise mint at
- * will. Narrowing this one is the backend's call to make, not ours.
+ * `getAttestedClientIp`, the same address the limiters above key on. This used
+ * to call `getClientIp` on the reasoning that a forwarded hint is safe because
+ * the backend "re-validates it under its own trust rules". It cannot: we send
+ * the HMAC and never the address, so there is nothing left on that side to
+ * validate against. `benchmarkJobRoutes` takes the hash verbatim as the
+ * `guestIpKey` and buckets the daily allowance on it.
+ *
+ * That made the cap self-defeating. `getClientIp` honours `x-real-ip` and the
+ * first `x-forwarded-for` entry even with no trusted ingress in front, so a
+ * guest could rotate either header to mint a fresh bucket — and the IP bucket
+ * is exactly what is supposed to catch a guest who clears their cookie to get
+ * a second free run. Rotate one and clear the other and the daily limit is
+ * gone.
+ *
+ * Unattested callers send NO key rather than a shared one. A pooled sentinel
+ * would be worse than nothing here: the buckets meter runs, not table space,
+ * so the first guest through would spend the whole deployment's allowance and
+ * lock out everyone behind them.
  */
-async function guestSpendKey(c: Parameters<typeof getClientIp>[0]) {
-  const clientIp = getClientIp(c);
+async function guestSpendKey(c: Parameters<typeof getAttestedClientIp>[0]) {
+  const clientIp = getAttestedClientIp(c);
   return clientIp ? await hashGuestSpendIp(clientIp) : null;
 }
 

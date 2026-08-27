@@ -159,7 +159,9 @@ describe("POST /api/web/bench/preflight", () => {
     const app = await freshApp();
     const res = await app.request("/api/web/bench/preflight", {
       method: "POST",
-      headers: { ...AUTHED, "x-real-ip": "203.0.113.4" },
+      // cf-connecting-ip, because Cloudflare rewrites it on every hop — a
+      // header the caller could have written is covered by the next test.
+      headers: { ...AUTHED, "cf-connecting-ip": "203.0.113.4" },
       body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
     });
 
@@ -176,6 +178,78 @@ describe("POST /api/web/bench/preflight", () => {
     // Hashed here, so the raw address never reaches Convex.
     expect(headers["x-mcpjam-guest-ip-hash"]).toEqual(expect.any(String));
     expect(headers["x-mcpjam-guest-ip-hash"]).not.toContain("203.0.113.4");
+  });
+
+  // The spend key is the ONLY thing standing between a guest who clears their
+  // cookie and an unlimited number of free benchmark runs. We send the backend
+  // an HMAC and never the address, so it has nothing left to re-validate — if
+  // a caller can choose the address we hash, the caller can mint buckets and
+  // the daily cap is decorative.
+  it.each([
+    ["x-forwarded-for", "198.51.100.9"],
+    ["x-real-ip", "198.51.100.9"],
+  ])("sends no spend key when the address is only claimed via %s", async (
+    header,
+    value,
+  ) => {
+    const fetchMock = jsonOk({ receiptId: "rcpt_1", categories: [] });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/preflight", {
+      method: "POST",
+      headers: { ...AUTHED, [header]: value },
+      body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const headers = classifyCall(fetchMock)[1].headers as Record<
+      string,
+      string
+    >;
+    // Absent, NOT a shared placeholder: the backend buckets daily runs on this
+    // key, so pooling every unattested guest under one value would let the
+    // first of them spend the whole deployment's allowance. Absent falls back
+    // to the backend's cookie-only bucket.
+    expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
+  });
+
+  it("prefers the attested address when a spoofed header sits beside it", async () => {
+    const fetchMock = jsonOk({ receiptId: "rcpt_1", categories: [] });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const attested = await app.request("/api/web/bench/preflight", {
+      method: "POST",
+      headers: { ...AUTHED, "cf-connecting-ip": "203.0.113.4" },
+      body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
+    });
+    expect(attested.status).toBe(200);
+    const alone = (classifyCall(fetchMock)[1].headers as Record<string, string>)[
+      "x-mcpjam-guest-ip-hash"
+    ];
+
+    const fetchMock2 = jsonOk({ receiptId: "rcpt_1", categories: [] });
+    global.fetch = fetchMock2 as any;
+    const app2 = await freshApp();
+    const spoofed = await app2.request("/api/web/bench/preflight", {
+      method: "POST",
+      headers: {
+        ...AUTHED,
+        "cf-connecting-ip": "203.0.113.4",
+        "x-forwarded-for": "198.51.100.9",
+        "x-real-ip": "198.51.100.9",
+      },
+      body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
+    });
+    expect(spoofed.status).toBe(200);
+    const alongside = (
+      classifyCall(fetchMock2)[1].headers as Record<string, string>
+    )["x-mcpjam-guest-ip-hash"];
+
+    // Same bucket either way: adding headers you control must not move you to
+    // a fresh one.
+    expect(alongside).toBe(alone);
   });
 
   it("relays the captured tool snapshot", async () => {
