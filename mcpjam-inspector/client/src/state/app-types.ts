@@ -36,6 +36,12 @@ export interface InitializationInfo {
       src: string;
       mimeType?: string;
       sizes?: string[];
+      /**
+       * MCP lets a server ship one icon per theme. It survives the wire
+       * (`initInfo` is forwarded whole), but declaring it is what makes
+       * `resolveMcpServerIconSrc`'s theme pick reachable by type.
+       */
+      theme?: "light" | "dark";
     }>;
   };
   instructions?: string;
