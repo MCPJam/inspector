@@ -347,16 +347,31 @@ async function collectSkills(
         `${unloadable} advertised but not loadable (the server says so itself).`
       );
     }
-    if (listing.rejected.length > 0) {
-      parts.push(`${listing.rejected.length} rejected as malformed.`);
-    }
-
+    // A REJECTED entry is a defect, unlike an unloadable one. `unloadable`
+    // means the server told the truth about something it cannot serve
+    // verifiably (dynamic content, or a manifest past the SEP's per-skill
+    // limits). `rejected` means MCPJam could not make sense of the manifest at
+    // all — a missing digest, a URI listed twice, an entry pointing outside the
+    // skill's own directory. Reporting that as `ok` because the sample happened
+    // to verify would tell an author their skills serving is fine while a
+    // conforming host is dropping entries on the floor.
+    const problems: string[] = [];
     if (failures.length > 0) {
+      problems.push(
+        `${failures.length} of ${sample.length} sampled skills failed verification: ${failures.join(", ")}`
+      );
+    }
+    if (listing.rejected.length > 0) {
+      problems.push(
+        `${listing.rejected.length} listed ${listing.rejected.length === 1 ? "entry" : "entries"} rejected as malformed: ${listing.rejected
+          .map((entry) => `${entry.skillUri} (${entry.reason})`)
+          .join(", ")}`
+      );
+    }
+    if (problems.length > 0) {
       return {
         skills: listing.skills,
-        check: errorCheck(
-          `${failures.length} of ${sample.length} sampled skills failed verification: ${failures.join(", ")}.`
-        ),
+        check: errorCheck(`${problems.join("; ")}.`),
       };
     }
     return { skills: listing.skills, check: okCheck(parts.join(" ")) };

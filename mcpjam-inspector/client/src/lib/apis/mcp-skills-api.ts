@@ -16,9 +16,10 @@ import type {
  *   - `cloud`: the project's durable skills in Convex (`/api/web/skills/*`).
  *     Used in hosted mode, and locally when the user toggles to Cloud.
  *
- * Cloud skills are SKILL.md-only in v1 (no supporting files). Cloud reads/writes
- * are keyed server-side by id; the client stays name-based and resolves the id
- * via the list when a mutation needs it (skill names are unique in a member's
+ * Cloud skills carry supporting files (see `uploadSkillFolder` below, which
+ * uploads them to Convex storage and attaches them). Cloud reads/writes are
+ * keyed server-side by id; the client stays name-based and resolves the id via
+ * the list when a mutation needs it (skill names are unique in a member's
  * visible scope, enforced by the backend).
  */
 export type SkillsSource =

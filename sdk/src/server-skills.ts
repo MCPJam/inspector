@@ -678,7 +678,29 @@ export async function readVerifiedServerSkillFile(
     resourceUri: string;
   }
 ): Promise<{ uri: string; text: string; digest: string }> {
-  const listed = findListedResource(args.entry, args.resourceUri);
+  // Normalize BEFORE the allowlist check, rather than trusting the caller to
+  // have passed a manifest that `getVerifiedServerSkill` already validated.
+  //
+  // Every caller in this repo does pass one, so this changes no behaviour
+  // today — it removes the requirement to. Containment (an entry may not point
+  // outside its own skill directory) is what stops a manifest authorizing a
+  // read of `skill://other-skill/secrets.env`, and a check that holds only
+  // while callers remember it is the "second way in" this module exists to
+  // prevent. That argument got sharper when this became a public SDK export:
+  // the CLI and the MCP worker now call it directly.
+  const manifest = normalizeManifest(args.entry.uri, args.entry.resources);
+  if (!manifest.ok) {
+    throw new ServerSkillRefusalError({
+      kind: manifest.kind ?? "unlisted_resource",
+      message: `Skill "${args.entry.uri}" advertises an invalid file manifest: ${manifest.reason}.`,
+      skillUri: args.entry.uri,
+      resourceUri: args.resourceUri,
+    });
+  }
+  const listed = findListedResource(
+    { resources: manifest.resources },
+    args.resourceUri
+  );
   if (!listed) {
     throw new ServerSkillRefusalError({
       kind: "unlisted_resource",
