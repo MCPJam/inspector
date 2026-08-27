@@ -159,10 +159,13 @@ describe("org model helpers", () => {
   });
 
   it("getProviderDisplayName title-cases unknown catalog providers", () => {
-    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
-    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    expect(getProviderDisplayName("sakana")).toBe("Sakana");
+    expect(getProviderDisplayName("thinking-machines")).toBe(
+      "Thinking Machines"
+    );
     // Known providers keep their curated names.
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
+    expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");
   });
 
   it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {
