@@ -569,6 +569,31 @@ function relayed(body: BackendBody): Record<string, unknown> {
   return rest;
 }
 
+/**
+ * The poll route, and ONLY the poll route, is the one backend answer that
+ * nests its entity: `/runs/get` replies `{ ok, run: { … } }` while `/runs`,
+ * `/runs/cancel`, `/quotes` and `/preflight` all reply with the entity's own
+ * fields at the top level.
+ *
+ * Passing that through unflattened is not a cosmetic difference. The caller
+ * reads `status` to decide whether a run is still going, so a nested body
+ * makes `status` `undefined` on every poll — which is not an error anywhere,
+ * just a run that never appears to finish. Flattened here rather than in the
+ * client so the relay presents one shape for a run however it was obtained.
+ *
+ * Tolerant of the flat form as well: if the backend ever stops nesting, this
+ * keeps working rather than starting to return an empty object.
+ */
+function relayedRun(body: BackendBody): Record<string, unknown> {
+  const rest = relayed(body);
+  const nested = rest.run;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const { run: _run, ...outer } = rest;
+    return { ...outer, ...(nested as Record<string, unknown>) };
+  }
+  return rest;
+}
+
 // ── Schemas ──────────────────────────────────────────────────────────
 
 /**
@@ -660,11 +685,43 @@ const preferencesSchema = z
 
 const preflightSchema = targetSchema;
 
+/**
+ * What the caller agreed to before anything is spent or written. Both booleans
+ * are optional and both default to "not consented" on the backend, so omitting
+ * the object is the safe reading rather than a permissive one.
+ */
+const consentSchema = z.object({
+  authenticatedChecks: z.boolean().optional(),
+  writeCases: z.boolean().optional(),
+});
+
+/**
+ * A quote is priced against the stable TARGET and the exact exam definition —
+ * not against the saved server row. `/preflight` mints `benchmarkTargetId` and
+ * returns the runnable `tracks`, each carrying the `profileId` and `version`
+ * named here; the backend refuses the request outright without all three of
+ * `projectId`, `benchmarkTargetId` and `profileId`.
+ *
+ * `serverId` rides along because the caller has it and the start call needs
+ * it; the quote itself does not read it.
+ */
 const quoteSchema = targetSchema.extend({
+  benchmarkTargetId: z.string().trim().min(1).max(256),
+  profileId: z.string().trim().min(1).max(256),
+  profileVersion: z.string().trim().min(1).max(128).optional(),
+  consent: consentSchema.optional(),
   selection: selectionSchema.optional(),
 });
 
 const startRunSchema = targetSchema.extend({
+  /**
+   * The quote being accepted. This is what makes a start an ACCEPTANCE of a
+   * price rather than a fresh request to spend: the backend re-checks the
+   * quote's definition and consent hashes and refuses with a conflict if the
+   * exam moved underneath it, and the quote id doubles as the admission
+   * idempotency key. Without it the backend has no price to hold anyone to.
+   */
+  quoteId: z.string().trim().min(1).max(256),
   /**
    * The classification receipt `/preflight` returned. A run is quoted and
    * priced against a specific classification of a specific tool surface, so
@@ -673,6 +730,9 @@ const startRunSchema = targetSchema.extend({
    * conflict, not a silent re-classification.
    */
   receiptId: z.string().trim().min(1).max(256),
+  consent: consentSchema.optional(),
+  /** Lets a caller retry a lost start without commissioning a second run. */
+  idempotencyKey: z.string().trim().min(1).max(256).optional(),
   selection: selectionSchema.optional(),
   preferences: preferencesSchema.optional(),
 });
@@ -880,7 +940,7 @@ bench.get("/runs/:runId", async (c) => {
     },
   );
 
-  return c.json({ ...relayed(backend), success: true });
+  return c.json({ ...relayedRun(backend), success: true });
 });
 
 /** Also a continuation — see the note on the poll route. */
