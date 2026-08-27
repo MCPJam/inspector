@@ -88,6 +88,8 @@ import type {
   PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformServerConnection,
@@ -1343,6 +1345,37 @@ export class PlatformApiClient {
         params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
       { body: { expectedRevision: params.expectedRevision } },
+      options,
+    );
+  }
+
+  // ── Cloud Skills ─────────────────────────────────────────────────────
+  //
+  // Read-only: the skills visible to the caller in a project, and one skill's
+  // detail including its SKILL.md body. Authoring stays on the app surface.
+
+  listProjectSkills(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformProjectSkill>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/skills`,
+      {},
+      options,
+    );
+  }
+
+  getProjectSkill(
+    params: { projectId: string; skillId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformProjectSkillDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/skills/${encodeURIComponent(params.skillId)}`,
+      {},
       options,
     );
   }

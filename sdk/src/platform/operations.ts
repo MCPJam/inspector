@@ -138,6 +138,8 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
@@ -9076,6 +9078,109 @@ export const restoreEnvironmentOperation: PlatformOperation<
   },
 };
 
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// Read-only, for the same reason as plugins: authoring is a project-admin app
+// flow. These exist because skill IDs are load-bearing on this very surface —
+// `set_eval_suite_environments`, an environment's `skillSelection`, and the
+// CLI's `--compose-skill` all demand one — and before this there was no
+// programmatic way to obtain one. The answer was "open the web app", which is
+// not an answer an unattended caller can act on.
+
+const listProjectSkillsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListProjectSkillsInput = z.infer<typeof listProjectSkillsInput>;
+
+export type ListProjectSkillsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformProjectSkill[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listProjectSkillsOperation: PlatformOperation<
+  ListProjectSkillsInput,
+  ListProjectSkillsResult
+> = {
+  name: "list_project_skills",
+  title: "List MCPJam project skills",
+  description:
+    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open one of these rows at."
+  ),
+  inputSchema: listProjectSkillsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listProjectSkills(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getProjectSkillInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  skillId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Skill ID, from list_project_skills."),
+});
+export type GetProjectSkillInput = z.infer<typeof getProjectSkillInput>;
+
+export type GetProjectSkillResult = {
+  project: SelectedProjectInfo;
+  skill: PlatformProjectSkillDetail;
+};
+
+export const getProjectSkillOperation: PlatformOperation<
+  GetProjectSkillInput,
+  GetProjectSkillResult
+> = {
+  name: "get_project_skill",
+  title: "Get an MCPJam project skill",
+  description:
+    "Read one Cloud Skill, including its SKILL.md body. Useful for confirming which body a skill currently holds before pinning it into a run — the body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which version you are looking at.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open this row at."
+  ),
+  inputSchema: getProjectSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const skill = await client.getProjectSkill(
+      { projectId: project.id, skillId: input.skillId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), skill };
+  },
+};
+
 // ── Agent Plugins ────────────────────────────────────────────────────────────
 //
 // Read-only. Import, activate, enable/disable and uninstall stay in the app —
@@ -13090,6 +13195,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   restoreEnvironmentOperation,
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listImagesOperation,
   getImageOperation,
   createImageOperation,
