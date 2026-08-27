@@ -2668,6 +2668,10 @@ export async function runEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -3093,6 +3097,9 @@ export async function streamEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Keep quick and streamed single-case runs identical to suite runs: the
+    // label is authored metadata, but it must be frozen at iteration create.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
