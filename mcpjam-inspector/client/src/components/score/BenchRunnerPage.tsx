@@ -632,7 +632,7 @@ export function BenchRunnerPage({
           // nothing and the offer never appears there.
           <BenchReport
             result={result}
-            flowScope={{ kind: "benchmark", benchmarkRunId: run.runId }}
+            flowScope={{ kind: "benchmark", benchmarkRunId: run.benchmarkRunId }}
           />
         ) : run.status === "failed" || run.status === "cancelled" ? (
           <div className="space-y-2 rounded-md border border-border/50 px-4 py-3">
