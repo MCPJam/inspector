@@ -42,6 +42,8 @@ import {
   Building2,
   Cloud,
   KeyRound,
+  PlugZap,
+  Unplug,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -136,6 +138,20 @@ interface ServerConnectionCardProps {
    * provided — the flag is the rollout door, not the caller's permission.
    */
   onShareToOrgRegistry?: (server: ServerWithName) => void;
+  /**
+   * Whether this server is currently opted out of the project's
+   * auto-connect. Read from `projectServerRefs.autoConnectDisabled`.
+   */
+  autoConnectDisabled?: boolean;
+  /**
+   * Toggle that opt-out. Omitted on surfaces with no project-scoped server
+   * config to write to (the scenario/eval forks), which is why the menu
+   * item is conditional on it rather than on a permission flag.
+   */
+  onSetAutoConnectDisabled?: (
+    serverName: string,
+    disabled: boolean
+  ) => Promise<void> | void;
 }
 
 export function ServerConnectionCard({
@@ -152,6 +168,8 @@ export function ServerConnectionCard({
   onMoveToProject,
   isMovingToProject = false,
   onShareToOrgRegistry,
+  autoConnectDisabled,
+  onSetAutoConnectDisabled,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
   const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
@@ -668,13 +686,20 @@ export function ServerConnectionCard({
                       style={{ backgroundColor: indicatorColor }}
                     />
                   )}
-                  {/* No `(retryCount)` suffix: nothing increments that
-                      counter, so every failed card read "Failed (0)" — a
-                      number that looked like a diagnostic and was always
-                      the same. The field stays on the model; when retries
-                      become real the suffix can come back meaning
-                      something. */}
-                  <span>{connectionStatusLabel}</span>
+                  {/* The suffix appears only when the counter means
+                      something. It used to render unconditionally on every
+                      failure and always read "(0)", because nothing
+                      incremented it; the auto-connect retry loop now does,
+                      so "Failed (3)" tells the user we tried three times
+                      before giving up — and a failure with no retries
+                      behind it (a pin mismatch, say) correctly shows no
+                      number at all. */}
+                  <span>
+                    {server.connectionStatus === "failed" &&
+                    server.retryCount > 0
+                      ? `${connectionStatusLabel} (${server.retryCount})`
+                      : connectionStatusLabel}
+                  </span>
                   {needsReconnect ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -935,6 +960,35 @@ export function ServerConnectionCard({
                       >
                         <Building2 className="h-3 w-3 mr-2" />
                         Add to org registry
+                      </DropdownMenuItem>
+                    ) : null}
+                    {/* The per-server escape hatch. A server that is slow,
+                        chronically broken, or simply not wanted on every
+                        page load can be dropped from auto-connect without
+                        turning it off for the whole project — and without
+                        deleting the server, which is the only thing users
+                        could do about it before. */}
+                    {onSetAutoConnectDisabled ? (
+                      <DropdownMenuItem
+                        className="text-xs cursor-pointer"
+                        onClick={() => {
+                          track("server_auto_connect_opt_out_toggled", {
+                            location: "server_connection_card",
+                          });
+                          void onSetAutoConnectDisabled(
+                            server.name,
+                            !autoConnectDisabled
+                          );
+                        }}
+                      >
+                        {autoConnectDisabled ? (
+                          <PlugZap className="h-3 w-3 mr-2" />
+                        ) : (
+                          <Unplug className="h-3 w-3 mr-2" />
+                        )}
+                        {autoConnectDisabled
+                          ? "Include in auto-connect"
+                          : "Skip on auto-connect"}
                       </DropdownMenuItem>
                     ) : null}
                     <Separator />

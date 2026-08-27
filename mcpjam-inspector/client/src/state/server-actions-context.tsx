@@ -34,6 +34,16 @@ export interface ServerActions {
    */
   setSelectedServerNames: (names: string[]) => void;
   /**
+   * Put a server back on `connecting` and bump its retry counter, for the
+   * auto-connect hook's bounded retry. Without this the row would flash
+   * red between attempts, and a server that comes back mid-backoff would
+   * have been shown as broken on the way to succeeding.
+   *
+   * Optional so existing test harnesses and any surface that doesn't retry
+   * can leave it out.
+   */
+  markServerRetrying?: (serverName: string) => void;
+  /**
    * Resolve selected runtime server names → persisted Convex server ids for a
    * hosted send (persisting ad-hoc/App servers that aren't saved yet). Throws if
    * a name can't be resolved/persisted. Surfaces use this as a preflight before a

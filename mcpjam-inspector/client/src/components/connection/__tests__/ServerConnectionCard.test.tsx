@@ -407,19 +407,31 @@ describe("ServerConnectionCard", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("shows failed status without a retry-count suffix", () => {
-      const server = createServer({
+    it("shows the retry count only once it means something", () => {
+      // The suffix used to render on every failure and always read "(0)",
+      // because nothing incremented the counter. The auto-connect retry
+      // loop now does, so a number here says how many attempts were spent.
+      const retried = createServer({
         connectionStatus: "failed",
         retryCount: 3,
         lastError: "Connection refused",
       });
-      render(<ServerConnectionCard server={server} {...defaultProps} />);
+      const { unmount } = render(
+        <ServerConnectionCard server={retried} {...defaultProps} />
+      );
+      expect(screen.getByText("Failed (3)")).toBeInTheDocument();
+      unmount();
 
-      // Nothing increments `retryCount` today, so the suffix always read
-      // "(0)" — a constant dressed up as a diagnostic. The label is now
-      // just the status.
+      // A failure with no retries behind it — a protocol pin mismatch, say,
+      // which is deliberately never retried — shows no number at all.
+      const notRetried = createServer({
+        connectionStatus: "failed",
+        retryCount: 0,
+        lastError: "Connection refused",
+      });
+      render(<ServerConnectionCard server={notRetried} {...defaultProps} />);
       expect(screen.getByText("Failed")).toBeInTheDocument();
-      expect(screen.queryByText("Failed (3)")).not.toBeInTheDocument();
+      expect(screen.queryByText("Failed (0)")).not.toBeInTheDocument();
     });
 
     it("shows needs-auth as an actionable Sign in state, not an error", () => {
@@ -682,6 +694,71 @@ describe("ServerConnectionCard", () => {
       );
 
       expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+  });
+
+  describe("per-server auto-connect opt-out", () => {
+    // Radix opens on pointerDown, not click.
+    const openMenu = () => {
+      fireEvent.pointerDown(
+        screen.getByRole("button", {
+          name: "Open actions menu for test-server",
+        }),
+        { button: 0, ctrlKey: false }
+      );
+    };
+
+    it("offers to skip a server that currently auto-connects", async () => {
+      const onSetAutoConnectDisabled = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          onSetAutoConnectDisabled={onSetAutoConnectDisabled}
+        />
+      );
+
+      openMenu();
+      const item = await screen.findByText("Skip on auto-connect");
+      fireEvent.click(item);
+
+      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+        "test-server",
+        true
+      );
+    });
+
+    it("offers to re-include a server that is opted out", async () => {
+      const onSetAutoConnectDisabled = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          autoConnectDisabled
+          onSetAutoConnectDisabled={onSetAutoConnectDisabled}
+        />
+      );
+
+      openMenu();
+      fireEvent.click(await screen.findByText("Include in auto-connect"));
+
+      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+        "test-server",
+        false
+      );
+    });
+
+    it("hides the option on surfaces with no project config to write", async () => {
+      // Scenario/eval forks keep their own per-host server lists; there is
+      // no project-scoped row for this flag to live in, so the item is
+      // gated on the callback rather than on a permission flag.
+      render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
+
+      openMenu();
+      await screen.findByText("Configure");
+      expect(
+        screen.queryByText("Skip on auto-connect")
+      ).not.toBeInTheDocument();
     });
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -54,6 +54,7 @@ function wrapper({
   runtimeDisconnectServer = () => {},
   reconnectServer = async () => {},
   setSelectedServerNames = () => {},
+  markServerRetrying = () => {},
 }: {
   children: ReactNode;
   ensureServersReady: (names: string[]) => Promise<{
@@ -66,6 +67,7 @@ function wrapper({
   runtimeDisconnectServer?: (name: string) => void;
   reconnectServer?: (name: string) => Promise<void>;
   setSelectedServerNames?: (names: string[]) => void;
+  markServerRetrying?: (name: string) => void;
 }) {
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
@@ -76,6 +78,7 @@ function wrapper({
             runtimeDisconnectServer,
             reconnectServer,
             setSelectedServerNames,
+            markServerRetrying,
           }}
         >
           {children}
@@ -243,6 +246,208 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
     expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+  });
+
+  describe("bounded retry", () => {
+    // The retries live INSIDE one logical attempt: `markAttempted` still
+    // fires before any connecting, so the "refresh-keeps-failing" guard is
+    // untouched. What changes is that a transport blip gets three chances
+    // before the card goes red.
+    const okResult = (ready: string[] = []) => ({
+      readyServerNames: ready,
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const failResult = (failed: string[]) => ({
+      readyServerNames: [],
+      failedServerNames: failed,
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    // The backoff sleeps on real timers; drain them without waiting.
+    const runBackoff = async () => {
+      for (let i = 0; i < 8; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(11_000);
+        });
+      }
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("retries a transport failure and lands green without ever showing red", async () => {
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValueOnce(failResult(["alpha"]))
+        .mockResolvedValueOnce(okResult(["alpha"]));
+      const markServerRetrying = vi.fn();
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-retry",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying,
+            }),
+        }
+      );
+
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(2);
+      expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["alpha"]);
+      // Put back on `connecting` BEFORE the wait — that is what stops a
+      // server which recovers mid-backoff from flashing red on its way to
+      // working.
+      expect(markServerRetrying).toHaveBeenCalledWith("alpha");
+    });
+
+    it("gives up after the retry budget", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue(failResult(["alpha"]));
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "connection refused",
+          },
+        },
+      } as any;
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-retry-exhausted",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      await runBackoff();
+
+      // One initial attempt plus the three-step backoff, then it settles.
+      expect(ensureServersReady).toHaveBeenCalledTimes(4);
+    });
+
+    it("does NOT retry a protocol-version pin mismatch", async () => {
+      // The server has already said it cannot speak the pinned version. It
+      // will say the same thing in a second; retrying only delays the card
+      // that offers to change the pin.
+      const ensureServersReady = vi.fn().mockResolvedValue(failResult(["alpha"]));
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError:
+              'Server "alpha" does not support MCP protocol version 2026-07-28.',
+            lastNormalizedError: { slug: "sdk/protocol_version_pin_unsupported" },
+          },
+        },
+      } as any;
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-pin",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT retry a server that needs authorization", async () => {
+      // `reauthServerNames` is its own bucket precisely so this cannot be
+      // mistaken for a transport failure: no number of retries produces a
+      // human clicking Authorize.
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        failedServerNames: [],
+        missingServerNames: [],
+        reauthServerNames: ["alpha"],
+      });
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+          },
+        },
+      } as any;
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-reauth",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("never re-attempts after a failure (refresh-keeps-failing guard)", async () => {

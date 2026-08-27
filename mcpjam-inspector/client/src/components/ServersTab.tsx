@@ -113,6 +113,7 @@ import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
 } from "@/hooks/useAutoConnectProjectServers";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
@@ -731,24 +732,28 @@ export function ServersTab({
     [remoteServersByName, projects, moveServerToProject, onDisconnect, onRemove]
   );
 
-  // Project-wide auto-connect toggle. Single switch in the header that
-  // either enrolls every catalog server in project.serverIds (ON) or
-  // clears the set (OFF). Overrides on still-included servers are
-  // preserved on ON so existing per-server header/timeout config isn't
-  // wiped by a toggle round-trip. Per-server granularity is intentionally
-  // deferred — this is the simplest user-facing surface for the project-
-  // scoped server config rollout.
+  // Project-wide auto-connect toggle. ON means `autoConnectMode: 'all'` —
+  // the pool is the project's live catalog, so a server added later is
+  // included by definition and the backend's create hook fans it out. OFF
+  // means 'none' and is non-destructive: per-server headers, timeouts and
+  // protocol pins live in `projectServerRefs` and are independent of
+  // enrollment, so they survive and come back when it is switched on.
   //
-  // Stale-server note: when this is ON and a user adds a new server to
-  // the catalog later, the new server isn't auto-included — they'd
-  // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
-  // newly-added servers in automatically when the toggle is on.
-  // Permission gate for the Auto-connect toggle. Backend
-  // `projectServerConfig:setConfig` requires project admin
-  // (`canManageProjectMembers`); mirror that check on the client so
-  // non-admins see a disabled switch instead of an enabled control that
-  // toasts an authorization error when toggled. Matches the
-  // canManageProjectSettings pattern in ProjectSettingsTab.
+  // This used to be DERIVED by exact set-equality between the stored
+  // `serverIds` and the catalog, which made the switch lie in both
+  // directions: a fresh project (empty `serverIds`) read OFF with no
+  // default-on state to write, and adding one server while it was ON made
+  // the sets unequal so the switch flipped to OFF while the other N
+  // servers carried on auto-connecting. Reading the mode directly is what
+  // retires both bugs, and with them the "toggle OFF/ON to refresh" wart.
+  //
+  // Permission gate: backend `projectServerConfig:setConfig` requires
+  // project admin (`canManageProjectMembers`); mirror that check on the
+  // client so non-admins see a disabled switch instead of an enabled
+  // control that toasts an authorization error when toggled. Reading the
+  // value is fine for everyone, and a non-admin who wants out has the
+  // per-user kill switch below. Matches the canManageProjectSettings
+  // pattern in ProjectSettingsTab.
   const { canManageMembers: canManageProjectServers } = useProjectMembers({
     isAuthenticated,
     projectId: sharedProjectIdForHostScope,
@@ -767,16 +772,26 @@ export function ServersTab({
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
   const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
+  // Per-user, per-browser opt-out (localStorage `mcpjam-auto-connect-servers`).
+  // This is the hook's own gate, so flipping it stops auto-connect for this
+  // person without touching the project setting.
+  const autoConnectServersEnabled = usePreferencesStore(
+    (s) => s.autoConnectServersEnabled
+  );
+  const setAutoConnectServersEnabled = usePreferencesStore(
+    (s) => s.setAutoConnectServersEnabled
+  );
   const catalogServerIds = useMemo(
     () => (viewProjectServersList ?? []).map((s) => s._id),
     [viewProjectServersList]
   );
-  const autoConnectAll = useMemo(() => {
-    if (!projectServerConfigDto || catalogServerIds.length === 0) return false;
-    const enrolled = new Set(projectServerConfigDto.serverIds);
-    if (enrolled.size !== catalogServerIds.length) return false;
-    return catalogServerIds.every((id) => enrolled.has(id));
-  }, [projectServerConfigDto, catalogServerIds]);
+  // A direct read of the stored intent. No set arithmetic, so the switch
+  // cannot disagree with what the project is actually doing. A project
+  // that has never been configured reads 'all' from the backend's
+  // normalization, which is what makes auto-connect on by default.
+  const autoConnectAll = projectServerConfigDto
+    ? projectServerConfigDto.autoConnectMode !== "none"
+    : true;
   const handleToggleAutoConnect = useCallback(
     async (next: boolean) => {
       if (!sharedProjectIdForHostScope) return;
@@ -786,29 +801,25 @@ export function ServersTab({
       resetAutoConnectAttempts(activeProjectId);
       resetAutoConnectAttempts(sharedProjectIdForHostScope);
       try {
-        if (next) {
-          // Preserve overrides for servers that remain in the catalog —
-          // backend rejects override keys not in serverIds, so we filter
-          // before sending.
-          const catalogIdSet = new Set(catalogServerIds);
-          const preservedOverrides = Object.fromEntries(
-            Object.entries(projectServerConfigDto?.overrides ?? {}).filter(
-              ([id]) => catalogIdSet.has(id)
-            )
-          );
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: {
-              serverIds: catalogServerIds,
-              overrides: preservedOverrides,
-            },
-          });
-        } else {
-          await setProjectServerConfigMutation({
-            projectId: sharedProjectIdForHostScope,
-            input: { serverIds: [], overrides: {} },
-          });
-        }
+        // Overrides pass through UNCHANGED in both directions. Turning
+        // auto-connect off used to send `{serverIds: [], overrides: {}}`,
+        // which deleted every stored header, timeout and protocol pin in
+        // the project — because the backend rejected override keys outside
+        // `serverIds`, so "no servers" had to mean "no overrides". Those
+        // are decoupled now, so the switch is reversible: flip it back on
+        // and the user's per-server configuration is still there.
+        //
+        // `serverIds` is advisory under 'all' (the backend resolves the
+        // live catalog) and ignored under 'none', so there is nothing to
+        // compute here.
+        await setProjectServerConfigMutation({
+          projectId: sharedProjectIdForHostScope,
+          input: {
+            serverIds: projectServerConfigDto?.serverIds ?? [],
+            overrides: projectServerConfigDto?.overrides ?? {},
+            autoConnectMode: next ? "all" : "none",
+          },
+        });
       } catch (err) {
         const message =
           err instanceof Error
@@ -822,7 +833,6 @@ export function ServersTab({
     [
       activeProjectId,
       sharedProjectIdForHostScope,
-      catalogServerIds,
       projectServerConfigDto,
       setProjectServerConfigMutation,
     ]
@@ -835,27 +845,62 @@ export function ServersTab({
     if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
     if (catalogServerIds.length === 0) return null;
     if (projectServerConfigDto === undefined) return null;
+
+    // Two independent switches, deliberately: the PROJECT setting is an
+    // admin decision shared by everyone, and the per-user one is this
+    // browser's own opt-out. Without the second, a non-admin who does not
+    // want servers opening on load would have no way out of a
+    // now-on-by-default setting they cannot change.
+    //
+    // The per-user switch is only offered when the project setting is on,
+    // because that is the only time it decides anything — and it is shown
+    // to admins too, so "stop connecting for me" doesn't require turning
+    // it off for the whole team.
     const disabled = isTogglingAutoConnect || !canManageProjectServers;
     return (
-      <label
-        className={cn(
-          "flex items-center gap-2 text-xs text-muted-foreground select-none",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
-        )}
-        title={
-          canManageProjectServers
-            ? "Auto-connect every project server when a client opens"
-            : "Only project admins can change auto-connect"
-        }
-      >
-        <Switch
-          checked={autoConnectAll}
-          disabled={disabled}
-          onCheckedChange={handleToggleAutoConnect}
-          aria-label="Auto-connect project servers"
-        />
-        <span>Auto-connect</span>
-      </label>
+      <div className="flex items-center gap-3">
+        <label
+          className={cn(
+            "flex items-center gap-2 text-xs text-muted-foreground select-none",
+            disabled ? "cursor-not-allowed" : "cursor-pointer"
+          )}
+          title={
+            canManageProjectServers
+              ? "Auto-connect every project server when a client opens"
+              : "Only project admins can change auto-connect for this project"
+          }
+        >
+          <Switch
+            checked={autoConnectAll}
+            disabled={disabled}
+            onCheckedChange={handleToggleAutoConnect}
+            aria-label="Auto-connect project servers"
+          />
+          <span>Auto-connect</span>
+        </label>
+        {autoConnectAll ? (
+          <label
+            className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground select-none"
+            title="Applies to you, in this browser only. The project setting stays as it is."
+          >
+            <Switch
+              checked={autoConnectServersEnabled}
+              onCheckedChange={(next) => {
+                setAutoConnectServersEnabled(next);
+                // An explicit flip is a fresh intent: clear the attempt log
+                // so turning it back on reconnects now instead of waiting
+                // for the next host switch.
+                resetAutoConnectAttempts(activeProjectId);
+                if (sharedProjectIdForHostScope) {
+                  resetAutoConnectAttempts(sharedProjectIdForHostScope);
+                }
+              }}
+              aria-label="Auto-connect on this device"
+            />
+            <span>On this device</span>
+          </label>
+        ) : null}
+      </div>
     );
   };
 
@@ -1005,6 +1050,37 @@ export function ServersTab({
     }
     setActiveId(null);
   };
+
+  /**
+   * Split the grid into "fine" and "needs attention", preserving the user's
+   * manual order within each.
+   *
+   * Status must NOT become the sort key: the grid is drag-orderable and
+   * that order is persisted, so sorting by status would silently overwrite
+   * an arrangement someone built by hand. Partitioning instead leaves
+   * `orderedServerNames` — the stored order — completely untouched; a
+   * server that recovers simply reappears in the position it always had.
+   *
+   * `failed` is the right predicate on its own, because the retry loop puts
+   * a server back on `connecting` between attempts. So anything still
+   * showing `failed` has either spent its retry budget or was never
+   * retriable, which is exactly "settled, and not going to fix itself".
+   * `needs-auth` deliberately stays in the main grid: it is one click from
+   * working and that click is on the card.
+   */
+  const [attentionSectionExpanded, setAttentionSectionExpanded] =
+    useState(false);
+  const { gridServerNames, attentionServerNames } = useMemo(() => {
+    const grid: string[] = [];
+    const attention: string[] = [];
+    for (const name of orderedServerNames) {
+      const server = projectServers[name];
+      if (!server) continue;
+      if (server.connectionStatus === "failed") attention.push(name);
+      else grid.push(name);
+    }
+    return { gridServerNames: grid, attentionServerNames: attention };
+  }, [orderedServerNames, projectServers]);
 
   const activeServer = activeId ? projectServers[activeId] : null;
   const reconnectWarningByServerName = useMemo(
@@ -2076,6 +2152,126 @@ export function ServersTab({
     );
   };
 
+  /**
+   * Per-server auto-connect opt-out, stored as
+   * `projectServerRefs.autoConnectDisabled` and honoured by the backend
+   * under every mode. Keyed by runtime NAME here and translated to the
+   * Convex id, because that is what the card knows.
+   */
+  const isServerAutoConnectDisabled = useCallback(
+    (serverName: string) => {
+      const serverId = sharedProjectServersRecord[serverName]?._id;
+      if (!serverId) return false;
+      return (
+        projectServerConfigDto?.overrides?.[serverId]?.autoConnectDisabled ===
+        true
+      );
+    },
+    [sharedProjectServersRecord, projectServerConfigDto]
+  );
+
+  const handleSetServerAutoConnectDisabled = useCallback(
+    async (serverName: string, disabled: boolean) => {
+      const serverId = sharedProjectServersRecord[serverName]?._id;
+      if (!sharedProjectIdForHostScope || !serverId) return;
+      // The whole DTO round-trips: `setConfig` replaces rather than merges,
+      // so every other server's overrides have to go back with it.
+      const currentOverrides = projectServerConfigDto?.overrides ?? {};
+      const existing = currentOverrides[serverId] ?? {};
+      const nextEntry = { ...existing, autoConnectDisabled: disabled };
+      try {
+        await setProjectServerConfigMutation({
+          projectId: sharedProjectIdForHostScope,
+          input: {
+            serverIds: projectServerConfigDto?.serverIds ?? [],
+            overrides: { ...currentOverrides, [serverId]: nextEntry },
+            ...(projectServerConfigDto?.autoConnectMode
+              ? { autoConnectMode: projectServerConfigDto.autoConnectMode }
+              : {}),
+          },
+        });
+        // A fresh intent: let the current host reconcile again rather than
+        // reusing the attempt log from before the change.
+        resetAutoConnectAttempts(activeProjectId);
+        resetAutoConnectAttempts(sharedProjectIdForHostScope);
+        toast.success(
+          disabled
+            ? `"${serverName}" will be skipped on auto-connect.`
+            : `"${serverName}" will auto-connect again.`
+        );
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "Failed to update auto-connect for this server"
+        );
+      }
+    },
+    [
+      activeProjectId,
+      sharedProjectIdForHostScope,
+      sharedProjectServersRecord,
+      projectServerConfigDto,
+      setProjectServerConfigMutation,
+    ]
+  );
+
+  /**
+   * The card's props, in one place. The same server can render in the main
+   * grid, in the collapsed "needs attention" section, or under the drag
+   * overlay, and three hand-maintained copies of this list is how one of
+   * them quietly stops passing `onShareToOrgRegistry`.
+   */
+  const buildServerCardProps = useCallback(
+    (name: string, server: ServerWithName) => ({
+      server: getDisplayServer(server),
+      needsReconnect: reconnectWarningByServerName[name],
+      onDisconnect: (serverName: string) => {
+        clearPendingQuickConnectIfMatches(serverName);
+        onDisconnect(serverName);
+      },
+      onReconnect: handleReconnectServer,
+      onRemove: (serverName: string) => {
+        clearPendingQuickConnectIfMatches(serverName);
+        onRemove(serverName);
+      },
+      hostedServerId: sharedProjectServersRecord[name]?._id,
+      onOpenDetailModal: handleOpenDetailModal,
+      projectId: activeProjectId,
+      moveTargets,
+      onMoveToProject: handleMoveServerToProject,
+      isMovingToProject: movingServerName === name,
+      onShareToOrgRegistry:
+        isRegistryEnabled && orgRegistry.canAdd
+          ? handleShareToOrgRegistry
+          : undefined,
+      autoConnectDisabled: isServerAutoConnectDisabled(name),
+      onSetAutoConnectDisabled: canManageProjectServers
+        ? handleSetServerAutoConnectDisabled
+        : undefined,
+    }),
+    [
+      getDisplayServer,
+      reconnectWarningByServerName,
+      clearPendingQuickConnectIfMatches,
+      onDisconnect,
+      handleReconnectServer,
+      onRemove,
+      sharedProjectServersRecord,
+      handleOpenDetailModal,
+      activeProjectId,
+      moveTargets,
+      handleMoveServerToProject,
+      movingServerName,
+      isRegistryEnabled,
+      orgRegistry.canAdd,
+      handleShareToOrgRegistry,
+      isServerAutoConnectDisabled,
+      canManageProjectServers,
+      handleSetServerAutoConnectDisabled,
+    ]
+  );
+
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
@@ -2122,46 +2318,74 @@ export function ServersTab({
             onDragCancel={() => setActiveId(null)}
           >
             <SortableContext
-              items={orderedServerNames}
+              items={gridServerNames}
               strategy={rectSortingStrategy}
             >
               <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-                {orderedServerNames.map((name) => {
+                {gridServerNames.map((name) => {
                   const server = projectServers[name];
                   if (!server) return null;
-                  const displayServer = getDisplayServer(server);
                   return (
                     <SortableServerCard
                       key={name}
                       id={name}
                       dndDisabled={false}
-                      server={displayServer}
-                      needsReconnect={reconnectWarningByServerName[name]}
-                      onDisconnect={(serverName) => {
-                        clearPendingQuickConnectIfMatches(serverName);
-                        onDisconnect(serverName);
-                      }}
-                      onReconnect={handleReconnectServer}
-                      onRemove={(serverName) => {
-                        clearPendingQuickConnectIfMatches(serverName);
-                        onRemove(serverName);
-                      }}
-                      hostedServerId={sharedProjectServersRecord[name]?._id}
-                      onOpenDetailModal={handleOpenDetailModal}
-                      projectId={activeProjectId}
-                      moveTargets={moveTargets}
-                      onMoveToProject={handleMoveServerToProject}
-                      isMovingToProject={movingServerName === name}
-                      onShareToOrgRegistry={
-                        isRegistryEnabled && orgRegistry.canAdd
-                          ? handleShareToOrgRegistry
-                          : undefined
-                      }
+                      {...buildServerCardProps(name, server)}
                     />
                   );
                 })}
               </div>
             </SortableContext>
+
+            {/* Servers that have settled as broken, folded away by default.
+                Rendered OUTSIDE the SortableContext on purpose: they are
+                not draggable while they're down here, and leaving them out
+                keeps the sortable index space contiguous. Their place in
+                `orderedServerNames` is untouched, so recovering puts each
+                one straight back where the user put it. */}
+            {attentionServerNames.length > 0 && (
+              <div className="mt-6">
+                <button
+                  type="button"
+                  className={cn(
+                    "group inline-flex max-w-full items-center gap-1 rounded-md border border-border/40 bg-muted/10 px-1.5 py-1 text-left",
+                    "text-[11px] font-semibold uppercase tracking-wide text-muted-foreground underline-offset-4 hover:underline",
+                    "transition-colors hover:border-border/60 hover:bg-muted/25",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  )}
+                  aria-expanded={attentionSectionExpanded}
+                  onClick={() => setAttentionSectionExpanded((open) => !open)}
+                  data-testid="servers-needs-attention-toggle"
+                >
+                  <ChevronRight
+                    className={cn(
+                      "h-3 w-3 shrink-0 text-current opacity-90 transition-transform duration-200 group-hover:opacity-100",
+                      attentionSectionExpanded && "rotate-90"
+                    )}
+                    aria-hidden
+                  />
+                  <span className="whitespace-nowrap">
+                    {attentionServerNames.length === 1
+                      ? "1 server needs attention"
+                      : `${attentionServerNames.length} servers need attention`}
+                  </span>
+                </button>
+                {attentionSectionExpanded && (
+                  <div className="mt-4 grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
+                    {attentionServerNames.map((name) => {
+                      const server = projectServers[name];
+                      if (!server) return null;
+                      return (
+                        <ServerConnectionCard
+                          key={name}
+                          {...buildServerCardProps(name, server)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             <DragOverlay>
               {activeServer ? (
                 <div style={{ opacity: 0.85 }}>

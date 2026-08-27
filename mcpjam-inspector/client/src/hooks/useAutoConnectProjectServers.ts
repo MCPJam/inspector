@@ -3,6 +3,8 @@ import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
 import { isHostedUnsupportedServer } from "@/lib/hosted-server-support";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import type { ServerWithName } from "@/state/app-types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -54,6 +56,47 @@ function getErrorMessage(error: unknown): string {
  */
 function reconnectFailureToastMessage(count: number): string {
   return `Failed to reconnect ${count} servers.`;
+}
+
+/**
+ * Backoff between retries WITHIN one logical auto-connect attempt.
+ *
+ * Three tries across about fifteen seconds: long enough to ride out a
+ * server that is still booting (the common case — `npm run dev` in the
+ * next terminal), short enough that a genuinely dead URL settles into red
+ * while the user is still looking at the screen.
+ */
+const RETRY_BACKOFF_MS = [1_000, 4_000, 10_000] as const;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+/**
+ * Whether a failure is worth another try.
+ *
+ * Only transport-shaped ones are. `ensureServersReady` already separates
+ * the outcomes a retry cannot change into their own buckets — a server in
+ * `reauthServerNames` needs a human, one in `missingServerNames` does not
+ * exist — so what reaches here is the `failed` bucket, and the remaining
+ * distinction is "the network was briefly unhappy" versus "this
+ * configuration is wrong".
+ *
+ * A protocol-version pin mismatch is the clearest case of the latter: the
+ * server has said it does not speak the version we pinned, and it will say
+ * exactly the same thing in a second. Retrying only delays the card that
+ * offers to change the pin.
+ */
+function isRetriableFailure(server: ServerWithName | undefined): boolean {
+  if (!server) return false;
+  if (isHostedUnsupportedServer(server.config)) return false;
+  if (
+    isProtocolVersionPinFailure(server.lastNormalizedError, server.lastError)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
@@ -150,9 +193,18 @@ export function useAutoConnectProjectServers({
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const { ensureServersReady, reconnectServer } = useServerActions();
+  const { ensureServersReady, reconnectServer, markServerRetrying } =
+    useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
+
+  // Live view of runtime server state for the retry loop. A ref, not the
+  // state object itself: the loop needs the error a failed attempt JUST
+  // wrote (to decide whether retrying could help), and reading that through
+  // the effect's dependencies would re-fire the batch on every status
+  // change.
+  const latestServersRef = useRef(sharedAppState.servers);
+  latestServersRef.current = sharedAppState.servers;
 
   const scopeKey = hostScopeKey ?? "-";
   // Stable key for "what the active host wants selected". Drives the
@@ -305,7 +357,77 @@ export function useAutoConnectProjectServers({
     }
 
     let cancelled = false;
-    ensureServersReady(fresh).then(
+
+    /**
+     * One logical attempt, internally retried.
+     *
+     * The retries live INSIDE the attempt on purpose. `markAttempted` above
+     * has already run — deliberately, before any connecting — so that a
+     * failure is never auto-retried later; that is the
+     * "refresh-keeps-failing" guard this hook's header describes, and
+     * relaxing it to get retries would bring the storm back. Retrying here
+     * instead means a server gets its three chances and then genuinely
+     * settles, with the dedupe contract untouched.
+     */
+    const runAttempt = async () => {
+      let result = await ensureServersReady(fresh);
+      if (cancelled) return result;
+
+      for (const backoffMs of RETRY_BACKOFF_MS) {
+        // Yield a macrotask so React has committed the failure this round
+        // just dispatched. `isRetriableFailure` reads `lastError` from the
+        // rendered state, and without this the FIRST check would run
+        // against the state as it was before the attempt — reading a
+        // not-yet-written protocol-pin failure as retriable and spending a
+        // round on a server that has already told us the answer.
+        await sleep(0);
+        if (cancelled) return result;
+
+        const retriable = result.failedServerNames.filter((name) =>
+          isRetriableFailure(latestServersRef.current[name])
+        );
+        if (retriable.length === 0) break;
+
+        // Back onto `connecting` BEFORE the wait, so a server that comes
+        // back mid-backoff is never shown as broken on its way to working.
+        for (const name of retriable) markServerRetrying?.(name);
+
+        await sleep(backoffMs);
+        if (cancelled) return result;
+
+        const retryResult = await ensureServersReady(retriable);
+        if (cancelled) return retryResult;
+
+        // Fold the retry's outcome back into the batch result: servers not
+        // in this round keep whatever the previous round decided, and the
+        // ones we retried take their new answer.
+        const retriedSet = new Set(retriable);
+        const keep = <T extends string>(names: T[]) =>
+          names.filter((name) => !retriedSet.has(name));
+        result = {
+          readyServerNames: [
+            ...keep(result.readyServerNames),
+            ...retryResult.readyServerNames,
+          ],
+          missingServerNames: [
+            ...keep(result.missingServerNames),
+            ...retryResult.missingServerNames,
+          ],
+          failedServerNames: [
+            ...keep(result.failedServerNames),
+            ...retryResult.failedServerNames,
+          ],
+          reauthServerNames: [
+            ...keep(result.reauthServerNames),
+            ...retryResult.reauthServerNames,
+          ],
+        };
+      }
+
+      return result;
+    };
+
+    runAttempt().then(
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;
@@ -322,7 +444,14 @@ export function useAutoConnectProjectServers({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
+  }, [
+    enabled,
+    projectId,
+    scopeKey,
+    candidateNamesKey,
+    ensureServersReady,
+    markServerRetrying,
+  ]);
 
   return { enabled, lastResult: lastResultRef.current };
 }

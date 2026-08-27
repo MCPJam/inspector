@@ -286,6 +286,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "CONNECT_RETRY_SCHEDULED": {
+      const activeProject = state.projects[state.activeProjectId];
+      const existing =
+        state.servers[action.name] ?? activeProject?.servers[action.name];
+      if (!existing) return state;
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: setStatus(existing, "connecting", {
+            retryCount: existing.retryCount + 1,
+          }),
+        },
+      };
+    }
+
     case "RECONNECT_REQUEST": {
       // Check state.servers first, then fallback to project servers (for cloud-synced servers)
       // If server doesn't exist anywhere, create it (for servers from Convex remote projects)

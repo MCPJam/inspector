@@ -344,6 +344,11 @@ export const ANALYTICS_EVENTS = {
   // amber "Sign in" affordance is the thing a user actually reaches for,
   // which is the question the status split was introduced to answer.
   authorize_server_clicked: { source: "client" },
+  // The per-server auto-connect escape hatch. Worth measuring on its own:
+  // a rise here says default-on is connecting things people don't want,
+  // which is the signal that would argue for changing the default rather
+  // than adding more affordances around it.
+  server_auto_connect_opt_out_toggled: { source: "client" },
   reconnect_server_clicked: { source: "client" },
   refresh_tools_clicked: { source: "client" },
   remove_server_clicked: { source: "client" },

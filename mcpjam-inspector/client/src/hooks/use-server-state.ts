@@ -5793,6 +5793,18 @@ export function useServerState({
     [dispatch]
   );
 
+  /**
+   * Put a server back on `connecting` and bump its retry counter. Used by
+   * the auto-connect hook between bounded retry attempts so a transient
+   * failure never surfaces as a red card on the way to succeeding.
+   */
+  const markServerRetrying = useCallback(
+    (serverName: string) => {
+      dispatch({ type: "CONNECT_RETRY_SCHEDULED", name: serverName });
+    },
+    [dispatch]
+  );
+
   const setSelectedMCPConfigs = useCallback(
     (serverNames: string[]) => {
       dispatch({ type: "SET_MULTI_SELECTED", names: serverNames });
@@ -6071,6 +6083,7 @@ export function useServerState({
     connectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,
+    markServerRetrying,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,

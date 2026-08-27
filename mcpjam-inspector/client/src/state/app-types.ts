@@ -278,6 +278,17 @@ export type AppAction =
       oauthTrace?: OAuthTrace;
     }
   | {
+      /**
+       * A transport-shaped failure is about to be retried inside the same
+       * logical auto-connect attempt. Puts the row back on `connecting`
+       * (so a server that recovers mid-backoff is never shown as broken)
+       * and increments `retryCount` — the first thing that ever has. The
+       * counter is reset by `CONNECT_SUCCESS`.
+       */
+      type: "CONNECT_RETRY_SCHEDULED";
+      name: string;
+    }
+  | {
       type: "RECONNECT_REQUEST";
       name: string;
       config: MCPServerConfig;
