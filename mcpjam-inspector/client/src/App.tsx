@@ -1,5 +1,4 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   useCallback,
   useContext,
@@ -154,7 +153,6 @@ import {
   ScenarioChatPage,
   getScenarioPathTokenFromLocation,
 } from "./components/hosted/ScenarioChatPage";
-import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
@@ -165,7 +163,7 @@ import {
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
 import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
-import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
+import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -227,7 +225,6 @@ import {
   clearScenarioSignInReturnPath,
   readScenarioSession,
   readScenarioSignInReturnPath,
-  writeScenarioSignInReturnPath,
 } from "./lib/scenario-session";
 import {
   clearCliSignInReturnPath,
@@ -2460,7 +2457,6 @@ export default function App() {
   const {
     getAccessToken,
     signIn,
-    signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
   } = useAuth();
@@ -3082,26 +3078,17 @@ export default function App() {
   )?.name;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
-    nonProdLockdown: NON_PROD_LOCKDOWN,
-    // Read on every render, like `scenarioPathToken` above: framing is a fact
-    // about this document, fixed for its lifetime, so there is nothing to
-    // memoize and nothing that can change under us.
-    embeddedPreview: isScenarioChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
-    workOsUserEmail: workOsUser?.email ?? null,
   });
   const baseHostedShellGateState = hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
     ? projectServers[pendingDashboardOAuth.serverName]
     : null;
   const shouldShowPendingDashboardOAuthGate =
-    !!pendingDashboardOAuth &&
-    !pendingDashboardOAuthServer &&
-    baseHostedShellGateState !== "logged-out" &&
-    baseHostedShellGateState !== "restricted";
+    !!pendingDashboardOAuth && !pendingDashboardOAuthServer;
   const effectiveHostedShellGateState = shouldShowPendingDashboardOAuthGate
     ? "project-loading"
     : baseHostedShellGateState;
@@ -5067,36 +5054,6 @@ export default function App() {
                     ? pendingDashboardOAuthMessage
                     : undefined
                 }
-                onSignIn={() => {
-                  if (scenarioPathToken) {
-                    // The scenario gate owns its own return path; leaving the
-                    // permalink nonce out keeps exactly one mechanism live on
-                    // that route rather than two racing to redirect.
-                    writeScenarioSignInReturnPath(window.location.pathname);
-                    signIn();
-                    return;
-                  }
-                  // THE primary signed-out path for a permalink. This gate
-                  // intercepts a hosted cold load before any screen renders,
-                  // so a bare `signIn()` here loses the resource path and its
-                  // `?project=` scope no matter what the header button does —
-                  // the visitor authenticates and lands on the app shell.
-                  //
-                  // The generic path is stored alongside the scenario one, not
-                  // instead of it: the scenario flow keeps its precedence on
-                  // `/callback`, and this only fills in for everything else.
-                  captureAppSignInReturnPath();
-                  signIn(permalinkSignInOptions());
-                }}
-                onSignOut={() => {
-                  void (async () => {
-                    try {
-                      await disconnectRuntimeServersForAuthExit();
-                    } finally {
-                      await signOut();
-                    }
-                  })();
-                }}
               >
                 {isScenarioChatRoute ? (
                   <ScenarioChatPage

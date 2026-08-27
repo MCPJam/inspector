@@ -43,8 +43,6 @@ export const LOCAL_COMPUTER_ENABLED =
 export const WEBMCP_INSPECTOR_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
 
-export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
-
 /**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
@@ -56,30 +54,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
-
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
-
-  const emailDomain = normalizedEmail.slice(atIndex + 1);
-  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
-}
 
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")
