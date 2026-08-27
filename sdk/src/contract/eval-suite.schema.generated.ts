@@ -244,6 +244,12 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
             pattern: "^[A-Za-z0-9_-]+$",
           },
           title: { type: "string", minLength: 1, maxLength: 200 },
+          intent: {
+            anyOf: [
+              { type: "string", minLength: 1, maxLength: 64 },
+              { type: "null" },
+            ],
+          },
           steps: {
             minItems: 1,
             maxItems: 200,

@@ -106,8 +106,8 @@ describe("createRunSetupObserver folding", () => {
       observer.recordToolsList(id, { outcome: "ok", startedAt: 1, endedAt: 2 });
     }
     expect(observer.buildSignals()).toEqual({
-      connection: { outcome: "ok" },
-      discovery: { outcome: "ok" },
+      connection: { outcome: "ok", durationMs: 1 },
+      discovery: { outcome: "ok", durationMs: 1 },
     });
   });
 
@@ -167,6 +167,14 @@ describe("createRunSetupObserver folding", () => {
       outcome: "failed",
       attribution: "unknown",
     });
+    expect(observer.buildSignals()?.connection?.durationMs).toBeUndefined();
+  });
+
+  it("emits the settled-target wall envelope for a complete phase", () => {
+    const observer = createRunSetupObserver({ expectedServerIds: ["a", "b"] });
+    observer.recordConnect("a", { outcome: "ok", startedAt: 10, endedAt: 25 });
+    observer.recordConnect("b", { outcome: "ok", startedAt: 20, endedAt: 50 });
+    expect(observer.buildSignals()?.connection?.durationMs).toBe(40);
   });
 
   // Absence of evidence, not evidence of failure: when connect fails for

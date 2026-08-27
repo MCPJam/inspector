@@ -158,6 +158,8 @@ export type SuiteFileFailureStage = "input" | "parse" | "contract";
 export type ResolvedEvalSuiteFileCase = {
   id: string;
   title: string;
+  /** Authored analytics grouping label; absent remains unlabelled. */
+  intent?: string;
   steps: EvalSuiteFileCase["steps"];
   assertions: NonNullable<EvalSuiteFileCase["assertions"]>;
   expectedOutput?: string;
@@ -548,6 +550,9 @@ function resolveCase(
   return {
     id: authoredCase.id,
     title: authoredCase.title,
+    ...(typeof authoredCase.intent === "string"
+      ? { intent: authoredCase.intent }
+      : {}),
     steps: authoredCase.steps,
     assertions: authoredCase.assertions ?? [],
     ...(authoredCase.expectedOutput === undefined
@@ -618,6 +623,7 @@ const PROVENANCE_KEY_ORDER = [
 const CASE_KEY_ORDER = [
   "id",
   "title",
+  "intent",
   "disabled",
   "model",
   "repetitions",

@@ -76,6 +76,9 @@ function slimPhaseSignal(
     ...(signal.egressVerified !== undefined
       ? { egressVerified: signal.egressVerified }
       : {}),
+    ...(signal.durationMs !== undefined
+      ? { durationMs: signal.durationMs }
+      : {}),
   };
 }
 
@@ -316,18 +319,44 @@ function foldPhase(
     };
   }
 
+  // Setup phases are measured once per run using the wall-clock envelope over
+  // settled targets. Never emit a duration for the incomplete-observation
+  // branch above: its envelope would claim a phase finished while a target was
+  // still outstanding.
+  const phaseDurationMs = (): number | undefined => {
+    if (
+      !observed.every(
+        (row) =>
+          Number.isFinite(row.startedAt) && Number.isFinite(row.endedAt)
+      )
+    ) {
+      return undefined;
+    }
+    let start = Number.POSITIVE_INFINITY;
+    let end = Number.NEGATIVE_INFINITY;
+    for (const row of observed) {
+      if (row.startedAt < start) start = row.startedAt;
+      if (row.endedAt > end) end = row.endedAt;
+    }
+    const duration = end - start;
+    return Number.isFinite(duration) && duration >= 0 ? duration : undefined;
+  };
+
   if (failures.length > 0) {
+    const durationMs = phaseDurationMs();
     return {
       outcome: "failed",
       attribution: foldAttribution(failures),
       spanIds: failures
         .map((row) => spanIdFor(row.serverId))
         .slice(0, MAX_CULPRIT_SPAN_IDS),
+      ...(durationMs !== undefined ? { durationMs } : {}),
     };
   }
 
   if (observed.every((row) => row.outcome === "ok")) {
-    return { outcome: "ok" };
+    const durationMs = phaseDurationMs();
+    return { outcome: "ok", ...(durationMs !== undefined ? { durationMs } : {}) };
   }
 
   return {

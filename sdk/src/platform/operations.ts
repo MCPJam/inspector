@@ -15,6 +15,10 @@ import {
   MAX_BATCH_CREATE_CASES,
   evalSuiteFileCaseImportSchema,
 } from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -4436,6 +4440,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4642,6 +4651,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -5577,6 +5591,14 @@ const updateEvalCaseInput = z.object({
     .optional()
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
     ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;

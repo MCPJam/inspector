@@ -271,6 +271,7 @@ describe("the write it does make", () => {
       "firstFailedStage",
       "failureCategory",
       "stageAnalyzerVersion",
+      "stageMeasurements",
       "setupSignals",
       "toolSignals",
       "scores",

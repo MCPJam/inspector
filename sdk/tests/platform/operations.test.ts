@@ -1088,6 +1088,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -1127,6 +1128,7 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
