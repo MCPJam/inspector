@@ -101,7 +101,11 @@ import {
   getScenarioShellStyle,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
-import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
+import {
+  DEFAULT_HOST_STYLE,
+  getReasoningDisplayForStyle,
+  type ChatUiOverride,
+} from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { track } from "@/lib/analytics";
@@ -4448,6 +4452,9 @@ export function PlaygroundMain({
                 onFullscreenChange={setIsWidgetFullscreen}
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
+                // The emulated host decides how reasoning is presented, the
+                // same way the compare cards resolve it. BB-136.
+                reasoningDisplayMode={getReasoningDisplayForStyle(hostStyle)}
                 mcpToolResultImageRendering={
                   effectiveMcpToolResultImageRendering
                 }

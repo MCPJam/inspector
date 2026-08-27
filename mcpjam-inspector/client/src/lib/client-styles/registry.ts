@@ -18,6 +18,7 @@ import type {
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
+  ReasoningDisplayMode,
   ResolvedMcpAppsCapabilities,
 } from "./types";
 
@@ -79,6 +80,17 @@ export function getHostStyleOrDefault(
   id: HostStyleId | null | undefined
 ): HostStyleDefinition {
   return findHostStyle(id) ?? DEFAULT_HOST_STYLE;
+}
+
+/**
+ * How the emulated host presents a model's reasoning, defaulting to the chat's
+ * `inline` rendering for hosts that declare no preference. Shared so every
+ * Playground surface that renders a thread resolves it the same way. BB-136.
+ */
+export function getReasoningDisplayForStyle(
+  id: HostStyleId | null | undefined
+): ReasoningDisplayMode {
+  return getHostStyleOrDefault(id).chatUi.reasoningDisplay ?? "inline";
 }
 
 /**
@@ -275,6 +287,10 @@ export function resolveEffectiveHostStyle(args: {
     family,
     resolveChatBackground,
     loadingIndicator,
+    // Not overridable yet, so it always comes from the preset — but it has to
+    // be carried explicitly or an override of any other field would silently
+    // drop the host's reasoning presentation.
+    reasoningDisplay: preset.chatUi.reasoningDisplay,
   };
 
   const styleVariables = override.styleVariables;

@@ -51,6 +51,7 @@ export {
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
   getLoadingIndicatorForStyle,
+  getReasoningDisplayForStyle,
   isKnownHostStyleId,
   listHostStyles,
   registerHostStyle,

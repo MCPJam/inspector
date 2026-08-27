@@ -95,7 +95,7 @@ vi.mock("@/hooks/use-chat-session", () => ({
 // the same card body sees the same value — there's literally one
 // provider tree above all of them.
 vi.mock("@/components/chat-v2/thread", () => ({
-  Thread: () => {
+  Thread: ({ reasoningDisplayMode }: { reasoningDisplayMode?: string }) => {
     const hostCapsOverride = useScenarioHostCapabilitiesOverride();
     const chatUiOverride = useScenarioChatUiOverride();
     const mcpProfile = useActiveMcpProfile();
@@ -116,6 +116,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
         <div data-testid="thread-mcp-profile">{JSON.stringify(mcpProfile)}</div>
         <div data-testid="thread-resolver-probe">
           {JSON.stringify(resolverProbe ?? null)}
+        </div>
+        <div data-testid="thread-reasoning-display">
+          {reasoningDisplayMode ?? "unset"}
         </div>
       </div>
     );
@@ -229,6 +232,53 @@ describe("MultiModelPlaygroundCard provider shadowing (chat branch)", () => {
 
     expect(screen.getByTestId("thread-chat-ui-override").textContent).toBe(
       JSON.stringify(perCardChatUi),
+    );
+  });
+
+  // BB-136: how reasoning is presented belongs to the host being emulated, so
+  // a Claude column shows the disclosure claude.ai uses while a ChatGPT column
+  // keeps it inline. In multi-host mode `hostStyle` is per column, which is
+  // what makes two columns able to disagree.
+  it("derives the reasoning display from the column's own host style", () => {
+    setMessagesWithContent();
+
+    const { unmount } = render(
+      <MultiModelPlaygroundCard
+        {...baseProps}
+        hostStyle="claude"
+        hostSnapshot={{
+          hostStyle: "claude",
+          hostCapabilitiesOverride: undefined,
+          chatUiOverride: undefined,
+          mcpProfile: undefined,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("thread-reasoning-display").textContent).toBe(
+      "collapsed",
+    );
+    unmount();
+
+    // `baseProps.hostStyle` is "chatgpt", which declares no preference.
+    render(<MultiModelPlaygroundCard {...baseProps} />);
+    expect(screen.getByTestId("thread-reasoning-display").textContent).toBe(
+      "inline",
+    );
+  });
+
+  it("lets an explicit reasoningDisplayMode prop override the host style", () => {
+    setMessagesWithContent();
+
+    render(
+      <MultiModelPlaygroundCard
+        {...baseProps}
+        hostStyle="claude"
+        reasoningDisplayMode="hidden"
+      />,
+    );
+
+    expect(screen.getByTestId("thread-reasoning-display").textContent).toBe(
+      "hidden",
     );
   });
 

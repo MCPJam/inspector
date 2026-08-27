@@ -338,12 +338,14 @@ vi.mock("@/components/chat-v2/thread", () => ({
     loadingIndicatorVariant,
     onEditUserMessage,
     editDisabled,
+    reasoningDisplayMode,
   }: {
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
     onEditUserMessage?: (message: any, text: string) => void;
     editDisabled?: boolean;
+    reasoningDisplayMode?: string;
   }) =>
     (() => {
       mockThread({
@@ -352,6 +354,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         loadingIndicatorVariant,
         onEditUserMessage,
         editDisabled,
+        reasoningDisplayMode,
       });
       return (
         <div data-testid="thread">
@@ -1156,6 +1159,13 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("thread")).toBeInTheDocument();
       expect(screen.getByTestId("message-count")).toHaveTextContent("2");
+      // BB-136: the single-column thread resolves the reasoning presentation
+      // from the emulated host, the same as the compare cards do. This is the
+      // surface the ticket's report was filed against.
+      // `mockPreferencesState.hostStyle` is "claude".
+      expect(mockThread.mock.calls.at(-1)?.[0].reasoningDisplayMode).toBe(
+        "collapsed"
+      );
     });
 
     it("shows loading indicator when submitting", () => {
@@ -1168,6 +1178,22 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("thread-loading")).toBeInTheDocument();
+    });
+
+    it("falls back to inline reasoning for a host that declares none", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockPreferencesState.hostStyle = "mcpjam";
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+
+        expect(mockThread.mock.calls.at(-1)?.[0].reasoningDisplayMode).toBe(
+          "inline"
+        );
+      } finally {
+        mockPreferencesState.hostStyle = "claude";
+      }
     });
   });
 

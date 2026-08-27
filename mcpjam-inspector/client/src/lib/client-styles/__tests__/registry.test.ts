@@ -17,6 +17,7 @@ import {
   findHostStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
+  getReasoningDisplayForStyle,
   isKnownHostStyleId,
   listHostStyles,
   registerHostStyle,
@@ -236,6 +237,19 @@ describe("host-styles registry", () => {
     expect(darkVars["--color-text-primary"]).toBe("#cccccc");
     expect(Object.keys(lightVars)).toHaveLength(76);
     expect(Object.keys(darkVars)).toHaveLength(76);
+  });
+
+  it("gives Claude a disclosure for reasoning and leaves other hosts inline", () => {
+    // BB-136: claude.ai shows thinking behind a labelled disclosure. Hosts that
+    // declare nothing inherit the chat's `inline` default, so a missing value
+    // is the deliberate answer for them, not an oversight.
+    expect(CLAUDE_HOST_STYLE.chatUi.reasoningDisplay).toBe("collapsed");
+    expect(MCPJAM_HOST_STYLE.chatUi.reasoningDisplay).toBeUndefined();
+
+    expect(getReasoningDisplayForStyle("claude")).toBe("collapsed");
+    expect(getReasoningDisplayForStyle("mcpjam")).toBe("inline");
+    expect(getReasoningDisplayForStyle("does-not-exist")).toBe("inline");
+    expect(getReasoningDisplayForStyle(null)).toBe("inline");
   });
 
   it("rejects duplicate host style ids", async () => {

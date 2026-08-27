@@ -23,6 +23,19 @@ describe("resolveEffectiveHostStyle", () => {
     ).toBe(DEFAULT_HOST_STYLE);
   });
 
+  it("keeps the preset's reasoning presentation across an unrelated override", () => {
+    // `reasoningDisplay` has no override field, so the resolver has to carry
+    // it forward explicitly — dropping it would silently return a Claude host
+    // that renders reasoning as plain running text. BB-136.
+    const resolved = resolveEffectiveHostStyle({
+      hostStyle: "claude",
+      chatUiOverride: { label: "Custom" },
+    });
+    expect(resolved.chatUi.reasoningDisplay).toBe(
+      CLAUDE_HOST_STYLE.chatUi.reasoningDisplay,
+    );
+  });
+
   it("returns a new object (not the preset) when override is set, leaving the preset untouched", () => {
     const override: ChatUiOverride = { label: "Custom" };
     const resolved = resolveEffectiveHostStyle({
