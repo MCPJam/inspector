@@ -134,6 +134,15 @@ export function SkillsTab({
   const [isDeleting, setIsDeleting] = useState(false);
 
   // File browsing state - now stores files per skill
+  /**
+   * Bumped by the header's refresh control.
+   *
+   * The server-skills rows have no refresh of their own — they sit in the list
+   * without a group header to hang one on — so the tab's single control has to
+   * reach both halves. It is a counter rather than a callback because the
+   * section owns its own per-connection fetch state.
+   */
+  const [refreshToken, setRefreshToken] = useState(0);
   const [skillFiles, setSkillFiles] = useState<Record<string, SkillFile[]>>({});
   const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
@@ -491,47 +500,54 @@ export function SkillsTab({
                   </Badge>
                 )}
               </div>
-              {/* Upload, refresh and the Local/Cloud toggle all act on the
-                  project store, so they go with it. `ServerSkillsSection`
-                  carries its own per-origin refresh. */}
-              {!cloudStoreHidden && (
-                <div className="flex items-center gap-1">
-                  {showSourceToggle && (
-                    <ViewModeSelector
-                      value={source}
-                      ariaLabel="Skills source"
-                      indicatorId="skills-source"
-                      onChange={(next) => setSource(next)}
-                      options={[
-                        { value: "local", label: "Local" },
-                        { value: "cloud", label: "Cloud" },
-                      ]}
-                      className="mr-1"
-                    />
-                  )}
-                  <Button
-                    onClick={() => setIsUploadDialogOpen(true)}
-                    variant="ghost"
-                    size="sm"
-                    title="Upload skill"
-                    disabled={cloudUnavailable}
-                  >
-                    <Plus className="h-3 w-3 cursor-pointer" />
-                  </Button>
-                  <Button
-                    onClick={() => fetchSkills()}
-                    variant="ghost"
-                    size="sm"
-                    disabled={fetchingSkills}
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${
-                        fetchingSkills ? "animate-spin" : ""
-                      } cursor-pointer`}
-                    />
-                  </Button>
-                </div>
-              )}
+              {/* Upload and the Local/Cloud toggle act on the project store,
+                  so they go with it. Refresh does NOT: it re-reads the server
+                  skills too, and those are exactly what is on screen when the
+                  project store is hidden. */}
+              <div className="flex items-center gap-1">
+                {!cloudStoreHidden && (
+                  <>
+                    {showSourceToggle && (
+                      <ViewModeSelector
+                        value={source}
+                        ariaLabel="Skills source"
+                        indicatorId="skills-source"
+                        onChange={(next) => setSource(next)}
+                        options={[
+                          { value: "local", label: "Local" },
+                          { value: "cloud", label: "Cloud" },
+                        ]}
+                        className="mr-1"
+                      />
+                    )}
+                    <Button
+                      onClick={() => setIsUploadDialogOpen(true)}
+                      variant="ghost"
+                      size="sm"
+                      title="Upload skill"
+                      disabled={cloudUnavailable}
+                    >
+                      <Plus className="h-3 w-3 cursor-pointer" />
+                    </Button>
+                  </>
+                )}
+                <Button
+                  onClick={() => {
+                    void fetchSkills();
+                    setRefreshToken((n) => n + 1);
+                  }}
+                  variant="ghost"
+                  size="sm"
+                  title="Refresh skills"
+                  disabled={fetchingSkills}
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 ${
+                      fetchingSkills ? "animate-spin" : ""
+                    } cursor-pointer`}
+                  />
+                </Button>
+              </div>
             </div>
 
             {/* Unified Tree */}
@@ -575,12 +591,16 @@ export function SkillsTab({
                       onExpandSkill={handleExpandSkill}
                     />
                   )}
-                  {/* Skills over MCP (SEP-2640). Rendered outside the tree:
+                  {/* Skills over MCP (SEP-2640). Rendered outside the tree —
                       these are identified by URI rather than by name and carry
-                      a verification state the tree has no vocabulary for. */}
+                      a verification state the tree has no vocabulary for — but
+                      NOT under a heading of their own: each row carries its
+                      origin server instead, so provenance travels with the
+                      skill rather than with the reader's scroll position. */}
                   <ServerSkillsSection
                     servers={mcpServers ?? []}
                     {...(projectId ? { projectId } : {})}
+                    refreshToken={refreshToken}
                     onOpenSkill={handleOpenServerSkill}
                   />
                 </div>
