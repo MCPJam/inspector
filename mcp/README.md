@@ -92,6 +92,8 @@ so results respect the caller's project access.
 | `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
+| `list_project_skills` | List the Cloud Skills visible to you in a project, with the IDs that environments and eval runs pin. Each row reports whether it is eligible to be pinned, and why not if it isn't. | — |
+| `get_project_skill` | Show one Cloud Skill including its SKILL.md body. | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
@@ -244,6 +246,28 @@ mints a content-addressed, unnamed row (the same row `run_eval_suite`'s
 environments stays CLI-only for now: those writes are revision-guarded
 (`expectedRevision`), and giving an agent a safe path through optimistic
 concurrency is a separate design question.
+
+## Skills over MCP (SEP-2640)
+
+This worker serves MCPJam's own Agent Skills alongside its tools, so an agent that connects gets the tools **and** the how-to knowledge for them without a separate install step. It declares:
+
+```json
+{ "capabilities": { "extensions": { "io.modelcontextprotocol/skills": {} } } }
+```
+
+and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
+
+The catalog is `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+
+**The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
+
+The generator refuses to emit anything MCPJam's own host would refuse: it runs `checkSkillIdentity`, enforces the draft's 512-entry / 16 MiB per-skill limits, and fails the build rather than warning.
+
+### Two behaviours worth knowing
+
+**Unknown `skill://` reads answer `-32602`, not `-32002`.** Both era codecs rewrite `ResourceNotFoundError` to Invalid params, so this worker cannot emit `-32002` even deliberately. That is what `isSkillNotFoundError` looks for anyway, but it differs from `sdk/tests/support/skills-fixture.ts`, which serves `-32002`.
+
+**The extension is always advertised.** The worker is stateless, so the declaration cannot be gated on the client's own `extensions`. This is correct — SEP-2133 negotiates connection-level and the client half of the gate is the client's to enforce — but it is the same shape of deviation documented at the top of `src/tools/sessionToolRegistrar.ts`.
 
 ## Auth
 

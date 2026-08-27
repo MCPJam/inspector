@@ -49,6 +49,7 @@ import {
   type EvalSuiteFileProvenance,
   type EvalSuiteFileTarget,
   type EvalSuiteFileToolPolicy,
+  type EvalSuiteFileValidity,
 } from "./contract/suite-file.js";
 import type { EvalValidityCoverage } from "./contract/verdict-policy.js";
 
@@ -189,6 +190,45 @@ export type ResolvedEvalSuiteFileValidity = {
   minCompletionRate: number;
   maxEvaluatorErrorRate: number;
 };
+
+/**
+ * The resolved validity block turned back into the AUTHORED shape — the shape
+ * every wire format speaks.
+ *
+ * WHY THIS EXISTS. {@link resolveEvalSuiteFile} replaces the authored
+ * `minEligibleTrials` with a `coverage` union, deliberately, so that no reader
+ * downstream can invent a `?? 1` default for an omitted one (see
+ * {@link SUITE_FILE_DEFAULT_COVERAGE}). That union is an INTERNAL
+ * representation: the suite-file schema does not have it, and neither does the
+ * hosted API, whose body validator is strict and rejects the key outright.
+ *
+ * Handing a resolved block to anything that serializes is therefore always a
+ * bug, and it was one — the hosted `eval run --file` path sent
+ * `resolved.defaults.validity` and every upload was refused with
+ * `Unrecognized key: "coverage"`, whatever the file said, because the resolver
+ * emits `coverage` unconditionally. Callers that need to transmit validity get
+ * this function instead of reaching into the resolved shape themselves.
+ *
+ * LOSSLESS BY CONSTRUCTION, in both directions:
+ *   - `minEligibleTrials` coverage carries its number back out.
+ *   - `allConfiguredTrialsAttempted` OMITS the key, which is precisely what
+ *     selected that rule on the way in. The receiver re-resolves omission to
+ *     the same stricter rule rather than to a number, so the round trip
+ *     preserves the policy rather than approximating it.
+ * The two rate fields carry their resolved values explicitly, so a defaults
+ * change here can never silently re-decide a policy already sent.
+ */
+export function declareEvalSuiteFileValidity(
+  resolved: ResolvedEvalSuiteFileValidity
+): EvalSuiteFileValidity {
+  return {
+    ...(resolved.coverage.kind === "minEligibleTrials"
+      ? { minEligibleTrials: resolved.coverage.minEligibleTrials }
+      : {}),
+    minCompletionRate: resolved.minCompletionRate,
+    maxEvaluatorErrorRate: resolved.maxEvaluatorErrorRate,
+  };
+}
 
 /**
  * The in-memory view a runner reads: every documented default applied, and
