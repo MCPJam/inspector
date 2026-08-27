@@ -75,23 +75,48 @@ describe("the exam's identity and size are on the screen", () => {
   });
 });
 
+/**
+ * The backend answers this question with `writesToTarget` plus the pinned
+ * `writeManifest`. It has never sent a `writeOperations` array — reading one
+ * made every quote look read-only, which disabled the consent gate and printed
+ * a reassurance that was false.
+ */
+const WRITE_MANIFEST = {
+  suiteHash: "suite_1",
+  cases: [
+    {
+      caseId: "create-a-page",
+      sideEffects: {
+        mode: "test_write" as const,
+        summary: "creates a page and deletes it afterwards",
+        allowedTools: ["create_page", "delete_page"],
+        createRules: [
+          {
+            tool: "create_page",
+            artifactNamePath: "title",
+            requiredPrefix: "mcpjam-benchmark-run_1-0",
+            createdIdResultPaths: ["id"],
+          },
+        ],
+        mutationTargetPaths: [],
+        cleanupSteps: [{ tool: "delete_page" }],
+      },
+    },
+  ],
+};
+
 describe("write operations need explicit consent", () => {
   it("previews each write and blocks the start until it is agreed to", async () => {
     const props = renderQuote({
-      quote: quote({
-        writeOperations: [
-          {
-            toolName: "create_page",
-            summary: "creates a page and deletes it afterwards",
-            artifactNamePrefix: "mcpjam-benchmark-run_1-0",
-          },
-        ],
-      }),
+      quote: quote({ writesToTarget: true, writeManifest: WRITE_MANIFEST }),
     });
 
-    expect(screen.getByText("create_page")).toBeInTheDocument();
+    expect(screen.getByText("create-a-page")).toBeInTheDocument();
     expect(
       screen.getByText(/creates a page and deletes it afterwards/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/mcpjam-benchmark-run_1-0/),
     ).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
 
@@ -102,13 +127,39 @@ describe("write operations need explicit consent", () => {
   it("starts once consent is given", () => {
     renderQuote({
       writeConsent: true,
-      quote: quote({ writeOperations: [{ toolName: "create_page" }] }),
+      quote: quote({ writesToTarget: true, writeManifest: WRITE_MANIFEST }),
     });
     expect(startButton()).not.toBeDisabled();
   });
 
+  /**
+   * The failure this whole gate exists to prevent. `writesToTarget` is the
+   * backend's authority on whether anything is written; the manifest is only
+   * the description. A quote that says it writes but whose manifest we cannot
+   * read must NOT fall through to "this exam only reads" — consenting to
+   * operations nobody can show you is not consent.
+   */
+  it("refuses to start a write exam whose manifest it cannot show", () => {
+    renderQuote({ quote: quote({ writesToTarget: true }) });
+
+    expect(screen.queryByText(/This exam only reads/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/could not read the manifest/),
+    ).toBeInTheDocument();
+    expect(startButton()).toBeDisabled();
+  });
+
+  it("stays blocked even if consent is somehow already ticked", () => {
+    renderQuote({
+      writeConsent: true,
+      quote: quote({ writesToTarget: true }),
+    });
+    expect(startButton()).toBeDisabled();
+  });
+
   it("states plainly when an exam only reads", () => {
-    renderQuote();
+    renderQuote({ quote: quote({ writesToTarget: false }) });
     expect(screen.getByText(/This exam only reads/)).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(startButton()).not.toBeDisabled();

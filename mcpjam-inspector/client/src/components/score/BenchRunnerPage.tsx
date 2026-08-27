@@ -338,6 +338,10 @@ export function BenchRunnerPage({
         serverId,
         quoteId: quote.quoteId,
         receiptId: preflight.receiptId,
+        // Gating the button is not consent: the backend re-checks the write
+        // manifest against what was agreed to, and it can only do that if the
+        // agreement actually travels with the start.
+        ...(quote.writesToTarget ? { consent: { writeCases: true } } : {}),
         selection,
         preferences: {
           ...(categoryId ? { categorySlug: categoryId } : {}),
