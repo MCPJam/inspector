@@ -3,10 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The session viewer's judge section (TL must-have: on-demand UX). States:
- * absent → Run judge; completed → shared verdict card + Re-judge; failed →
- * "Judge unavailable" + Retry (failed judgments are recoverable, never
- * hidden); running → judging placeholder. Controls invoke
+ * The session viewer's judge section. Auto-runs when no verdict exists;
+ * completed → shared verdict card + Re-judge; failed → "Judge unavailable" +
+ * Retry; running/pending → judging placeholder. Invokes
  * `swarmJudge:requestSwarmSessionJudge` with ONLY the session id.
  */
 const { requestJudgeMock, toastMock } = vi.hoisted(() => ({
@@ -53,13 +52,16 @@ describe("SwarmJudgeSection", () => {
     toastMock.error.mockClear();
   });
 
-  it("absent → first-run affordance invoking the action", async () => {
-    const user = userEvent.setup();
+  it("absent → auto-invokes the judge action on mount", async () => {
     render(<SwarmJudgeSection threadId="session-1" />);
 
-    await user.click(screen.getByRole("button", { name: /run judge/i }));
-
-    expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+    expect(
+      screen.getByText(/Judging against the journey goal/)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run judge/i })).not.toBeInTheDocument();
   });
 
   it("completed → verdict card with score/reason + a Re-judge affordance", async () => {
