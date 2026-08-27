@@ -123,14 +123,23 @@ describe("useUnifiedConvexAuth", () => {
     }
 
     it("mints a new guest token when the cache has lapsed", async () => {
-      // Cache empty is exactly the state a 24h guest token reaches once it
+      // An empty cache is exactly the state a 24h guest token reaches once it
       // enters its 5-minute expiry buffer. The old code returned the stale
-      // React copy of that same expired token.
+      // React copy of that same expired token. The cache must still be empty
+      // when getAccessToken runs, or this exercises the cached fast path
+      // instead of the mint path it exists to cover.
       mockState.getCachedGuestSession.mockReturnValue(null);
-      mockState.getOrCreateGuestSession.mockResolvedValue(session);
+      mockState.getOrCreateGuestSession.mockResolvedValue(null);
 
       const result = await mountGuest();
-      mockState.getCachedGuestSession.mockReturnValue(session);
+      mockState.getOrCreateGuestSession.mockClear();
+
+      // A real mint writes through to the cache (setCachedSession), which is
+      // how markActiveGuest then resolves the guestId.
+      mockState.getOrCreateGuestSession.mockImplementation(async () => {
+        mockState.getCachedGuestSession.mockReturnValue(session);
+        return session;
+      });
 
       let token: string | null = null;
       await act(async () => {
@@ -138,6 +147,7 @@ describe("useUnifiedConvexAuth", () => {
       });
 
       expect(token).toBe("fresh-guest-token");
+      expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
       expect(mockState.markGuestActivated).toHaveBeenCalledWith("guest-1");
       expect(mockState.reportCaught).not.toHaveBeenCalled();
     });

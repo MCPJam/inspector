@@ -10,6 +10,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { reportCaught } from "./lib/error-reporting";
+import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
@@ -345,29 +346,9 @@ if (isInIframe) {
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
       }}
-      /**
-       * A refresh WorkOS actively rejected — the session is dead, and authkit
-       * has already wiped it and latched to its ERROR state. Without this the
-       * provider keeps `user` populated, so the app renders signed-in chrome
-       * over a connection Convex has already de-authenticated: every mounted
-       * query fires with no identity and crashes into an error boundary.
-       *
-       * `signIn()` navigates to WorkOS. When the browser still holds a valid
-       * SSO cookie — the common case for a transient server-side rejection —
-       * the user round-trips silently and comes back with a live session;
-       * otherwise they land on login, which is the honest state. Either way
-       * the navigation tears the tab down before the burst can surface.
-       *
-       * Only fires for an already-established session (authkit skips it from
-       * the INITIAL state), so a signed-out visitor is never redirected.
-       */
-      onRefreshFailure={({ signIn }) => {
-        reportCaught(new Error("WorkOS session refresh failed"), {
-          source: "workos_refresh_failure",
-          level: "warning",
-        });
-        void signIn();
-      }}
+      // Redirect a genuinely dead session to sign-in rather than leaving
+      // signed-in chrome over a de-authed connection. See the handler.
+      onRefreshFailure={handleWorkosRefreshFailure}
       /**
        * Send a returning sign-in back where it started, when something asked
        * to come back.
