@@ -1,4 +1,6 @@
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { reportCaught } from "@/lib/error-reporting";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 /**
@@ -26,7 +28,9 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 export function handleWorkosRefreshFailure({
   signIn,
 }: {
-  signIn: () => void | Promise<void>;
+  signIn: (options?: {
+    state?: Record<string, string>;
+  }) => void | Promise<void>;
 }): void {
   reportCaught(new Error("WorkOS session refresh failed"), {
     source: "workos_refresh_failure",
@@ -36,8 +40,13 @@ export function handleWorkosRefreshFailure({
   // if the navigation is blocked or fails, the banner is already up offering a
   // sign-in, instead of leaving signed-in chrome over a dead session.
   useSessionRefreshStore.getState().notifyFailure("signed_out");
+  // This redirect is involuntary — the user did not ask to leave — so the way
+  // back matters more here than on a button they chose to press. Without these
+  // they return to the app's front door having lost the resource they were on
+  // and the project it was scoped to. Same pair the banner's Sign in uses.
+  captureAppSignInReturnPath();
   // Fire-and-forget, but wrapped: `signIn` is async and a failure to build the
   // authorization URL would otherwise surface as an unhandled rejection inside
   // authkit's callback. The report above already recorded the dead session.
-  void Promise.resolve(signIn()).catch(() => {});
+  void Promise.resolve(signIn(permalinkSignInOptions())).catch(() => {});
 }

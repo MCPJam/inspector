@@ -4,10 +4,20 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const mockState = vi.hoisted(() => ({
   reportCaught: vi.fn(),
+  captureAppSignInReturnPath: vi.fn(),
+  permalinkSignInOptions: vi.fn(() => ({ state: { permalink: "nonce-1" } })),
 }));
 
 vi.mock("@/lib/error-reporting", () => ({
   reportCaught: mockState.reportCaught,
+}));
+
+vi.mock("@/lib/app-signin-return-path", () => ({
+  captureAppSignInReturnPath: mockState.captureAppSignInReturnPath,
+}));
+
+vi.mock("@/lib/permalink-signin-return", () => ({
+  permalinkSignInOptions: mockState.permalinkSignInOptions,
 }));
 
 describe("handleWorkosRefreshFailure", () => {
@@ -27,6 +37,17 @@ describe("handleWorkosRefreshFailure", () => {
 
     expect(useSessionRefreshStore.getState().status).toBe("failed");
     expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+  });
+
+  it("preserves where the user was across the forced redirect", () => {
+    // This redirect is involuntary, so losing the deep link and its project
+    // scope would dump the user at the front door through no action of theirs.
+    const signIn = vi.fn();
+
+    handleWorkosRefreshFailure({ signIn });
+
+    expect(mockState.captureAppSignInReturnPath).toHaveBeenCalledTimes(1);
+    expect(signIn).toHaveBeenCalledWith({ state: { permalink: "nonce-1" } });
   });
 
   it("reports one warning and sends the user to sign in", () => {
