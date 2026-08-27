@@ -12,6 +12,7 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { WEBMCP_INSPECTOR_ENABLED } from "../../config";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
@@ -50,6 +51,8 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validatePageToolEntries,
+  PageToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
@@ -1037,6 +1040,21 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
+    // gated on the kill switch — a turn must not be able to advertise page
+    // tools on an inspector where the feature is off.
+    let validatedPageTools;
+    try {
+      validatedPageTools = WEBMCP_INSPECTOR_ENABLED
+        ? validatePageToolEntries(body.pageTools)
+        : [];
+    } catch (error) {
+      if (error instanceof PageToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
     // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
     // cached pre-cutover clients may still send the field. Without a
@@ -1268,6 +1286,7 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
+        pageTools: validatedPageTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.

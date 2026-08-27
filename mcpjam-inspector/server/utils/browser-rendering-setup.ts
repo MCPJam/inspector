@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 
 const INSTALL_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
-type BrowserSetupReason = "startup" | "render";
+type BrowserSetupReason = "startup" | "render" | "webmcp";
 
 type BrowserRenderingSetupLogger = {
   info: (message: string) => void;
