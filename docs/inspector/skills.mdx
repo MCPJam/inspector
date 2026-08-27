@@ -205,12 +205,25 @@ and checking each against its manifest:
 
 ```
 - skills: ok (4 skills discovered. 4 verified against their manifests.)
+- skills: ok (8 skills discovered. 5 of 8 sampled and verified against their manifests.)
 - skills: error (1 of 2 sampled skills failed verification:
   skill://demo/tampered/SKILL.md (digest_mismatch).)
 ```
 
 It reports `skipped` when the extension is not active on the connection, which
-is the normal state for a server that serves no skills.
+is the normal state for a server that serves no skills. The detail names which
+side withheld the declaration:
+
+- **Server did not declare the extension** — the server does not advertise
+  `io.modelcontextprotocol/skills`.
+- **Client capability pin blocked advertising** — the server does declare the
+  extension, but the host persona you pinned (e.g. `--host cursor`) does not
+  advertise it. The server's skills are fine; the pin is why nothing was
+  inspected. Drop the host pin to inspect them.
+
+When the doctor verifies only a sample of a large catalog (up to 5 skills), the
+detail says **"N of M sampled and verified"** so it is clear the doctor stopped
+early — not that only N skills passed.
 
 ### Unloadable skills
 
