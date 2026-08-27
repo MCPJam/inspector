@@ -714,6 +714,59 @@ describe("useCrossHostData", () => {
     expect(result.current.hostColumns[0].splitLabel).toMatch(/pinned/);
   });
 
+  it("names the revision in the label, since a pin COUNT is equally blind", () => {
+    // Two environments each pinning ONE skill to a different revision: a count
+    // would read "pinned 1 version" on both columns, reproducing exactly the
+    // ambiguity the label exists to remove.
+    const suite = makeSuite();
+    const cases = [makeCase("c1")];
+    const runA = makeEnvironmentRun("rA", "h1", "envA", 1, 1000);
+    const runB = makeEnvironmentRun("rB", "h1", "envB", 1, 2000);
+    const iters = [
+      makeIteration("iA", {
+        suiteRunId: "rA",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("iB", {
+        suiteRunId: "rB",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [runA, runB], iters, {
+        hostNamesById: new Map([["h1", "Claude"]]),
+        environments: [
+          {
+            environmentId: "envA",
+            hostId: "h1",
+            skillSelection: {
+              skillIds: ["skill-refunds"],
+              versionPins: [
+                { skillId: "skill-refunds", versionId: "version-aaaa" },
+              ],
+            },
+          },
+          {
+            environmentId: "envB",
+            hostId: "h1",
+            skillSelection: {
+              skillIds: ["skill-refunds"],
+              versionPins: [
+                { skillId: "skill-refunds", versionId: "version-bbbb" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.current.hostColumns).toHaveLength(2);
+    const labels = result.current.hostColumns.map((c) => c.splitLabel);
+    expect(labels[0]).not.toBe(labels[1]);
+    expect(labels).toEqual(["pinned aaaa", "pinned bbbb"]);
+  });
+
   it("annotates a split by the slot that actually differs, not the sandbox pin", () => {
     const suite = makeSuite();
     const cases = [makeCase("c1")];

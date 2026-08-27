@@ -371,14 +371,19 @@ function splitLabelFor(
         ? `servers-${env.serverAttachmentId.slice(-4)}`
         : "no servers";
     case "skills": {
-      // When the split is BY revision, a skill count is the one thing that
-      // cannot tell the columns apart — every column would read "1 skill".
-      // Name the pinned revisions instead.
+      // A COUNT cannot tell these columns apart. That is true of a skill count
+      // when the split is by revision — every column reads "1 skill" — and just
+      // as true of a pin COUNT, since two environments each pinning one skill
+      // to a different revision both read "pinned 1 version". Name the
+      // revisions themselves, by the same id-suffix convention the servers and
+      // sandbox arms use. Sorted so the label is stable across pin order.
       const pins = env.skillSelection?.versionPins ?? [];
       if (pins.length > 0) {
-        return `pinned ${
-          pins.length === 1 ? "1 version" : `${pins.length} versions`
-        }`;
+        const revisions = pins
+          .map((pin) => pin.versionId.slice(-4))
+          .sort()
+          .join(",");
+        return `pinned ${revisions}`;
       }
       const count = env.skillSelection?.skillIds.length ?? 0;
       return count === 0

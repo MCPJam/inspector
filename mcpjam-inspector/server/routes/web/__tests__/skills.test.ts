@@ -348,12 +348,35 @@ describe("POST /api/web/skills/versions/*", () => {
     expect((await res.json()).skill.content).toBe("restored");
   });
 
-  it("rejects a request with no versionId", async () => {
-    const res = await post("/api/web/skills/versions/get", {
-      projectId: "proj_1",
-      skillId: "s1",
-    });
-    expect(res.status).toBe(400);
+  it("rejects a missing, null or empty versionId without calling upstream", async () => {
+    // An empty string is the one that matters in practice: a picker or URL
+    // param can produce it, and `z.string().min(1)` is what stops it reaching
+    // Convex as a lookup for a version nobody named.
+    for (const [route, mock] of [
+      ["get", getCloudSkillVersion],
+      ["restore", restoreCloudSkillVersion],
+    ] as const) {
+      for (const versionId of [undefined, null, ""]) {
+        const res = await post(`/api/web/skills/versions/${route}`, {
+          projectId: "proj_1",
+          skillId: "s1",
+          ...(versionId === undefined ? {} : { versionId }),
+        });
+        expect(res.status).toBe(400);
+        expect(vi.mocked(mock)).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("rejects a missing, null or empty skillId without calling upstream", async () => {
+    for (const skillId of [undefined, null, ""]) {
+      const res = await post("/api/web/skills/versions/list", {
+        projectId: "proj_1",
+        ...(skillId === undefined ? {} : { skillId }),
+      });
+      expect(res.status).toBe(400);
+      expect(vi.mocked(listCloudSkillVersions)).not.toHaveBeenCalled();
+    }
   });
 
   it("maps an upstream failure to its status", async () => {
