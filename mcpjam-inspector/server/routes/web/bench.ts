@@ -9,7 +9,7 @@ import {
   readJsonBody,
   WebRouteError,
 } from "./errors.js";
-import { getClientIp } from "../../utils/client-ip.js";
+import { getAttestedClientIp, getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 
 /**
@@ -43,9 +43,18 @@ import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
  *
  * `/preflight` and `/runs` spend our egress and the caller's credits, so they
  * carry a per-IP ceiling on top of the per-guest one (guest identities are
- * free to mint; the IP is the honest unit). Polling and cancelling a run
- * already paid for are NOT debited — charging them would let a start consume
- * the last slot and then 429 the caller out of the run they just launched.
+ * free to mint; the IP is the honest unit). Only an address this deployment
+ * can VOUCH for gets a window of its own — everything else shares one pooled
+ * bucket, because a per-value key a caller can rotate is a way to fill the map
+ * rather than a way to bound anyone. Polling and cancelling a run already paid
+ * for are NOT debited — charging them would let a start consume the last slot
+ * and then 429 the caller out of the run they just launched.
+ *
+ * ## Nothing is dialed before the backend is known to be there
+ *
+ * `/preflight` opens the caller's saved server, so it asks the backend whether
+ * benchmark runs exist at all before it spends that connection; see
+ * `assertBenchBackendEnabled`.
  */
 
 const bench = new Hono();
@@ -92,11 +101,31 @@ const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const READ_MISS_RATE_LIMIT = 60;
 
 /**
- * Bounded like `resultCache` below. Only EXPIRED windows are swept, and the
- * key comes from a client-supplied forwarding header — so a caller rotating
- * `x-forwarded-for` adds one live entry per request and none of them age out
- * for ten minutes. A limiter that can be made to exhaust memory is a
- * liability, not a defense.
+ * The one bucket every request we cannot place shares — one bucket, not one
+ * each. Only an ATTESTED address earns a window of its own: a key minted from
+ * a forwarding header is a key the caller picks, so keying per value lets a
+ * single actor rotate `x-forwarded-for` until the map is full and then 429
+ * every genuinely new caller until the entries expire, the limiter becoming
+ * the outage it exists to prevent. Sweeping does not help — the entries are
+ * live, not stale.
+ */
+const UNATTESTED_CLIENT_KEY = "_unattested";
+
+/**
+ * Pooled ceilings, deliberately looser than the per-address ones because they
+ * bound a whole population rather than one actor. A deployment that lands here
+ * for every request is one whose ingress we cannot read: set
+ * `MCPJAM_TRUSTED_CLIENT_IP_HEADER` to the header it overwrites and callers
+ * get their own budgets back.
+ */
+const UNATTESTED_START_WORK_RATE_LIMIT = 4 * START_WORK_RATE_LIMIT;
+const UNATTESTED_READ_MISS_RATE_LIMIT = 4 * READ_MISS_RATE_LIMIT;
+
+/**
+ * Bounded like `resultCache` below, and now bounded by something a caller
+ * cannot inflate: entries are only minted for addresses this deployment can
+ * vouch for, so the map grows with real clients rather than with header
+ * values.
  */
 const WINDOW_MAX_ENTRIES = 10_000;
 const startWorkWindows = new Map<
@@ -104,6 +133,12 @@ const startWorkWindows = new Map<
   { count: number; windowStart: number }
 >();
 const readWindows = new Map<string, { count: number; windowStart: number }>();
+
+/** Test-only seams: a bound is only meaningful if a test can observe it. */
+export const BENCH_WINDOW_MAX_ENTRIES = WINDOW_MAX_ENTRIES;
+export function benchStartWorkWindowCountForTests(): number {
+  return startWorkWindows.size;
+}
 
 /**
  * Expire windows on a timer, not on the request. Sweeping inside the handler
@@ -155,27 +190,41 @@ function consumeWindow(
   windows.set(clientKey, { count: 1, windowStart: now });
 }
 
+/** An attested address gets its own window; everyone else shares one. */
+function clientBudget(c: Parameters<typeof getAttestedClientIp>[0]) {
+  const attested = getAttestedClientIp(c);
+  return attested
+    ? { key: attested, attested: true }
+    : { key: UNATTESTED_CLIENT_KEY, attested: false };
+}
+
 /**
  * Charged by `/preflight` and `/runs` ONLY, and charged BEFORE the dial —
  * the budget exists to bound egress, so it cannot sit behind the round trip
  * it is bounding.
  */
-function consumeStartWorkRateLimit(clientKey: string) {
+function consumeStartWorkRateLimit(
+  c: Parameters<typeof getAttestedClientIp>[0],
+) {
+  const { key, attested } = clientBudget(c);
   consumeWindow(
     startWorkWindows,
-    clientKey,
+    key,
     Date.now(),
-    START_WORK_RATE_LIMIT,
-    "Too many benchmark runs from this address. Try again in a few minutes.",
+    attested ? START_WORK_RATE_LIMIT : UNATTESTED_START_WORK_RATE_LIMIT,
+    attested
+      ? "Too many benchmark runs from this address. Try again in a few minutes."
+      : "Too many benchmark runs right now. Try again in a few minutes.",
   );
 }
 
-function consumeReadRateLimit(clientKey: string) {
+function consumeReadRateLimit(c: Parameters<typeof getAttestedClientIp>[0]) {
+  const { key, attested } = clientBudget(c);
   consumeWindow(
     readWindows,
-    clientKey,
+    key,
     Date.now(),
-    READ_MISS_RATE_LIMIT,
+    attested ? READ_MISS_RATE_LIMIT : UNATTESTED_READ_MISS_RATE_LIMIT,
     "Too many result lookups. Please try again later.",
   );
 }
@@ -258,6 +307,15 @@ function backendConfig(): { convexUrl: string; serviceToken: string } {
   }
 
   return { convexUrl: convexUrl.replace(/\/$/, ""), serviceToken };
+}
+
+/** The one verdict a bare 404 and a cached-off probe both produce. */
+function featureDisabled() {
+  return new WebRouteError(
+    503,
+    ErrorCode.FEATURE_NOT_SUPPORTED,
+    FEATURE_DISABLED_MESSAGE,
+  );
 }
 
 type BackendBody = {
@@ -351,11 +409,7 @@ async function callBackend(
         options.notFoundMessage,
       );
     }
-    throw new WebRouteError(
-      503,
-      ErrorCode.FEATURE_NOT_SUPPORTED,
-      FEATURE_DISABLED_MESSAGE,
-    );
+    throw featureDisabled();
   }
 
   if (response.ok && body?.ok === true) {
@@ -417,11 +471,84 @@ async function callBackend(
   }
 }
 
+// ── Capability probe ─────────────────────────────────────────────────
+
+/**
+ * Is the bench family deployed at all?
+ *
+ * Every other route here learns that from the call it was going to make
+ * anyway. `/preflight` cannot: it dials the caller's saved server and drains
+ * `tools/list` FIRST, so in the merge-before-enable state that dial buys a
+ * `FEATURE_NOT_SUPPORTED` — and if the target happens to be down, the caller
+ * is shown the target's failure instead of ours. Ask the backend before
+ * spending someone else's connection.
+ *
+ * The probe rides the preflight path itself rather than a route of its own. A
+ * dedicated probe path would 404 both when the family is absent AND when a
+ * deployed backend simply never added that one route, and the second reading
+ * would keep the feature off permanently. Only a BARE 404 disables; every
+ * other answer — the 400 a deployed backend owes a body with no target
+ * included — proves the route is there.
+ */
+const FEATURE_PROBE_ENABLED_TTL_MS = 5 * 60_000;
+const FEATURE_PROBE_DISABLED_TTL_MS = 60_000;
+
+let featureProbe: { enabled: boolean; at: number } | null = null;
+
+async function assertBenchBackendEnabled(): Promise<void> {
+  const now = Date.now();
+  if (featureProbe) {
+    const ttl = featureProbe.enabled
+      ? FEATURE_PROBE_ENABLED_TTL_MS
+      : FEATURE_PROBE_DISABLED_TTL_MS;
+    if (now - featureProbe.at < ttl) {
+      if (featureProbe.enabled) return;
+      throw featureDisabled();
+    }
+  }
+
+  // No bearer: this asks about the DEPLOYMENT, not about a caller, so the
+  // verdict is the same for everyone and can be cached across them.
+  try {
+    await callBackend(
+      BACKEND_PREFLIGHT_PATH,
+      { probe: true },
+      { unreachableMessage: FEATURE_DISABLED_MESSAGE },
+    );
+    featureProbe = { enabled: true, at: now };
+    return;
+  } catch (error) {
+    if (
+      error instanceof WebRouteError &&
+      error.code === ErrorCode.FEATURE_NOT_SUPPORTED
+    ) {
+      featureProbe = { enabled: false, at: now };
+      throw error;
+    }
+    // A verdict of any other kind still proves the route answered. Transport
+    // failures prove nothing, so they are not cached — and neither is allowed
+    // to BLOCK: the probe may only ever short-circuit the disabled case, never
+    // become a new way for preflight to fail.
+    if (
+      error instanceof WebRouteError &&
+      error.code !== ErrorCode.SERVER_UNREACHABLE
+    ) {
+      featureProbe = { enabled: true, at: now };
+    }
+  }
+}
+
 /**
  * The per-IP spend key the backend meters guests by. Hashed here so the raw
  * address never reaches Convex; omitted when it cannot be produced, so an
  * unresolvable IP falls back to the backend's cookie-only bucket instead of
  * pooling unrelated guests together.
+ *
+ * `getClientIp`, NOT the attested address the limiters above key on, and the
+ * difference is deliberate: this is a forwarded hint the backend accepts only
+ * alongside our service token and re-validates under its own trust rules,
+ * whereas a local rate-limit key is state a caller could otherwise mint at
+ * will. Narrowing this one is the backend's call to make, not ours.
  */
 async function guestSpendKey(c: Parameters<typeof getClientIp>[0]) {
   const clientIp = getClientIp(c);
@@ -463,6 +590,66 @@ const selectionSchema = z.object({
   actorIds: z.array(z.string().trim().min(1).max(128)).max(32).optional(),
 });
 
+/**
+ * Per-actor prefill the score site collects. The KEYS are the backend's
+ * vocabulary — it mints the actor ids and it is the only thing that can
+ * validate them — so this bounds size and shape-depth, not meaning, the same
+ * way `selectionSchema` above treats the ids it carries.
+ *
+ * It has to be bounded HERE rather than left to the blanket 1 MB body cap:
+ * this record is forwarded verbatim, and the backend may persist it against
+ * the run and price from it. A megabyte of arbitrarily nested JSON per run
+ * start is durable backend state nobody agreed to store.
+ */
+const PREFERENCES_MAX_KEYS = 32;
+const PREFERENCES_MAX_KEY_LENGTH = 128;
+const PREFERENCES_MAX_BYTES = 8 * 1024;
+const PREFERENCES_MAX_DEPTH = 8;
+
+/** True as soon as `value` nests past `limit` levels; stops at the first one. */
+function nestsDeeperThan(value: unknown, limit: number): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (limit <= 0) return true;
+  return Object.values(value as Record<string, unknown>).some((child) =>
+    nestsDeeperThan(child, limit - 1),
+  );
+}
+
+const preferencesSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((value, ctx) => {
+    const keys = Object.keys(value);
+    if (keys.length > PREFERENCES_MAX_KEYS) {
+      ctx.addIssue({
+        code: "custom",
+        message: `must have at most ${PREFERENCES_MAX_KEYS} keys`,
+      });
+      return;
+    }
+    if (keys.some((key) => key.length > PREFERENCES_MAX_KEY_LENGTH)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `each key must be at most ${PREFERENCES_MAX_KEY_LENGTH} characters`,
+      });
+      return;
+    }
+    if (nestsDeeperThan(value, PREFERENCES_MAX_DEPTH)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `must not nest more than ${PREFERENCES_MAX_DEPTH} levels deep`,
+      });
+      return;
+    }
+    if (
+      Buffer.byteLength(JSON.stringify(value), "utf8") > PREFERENCES_MAX_BYTES
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: `must serialize to at most ${PREFERENCES_MAX_BYTES} bytes`,
+      });
+    }
+  });
+
 const preflightSchema = targetSchema;
 
 const quoteSchema = targetSchema.extend({
@@ -479,8 +666,7 @@ const startRunSchema = targetSchema.extend({
    */
   receiptId: z.string().trim().min(1).max(256),
   selection: selectionSchema.optional(),
-  /** Bounded free-form prefs (per-actor overrides the score site collects). */
-  preferences: z.record(z.string(), z.unknown()).optional(),
+  preferences: preferencesSchema.optional(),
 });
 
 // ── Tool snapshot ────────────────────────────────────────────────────
@@ -494,6 +680,13 @@ const startRunSchema = targetSchema.extend({
  */
 const SNAPSHOT_MAX_TOOLS = 500;
 const SNAPSHOT_MAX_BYTES = 512 * 1024;
+
+/**
+ * What an entry costs beyond its own JSON: the comma joining it to the one
+ * before. Counted so the bound holds for the array actually sent rather than
+ * for the entries measured in isolation.
+ */
+const SNAPSHOT_ENTRY_FRAMING_BYTES = 1;
 
 interface ToolSnapshot {
   tools: Array<Record<string, unknown>>;
@@ -528,7 +721,13 @@ function buildToolSnapshot(tools: unknown[]): ToolSnapshot {
     if (tool.outputSchema) entry.outputSchema = tool.outputSchema;
     if (tool.annotations) entry.annotations = tool.annotations;
 
-    const size = JSON.stringify(entry).length;
+    // UTF-8 BYTES, which is what crosses the wire. `String.length` counts
+    // UTF-16 code units, and a CJK or emoji description costs three to four
+    // bytes per unit — so counting units would wave through a body several
+    // times the size of a bound that calls itself bytes.
+    const size =
+      Buffer.byteLength(JSON.stringify(entry), "utf8") +
+      SNAPSHOT_ENTRY_FRAMING_BYTES;
     if (bytes + size > SNAPSHOT_MAX_BYTES) {
       truncated = true;
       break;
@@ -558,7 +757,7 @@ function buildToolSnapshot(tools: unknown[]): ToolSnapshot {
  * server row — this route never sees a URL or a token it could substitute.
  */
 bench.post("/preflight", async (c) => {
-  consumeStartWorkRateLimit(getClientIp(c) ?? "unknown");
+  consumeStartWorkRateLimit(c);
 
   const bearer = assertBearerToken(c);
   const body = parseWithSchema(preflightSchema, await readJsonBody(c));
@@ -568,6 +767,12 @@ bench.post("/preflight", async (c) => {
   // connecting to the caller's server to learn that spends their time for
   // nothing.
   backendConfig();
+
+  // Same reasoning one step further out: a backend that has not enabled
+  // benchmark runs cannot classify anything either, and finding that out by
+  // opening the caller's server first is the one cost this route can avoid
+  // paying. After validation, so a malformed request never reaches Convex.
+  await assertBenchBackendEnabled();
 
   // A FRESH body, not the caller's. `runEphemeralConnection` re-reads its raw
   // argument for fields no route schema declares (the XAA policy), so handing
@@ -631,7 +836,7 @@ bench.post("/quotes", async (c) => {
 });
 
 bench.post("/runs", async (c) => {
-  consumeStartWorkRateLimit(getClientIp(c) ?? "unknown");
+  consumeStartWorkRateLimit(c);
 
   const bearer = assertBearerToken(c);
   const body = parseWithSchema(startRunSchema, await readJsonBody(c));
@@ -712,7 +917,7 @@ bench.get("/results/:secret", async (c) => {
   // gets 404s that never populate the cache — without a budget, every guess is
   // a free Convex round trip and this public route becomes a load amplifier
   // aimed at our own backend. Legitimate readers hit the cache and pay nothing.
-  consumeReadRateLimit(getClientIp(c) ?? "unknown");
+  consumeReadRateLimit(c);
 
   const backend = await callBackend(
     BACKEND_RESULT_GET_PATH,
