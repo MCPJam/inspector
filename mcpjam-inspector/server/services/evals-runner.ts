@@ -144,7 +144,9 @@ import {
   UnmatchedToolPolicyNameError,
   validateToolPolicyNames,
   type ToolAnnotationsLookup,
+  type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
+import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   createRunSetupObserver,
@@ -176,6 +178,32 @@ const MAX_CONCURRENT_RENDER_CHECKS = (() => {
   const raw = Number(process.env.MCPJAM_MAX_CONCURRENT_RENDER_CHECKS);
   return Number.isInteger(raw) && raw >= 1 ? raw : 4;
 })();
+
+/**
+ * Narrow the run-level benchmark write guard to ONE case's iteration.
+ *
+ * The prefix an artifact must carry is per-ITERATION, so a list-style case
+ * cannot observe its own sibling iterations' artifacts and grade a leak that is
+ * ours. The ledger is deliberately NOT narrowed: it belongs to the run, because
+ * the cleanup that reads it does.
+ *
+ * A case with no id cannot be matched to a manifest at all, which under
+ * `requireManifest` is refused rather than run — an unidentifiable write case
+ * is exactly the one whose blast radius nobody can state.
+ */
+function resolveSideEffectGate(
+  guard: BenchmarkWriteGuard,
+  caseId: string | undefined,
+  iteration: number,
+): SideEffectGate {
+  return {
+    sideEffects: caseId ? guard.sideEffectsByCaseId[caseId] : undefined,
+    benchmarkRunId: guard.benchmarkRunId,
+    iteration,
+    ledger: guard.ledger,
+    requireManifest: guard.requireManifest === true,
+  };
+}
 
 /**
  * Minimal async concurrency limiter: returns a function that runs at most
@@ -497,6 +525,17 @@ export type RunEvalSuiteOptions = {
    * the object between steps.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement, when this run is a hosted
+   * benchmark cell.
+   *
+   * Threaded rather than resolved here for the same reason the grant is: the
+   * manifests are pinned in the definition and verified against the claim
+   * before a cell launches, so the runner receives a decision it must not
+   * re-make. The ledger inside travels by REFERENCE — every iteration writes
+   * into the one the run's cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1597,6 +1636,8 @@ type RunIterationBaseParams = {
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -2025,6 +2066,8 @@ const executeTestCase = async (params: {
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /** See {@link RunEvalSuiteOptions.extraHeaders}. */
   extraHeaders?: Record<string, string>;
 }) => {
@@ -2062,6 +2105,7 @@ const executeTestCase = async (params: {
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
+    benchmarkWriteGuard,
     extraHeaders,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
@@ -2153,6 +2197,7 @@ const executeTestCase = async (params: {
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2289,6 +2334,7 @@ const executeTestCase = async (params: {
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2350,6 +2396,7 @@ const executeTestCase = async (params: {
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2403,6 +2450,7 @@ const executeTestCase = async (params: {
       ...(toolPolicy
         ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
         : {}),
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2447,6 +2495,7 @@ export const runEvalSuiteWithAiSdk = async ({
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
+  benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
@@ -2680,6 +2729,7 @@ export const runEvalSuiteWithAiSdk = async ({
               toolPolicyWarnings: resolvedToolPolicyWarnings,
             }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
@@ -3014,6 +3064,7 @@ const runLocalIteration = async ({
   toolPolicy,
   toolAnnotations,
   toolPolicyWarnings,
+  benchmarkWriteGuard,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3025,6 +3076,15 @@ const runLocalIteration = async ({
         policy: toolPolicy,
         annotations: toolAnnotations ?? new Map(),
         warnings: toolPolicyWarnings,
+        ...(benchmarkWriteGuard
+          ? {
+              sideEffectGate: resolveSideEffectGate(
+                benchmarkWriteGuard,
+                testCaseId ?? test.testCaseId,
+                runIndex,
+              ),
+            }
+          : {}),
       })
     : null;
 
@@ -4096,6 +4156,7 @@ const runHostedIterationWithBrowser = async (
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
+    benchmarkWriteGuard,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -4109,6 +4170,15 @@ const runHostedIterationWithBrowser = async (
         policy: toolPolicy,
         annotations: toolAnnotations ?? new Map(),
         warnings: toolPolicyWarnings,
+        ...(benchmarkWriteGuard
+          ? {
+              sideEffectGate: resolveSideEffectGate(
+                benchmarkWriteGuard,
+                testCaseId ?? test.testCaseId,
+                runIndex,
+              ),
+            }
+          : {}),
       })
     : null;
 

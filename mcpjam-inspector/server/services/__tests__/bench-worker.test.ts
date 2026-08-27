@@ -15,11 +15,43 @@ import {
 
 const CLAIMED_BY = "inspector-bench-test";
 const DEFINITION_HASH = "def-hash-1";
+const CASE_METADATA_HASH = "cases-hash-1";
+
+/**
+ * A write cell always carries a manifest here, because a claim that produced
+ * one without is refused before anything launches — see
+ * `bench-write-manifest.test.ts`.
+ */
+function writeManifest(cellId: string) {
+  return [
+    {
+      suiteHash: "suite-1",
+      caseId: `case-${cellId}`,
+      caseMetadataHash: CASE_METADATA_HASH,
+      sideEffects: {
+        mode: "test_write" as const,
+        summary: "creates one artifact",
+        allowedTools: ["create"],
+        createRules: [
+          {
+            tool: "create",
+            artifactNamePath: "name",
+            requiredPrefix: "mcpjam-benchmark-",
+            createdIdResultPaths: ["id"],
+          },
+        ],
+        mutationTargetPaths: [],
+        cleanupSteps: [{ tool: "remove", idArgPath: "id" }],
+      },
+    },
+  ];
+}
 
 function cell(
   cellId: string,
   options?: { writeCases?: boolean; status?: BenchmarkRosterEntry["status"] },
 ): BenchmarkRosterEntry {
+  const writeCases = options?.writeCases ?? false;
   return {
     evidenceKey: `eval:${cellId}`,
     kind: "eval_run",
@@ -31,7 +63,8 @@ function cell(
       suiteId: "suite-1",
       environmentId: `env-${cellId}`,
       namedHostId: null,
-      writeCases: options?.writeCases ?? false,
+      writeCases,
+      ...(writeCases ? { caseSideEffects: writeManifest(cellId) } : {}),
     },
   };
 }
@@ -46,7 +79,11 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
     serverName: "Target",
     leaseGeneration: 7,
     definitionHash: DEFINITION_HASH,
-    pins: { definitionHash: DEFINITION_HASH, consentHash: "consent-1" },
+    pins: {
+      definitionHash: DEFINITION_HASH,
+      consentHash: "consent-1",
+      caseMetadataHash: CASE_METADATA_HASH,
+    },
     roster: [
       // A pillar this lane does not own; it must be left entirely alone.
       {
@@ -71,6 +108,8 @@ type Recorded = {
   aborted: Array<{ reason: string; retryable: boolean }>;
   /** Header objects handed to each cell, so grant rotation is observable. */
   grantHeaders: Array<Record<string, string>>;
+  /** Cleanup + the terminal sequence, in the order they were called. */
+  terminal: string[];
 };
 
 function harness(options?: {
@@ -87,6 +126,7 @@ function harness(options?: {
     completed: [],
     aborted: [],
     grantHeaders: [],
+    terminal: [],
   };
 
   const runCell: BenchExecutionDeps["runEvalCell"] =
@@ -108,10 +148,30 @@ function harness(options?: {
         testSuiteRunId: args.testSuiteRunId,
       });
     },
+    cleanupArtifacts: async () => {
+      recorded.terminal.push("cleanup");
+      return {
+        status: "clean" as const,
+        attempted: 0,
+        removed: 0,
+        residue: 0,
+        residualIds: [],
+      };
+    },
     executionComplete: async (args) => {
+      recorded.terminal.push("execution-complete");
       recorded.completed.push({
         ...(args.stoppedReason ? { stoppedReason: args.stoppedReason } : {}),
       });
+    },
+    finalize: async () => {
+      recorded.terminal.push("finalize");
+    },
+    analyze: async () => {
+      recorded.terminal.push("analyze");
+    },
+    complete: async () => {
+      recorded.terminal.push("complete");
     },
     abort: async (args) => {
       recorded.aborted.push({ reason: args.reason, retryable: args.retryable });

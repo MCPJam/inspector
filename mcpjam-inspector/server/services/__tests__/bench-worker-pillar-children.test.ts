@@ -134,7 +134,17 @@ function harness(options?: {
       });
     },
     attachEvidence: async () => {},
+    cleanupArtifacts: async () => ({
+      status: "clean" as const,
+      attempted: 0,
+      removed: 0,
+      residue: 0,
+      residualIds: [],
+    }),
     executionComplete: async () => {},
+    finalize: async () => {},
+    analyze: async () => {},
+    complete: async () => {},
     abort: async () => {},
     heartbeat: async () => ({ leaseOk: true }),
     heartbeatIntervalMs: 20_000,

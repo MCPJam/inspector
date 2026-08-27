@@ -62,6 +62,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
   environmentServerIds,
@@ -466,6 +467,17 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * it mid-run without restarting anything.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement for this cell.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot hand itself permission to write to a target. The
+   * manifests inside are pinned in the definition and verified against the
+   * claim BEFORE the cell launches; the artifact ledger inside is the run's,
+   * shared by reference so every iteration writes into the one the run's
+   * cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -1944,6 +1956,7 @@ export async function prepareEvalRun(
     toolPolicy,
     importApprovals,
     extraHeaders,
+    benchmarkWriteGuard,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2506,6 +2519,8 @@ export async function prepareEvalRun(
       ...(toolPolicy ? { toolPolicy } : {}),
       // The SAME object, never a copy — see `extraHeaders` on the request type.
       ...(extraHeaders ? { extraHeaders } : {}),
+      // Likewise by reference: the ledger inside is the RUN's.
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     });
   };
 

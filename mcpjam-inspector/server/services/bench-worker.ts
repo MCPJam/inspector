@@ -12,7 +12,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * A benchmark run spends someone's credits and dials a third party's server,
- * so two properties matter more here than in the sibling workers:
+ * so three properties matter more here than in the sibling workers:
  *
  *   1. TWO WORKERS MUST NEVER DRIVE ONE JOB. The lease is refreshed every 20s
  *      and `assertLeaseHeld()` runs between every step; a worker that keeps
@@ -28,12 +28,21 @@
  *      else's server. Rostered evidence that already reached a terminal status
  *      is not launched at all.
  *
- * The pins are checked BEFORE anything runs. A job whose definition hash no
- * longer matches the one the claim resolved is refused rather than executed:
- * running the wrong exam under a profile's name is worse than not running it.
+ *   3. A RUN TIDIES UP AFTER ITSELF. Every artifact a write case creates lands
+ *      in the run's ledger as it is created, and cleanup replays that ledger in
+ *      a `finally` — after every cell has disconnected, over its own
+ *      connection, with no model call anywhere on the path. A run that
+ *      exhausted its budget still has to remove what it left on somebody
+ *      else's server, so the one thing cleanup must not depend on is the thing
+ *      that ran out. Cleanup dials the TARGET rather than the backend, which is
+ *      why it runs even after a lost lease: the ids are in THIS worker's ledger
+ *      and no other worker can see them.
  *
- * SCOPE: the eval matrix, the conformance child and the auth-probe child. The
- * write-manifest enforcement a `test_write` cell needs is a separate lane.
+ * The pins are checked BEFORE anything runs — the definition hash, and the
+ * `caseMetadataHash` a write cell's manifest has to agree with. A job that no
+ * longer matches what the claim resolved is refused rather than executed:
+ * running the wrong exam under a profile's name, or writing under rules the
+ * payer never saw, is worse than not running it.
  *
  * THE TWO NON-MODEL CHILDREN RUN FIRST. The probe and the conformance suite
  * spend no model credits, so a run whose budget is exhausted — or which is
@@ -55,6 +64,18 @@ import {
   shouldSkipExecution,
 } from "../routes/shared/evals.js";
 import { createConcurrencyLimiter } from "./evals-runner.js";
+import {
+  cleanupBenchmarkArtifacts,
+  createBenchmarkArtifactLedger,
+  type ArtifactCleanupReport,
+  type BenchmarkArtifactLedger,
+  type BenchmarkWriteGuard,
+} from "./evals/artifact-ledger.js";
+import {
+  assertCaseMetadataPinned,
+  CaseMetadataPinMismatchError,
+  type PinnedCaseSideEffects,
+} from "./evals/side-effect-manifest.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import {
@@ -136,6 +157,16 @@ export type BenchmarkEvalCell = {
    * `read_only` costs someone else's data.
    */
   writeCases?: boolean;
+  /**
+   * The pinned side-effect manifests for this exam's cases, resolved
+   * backend-side by `suiteHash + caseId`.
+   *
+   * Verified against the claim's `caseMetadataHash` before anything launches —
+   * see `assertClaimExecutable`. A manifest that cannot be tied to the
+   * definition the job was admitted under is not one we may enforce: the write
+   * rules the payer consented to would not be the rules that ran.
+   */
+  caseSideEffects?: PinnedCaseSideEffects[];
 };
 
 /**
@@ -550,6 +581,14 @@ async function reportExecutionComplete(args: {
   job: ClaimedBenchmarkJob;
   claimedBy: string;
   stoppedReason?: string;
+  /**
+   * What the run left behind on the target, for the scorecard. Reported with
+   * the phase that produced it rather than on its own route: "here is how
+   * execution went" is one statement, and a residue count that arrived
+   * separately could be attached to a run that had already been finalized
+   * without it.
+   */
+  cleanup?: ArtifactCleanupReport;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
     `${BENCH_SERVICE_BASE}/jobs/execution-complete`,
@@ -559,6 +598,7 @@ async function reportExecutionComplete(args: {
       gen: args.job.leaseGeneration,
       claimedBy: args.claimedBy,
       ...(args.stoppedReason ? { stoppedReason: args.stoppedReason } : {}),
+      ...(args.cleanup ? { cleanup: args.cleanup } : {}),
     },
   );
   if (isLeaseLostResponse(status, body)) {
@@ -566,6 +606,87 @@ async function reportExecutionComplete(args: {
   }
   if (status !== 200 || !body?.ok) {
     throw new Error(`execution-complete rejected (${status})`);
+  }
+}
+
+/**
+ * Assemble the scorecard.
+ *
+ * A SEPARATE step from execution-complete, and the job's lease deliberately
+ * outlives it: a worker lost between the two is swept and the run re-finalized
+ * rather than orphaned in `awaiting_evidence` with a complete roster.
+ */
+async function finalizeBenchmarkRun(args: {
+  job: ClaimedBenchmarkJob;
+  claimedBy: string;
+}): Promise<void> {
+  const { status, body } = await postServiceRoute(
+    `${BENCH_SERVICE_BASE}/runs/finalize`,
+    {
+      jobId: args.job.jobId,
+      benchmarkRunId: args.job.benchmarkRunId,
+      gen: args.job.leaseGeneration,
+      claimedBy: args.claimedBy,
+    },
+  );
+  if (isLeaseLostResponse(status, body)) {
+    throw new LeaseLostError("finalize rejected the lease generation");
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`finalize rejected (${status})`);
+  }
+}
+
+/**
+ * Ask for the explanatory flow analysis.
+ *
+ * AFTER finalize, and never a precondition of it. The analyzer produces an
+ * INFERRED experience artifact billed against the run's budget; a scorecard
+ * must not wait on it and must not change because it failed or arrived late.
+ */
+async function triggerFlowAnalyzer(args: {
+  job: ClaimedBenchmarkJob;
+  claimedBy: string;
+}): Promise<void> {
+  const { status, body } = await postServiceRoute(
+    `${BENCH_SERVICE_BASE}/runs/analyze`,
+    {
+      jobId: args.job.jobId,
+      benchmarkRunId: args.job.benchmarkRunId,
+      gen: args.job.leaseGeneration,
+      claimedBy: args.claimedBy,
+    },
+  );
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`analyzer trigger rejected (${status})`);
+  }
+}
+
+/**
+ * Release the job. LAST, always.
+ *
+ * The backend only accepts it once the run is terminal, and holding the lease
+ * until then is what lets a sweep re-finalize a run whose worker died between
+ * `awaiting_evidence` and a scorecard.
+ */
+async function completeBenchmarkJob(args: {
+  job: ClaimedBenchmarkJob;
+  claimedBy: string;
+}): Promise<void> {
+  const { status, body } = await postServiceRoute(
+    `${BENCH_SERVICE_BASE}/jobs/complete`,
+    {
+      jobId: args.job.jobId,
+      benchmarkRunId: args.job.benchmarkRunId,
+      gen: args.job.leaseGeneration,
+      claimedBy: args.claimedBy,
+    },
+  );
+  if (isLeaseLostResponse(status, body)) {
+    throw new LeaseLostError("complete rejected the lease generation");
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`job complete rejected (${status})`);
   }
 }
 
@@ -623,10 +744,40 @@ export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
   }
   for (const entry of job.roster ?? []) {
     if (entry.kind !== "eval_run") continue;
-    if (!entry.evalCell?.cellId || !entry.evalCell?.suiteId) {
+    const cell = entry.evalCell;
+    if (!cell?.cellId || !cell?.suiteId) {
       throw new JobUnexecutableError(
         `rostered cell "${entry.evidenceKey}" carries no launch spec`,
       );
+    }
+    // A write cell with no manifest has no enforceable bound on what it may
+    // create or mutate on a third party's server. `publishDefinition` refuses
+    // to publish one; a claim that produced one anyway is a contract breach,
+    // and running it unbounded is the one outcome worse than not running it.
+    if (cell.writeCases === true && !cell.caseSideEffects?.length) {
+      throw new JobUnexecutableError(
+        `write cell "${entry.evidenceKey}" carries no side-effect manifest`,
+      );
+    }
+    // Only a cell that HAS manifests needs the pin: a read-only exam declares
+    // nothing, and demanding a `caseMetadataHash` for it would refuse every
+    // definition that has no write case to describe.
+    if (!cell.caseSideEffects?.length) continue;
+    try {
+      assertCaseMetadataPinned({
+        resolved: cell.caseSideEffects,
+        expectedCaseMetadataHash: job.pins?.caseMetadataHash,
+        ...(job.pins?.suiteRevision
+          ? { expectedSuiteHash: job.pins.suiteRevision }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof CaseMetadataPinMismatchError) {
+        throw new JobUnexecutableError(
+          `cell "${entry.evidenceKey}": ${error.message}`,
+        );
+      }
+      throw error;
     }
   }
 }
@@ -655,7 +806,44 @@ export type RunEvalCellArgs = {
    * place when a heartbeat reissues the grant — see `executeClaimedJob`.
    */
   grantHeaders: Record<string, string>;
+  /**
+   * The RUN's artifact ledger, shared by every cell and by the cleanup that
+   * follows them. One per job, never per cell: an artifact created by one cell
+   * has to be removable after every cell has finished.
+   */
+  ledger: BenchmarkArtifactLedger;
 };
+
+/**
+ * The write guard for one cell, or nothing when the cell declares no writes.
+ *
+ * Read-only cells get no guard at all rather than an empty one: an empty guard
+ * would wrap every allowed tool for no reason, and `requireManifest` on a cell
+ * with nothing to declare would refuse calls the exam is supposed to make.
+ */
+function buildWriteGuard(
+  cell: BenchmarkEvalCell,
+  benchmarkRunId: string,
+  ledger: BenchmarkArtifactLedger,
+): BenchmarkWriteGuard | undefined {
+  if (!cell.caseSideEffects?.length) return undefined;
+  const sideEffectsByCaseId: Record<
+    string,
+    PinnedCaseSideEffects["sideEffects"]
+  > = {};
+  for (const entry of cell.caseSideEffects) {
+    sideEffectsByCaseId[entry.caseId] = entry.sideEffects;
+  }
+  return {
+    benchmarkRunId,
+    sideEffectsByCaseId,
+    // Fail-closed only for a cell that actually writes. A read case inside a
+    // write exam still has to find its own manifest entry; one that does not
+    // is refused rather than run unbounded.
+    requireManifest: cell.writeCases === true,
+    ledger,
+  };
+}
 
 /**
  * Run ONE matrix cell as an eval child.
@@ -668,6 +856,7 @@ async function defaultRunEvalCell(
   args: RunEvalCellArgs,
 ): Promise<{ runId: string; executed: boolean }> {
   const { job, cell } = args;
+  const writeGuard = buildWriteGuard(cell, job.benchmarkRunId, args.ledger);
   // Empty caller context = plain-JWT caller (locked by the caller-context
   // contract test); the runner bearer is the principal.
   const authorized = await createAuthorizedManager(
@@ -698,6 +887,9 @@ async function defaultRunEvalCell(
       // the object is shared with the heartbeat, which rotates the grant inside
       // it when the backend reissues one.
       extraHeaders: args.grantHeaders,
+      // Likewise by reference: the ledger inside is the RUN's, so what this
+      // cell creates is what the run's cleanup removes.
+      ...(writeGuard ? { benchmarkWriteGuard: writeGuard } : {}),
       idempotencyKey: evalChildIdempotencyKey(
         job.benchmarkRunId,
         args.entry.evidenceKey,
@@ -839,6 +1031,85 @@ export type RunAuthProbeArgs = {
   spec: BenchmarkProbeSpec;
 };
 
+export type CleanupArtifactsArgs = {
+  job: ClaimedBenchmarkJob;
+  ledger: BenchmarkArtifactLedger;
+};
+
+/**
+ * Remove everything this run created on the target.
+ *
+ * Its OWN connection, opened after every cell has disconnected, because
+ * cleanup outlives the cells: an artifact created by the first cell has to be
+ * removable after the last one finished. No model is involved anywhere on this
+ * path — a run that exhausted its budget still has to tidy up, and cleanup that
+ * needed an LLM would be skipped by exactly the failure that most needs it.
+ *
+ * A connection we cannot open is `skipped`, not `clean`. The artifacts are
+ * still there; saying otherwise would report an operator's server as tidy on
+ * the strength of never having looked.
+ */
+async function defaultCleanupArtifacts(
+  args: CleanupArtifactsArgs,
+): Promise<ArtifactCleanupReport> {
+  const pending = args.ledger.entries();
+  if (pending.length === 0) {
+    return {
+      status: "clean",
+      attempted: 0,
+      removed: 0,
+      residue: 0,
+      residualIds: [],
+    };
+  }
+
+  const { job } = args;
+  const authorized = await createAuthorizedManager(
+    {},
+    job.runnerBearer,
+    job.projectId,
+    [job.serverId],
+    WEB_CALL_TIMEOUT_MS,
+    undefined,
+    undefined,
+    job.serverName ? { serverNames: [job.serverName] } : undefined,
+  ).catch((error: unknown) => {
+    logger.error("[bench] cleanup could not connect to the target", error, {
+      benchmarkRunId: job.benchmarkRunId,
+      residue: pending.length,
+    });
+    return null;
+  });
+
+  if (!authorized) {
+    return {
+      status: "skipped",
+      attempted: pending.length,
+      removed: 0,
+      residue: pending.length,
+      residualIds: pending.map((entry) => entry.createdId).slice(0, 50),
+    };
+  }
+
+  try {
+    return await cleanupBenchmarkArtifacts({
+      ledger: args.ledger,
+      callTool: ({ tool, args: toolArgs }) =>
+        authorized.manager.executeTool(job.serverId, tool, toolArgs),
+      onStepError: (error, context) => {
+        logger.warn("[bench] cleanup step failed", {
+          benchmarkRunId: job.benchmarkRunId,
+          tool: context.tool,
+          createdId: context.createdId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
+  } finally {
+    await authorized.manager.disconnectAllServers().catch(() => {});
+  }
+}
+
 /** Observe the target's unauthenticated behaviour from our own infrastructure. */
 async function defaultRunAuthProbe(
   args: RunAuthProbeArgs,
@@ -864,10 +1135,14 @@ export type BenchExecutionDeps = {
   runEvalCell: typeof defaultRunEvalCell;
   runConformanceChild: typeof defaultRunConformanceChild;
   runAuthProbe: typeof defaultRunAuthProbe;
+  cleanupArtifacts: typeof defaultCleanupArtifacts;
   attachEvidence: typeof attachEvalEvidence;
   attachConformance: typeof attachConformanceEvidence;
   attachProbe: typeof attachProbeEvidence;
   executionComplete: typeof reportExecutionComplete;
+  finalize: typeof finalizeBenchmarkRun;
+  analyze: typeof triggerFlowAnalyzer;
+  complete: typeof completeBenchmarkJob;
   abort: typeof abortJob;
   heartbeat: (
     job: ClaimedBenchmarkJob,
@@ -881,10 +1156,14 @@ function defaultDeps(): BenchExecutionDeps {
     runEvalCell: defaultRunEvalCell,
     runConformanceChild: defaultRunConformanceChild,
     runAuthProbe: defaultRunAuthProbe,
+    cleanupArtifacts: defaultCleanupArtifacts,
     attachEvidence: attachEvalEvidence,
     attachConformance: attachConformanceEvidence,
     attachProbe: attachProbeEvidence,
     executionComplete: reportExecutionComplete,
+    finalize: finalizeBenchmarkRun,
+    analyze: triggerFlowAnalyzer,
+    complete: completeBenchmarkJob,
     abort: abortJob,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
@@ -925,6 +1204,14 @@ export async function executeClaimedJob(
   const grantHeaders: Record<string, string> = {
     [BENCHMARK_GRANT_HEADER]: claimed.grant,
   };
+
+  /**
+   * ONE ledger for the whole job, written by every write case and read by the
+   * cleanup below. Per-run rather than per-cell because an artifact created by
+   * the first cell has to be removable after the last one has finished.
+   */
+  const ledger = createBenchmarkArtifactLedger();
+  let cleanupReport: ArtifactCleanupReport | undefined;
 
   const heartbeat = setInterval(() => {
     void deps
@@ -981,6 +1268,43 @@ export async function executeClaimedJob(
     if (leaseLost) throw leaseLost;
   };
 
+  /**
+   * Remove what this run created, whatever ended it.
+   *
+   * NEVER THROWS, and reached by every path that got as far as launching a
+   * cell: it dials the TARGET rather than the backend, so a lost lease does not
+   * stop it — the ids are in THIS worker's ledger and no other worker can see
+   * them. Budget exhaustion and cancellation reach it for the same reason.
+   *
+   * A claim refused before anything launched never gets here, and does not
+   * need to: nothing was created.
+   */
+  const runCleanup = async (): Promise<void> => {
+    try {
+      cleanupReport = await deps.cleanupArtifacts({ job: claimed, ledger });
+    } catch (error) {
+      const pending = ledger.entries();
+      logger.error("[bench] cleanup failed", error, {
+        ...logContext,
+        residue: pending.length,
+      });
+      cleanupReport = {
+        status: "skipped",
+        attempted: pending.length,
+        removed: 0,
+        residue: pending.length,
+        residualIds: pending.map((entry) => entry.createdId).slice(0, 50),
+      };
+    }
+    if (cleanupReport.residue > 0) {
+      logger.warn("[bench] run left artifacts on the target", {
+        ...logContext,
+        status: cleanupReport.status,
+        residue: cleanupReport.residue,
+      });
+    }
+  };
+
   try {
     assertClaimExecutable(claimed);
     assertLeaseHeld();
@@ -1025,6 +1349,7 @@ export async function executeClaimedJob(
           entry,
           cell,
           grantHeaders,
+          ledger,
         });
         runId = result.runId;
       } catch (error) {
@@ -1194,35 +1519,42 @@ export async function executeClaimedJob(
       }
     };
 
-    // The two non-model children first, and one at a time — see the module
-    // header. They cost no credits, so a wind-down should never be what throws
-    // them away; and running them concurrently would put two unauthenticated
-    // conversations on a target that did not ask for either.
-    for (const entry of owing("auth_probe")) {
+    try {
+      // The two non-model children first, and one at a time — see the module
+      // header. They cost no credits, so a wind-down should never be what
+      // throws them away; and running them concurrently would put two
+      // unauthenticated conversations on a target that did not ask for either.
+      for (const entry of owing("auth_probe")) {
+        assertLeaseHeld();
+        await settle(entry, runAuthProbeRow);
+      }
+      for (const entry of owing("conformance_run")) {
+        assertLeaseHeld();
+        await settle(entry, runConformanceRow);
+      }
+
       assertLeaseHeld();
-      await settle(entry, runAuthProbeRow);
-    }
-    for (const entry of owing("conformance_run")) {
+
+      const limit = createConcurrencyLimiter(MAX_CONCURRENT_READ_ONLY_CELLS);
+      await Promise.all(
+        readOnly.map((entry) => limit(() => settle(entry, runCell))),
+      );
+
       assertLeaseHeld();
-      await settle(entry, runConformanceRow);
-    }
 
-    assertLeaseHeld();
-
-    const limit = createConcurrencyLimiter(MAX_CONCURRENT_READ_ONLY_CELLS);
-    await Promise.all(
-      readOnly.map((entry) => limit(() => settle(entry, runCell))),
-    );
-
-    assertLeaseHeld();
-
-    // STRICTLY one at a time, and only after every read-only cell has settled.
-    // A write case creates artifacts named for this run and then asserts over
-    // what it can see; a sibling writing concurrently is indistinguishable from
-    // the target leaking another tenant's data.
-    for (const entry of writing) {
-      assertLeaseHeld();
-      await settle(entry, runCell);
+      // STRICTLY one at a time, and only after every read-only cell has
+      // settled. A write case creates artifacts named for this run and then
+      // asserts over what it can see; a sibling writing concurrently is
+      // indistinguishable from the target leaking another tenant's data.
+      for (const entry of writing) {
+        assertLeaseHeld();
+        await settle(entry, runCell);
+      }
+    } finally {
+      // After every cell has disconnected, and before anything is reported:
+      // the scorecard's cleanup status has to describe a cleanup that already
+      // happened.
+      await runCleanup();
     }
 
     assertLeaseHeld();
@@ -1230,7 +1562,29 @@ export async function executeClaimedJob(
       job: claimed,
       claimedBy,
       ...(windDown.reason ? { stoppedReason: windDown.reason } : {}),
+      ...(cleanupReport ? { cleanup: cleanupReport } : {}),
     });
+
+    // Assemble the scorecard, then ask for the explanatory flow analysis, then
+    // release the job — in that order and no other. The analyzer bills the
+    // run's budget for an INFERRED artifact, so it must never be able to
+    // change or delay a scorecard; and the lease has to outlive finalization
+    // so a worker lost mid-assembly is swept rather than leaving a run parked
+    // in `awaiting_evidence` with a complete roster.
+    assertLeaseHeld();
+    await deps.finalize({ job: claimed, claimedBy });
+
+    assertLeaseHeld();
+    await deps.analyze({ job: claimed, claimedBy }).catch((error) => {
+      if (error instanceof LeaseLostError) throw error;
+      logger.warn("[bench] flow analyzer could not be triggered", {
+        ...logContext,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    assertLeaseHeld();
+    await deps.complete({ job: claimed, claimedBy });
   } catch (error) {
     if (error instanceof LeaseLostError) {
       // WRITE NOTHING. Another worker owns this job, and an abort from here
