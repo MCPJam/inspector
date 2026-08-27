@@ -198,7 +198,7 @@ Check ids:
 Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
 
 - `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
-- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
+- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe` or `logProbe`, no successful exchange for `modern-no-session-id`, subscription stream unavailable). These make the run `incomplete`.
 
 `MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
 
