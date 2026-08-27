@@ -68,7 +68,15 @@ Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
 - **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
-- **Hosted (cloud):** Cloud skills are **SKILL.md-only**. Folders that contain files other than `SKILL.md` are rejected — inline any content that `SKILL.md` references directly into the file before uploading.
+- **Hosted (cloud):** Cloud skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
+
+Hosted skill folders are bounded by three limits, enforced when the files are attached:
+
+| Limit | Value |
+|---|---|
+| Per file | 2 MB |
+| Files per skill | 50 |
+| Total per skill | 20 MB |
 
 <Note>
   Uploading a skill with a name that already exists will be rejected. Delete the existing skill first if you need to replace it.
@@ -87,6 +95,32 @@ To update every installed skill at once:
 ```bash
 npx skills update
 ```
+
+## Skills an agent writes for itself
+
+Harness runs (Claude Code, Codex) execute in a sandbox with a real filesystem, so
+the agent can write a skill mid-run the same way it would on your machine. After
+a clean turn, MCPJam **adopts** any skill it finds in the sandbox's skills
+directory into your project — otherwise the work would vanish with the sandbox.
+
+Adopted skills are **personal**: visible to you, not to the rest of the project,
+until you promote one. They are marked with a `computer-adopted` provenance, so
+you can tell them from skills you authored.
+
+Adoption is deliberately narrow. It does not run when:
+
+- **the run used pinned skills** — a pinned set is a frozen snapshot, and writing
+  back into the pool would change what the *next* eval arm resolves against,
+  silently altering the thing under comparison;
+- the turn failed, was aborted, or is paused waiting for approval;
+- the run carries an execution scope (guest and swarm runs never adopt);
+- the live skills fetch failed, so MCPJam cannot tell an agent-authored skill
+  from one it simply failed to see as already managed.
+
+<Note>
+  Set `HARNESS_SKILL_ADOPTION_DISABLED=1` to turn adoption off entirely for a
+  deployment.
+</Note>
 
 ## Using Skills
 
