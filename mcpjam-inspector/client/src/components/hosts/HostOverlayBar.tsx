@@ -259,7 +259,7 @@ export function HostOverlayBar({
             onClick={() => cycle(-1)}
             className={cn(
               "inline-flex h-8 w-7 items-center justify-center rounded-l-md text-muted-foreground transition-colors",
-              "hover:bg-chrome-hover hover:text-foreground",
+              "hover:bg-chrome-control-hover hover:text-foreground",
               "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-40"
             )}
@@ -275,7 +275,7 @@ export function HostOverlayBar({
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-chrome-control-border bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
-                  "hover:bg-chrome-hover data-[state=open]:bg-chrome-hover",
+                  "hover:bg-chrome-control-hover data-[state=open]:bg-chrome-control-hover",
                   "focus-visible:ring-2 focus-visible:ring-ring/45"
                 )}
               >

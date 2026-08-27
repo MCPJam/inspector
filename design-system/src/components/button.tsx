@@ -22,7 +22,7 @@ const buttonVariants = cva(
         // latter is the same value as --chrome-control, which made the label
         // vanish into the fill.
         secondary:
-          "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-hover",
+          "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-control-hover",
         // No fill at rest, chrome fill on hover. One token for both themes,
         // so this no longer needs a dark-mode override.
         ghost:

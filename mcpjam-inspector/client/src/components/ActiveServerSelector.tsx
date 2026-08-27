@@ -392,7 +392,11 @@ export function ActiveServerSelector({
               // Not a tab, so it never wears the panel fill — it stays on the
               // chrome and only lights up on hover.
               "hover:bg-chrome-hover hover:text-foreground",
-              "text-muted-foreground border-dashed",
+              // Same text colour as the server tabs beside it. It was muted,
+              // which on the linen ground read as disabled rather than as the
+              // secondary action it is; the dashed border already says "not a
+              // server".
+              "text-foreground border-dashed",
             )}
           >
             {isMultiSelectEnabled && (

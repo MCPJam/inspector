@@ -362,6 +362,10 @@ describe("ActiveServerSelector", () => {
       const addServer = screen.getByText("Add Server").closest("button");
       expect(addServer?.className).not.toContain("bg-background");
       expect(addServer?.className).toContain("hover:bg-chrome-hover");
+      // Same text weight as the tabs beside it. Muted read as disabled on the
+      // linen ground; the dashed border is what says "not a server".
+      expect(addServer?.className).toContain("text-foreground");
+      expect(addServer?.className).not.toContain("text-muted-foreground");
     });
   });
 
