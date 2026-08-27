@@ -22,8 +22,8 @@ import {
   probeServerSkillMissing,
   readVerifiedServerSkillFile,
   type ServerSkillRefusal,
-} from "../server-skills.js";
-import type { MCPClientManager } from "@mcpjam/sdk";
+} from "../src/server-skills.js";
+import type { MCPClientManager } from "../src/mcp-client-manager/index.js";
 
 const SERVER_ID = "srv";
 const SKILL_URI = "skill://acme/refunds/SKILL.md";
@@ -42,7 +42,9 @@ async function sha256(text: string): Promise<string> {
     .join("");
 }
 
-const bytesOf = (text: string) => Buffer.byteLength(text, "utf8");
+// Byte length via `TextEncoder`: this suite moved into the SDK with the module
+// it covers, and the SDK's browser entry bans node built-ins.
+const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
 
 type Manifest = Array<{ uri: string; digest: string; size?: number }>;
 
