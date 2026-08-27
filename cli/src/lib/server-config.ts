@@ -156,14 +156,22 @@ export function conformanceConfigFromOptions(options: {
   };
 }
 
-export function getGlobalOptions(command: Command): GlobalOptions {
+export function getGlobalOptions(
+  command: Command,
+  defaultTimeoutMs = 30_000,
+): GlobalOptions {
   const options = command.optsWithGlobals() as Partial<GlobalOptions>;
   return {
     format: resolveOutputFormat(
       options.format as string | undefined,
       process.stdout.isTTY,
     ),
-    timeout: options.timeout ?? 30_000,
+    // `defaultTimeoutMs` applies ONLY when `--timeout` was not passed, so an
+    // explicit flag always wins. Commands that drive a model turn override it:
+    // 30s is right for an MCP probe and far too short for an agent that
+    // installs packages, and the turn keeps running server-side after the
+    // client gives up.
+    timeout: options.timeout ?? defaultTimeoutMs,
     rpc: options.rpc ?? false,
     quiet: options.quiet ?? false,
     telemetry: options.telemetry ?? true,
