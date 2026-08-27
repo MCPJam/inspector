@@ -38,7 +38,9 @@ import { AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
 import { StageFunnel } from "@/components/shared/user-value-chain/StageFunnel";
 import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chain/user-value-chain-types";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
+import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type {
+  InsightsScope,
   SankeyStage,
   UsageBreakdown,
 } from "@/hooks/useUsageInsights";
@@ -249,6 +251,7 @@ export function BenchReport({
   result,
   funnel,
   flow,
+  flowScope = null,
   onRerunSameExam,
   onRerunLatestExam,
 }: {
@@ -257,6 +260,12 @@ export function BenchReport({
   funnel?: ChatSessionStageFunnel | null;
   /** The four-column flow. Absent until somebody paid for the analyzer pass. */
   flow?: UsageBreakdown | null;
+  /**
+   * The cohort a not-yet-bought analysis would be filed against. Supplied only
+   * where the reader can actually authorize the spend — the public result link
+   * has no session to bill, so it passes nothing and the offer never appears.
+   */
+  flowScope?: InsightsScope | null;
   onRerunSameExam?: () => void;
   onRerunLatestExam?: () => void;
 }) {
@@ -433,7 +442,17 @@ export function BenchReport({
             nothing that scores.
           </p>
         </Panel>
-      ) : null}
+      ) : (
+        // No pass has been bought for this run yet. The opt-in is the only
+        // thing that can buy one, it issues nothing until it is clicked, and
+        // it renders nothing at all without a scope — which is what the public
+        // result link passes, having no session to bill.
+        <ExplanatoryFlowOptIn
+          scope={flowScope}
+          stageTitles={BENCH_STAGE_TITLES}
+          costLabel="It is priced into the run's own budget."
+        />
+      )}
 
       {result.cleanup ? (
         <div className="flex items-start gap-2 rounded-md border border-border/50 px-3 py-2 text-[11px]">

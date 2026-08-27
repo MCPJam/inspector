@@ -115,3 +115,55 @@ function SwarmRunStageFunnelPanel({ journeyRunId }: { journeyRunId: string }) {
     />
   );
 }
+
+/**
+ * The funnel for one eval suite run's trials.
+ *
+ * Its own denominator again, and the third population that must never be
+ * folded into the other two: an eval trial is a pinned case executed against a
+ * pinned config, which is neither a real person nor a persona rehearsal.
+ *
+ * COSTS NOTHING TO RENDER, which is why it is mounted unconditionally on the
+ * run detail rather than behind an opt-in. The chain was already derived by
+ * the stage worker; this reads the rollup. The explanatory flow diagram beside
+ * it is a model's reading of the same traces, is bought per pass, and is
+ * gated — the difference in how they are offered is the difference in what
+ * they cost.
+ */
+export function SuiteRunStageFunnelPanel({
+  suiteRunId,
+  className,
+}: {
+  suiteRunId: string | undefined;
+  className?: string;
+}) {
+  return (
+    <ErrorBoundary fallback={null}>
+      <SuiteRunStageFunnel suiteRunId={suiteRunId} className={className} />
+    </ErrorBoundary>
+  );
+}
+
+function SuiteRunStageFunnel({
+  suiteRunId,
+  className,
+}: {
+  suiteRunId: string | undefined;
+  className?: string;
+}) {
+  const summary = useQuery(
+    "chatSessionStageDerivation:getSuiteRunStageFunnel" as never,
+    (suiteRunId ? { suiteRunId } : "skip") as never
+  ) as ChatSessionStageFunnel | null | undefined;
+
+  if (!summary) return null;
+
+  return (
+    <StageFunnel
+      summary={summary}
+      title="User value chain"
+      populationLabel="Trials in this run"
+      className={className}
+    />
+  );
+}
