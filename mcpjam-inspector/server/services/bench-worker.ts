@@ -26,11 +26,17 @@
  *      of the pinned definition, so a resumed job joins the children it already
  *      started instead of paying for a second intrusive run against someone
  *      else's server. Rostered evidence that already reached a terminal status
- *      is not launched at all.
+ *      is not launched at all, and a child that DOES come back is adopted
+ *      rather than driven — including a non-terminal one, which this process
+ *      cannot distinguish from a live one another worker still owns.
  *
  * The pins are checked BEFORE anything runs. A job whose definition hash no
  * longer matches the one the claim resolved is refused rather than executed:
  * running the wrong exam under a profile's name is worse than not running it.
+ *
+ * And a child that ran is never traded for a tidy exit: the execution phase is
+ * reported only once every child has been bound to its row, because a scorecard
+ * is inserted once and never patched.
  *
  * SCOPE: eval children only. The conformance and auth-probe children, and the
  * write-manifest enforcement a `test_write` cell needs, are separate lanes.
@@ -77,6 +83,18 @@ const MAX_CONCURRENT_READ_ONLY_CELLS = 2;
 
 /** The grant travels as a request header; it is never a body field. */
 const BENCHMARK_GRANT_HEADER = "x-mcpjam-benchmark-grant";
+
+/**
+ * Backoff between attempts to bind a finished child to its evidence row.
+ *
+ * Short and bounded. The attach is the one write whose loss is not recoverable
+ * by looking again — a child that ran but was never pointed at is invisible to
+ * a scorecard that gets written exactly once — so a transient blip is worth
+ * riding out. It is bounded because the fallback (hand the job back and let a
+ * later attempt re-attach) is a real recovery, not a last resort, and the
+ * heartbeat keeps the lease alive only for as long as this worker is useful.
+ */
+const ATTACH_RETRY_DELAYS_MS = [1_000, 3_000];
 
 /** Evidence statuses that mean the row is settled and owes no child. */
 const TERMINAL_EVIDENCE_STATUSES = new Set([
@@ -563,6 +581,17 @@ async function defaultRunEvalCell(
       source: "benchmark",
       ...(cell.environmentId ? { environmentId: cell.environmentId } : {}),
       ...(cell.namedHostId ? { namedHostId: cell.namedHostId } : {}),
+      // The CELL's pinned repetition count, not the suite's `runs` default.
+      // The scorer's `minimumRepetitionsPerRequiredCell` is a publication
+      // floor, so a cell declared at 3 that runs once is not merely thinner
+      // evidence — it can never clear the floor, and every hosted run of that
+      // definition comes out provisional. Forwarded as-is rather than clamped:
+      // the eval surface caps an override at 10, and a definition pinning more
+      // should fail loudly here instead of silently under-observing.
+      ...(Number.isInteger(args.entry.repetitions) &&
+      (args.entry.repetitions as number) >= 1
+        ? { iterationOverride: args.entry.repetitions }
+        : {}),
       // The run's model calls are billed against the benchmark budget, and the
       // grant is what tells `/stream` which run to charge. Passed by reference:
       // the object is shared with the heartbeat, which rotates the grant inside
@@ -574,17 +603,42 @@ async function defaultRunEvalCell(
       ),
     });
 
-    // A replayed claim replays the run its key already started. If that run
-    // FINISHED, executing would run the exam a second time against someone
-    // else's server and bill the budget twice for evidence the roster already
-    // has.
-    if (shouldSkipExecution(prepared)) {
-      logger.info("[bench] cell already ran — not re-executing", {
-        benchmarkRunId: job.benchmarkRunId,
-        cellId: cell.cellId,
-        runId: prepared.runId,
-        status: prepared.status,
-      });
+    // ── A REPLAYED CHILD IS NEVER EXECUTED FROM HERE ─────────────────────
+    //
+    // `deduped` means the idempotency key matched a run that already exists,
+    // so THIS process did not create it — and a benchmark must not drive a
+    // child it did not start, whatever state that child is in.
+    //
+    // `shouldSkipExecution` alone is not enough, and the gap is specific: it
+    // answers false for a deduped run still `running`, because for ORDINARY
+    // evals a replay of a non-terminal run is more likely a crashed process
+    // worth resuming than a live one worth leaving alone. That trade inverts
+    // here. A lease expires on a network partition just as readily as on a
+    // dead worker, so the reclaiming worker cannot tell "abandoned" from
+    // "still being driven" — and guessing wrong runs the exam twice against
+    // somebody else's server and bills the budget for both.
+    //
+    // So a replay is adopted, never re-driven: the pointer is returned, the
+    // row gets attached, and whichever worker actually owns the child carries
+    // it to a terminal status. A child that really was abandoned degrades to a
+    // coverage gap (the backend's evidence resync and the stale-eval-run
+    // watchdog terminalize it), which is the cheaper of the two mistakes.
+    //
+    // Driving an abandoned child to completion needs a liveness signal this
+    // process does not have; see the `claim-child` route requested on the
+    // review thread.
+    if (prepared.deduped === true) {
+      logger.info(
+        shouldSkipExecution(prepared)
+          ? "[bench] cell already ran — adopting the finished child"
+          : "[bench] cell child is not terminal — adopting, not driving it",
+        {
+          benchmarkRunId: job.benchmarkRunId,
+          cellId: cell.cellId,
+          runId: prepared.runId,
+          status: prepared.status,
+        },
+      );
       return { runId: prepared.runId, executed: false };
     }
 
@@ -765,6 +819,48 @@ export async function executeClaimedJob(
       (entry) => entry.evalCell?.writeCases !== false,
     );
 
+    /**
+     * Children that ran and could not be bound to their row: evidenceKey →
+     * runId. Non-empty means the execution phase must NOT be reported.
+     */
+    const unattached = new Map<string, string>();
+
+    /**
+     * Bind the child, retrying a transient refusal.
+     *
+     * A lost lease is never retried — the write would be refused every time,
+     * and the whole point of standing down is to stop writing.
+     */
+    const attachWithRetry = async (
+      entry: BenchmarkRosterEntry,
+      cellId: string,
+      runId: string,
+    ): Promise<void> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await deps.attachEvidence({
+            job: claimed,
+            evidenceKey: entry.evidenceKey,
+            cellId,
+            testSuiteRunId: runId,
+          });
+          return;
+        } catch (error) {
+          if (error instanceof LeaseLostError) throw error;
+          if (attempt >= ATTACH_RETRY_DELAYS_MS.length) throw error;
+          logger.warn("[bench] evidence attach failed; retrying", {
+            ...logContext,
+            cellId,
+            runId,
+            attempt: attempt + 1,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          await sleep(ATTACH_RETRY_DELAYS_MS[attempt]);
+          assertLeaseHeld();
+        }
+      }
+    };
+
     const runCell = async (entry: BenchmarkRosterEntry): Promise<void> => {
       if (windDown.reason || leaseLost) return;
       const cell = entry.evalCell!;
@@ -795,14 +891,19 @@ export async function executeClaimedJob(
       if (!runId) return;
       assertLeaseHeld();
       try {
-        await deps.attachEvidence({
-          job: claimed,
-          evidenceKey: entry.evidenceKey,
-          cellId: cell.cellId,
-          testSuiteRunId: runId,
-        });
+        await attachWithRetry(entry, cell.cellId, runId);
       } catch (error) {
         if (error instanceof LeaseLostError) throw error;
+        // AN ATTACH THAT NEVER LANDED LOSES A CHILD THAT REALLY RAN.
+        //
+        // The row stays `expected` while a completed exam sits beside it, and
+        // the scorecard is written once and never patched — so reporting the
+        // execution phase over the top of this would bake the loss in
+        // permanently. Recorded instead, and checked before the phase is
+        // reported: the job goes back for another attempt, and the resumed
+        // worker adopts the same child (same idempotency key) and retries the
+        // attach without re-running anything.
+        unattached.set(entry.evidenceKey, runId);
         logger.error("[bench] attaching cell evidence failed", error, {
           ...logContext,
           cellId: cell.cellId,
@@ -842,6 +943,23 @@ export async function executeClaimedJob(
     }
 
     assertLeaseHeld();
+
+    // REPORTING THE PHASE OVER AN UNATTACHED CHILD IS THE ONE UNRECOVERABLE
+    // MISTAKE HERE. `execution-complete` moves the run to `awaiting_evidence`
+    // and hands finalization to the backend, and a scorecard is inserted once
+    // and never patched — so a child that ran but never got pointed at is
+    // dropped from the result for good, silently, with the roster showing a
+    // coverage gap that never existed. Handing the job back instead costs one
+    // more attempt, and the re-attempt adopts the same children rather than
+    // re-running them.
+    if (unattached.size > 0) {
+      throw new Error(
+        `${unattached.size} eval child(ren) ran but could not be attached: ${[
+          ...unattached.keys(),
+        ].join(", ")}`,
+      );
+    }
+
     await deps.executionComplete({
       job: claimed,
       claimedBy,
