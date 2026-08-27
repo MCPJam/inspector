@@ -21,7 +21,9 @@
  * returns OK and no tools ever arrive). Support must therefore be probed in the
  * page — see `PAGE_API_PROBE` — not by whether the CDP command succeeded.
  */
-export const WEBMCP_LAUNCH_ARGS: readonly string[] = ["--enable-features=WebMCP"];
+export const WEBMCP_LAUNCH_ARGS: readonly string[] = [
+  "--enable-features=WebMCP",
+];
 
 /**
  * Baseline sandbox/shared-memory switches, matching the widget harness
@@ -45,4 +47,19 @@ export const PAGE_API_PROBE =
 
 export function buildWebMcpLaunchArgs(extra: readonly string[] = []): string[] {
   return [...WEBMCP_BASE_LAUNCH_ARGS, ...WEBMCP_LAUNCH_ARGS, ...extra];
+}
+
+/**
+ * Run the browser headless even for a user-facing session.
+ *
+ * The default is headed, because the point of the local inspector is that the
+ * developer drives their own page in a real window. But an inspector reached
+ * over SSH, or running in a container or a bare WSL install, has no display to
+ * open one on — and there the choice is headless or nothing. Tool discovery,
+ * invocation and screenshots all work headless; only direct interaction is lost.
+ */
+export function webMcpHeadlessRequested(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_WEBMCP_HEADLESS === "true";
 }

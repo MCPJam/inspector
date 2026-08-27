@@ -82,7 +82,10 @@ export type WebMcpSessionStatus =
  * change.
  */
 export type WebMcpViewportTransport =
+  /** A real window on the viewer's own machine; they drive it directly. */
   | { kind: "native-window" }
+  /** No viewport at all: the browser is headless, so tools only. */
+  | { kind: "headless" }
   | { kind: "remote-interactive-url"; url: string }
   | { kind: "frame-stream" };
 
@@ -128,10 +131,7 @@ export type WebMcpCommandResult =
 
 /** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "timeout";
+  "succeeded" | "failed" | "cancelled" | "timeout";
 
 export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_started"; url: string }

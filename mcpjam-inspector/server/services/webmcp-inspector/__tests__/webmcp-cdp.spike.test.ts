@@ -173,18 +173,23 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
   it("invokes a tool and returns the invocationId before the tool settles", async () => {
     responded.length = 0;
     const before = responded.length;
-    const { invocationId } = (await cdp.send("WebMCP.invokeTool" as never, {
-      frameId: mainFrameId,
-      toolName: "echo",
-      input: { text: "hello" },
-    } as never)) as { invocationId: string };
+    const { invocationId } = (await cdp.send(
+      "WebMCP.invokeTool" as never,
+      {
+        frameId: mainFrameId,
+        toolName: "echo",
+        input: { text: "hello" },
+      } as never,
+    )) as { invocationId: string };
     expect(invocationId).toMatch(/^[0-9A-F]+$/i);
     expect(responded.length).toBe(before); // resolved before any response
 
     // The command response beats its own events: `toolInvoked` has not arrived
     // yet at this point, so a caller that registered the invocation only on the
     // event would miss the window in which it is already running.
-    expect(invoked.find((e) => e.invocationId === invocationId)).toBeUndefined();
+    expect(
+      invoked.find((e) => e.invocationId === invocationId),
+    ).toBeUndefined();
 
     const start = await waitFor(() =>
       invoked.find((e) => e.invocationId === invocationId),
@@ -207,11 +212,14 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
 
   it("reports a thrown tool as Error with the message on exception.description", async () => {
     responded.length = 0;
-    const { invocationId } = (await cdp.send("WebMCP.invokeTool" as never, {
-      frameId: mainFrameId,
-      toolName: "boom",
-      input: {},
-    } as never)) as { invocationId: string };
+    const { invocationId } = (await cdp.send(
+      "WebMCP.invokeTool" as never,
+      {
+        frameId: mainFrameId,
+        toolName: "boom",
+        input: {},
+      } as never,
+    )) as { invocationId: string };
     const done = await waitFor(() =>
       responded.find((r) => r.invocationId === invocationId),
     );
@@ -224,21 +232,27 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
 
   it("rejects an unknown tool at the CDP layer, not as a toolResponded", async () => {
     await expect(
-      cdp.send("WebMCP.invokeTool" as never, {
-        frameId: mainFrameId,
-        toolName: "does_not_exist",
-        input: {},
-      } as never),
+      cdp.send(
+        "WebMCP.invokeTool" as never,
+        {
+          frameId: mainFrameId,
+          toolName: "does_not_exist",
+          input: {},
+        } as never,
+      ),
     ).rejects.toThrow(/Tool not found/i);
   });
 
   it("passes oversized output through untruncated, so we must cap it ourselves", async () => {
     responded.length = 0;
-    const { invocationId } = (await cdp.send("WebMCP.invokeTool" as never, {
-      frameId: mainFrameId,
-      toolName: "big",
-      input: {},
-    } as never)) as { invocationId: string };
+    const { invocationId } = (await cdp.send(
+      "WebMCP.invokeTool" as never,
+      {
+        frameId: mainFrameId,
+        toolName: "big",
+        input: {},
+      } as never,
+    )) as { invocationId: string };
     const done = await waitFor(
       () => responded.find((r) => r.invocationId === invocationId),
       15_000,
@@ -251,19 +265,27 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
 
   it("cancels a pending invocation and settles it as Canceled", async () => {
     responded.length = 0;
-    const { invocationId } = (await cdp.send("WebMCP.invokeTool" as never, {
-      frameId: mainFrameId,
-      toolName: "slow",
-      input: {},
-    } as never)) as { invocationId: string };
+    const { invocationId } = (await cdp.send(
+      "WebMCP.invokeTool" as never,
+      {
+        frameId: mainFrameId,
+        toolName: "slow",
+        input: {},
+      } as never,
+    )) as { invocationId: string };
     await waitFor(() =>
       invoked.find((e) => e.invocationId === invocationId) ? true : undefined,
     );
-    expect(responded.find((r) => r.invocationId === invocationId)).toBeUndefined();
+    expect(
+      responded.find((r) => r.invocationId === invocationId),
+    ).toBeUndefined();
 
-    await cdp.send("WebMCP.cancelInvocation" as never, {
-      invocationId,
-    } as never);
+    await cdp.send(
+      "WebMCP.cancelInvocation" as never,
+      {
+        invocationId,
+      } as never,
+    );
     const done = await waitFor(() =>
       responded.find((r) => r.invocationId === invocationId),
     );
@@ -273,9 +295,12 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
 
   it("rejects cancelling an unknown invocation id", async () => {
     await expect(
-      cdp.send("WebMCP.cancelInvocation" as never, {
-        invocationId: "not-a-real-invocation",
-      } as never),
+      cdp.send(
+        "WebMCP.cancelInvocation" as never,
+        {
+          invocationId: "not-a-real-invocation",
+        } as never,
+      ),
     ).rejects.toThrow(/Invalid invocation id/i);
   });
 
@@ -314,7 +339,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
     );
     await probeCdp.send("WebMCP.enable" as never);
     await probePage.goto(fixture.url, { waitUntil: "networkidle" });
-    await waitFor(() => (seen.some((t) => t.name === "echo") ? true : undefined));
+    await waitFor(() =>
+      seen.some((t) => t.name === "echo") ? true : undefined,
+    );
 
     // The subframe itself reports a successful registration...
     const subFrame = probePage
@@ -342,7 +369,11 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP support probing", () => {
     // Base args only: no --enable-features=WebMCP.
     const browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+      ],
     });
     try {
       const page = await browser.newPage();

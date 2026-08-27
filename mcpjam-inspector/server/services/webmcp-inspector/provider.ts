@@ -119,6 +119,20 @@ export class WebMcpChromiumNotInstalledError extends Error {
   }
 }
 
+/**
+ * The browser could not open a window because there is no display.
+ *
+ * Its own class because the fix is specific and the raw Playwright text is a
+ * wall: someone over SSH, in a container, or on a bare WSL install needs to be
+ * told to run headless, not handed browser logs.
+ */
+export class WebMcpNoDisplayError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebMcpNoDisplayError";
+  }
+}
+
 /** A tool name that is no longer registered (usually: the page navigated). */
 export class WebMcpToolGoneError extends Error {
   constructor(message: string) {

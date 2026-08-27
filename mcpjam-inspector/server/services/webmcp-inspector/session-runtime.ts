@@ -107,6 +107,11 @@ export class WebMcpSessionRuntime {
     this.onActivity = options.onActivity ?? (() => {});
     this.url = startUrl;
     this.createdAt = this.now();
+    // Recorded at construction, not at `attach`: the browser navigates and
+    // registers tools while it is starting, so an entry written afterwards
+    // would land behind them and the timeline would read "navigated, tools
+    // added, session started".
+    this.pushActivity({ kind: "session_started", url: this.url });
   }
 
   /** Callbacks handed to the provider at construction. */
@@ -150,7 +155,6 @@ export class WebMcpSessionRuntime {
     // sit in the replay buffer advertising a session that expires at the epoch.
     // `register` publishes the first session event, once there is one to tell.
     this.status = "ready";
-    this.pushActivity({ kind: "session_started", url: this.url });
   }
 
   /** Record that the browser works but WebMCP is unavailable in it. */
@@ -196,7 +200,11 @@ export class WebMcpSessionRuntime {
     );
 
     this.tools = next;
-    this.publish({ type: "tools", seq: this.nextSeq(), tools: this.currentTools() });
+    this.publish({
+      type: "tools",
+      seq: this.nextSeq(),
+      tools: this.currentTools(),
+    });
 
     if (added.length > 0) {
       this.pushActivity({ kind: "tools_added", tools: added.map(toRef) });
@@ -217,7 +225,10 @@ export class WebMcpSessionRuntime {
 
   /** Drive the page. Status flips to `navigating` so the UI can say so. */
   async navigateCommand(
-    command: { type: "navigate"; url: string } | { type: "reload" } | { type: "go_back" },
+    command:
+      | { type: "navigate"; url: string }
+      | { type: "reload" }
+      | { type: "go_back" },
   ): Promise<void> {
     const session = this.requireSession();
     this.setStatus("navigating");
@@ -261,7 +272,10 @@ export class WebMcpSessionRuntime {
     toolKey: string,
     input: Record<string, unknown>,
     source: WebMcpInvocationSource,
-  ): { invokeId: string; settled: Promise<{ output: unknown; truncated: boolean }> } {
+  ): {
+    invokeId: string;
+    settled: Promise<{ output: unknown; truncated: boolean }>;
+  } {
     if (this.inFlight >= this.queueLimit + 1) {
       throw new WebMcpQueueFullError(
         `Too many invocations are already queued (limit ${this.queueLimit}).`,
@@ -354,7 +368,9 @@ export class WebMcpSessionRuntime {
     // Resolved at dequeue, not at enqueue: a navigation between the two may
     // have replaced or removed the tool, and invoking a stale frame id would
     // either fail obscurely or hit the wrong page.
-    const tool = this.tools.find((candidate) => candidate.toolKey === item.toolKey);
+    const tool = this.tools.find(
+      (candidate) => candidate.toolKey === item.toolKey,
+    );
     if (!tool) {
       const message = `The page no longer offers "${item.toolKey}".`;
       this.settle(item, "failed", startedAt, { errorMessage: message });
@@ -452,12 +468,20 @@ export class WebMcpSessionRuntime {
   private setStatus(status: WebMcpSessionStatus, detail?: string): void {
     this.status = status;
     this.statusDetail = detail;
-    this.publish({ type: "session", seq: this.nextSeq(), session: this.toPublic() });
+    this.publish({
+      type: "session",
+      seq: this.nextSeq(),
+      session: this.toPublic(),
+    });
   }
 
   /** Re-publish the session (used when the registry moves its clocks). */
   publishSession(): void {
-    this.publish({ type: "session", seq: this.nextSeq(), session: this.toPublic() });
+    this.publish({
+      type: "session",
+      seq: this.nextSeq(),
+      session: this.toPublic(),
+    });
   }
 
   private pushActivity(entry: WebMcpActivityDraft): void {

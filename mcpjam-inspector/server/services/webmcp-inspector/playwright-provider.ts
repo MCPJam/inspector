@@ -19,10 +19,15 @@ import {
   WEBMCP_VIEWPORT,
   type WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
-import { buildWebMcpLaunchArgs, PAGE_API_PROBE } from "./launch-args";
+import {
+  buildWebMcpLaunchArgs,
+  PAGE_API_PROBE,
+  webMcpHeadlessRequested,
+} from "./launch-args";
 import {
   WebMcpChromiumNotInstalledError,
   WebMcpInvocationCancelledError,
+  WebMcpNoDisplayError,
   WebMcpToolGoneError,
   WebMcpUnsupportedError,
   type CreateWebMcpSessionOptions,
@@ -113,6 +118,7 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     private readonly cdp: CDPSession,
     private readonly callbacks: WebMcpSessionCallbacks,
     startUrl: string,
+    private readonly headless: boolean,
   ) {
     this.url = startUrl;
   }
@@ -127,7 +133,9 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // `WebMCP.enable` resolves even on a browser with the feature switched off
     // - it just never reports a tool. So support is probed in the page, after
     // the first navigation, where the API either exists or does not.
-    const supported = await this.page.evaluate(PAGE_API_PROBE).catch(() => false);
+    const supported = await this.page
+      .evaluate(PAGE_API_PROBE)
+      .catch(() => false);
     if (!supported) {
       throw new WebMcpUnsupportedError(
         "This browser build does not expose the WebMCP page API " +
@@ -333,11 +341,14 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
 
     let invocationId: string;
     try {
-      ({ invocationId } = (await this.cdp.send("WebMCP.invokeTool" as never, {
-        frameId,
-        toolName: request.toolName,
-        input: request.input,
-      } as never)) as { invocationId: string });
+      ({ invocationId } = (await this.cdp.send(
+        "WebMCP.invokeTool" as never,
+        {
+          frameId,
+          toolName: request.toolName,
+          input: request.input,
+        } as never,
+      )) as { invocationId: string });
     } catch (error) {
       // An unknown tool rejects here rather than settling as a response.
       const message = error instanceof Error ? error.message : String(error);
@@ -416,9 +427,11 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
 
   viewportTransport(): WebMcpViewportTransport {
     // V1 runs the browser on the developer's own machine, so the viewport IS
-    // the window in front of them. A remote provider returns an interactive URL
-    // here instead, and the client renders that without further changes.
-    return { kind: "native-window" };
+    // the window in front of them — unless it was launched headless, where
+    // there is no window and the UI must not tell anyone to go look at one.
+    // A remote provider returns an interactive URL here instead, and the client
+    // renders that without further changes.
+    return this.headless ? { kind: "headless" } : { kind: "native-window" };
   }
 
   async dispose(): Promise<void> {
@@ -453,10 +466,14 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
 
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    // Headed for real sessions: the developer drives their own window. Tests
+    // pass `headless` explicitly; `MCPJAM_WEBMCP_HEADLESS` is the escape hatch
+    // for an inspector running where no display exists.
+    const headless = options.headless ?? webMcpHeadlessRequested();
+
     try {
       browser = await chromium.launch({
-        // Headed for real sessions: the developer drives their own window.
-        headless: options.headless ?? false,
+        headless,
         args: buildWebMcpLaunchArgs(),
       });
       context = await browser.newContext({
@@ -474,6 +491,7 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
         cdp,
         options.callbacks,
         options.url,
+        headless,
       );
       await session.start(options.url);
       return session;
@@ -481,6 +499,17 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
       await waitForClose(context?.close());
       await waitForClose(browser?.close());
       const message = error instanceof Error ? error.message : String(error);
+      // Headed launch on a machine with no display: SSH, a container, a bare
+      // WSL install. Playwright's own text is a wall of browser logs, and the
+      // fix is one env var, so say that instead of relaying it.
+      if (/XServer|Missing X server|DISPLAY/i.test(message)) {
+        throw new WebMcpNoDisplayError(
+          "The WebMCP Inspector opens a real browser window, and this machine has no display " +
+            "to open one on. Set MCPJAM_WEBMCP_HEADLESS=true to run the browser headless — " +
+            "tool discovery, invocation and screenshots all still work; only interacting with " +
+            "the page by hand does not.",
+        );
+      }
       if (/Executable doesn't exist|please run|install/i.test(message)) {
         throw new WebMcpChromiumNotInstalledError(message);
       }

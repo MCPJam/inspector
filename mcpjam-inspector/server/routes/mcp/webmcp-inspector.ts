@@ -13,6 +13,7 @@ import {
 } from "../../services/webmcp-inspector/session-registry";
 import {
   WebMcpChromiumNotInstalledError,
+  WebMcpNoDisplayError,
   WebMcpToolGoneError,
   WebMcpUnsupportedError,
 } from "../../services/webmcp-inspector/provider";
@@ -72,7 +73,10 @@ const commandSchema = z.discriminatedUnion("type", [
     input: z.record(z.string(), z.unknown()).default({}),
     source: z.enum(["manual", "chat"]).default("manual"),
   }),
-  z.object({ type: z.literal("cancel_invocation"), invokeId: z.string().min(1) }),
+  z.object({
+    type: z.literal("cancel_invocation"),
+    invokeId: z.string().min(1),
+  }),
   z.object({ type: z.literal("capture_screenshot") }),
 ]);
 
@@ -101,6 +105,9 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
       503,
     );
   }
+  if (error instanceof WebMcpNoDisplayError) {
+    return c.json({ error: error.message, code: "no-display" }, 503);
+  }
   if (error instanceof WebMcpUnsupportedError) {
     // 501, not 500: the request was fine and the server is healthy — this
     // browser build simply cannot do WebMCP, and the UI says exactly that.
@@ -119,7 +126,10 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
 // The capability is not discoverable when it is off: 404, not 403.
 webmcpInspector.use("*", async (c, next) => {
   if (!WEBMCP_INSPECTOR_ENABLED) {
-    return c.json({ error: "Not found", code: "webmcp-inspector-disabled" }, 404);
+    return c.json(
+      { error: "Not found", code: "webmcp-inspector-disabled" },
+      404,
+    );
   }
   await next();
 });
@@ -259,9 +269,15 @@ webmcpInspector.post("/sessions/:id/command", async (c) => {
         return c.json({ ok: true, invokeId }, 202);
       }
       case "cancel_invocation":
-        return c.json({ ok: true, cancelled: runtime.cancel(command.invokeId) });
+        return c.json({
+          ok: true,
+          cancelled: runtime.cancel(command.invokeId),
+        });
       case "capture_screenshot":
-        return c.json({ ok: true, screenshotBase64: await runtime.screenshotNow() });
+        return c.json({
+          ok: true,
+          screenshotBase64: await runtime.screenshotNow(),
+        });
     }
   } catch (error) {
     return webMcpErrorResponse(c, error, "Could not run that command.");

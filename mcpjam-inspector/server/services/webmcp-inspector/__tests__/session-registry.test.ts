@@ -11,7 +11,9 @@ import { deferred, FakeProvider } from "./fake-provider";
 
 /** A registry with no background timer; these tests sweep on demand. */
 function makeRegistry(
-  overrides: Partial<ConstructorParameters<typeof WebMcpSessionRegistry>[0]> = {},
+  overrides: Partial<
+    ConstructorParameters<typeof WebMcpSessionRegistry>[0]
+  > = {},
 ) {
   let clock = 1_000;
   const registry = new WebMcpSessionRegistry({

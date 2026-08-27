@@ -13,7 +13,9 @@ import {
 import { WebMcpToolGoneError } from "../provider";
 import { FakeBrowserSession, fakeTool } from "./fake-provider";
 
-function makeRuntime(options: { invokeTimeoutMs?: number; queueLimit?: number } = {}) {
+function makeRuntime(
+  options: { invokeTimeoutMs?: number; queueLimit?: number } = {},
+) {
   const runtime = new WebMcpSessionRuntime("https://example.test/", {
     sessionId: "session-1",
     invokeTimeoutMs: options.invokeTimeoutMs ?? 60_000,
@@ -28,7 +30,10 @@ function makeRuntime(options: { invokeTimeoutMs?: number; queueLimit?: number } 
   runtime.attach(session);
   const activity = () =>
     events
-      .filter((e): e is Extract<WebMcpEvent, { type: "activity" }> => e.type === "activity")
+      .filter(
+        (e): e is Extract<WebMcpEvent, { type: "activity" }> =>
+          e.type === "activity",
+      )
       .map((e) => e.entry);
   return { runtime, session, events, activity };
 }
@@ -38,8 +43,7 @@ function entryOfKind<K extends WebMcpActivityEntry["kind"]>(
   kind: K,
 ): Extract<WebMcpActivityEntry, { kind: K }> | undefined {
   return entries.find((e) => e.kind === kind) as
-    | Extract<WebMcpActivityEntry, { kind: K }>
-    | undefined;
+    Extract<WebMcpActivityEntry, { kind: K }> | undefined;
 }
 
 describe("tool identity", () => {
@@ -70,7 +74,11 @@ describe("tool identity", () => {
   it("keeps same-name tools from different origins apart without a suffix", () => {
     const tools = assignToolKeys([
       fakeTool({ frameId: "frame-1", origin: "https://a.test" }),
-      fakeTool({ frameId: "frame-2", origin: "https://b.test", isMainFrame: false }),
+      fakeTool({
+        frameId: "frame-2",
+        origin: "https://b.test",
+        isMainFrame: false,
+      }),
     ]);
     expect(tools.map((t) => t.toolKey)).toEqual([
       "https://a.test::echo",
@@ -88,8 +96,14 @@ describe("tool identity", () => {
         registrationKind: "declarative",
       }),
     ]);
-    expect(tools[0]).toMatchObject({ fromSubframe: false, registrationKind: "imperative" });
-    expect(tools[1]).toMatchObject({ fromSubframe: true, registrationKind: "declarative" });
+    expect(tools[0]).toMatchObject({
+      fromSubframe: false,
+      registrationKind: "imperative",
+    });
+    expect(tools[1]).toMatchObject({
+      fromSubframe: true,
+      registrationKind: "declarative",
+    });
   });
 });
 
@@ -131,7 +145,11 @@ describe("invocation", () => {
     });
     const started = entryOfKind(activity(), "invocation_started");
     const done = entryOfKind(activity(), "invocation_settled");
-    expect(started).toMatchObject({ invokeId, source: "manual", input: { text: "hi" } });
+    expect(started).toMatchObject({
+      invokeId,
+      source: "manual",
+      input: { text: "hi" },
+    });
     expect(started?.screenshotBase64).toBeTruthy();
     expect(done).toMatchObject({ invokeId, state: "succeeded" });
     expect(done?.screenshotBase64).toBeTruthy();
@@ -143,7 +161,11 @@ describe("invocation", () => {
     // The page navigates: the tool is gone by the time the queue reaches it.
     session.emitTools([]);
 
-    const { settled } = runtime.invoke("https://example.test::echo", {}, "manual");
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
     await expect(settled).rejects.toBeInstanceOf(WebMcpToolGoneError);
   });
 
@@ -152,8 +174,16 @@ describe("invocation", () => {
     session.emitTools([fakeTool()]);
     session.hangOnInvoke = true;
 
-    const first = runtime.invoke("https://example.test::echo", { n: 1 }, "manual");
-    const second = runtime.invoke("https://example.test::echo", { n: 2 }, "chat");
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      { n: 1 },
+      "manual",
+    );
+    const second = runtime.invoke(
+      "https://example.test::echo",
+      { n: 2 },
+      "chat",
+    );
     first.settled.catch(() => {});
     second.settled.catch(() => {});
 
@@ -172,7 +202,11 @@ describe("invocation", () => {
   it("frees the session as soon as an invocation settles", async () => {
     const { runtime, session } = makeRuntime();
     session.emitTools([fakeTool()]);
-    const { settled } = runtime.invoke("https://example.test::echo", {}, "manual");
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
     await settled;
     // A caller that awaited the result must be able to navigate immediately;
     // reporting the page as busy here would 409 a legitimate next step.
@@ -194,7 +228,9 @@ describe("invocation", () => {
     await expect(settled).rejects.toThrow(/cancel/i);
 
     await vi.waitFor(() =>
-      expect(entryOfKind(activity(), "invocation_settled")?.state).toBe("cancelled"),
+      expect(entryOfKind(activity(), "invocation_settled")?.state).toBe(
+        "cancelled",
+      ),
     );
   });
 
@@ -227,10 +263,16 @@ describe("invocation", () => {
     session.emitTools([fakeTool()]);
     session.hangOnInvoke = true;
 
-    const { settled } = runtime.invoke("https://example.test::echo", {}, "manual");
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
     await expect(settled).rejects.toThrow(/timed out/i);
     await vi.waitFor(() =>
-      expect(entryOfKind(activity(), "invocation_settled")?.state).toBe("timeout"),
+      expect(entryOfKind(activity(), "invocation_settled")?.state).toBe(
+        "timeout",
+      ),
     );
   });
 
@@ -239,8 +281,12 @@ describe("invocation", () => {
     session.emitTools([fakeTool()]);
     session.hangOnInvoke = true;
 
-    runtime.invoke("https://example.test::echo", {}, "manual").settled.catch(() => {});
-    runtime.invoke("https://example.test::echo", {}, "manual").settled.catch(() => {});
+    runtime
+      .invoke("https://example.test::echo", {}, "manual")
+      .settled.catch(() => {});
+    runtime
+      .invoke("https://example.test::echo", {}, "manual")
+      .settled.catch(() => {});
     expect(() =>
       runtime.invoke("https://example.test::echo", {}, "manual"),
     ).toThrow(WebMcpQueueFullError);
@@ -276,9 +322,15 @@ describe("result capping", () => {
     const { runtime, session, activity } = makeRuntime();
     session.emitTools([fakeTool()]);
     session.hangOnInvoke = true;
-    const { settled } = runtime.invoke("https://example.test::echo", {}, "manual");
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
     await vi.waitFor(() => expect(session.invocations).toHaveLength(1));
-    session.pending?.resolve({ output: "y".repeat(WEBMCP_RESULT_CAP_BYTES + 100) });
+    session.pending?.resolve({
+      output: "y".repeat(WEBMCP_RESULT_CAP_BYTES + 100),
+    });
     await settled;
 
     await vi.waitFor(() => {
@@ -302,7 +354,11 @@ describe("session lifecycle events", () => {
     const { runtime, session } = makeRuntime();
     session.emitTools([fakeTool()]);
     session.hangOnInvoke = true;
-    const { settled } = runtime.invoke("https://example.test::echo", {}, "manual");
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
     await vi.waitFor(() => expect(session.invocations).toHaveLength(1));
 
     session.callbacks.onCrashed("The browser page crashed.");

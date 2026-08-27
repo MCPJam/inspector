@@ -10,10 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
-import {
-  startWebMcpSession,
-  WebMcpSessionRegistry,
-} from "../session-registry";
+import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
 import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
@@ -28,7 +25,9 @@ if (process.env.CI && !CHROMIUM_AVAILABLE) {
 
 /** Headless for tests; a real session opens a window the developer drives. */
 class HeadlessProvider extends PlaywrightWebMcpProvider {
-  async createSession(options: Parameters<PlaywrightWebMcpProvider["createSession"]>[0]) {
+  async createSession(
+    options: Parameters<PlaywrightWebMcpProvider["createSession"]>[0],
+  ) {
     return super.createSession({ ...options, headless: true });
   }
 }
@@ -85,7 +84,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
 
   it("invokes a tool and reports the result on the timeline", async () => {
     const { runtime, activity } = await open();
-    await vi.waitFor(() => expect(runtime.currentTools().length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
 
     const origin = new URL(fixture.url).origin;
     const { invokeId, settled } = runtime.invoke(
@@ -101,17 +102,22 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
 
     await vi.waitFor(() => {
       const done = activity.find(
-        (entry) => entry.kind === "invocation_settled" && entry.invokeId === invokeId,
+        (entry) =>
+          entry.kind === "invocation_settled" && entry.invokeId === invokeId,
       );
       expect(done).toBeDefined();
-      expect(done && "state" in done ? done.state : undefined).toBe("succeeded");
+      expect(done && "state" in done ? done.state : undefined).toBe(
+        "succeeded",
+      );
     });
     await registry.disposeAll();
   }, 60_000);
 
   it("surfaces a thrown page tool as a failure with its message", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() => expect(runtime.currentTools().length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
     const origin = new URL(fixture.url).origin;
 
     await expect(
@@ -131,7 +137,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
     const runtime = registry.get(session.sessionId);
     // A short timeout keeps the suite quick; the production default is 60s.
     Reflect.set(runtime, "invokeTimeoutMs", 2_000);
-    await vi.waitFor(() => expect(runtime.currentTools().length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
     const origin = new URL(fixture.url).origin;
 
     await expect(
@@ -139,19 +147,27 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
     ).rejects.toThrow(/did not respond in time|cancel/i);
 
     // The session must survive a hung tool: the next call still works.
-    const after = await runtime.invoke(`${origin}::echo`, { text: "after" }, "manual")
-      .settled;
+    const after = await runtime.invoke(
+      `${origin}::echo`,
+      { text: "after" },
+      "manual",
+    ).settled;
     expect(JSON.stringify(after.output)).toContain("after");
     await registry.disposeAll();
   }, 60_000);
 
   it("truncates an oversized result at the cap", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() => expect(runtime.currentTools().length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
     const origin = new URL(fixture.url).origin;
 
-    const { truncated, output } = await runtime.invoke(`${origin}::big`, {}, "manual")
-      .settled;
+    const { truncated, output } = await runtime.invoke(
+      `${origin}::big`,
+      {},
+      "manual",
+    ).settled;
     expect(truncated).toBe(true);
     expect(String(output)).toContain("truncated");
     await registry.disposeAll();
@@ -159,7 +175,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
 
   it("drops the old page's tools on navigation", async () => {
     const { runtime } = await open();
-    await vi.waitFor(() => expect(runtime.currentTools().length).toBeGreaterThan(0));
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
 
     await runtime.navigateCommand({ type: "navigate", url: fixture.nextUrl });
 
@@ -176,6 +194,33 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
     await expect(
       runtime.invoke(`${origin}::echo`, {}, "manual").settled,
     ).rejects.toBeInstanceOf(WebMcpToolGoneError);
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("reports a headless session as having no viewport", async () => {
+    const { session } = await open();
+    // The UI reads this to decide whether to tell someone to go look at a
+    // window. Claiming `native-window` here would point them at one that does
+    // not exist — the state an inspector reached over SSH is always in.
+    expect(session.viewportTransport).toEqual({ kind: "headless" });
+    await registry.disposeAll();
+  }, 60_000);
+
+  it("records session_started before the navigation it caused", async () => {
+    const { runtime } = await open();
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().length).toBeGreaterThan(0),
+    );
+    const kinds = runtime.hub
+      .buffered()
+      .flatMap((event) =>
+        event.type === "activity" ? [event.entry.kind] : [],
+      );
+    // The browser navigates and registers tools while starting up, so an entry
+    // written after `attach` would land behind them and the timeline would read
+    // "navigated, tools added, session started".
+    expect(kinds[0]).toBe("session_started");
+    expect(kinds).toContain("navigated");
     await registry.disposeAll();
   }, 60_000);
 

@@ -166,7 +166,11 @@ describe("hosted tab policy stays consistent with the manifests", () => {
   it("blocks hosted surfaces sparingly", () => {
     // A growing block list means screens are being written that hosted
     // cannot serve — worth noticing deliberately rather than by drift.
-    expect(HOSTED_HASH_BLOCKED_TABS).toEqual(["tracing"]);
+    //
+    // `webmcp` earns its place: it drives a browser on the machine running the
+    // inspector, which a hosted replica has no way to open. Its API routes are
+    // local-only for the same reason.
+    expect(HOSTED_HASH_BLOCKED_TABS).toEqual(["tracing", "webmcp"]);
   });
 });
 
