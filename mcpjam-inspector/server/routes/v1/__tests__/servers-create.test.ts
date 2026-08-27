@@ -55,11 +55,18 @@ function createApp(): Hono {
   return app;
 }
 
-const postServer = (body: unknown) =>
+const postServer = (body: unknown) => postRawServer(JSON.stringify(body));
+
+/**
+ * The body verbatim. `postServer` cannot express an empty body or a bare
+ * `null` through `JSON.stringify`, and those are the two shapes that reach the
+ * body reader rather than the schema.
+ */
+const postRawServer = (raw: string) =>
   createApp().request("/api/v1/projects/proj-1/servers", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: raw,
   });
 
 const patchServer = (body: unknown) =>
@@ -134,6 +141,34 @@ describe("POST /projects/:projectId/servers", () => {
 
     expect(response.status).toBe(400);
     expect(convex.action).not.toHaveBeenCalled();
+  });
+
+  it("rejects a null body, an array, and an empty body as validation errors", async () => {
+    // These never reach the schema — `readJsonObject` refuses them first — so
+    // they are the cases a schema-shaped test would miss entirely.
+    for (const raw of ["null", "[]", ""]) {
+      const response = await postRawServer(raw);
+      expect([raw, response.status]).toEqual([raw, 400]);
+    }
+    expect(convex.action).not.toHaveBeenCalled();
+  });
+
+  it("translates a rejected Convex write into the public error envelope", async () => {
+    // The default mock resolves, so nothing else here exercises the catch that
+    // turns a backend rejection into a v1 error rather than an unhandled 500.
+    convex.action.mockRejectedValueOnce(
+      Object.assign(new Error("backend refused"), {
+        data: { code: "CONFLICT", message: "duplicate name" },
+      }),
+    );
+
+    const response = await postServer(MINIMAL_HTTP_SERVER);
+
+    // 409 with the backend's own code preserved, NOT a 500: the catch exists
+    // so a name collision reads as a conflict the caller can act on rather
+    // than as an MCPJam fault.
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "CONFLICT" });
   });
 });
 
