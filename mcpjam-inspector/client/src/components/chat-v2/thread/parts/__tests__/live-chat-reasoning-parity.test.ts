@@ -56,9 +56,17 @@ describe("live chat reasoning display parity", () => {
       // Ban EVERY string literal in a `reasoningDisplayMode` position, not just
       // the old "inline": the drift this guards against is "a live surface got
       // a different mode", and a hardcoded "collapsible" would otherwise pass
-      // every assertion above as long as the import line survived. Matches
-      // both the JSX form (`={"..."}`) and a prop default (`= "..."`).
-      expect(source).not.toMatch(/reasoningDisplayMode\s*=\s*\{?\s*"/);
+      // every assertion above as long as the import line survived.
+      //
+      // All three quote styles, braced or not, so the ban does not hinge on the
+      // formatter's quote preference: a `'collapsible'` or a template literal
+      // is the same drift as a `"collapsible"`, and a guard that only knows
+      // about double quotes silently stops guarding the day one of the others
+      // shows up. Covers the JSX forms (`="..."`, `={"..."}`) and a prop
+      // default (`= "..."`).
+      expect(source).not.toMatch(
+        /reasoningDisplayMode\s*=\s*(?:\{\s*)?(?:"[^"]*"|'[^']*'|`[^`]*`)/,
+      );
     },
   );
 });
