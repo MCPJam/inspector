@@ -120,6 +120,41 @@ describe("defaultRunEvalCell", () => {
     ).toBe("runner-bearer");
   });
 
+  it("licenses the hidden source with the claim's benchmarkRunId", async () => {
+    // `source: 'benchmark'` is a CAPABILITY, not a label (mcpjam-backend#1160):
+    // it hides the child from every project list and suppresses its
+    // notifications, so `startTestSuiteRun` refuses it unless the caller also
+    // names a live parent benchmark run it can already reach. Sending the
+    // source without the id fails EVERY benchmark child at the mutation —
+    // after the claim is leased and the MCP session is open.
+    await run();
+
+    const request = prepareEvalRun.mock.calls[0][1] as Record<string, unknown>;
+    expect(request.source).toBe("benchmark");
+    // Straight pass-through from the claim, not a re-derivation: the parent is
+    // a fact of the job, and looking it up again is how a child gets filed
+    // under the wrong benchmark.
+    expect(request.benchmarkRunId).toBe(JOB.benchmarkRunId);
+    expect(request.benchmarkRunId).toBe("brun-1");
+  });
+
+  it("sends the parent id of THIS claim, not a remembered one", async () => {
+    // One worker process drives many jobs. A cached or module-scoped parent id
+    // would pass the assertion above on the first job and silently file every
+    // later job's children under it.
+    await defaultRunEvalCellForTests()({
+      job: { ...JOB, benchmarkRunId: "brun-2" },
+      entry: ENTRY,
+      cell: ENTRY.evalCell!,
+      grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+    });
+
+    expect(
+      (prepareEvalRun.mock.calls[0][1] as Record<string, unknown>)
+        .benchmarkRunId,
+    ).toBe("brun-2");
+  });
+
   it("keys the child by benchmarkRunId + evidenceKey", async () => {
     await run();
 

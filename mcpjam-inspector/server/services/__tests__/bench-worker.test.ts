@@ -232,6 +232,24 @@ describe("assertClaimExecutable", () => {
     );
   });
 
+  it("refuses a claim carrying no benchmark run id", () => {
+    // The parent id is what LICENSES this job's children to carry the hidden
+    // `benchmark` source: `startTestSuiteRun` refuses that source without a
+    // live parent run (mcpjam-backend#1160). The claim type says `string`, but
+    // it is hand-mirrored from the wire and absent fields are ignored rather
+    // than rejected — so an older or changed backend reaches this worker as
+    // `undefined`, and without this check every cell would fail at Convex with
+    // an opaque FORBIDDEN, one lease and one MCP session in.
+    expect(() => assertClaimExecutable(job({ benchmarkRunId: "" }))).toThrow(
+      JobUnexecutableError,
+    );
+    expect(() =>
+      assertClaimExecutable(
+        job({ benchmarkRunId: undefined as unknown as string }),
+      ),
+    ).toThrow(JobUnexecutableError);
+  });
+
   it("accepts a claim whose pins agree", () => {
     expect(() => assertClaimExecutable(job())).not.toThrow();
   });

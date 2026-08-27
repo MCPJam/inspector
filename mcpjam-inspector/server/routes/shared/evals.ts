@@ -13,6 +13,7 @@ import {
 import { resolveFrozenRunGradingMode } from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
+  type EvalRunProvenance,
   type SuiteRunRecorder,
 } from "../../services/evals/recorder";
 import {
@@ -443,16 +444,18 @@ export const RunEvalsRequestSchema = z.object({
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+/**
+ * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api', the
+ * scheduled-evals worker passes 'schedule', the GitHub-checks worker passes
+ * 'github_check', and the bench worker passes 'benchmark' — which, alone among
+ * them, must also carry the `benchmarkRunId` of its live parent run.
+ *
+ * Server-internal on purpose: neither field is on `RunEvalsRequestSchema`, so
+ * API callers cannot spoof run provenance. The pairing rule lives in
+ * {@link EvalRunProvenance} beside the mutation call that has to honour it.
+ */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
-  /**
-   * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule', the GitHub-checks
-   * worker passes 'github_check', and the bench worker passes 'benchmark'.
-   * Server-internal on purpose: it is NOT on `RunEvalsRequestSchema`, so API
-   * callers cannot spoof run provenance.
-   */
-  source?: "ui" | "api" | "schedule" | "github_check" | "benchmark";
   /**
    * Extra headers stamped on every per-step Convex request this run makes.
    *
@@ -489,7 +492,7 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * retry) rather than pairing a stale manager with a newer run snapshot.
    */
   resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-};
+} & EvalRunProvenance;
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
@@ -1948,7 +1951,6 @@ export async function prepareEvalRun(
     runGroupId,
     environmentId,
     resolvedEnvironment,
-    source,
     idempotencyKey,
     sourceHash,
     skillsOverride,
@@ -1958,6 +1960,18 @@ export async function prepareEvalRun(
     extraHeaders,
     benchmarkWriteGuard,
   } = request;
+
+  /**
+   * `source` and its licence are ONE fact (see {@link EvalRunProvenance}), so
+   * they travel as one value instead of being destructured apart. Two variables
+   * pulled out of a discriminated union are no longer correlated, and re-pairing
+   * them at the recorder call would take a cast — which is exactly the escape
+   * hatch that let `source: 'benchmark'` ship with no `benchmarkRunId`.
+   */
+  const provenance: EvalRunProvenance =
+    request.source === "benchmark"
+      ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
+      : { source: request.source };
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
     throw new WebRouteError(
@@ -2148,7 +2162,10 @@ export async function prepareEvalRun(
     expectedEnvironmentServerIds: environmentLaunch
       ? environmentEffectiveServerIds(environmentLaunch)
       : undefined,
-    source,
+    // Spread as ONE value: `source: 'benchmark'` without its parent id is
+    // refused by `startTestSuiteRun`, so anything that can drop the id here
+    // turns a valid launch into a FORBIDDEN at the wire.
+    ...provenance,
     idempotencyKey,
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
