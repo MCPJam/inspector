@@ -34,7 +34,12 @@ export function AppChromePanel({
         "bg-background flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
         // rounded-t-2xl is 16px; it is not remapped by the theme's radius
         // scale (only sm/md/lg/xl are), so it tracks the design value.
-        headerVisible && "rounded-t-2xl shadow-[0_2px_3px_#00000033]"
+        //
+        // The shadow is mostly hidden BEHIND the panel — only what the blur
+        // pushes past the top edge is ever visible. So depth here comes from
+        // the blur (3px → 10px), not the offset or the alpha, which barely
+        // moved (0x33 → 0x38).
+        headerVisible && "rounded-t-2xl shadow-[0_3px_10px_#00000038]"
       )}
     >
       {children}

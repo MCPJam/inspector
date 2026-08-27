@@ -335,7 +335,7 @@ describe("ActiveServerSelector", () => {
       expect(onServerChange).toHaveBeenCalledWith("server-1");
     });
 
-    it("applies selected styles to selected server", () => {
+    it("gives the panel fill to the selected tab and to nothing else", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
         "server-2": createServer({ name: "server-2" }),
@@ -349,8 +349,19 @@ describe("ActiveServerSelector", () => {
         />,
       );
 
-      const selectedButton = screen.getByText("server-1").closest("button");
-      expect(selectedButton?.className).toContain("bg-muted");
+      // Only the active tab lifts off the linen chrome. The idle tab and Add
+      // Server stay unfilled — the strip used to be the other way round, with
+      // every tab pale and the selection barely marked.
+      const selected = screen.getByText("server-1").closest("button");
+      expect(selected?.className).toContain("bg-background");
+
+      const idle = screen.getByText("server-2").closest("button");
+      expect(idle?.className).not.toContain("bg-background");
+      expect(idle?.className).toContain("hover:bg-chrome-hover");
+
+      const addServer = screen.getByText("Add Server").closest("button");
+      expect(addServer?.className).not.toContain("bg-background");
+      expect(addServer?.className).toContain("hover:bg-chrome-hover");
     });
   });
 

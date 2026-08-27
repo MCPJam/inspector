@@ -281,11 +281,17 @@ export function ActiveServerSelector({
                   handleServerClick(name);
                 }}
                 className={cn(
-                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none focus-visible:bg-accent focus-visible:text-accent-foreground",
-                  "hover:bg-accent hover:text-accent-foreground",
+                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none",
+                  // Only the ACTIVE tab carries the panel fill; the rest sit
+                  // on the linen chrome with no fill at rest. This used to be
+                  // the other way round, which is why the strip read as one
+                  // pale block with the selection barely marked.
+                  //
+                  // The hover cannot be `bg-accent`: --accent IS the chrome
+                  // ground, so hovering an idle tab changed nothing.
                   isSelected
-                    ? "bg-muted text-foreground"
-                    : "bg-background text-foreground",
+                    ? "bg-background text-foreground"
+                    : "text-foreground hover:bg-chrome-hover focus-visible:bg-chrome-hover",
                 )}
               >
                 {isMultiSelectEnabled && (
@@ -383,8 +389,10 @@ export function ActiveServerSelector({
             }}
             className={cn(
               "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
-              "hover:bg-accent hover:text-accent-foreground",
-              "bg-background text-muted-foreground border-dashed",
+              // Not a tab, so it never wears the panel fill — it stays on the
+              // chrome and only lights up on hover.
+              "hover:bg-chrome-hover hover:text-foreground",
+              "text-muted-foreground border-dashed",
             )}
           >
             {isMultiSelectEnabled && (
