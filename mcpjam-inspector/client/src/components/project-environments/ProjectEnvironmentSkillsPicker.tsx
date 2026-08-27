@@ -8,7 +8,11 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { listSkills } from "@/lib/apis/mcp-skills-api";
+import {
+  listSkills,
+  listSkillVersions,
+  type CloudSkillVersionSummary,
+} from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem } from "@/shared/skill-types";
 import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnvironments";
 
@@ -24,8 +28,17 @@ export const MAX_ENVIRONMENT_SKILLS = 20;
  * frontmatter) render disabled with the backend-aligned reason, so users
  * never pick a skill only to discover the restriction at save time.
  *
- * Emits `{ mode: 'explicit', skillIds }` or `null` — never an empty array
- * (the backend rejects `[]`; clearing means `null`).
+ * Each selected skill also gets a VERSION control, defaulting to "Latest" —
+ * the skill's current revision, resolved when the run starts, which is what an
+ * environment has always done. Choosing an exact revision writes a
+ * `versionPins` entry, which is how two environments run two revisions of one
+ * skill side by side. History is fetched only when a control is opened: a
+ * picker listing 20 skills should not fetch 20 histories nobody looked at.
+ *
+ * Emits `{ mode: 'explicit', skillIds, versionPins? }` or `null` — never an
+ * empty array (the backend rejects `[]`; clearing means `null`), and
+ * `versionPins` is omitted rather than `[]` when nothing is pinned, so an
+ * unpinned environment serializes exactly as it did before pins existed.
  */
 export function ProjectEnvironmentSkillsPicker({
   projectId,
@@ -53,7 +66,7 @@ export function ProjectEnvironmentSkillsPicker({
       } catch (err) {
         if (!active) return;
         setLoadError(
-          err instanceof Error ? err.message : "Failed to load skills"
+          err instanceof Error ? err.message : "Failed to load skills",
         );
       }
     })();
@@ -63,6 +76,11 @@ export function ProjectEnvironmentSkillsPicker({
   }, [projectId]);
 
   const selectedIds = useMemo(() => new Set(value?.skillIds ?? []), [value]);
+  const pinnedVersionBySkillId = useMemo(
+    () =>
+      new Map((value?.versionPins ?? []).map((p) => [p.skillId, p.versionId])),
+    [value],
+  );
   const atCap = selectedIds.size >= MAX_ENVIRONMENT_SKILLS;
   // Pinned ids the shared-skills list doesn't return: the skill was unshared,
   // deleted, or moved out of the project. Without a row they are invisible AND
@@ -74,10 +92,30 @@ export function ProjectEnvironmentSkillsPicker({
       skills === null
         ? []
         : Array.from(selectedIds).filter(
-            (id) => !skills.some((s) => s.skillId === id)
+            (id) => !skills.some((s) => s.skillId === id),
           ),
-    [skills, selectedIds]
+    [skills, selectedIds],
   );
+
+  /** Emit a selection, dropping pins for skills that are no longer selected. */
+  const emit = (nextIds: Set<string>, nextPins: Map<string, string>): void => {
+    // Never emit an empty explicit selection — clearing means null.
+    if (nextIds.size === 0) {
+      onChange(null);
+      return;
+    }
+    const pins = Array.from(nextPins.entries())
+      // A pin for an unselected skill is rejected by the backend, and would be
+      // a silent passenger even if it weren't.
+      .filter(([skillId]) => nextIds.has(skillId))
+      .map(([skillId, versionId]) => ({ skillId, versionId }));
+    onChange({
+      mode: "explicit",
+      skillIds: Array.from(nextIds),
+      // Absent, not `[]`, when nothing is pinned.
+      ...(pins.length > 0 ? { versionPins: pins } : {}),
+    });
+  };
 
   const toggle = (skillId: string, checked: boolean) => {
     const next = new Set(selectedIds);
@@ -87,10 +125,15 @@ export function ProjectEnvironmentSkillsPicker({
     } else {
       next.delete(skillId);
     }
-    // Never emit an empty explicit selection — clearing means null.
-    onChange(
-      next.size === 0 ? null : { mode: "explicit", skillIds: Array.from(next) }
-    );
+    emit(next, pinnedVersionBySkillId);
+  };
+
+  /** Pin one skill to an exact revision, or `null` to go back to Latest. */
+  const setVersionPin = (skillId: string, versionId: string | null) => {
+    const nextPins = new Map(pinnedVersionBySkillId);
+    if (versionId === null) nextPins.delete(skillId);
+    else nextPins.set(skillId, versionId);
+    emit(selectedIds, nextPins);
   };
 
   if (loadError) {
@@ -143,7 +186,7 @@ export function ProjectEnvironmentSkillsPicker({
               className={cn(
                 "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/30",
                 rowDisabled &&
-                  "cursor-not-allowed opacity-60 hover:bg-transparent"
+                  "cursor-not-allowed opacity-60 hover:bg-transparent",
               )}
             >
               <Checkbox
@@ -161,6 +204,16 @@ export function ProjectEnvironmentSkillsPicker({
                   </span>
                 ) : null}
               </span>
+              {checked ? (
+                <SkillVersionControl
+                  projectId={projectId}
+                  skillId={skillId}
+                  currentVersionNumber={skill.currentVersionNumber}
+                  pinnedVersionId={pinnedVersionBySkillId.get(skillId) ?? null}
+                  disabled={disabled}
+                  onChange={(versionId) => setVersionPin(skillId, versionId)}
+                />
+              ) : null}
             </Label>
           );
           if (!ineligible) return row;
@@ -185,7 +238,7 @@ export function ProjectEnvironmentSkillsPicker({
             key={skillId}
             className={cn(
               "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/30",
-              disabled && "cursor-not-allowed opacity-60 hover:bg-transparent"
+              disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
             )}
           >
             {/* Unresolvable pin: uncheck to remove only — never re-selectable.
@@ -214,8 +267,104 @@ export function ProjectEnvironmentSkillsPicker({
       </div>
       <p className="text-[11px] text-muted-foreground">
         {selectedIds.size}/{MAX_ENVIRONMENT_SKILLS} skills selected
+        {pinnedVersionBySkillId.size > 0
+          ? ` (${pinnedVersionBySkillId.size} pinned to a version)`
+          : ""}
         {atCap ? " — cap reached" : ""}. Shared skills only.
       </p>
     </div>
+  );
+}
+
+/**
+ * "Latest" vs an exact revision, for ONE selected skill.
+ *
+ * History loads on first open, not on mount: a picker showing 20 skills would
+ * otherwise fire 20 requests for lists nobody looked at. Until then the control
+ * shows what it already knows from the list row — the current version number.
+ *
+ * Latest is the default and stays the default. Pinning is the deliberate act
+ * (hold this environment at a known revision so a comparison means something),
+ * so it is never selected on the user's behalf.
+ */
+function SkillVersionControl({
+  projectId,
+  skillId,
+  currentVersionNumber,
+  pinnedVersionId,
+  disabled,
+  onChange,
+}: {
+  projectId: string;
+  skillId: string;
+  currentVersionNumber?: number;
+  pinnedVersionId: string | null;
+  disabled: boolean;
+  onChange: (versionId: string | null) => void;
+}) {
+  const [versions, setVersions] = useState<CloudSkillVersionSummary[] | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(false);
+
+  const loadVersions = async () => {
+    if (versions !== null || loading) return;
+    setLoading(true);
+    try {
+      setVersions(await listSkillVersions(projectId, skillId));
+    } catch {
+      // A failed history load must not block the selection itself: fall back
+      // to an empty list, which renders as "Latest only".
+      setVersions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // What the trigger says before history arrives: the pinned number when we
+  // know it, else Latest (with its number when the list row carried one).
+  const pinned = versions?.find((v) => v.versionId === pinnedVersionId);
+  const label = pinnedVersionId
+    ? pinned
+      ? `v${pinned.versionNumber}`
+      : "Pinned"
+    : currentVersionNumber !== undefined
+    ? `Latest (v${currentVersionNumber})`
+    : "Latest";
+
+  return (
+    <select
+      // eslint-disable-next-line jsx-a11y/no-onchange
+      className={cn(
+        "ml-auto shrink-0 rounded border border-border/60 bg-background px-1.5 py-0.5 text-[11px]",
+        pinnedVersionId && "border-warning/60",
+      )}
+      aria-label={`Version for ${skillId}`}
+      disabled={disabled}
+      value={pinnedVersionId ?? ""}
+      onMouseDown={(e) => {
+        // Opening the control is what triggers the fetch; stop the click from
+        // reaching the row Label, which would toggle the checkbox.
+        e.stopPropagation();
+        void loadVersions();
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onFocus={() => void loadVersions()}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+    >
+      <option value="">{label === "Pinned" ? "Latest" : label}</option>
+      {loading ? <option disabled>Loading…</option> : null}
+      {(versions ?? []).map((version) => (
+        <option key={version.versionId} value={version.versionId}>
+          v{version.versionNumber}
+          {version.isCurrent ? " (current)" : ""}
+        </option>
+      ))}
+      {/* A pin whose history hasn't loaded still needs a selectable option, or
+          the control would silently reset it to Latest on first render. */}
+      {pinnedVersionId && !pinned ? (
+        <option value={pinnedVersionId}>Pinned version</option>
+      ) : null}
+    </select>
   );
 }

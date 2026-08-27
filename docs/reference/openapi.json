@@ -16314,7 +16314,24 @@
             "items": {
               "type": "string"
             },
-            "description": "Project-shared skill IDs. Skills carrying supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+            "description": "Project-shared skill IDs. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+          },
+          "versionPins": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["skillId", "versionId"],
+              "properties": {
+                "skillId": {
+                  "type": "string"
+                },
+                "versionId": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs \"Latest\" — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
           }
         }
       },

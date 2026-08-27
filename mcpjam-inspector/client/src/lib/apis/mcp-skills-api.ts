@@ -29,7 +29,7 @@ export type SkillsSource =
 export type SkillSharing = "user" | "project";
 
 function isCloud(
-  source?: SkillsSource
+  source?: SkillsSource,
 ): source is { kind: "cloud"; projectId: string } {
   return source?.kind === "cloud";
 }
@@ -48,6 +48,9 @@ interface CloudSkillWire {
    * below can carry it; absent on older backends.
    */
   pinnability?: SkillPinnability;
+  /** Which revision "Latest" resolves to; absent on older backends. */
+  currentVersionId?: string;
+  currentVersionNumber?: number;
   content?: string;
 }
 
@@ -67,6 +70,10 @@ function cloudToListItem(s: CloudSkillWire): SkillListItem {
     origin: "cloud",
     provenance: normalizeProvenance(s.provenance),
     ...(s.pinnability ? { pinnability: s.pinnability } : {}),
+    ...(s.currentVersionId ? { currentVersionId: s.currentVersionId } : {}),
+    ...(s.currentVersionNumber !== undefined
+      ? { currentVersionNumber: s.currentVersionNumber }
+      : {}),
   };
 }
 
@@ -110,7 +117,7 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
 
 async function resolveCloudSkillId(
   projectId: string,
-  name: string
+  name: string,
 ): Promise<string> {
   const body = await webPost<
     { projectId: string },
@@ -126,7 +133,7 @@ export interface ListSkillsResponse {
 }
 
 export async function listSkills(
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<SkillListItem[]> {
   if (isCloud(source)) {
     const body = await webPost<
@@ -163,7 +170,7 @@ export async function listSkills(
 
 export async function getSkill(
   name: string,
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<Skill> {
   if (isCloud(source)) {
     const body = await webPost<
@@ -199,11 +206,24 @@ export async function uploadSkill(
      * description/body. Ignored by the local-FS path.
      */
     skillMd?: string;
+    /**
+     * FOLDER IMPORT (cloud only): create the skill as a hidden draft whose
+     * supporting files are still uploading. The bulk `/files/attach` that
+     * follows commits it and mints its single v1 — so an interrupted import
+     * leaves nothing visible, instead of a skill whose scripts/ never arrived.
+     */
+    importPending?: boolean;
   },
   source?: SkillsSource,
-  sharing: SkillSharing = "user"
+  sharing: SkillSharing = "user",
+  /**
+   * Cloud only: receives the created row's id. A folder import NEEDS this —
+   * its draft is hidden until the file attach commits it, so it cannot be
+   * looked up by name the way `resolveCloudSkillId` would.
+   */
+  onCloudSkillId?: (skillId: string) => void,
 ): Promise<Skill> {
-  const { skillMd, ...fields } = data;
+  const { skillMd, importPending, ...fields } = data;
   if (isCloud(source)) {
     const body = await webPost<
       {
@@ -213,6 +233,7 @@ export async function uploadSkill(
         content: string;
         sharing: SkillSharing;
         skillMd?: string;
+        importPending?: boolean;
       },
       { skill: CloudSkillWire }
     >("/api/web/skills/create", {
@@ -220,7 +241,9 @@ export async function uploadSkill(
       ...fields,
       sharing,
       ...(skillMd !== undefined ? { skillMd } : {}),
+      ...(importPending ? { importPending: true } : {}),
     });
+    onCloudSkillId?.(body.skill.skillId);
     return cloudToSkill(body.skill);
   }
 
@@ -242,13 +265,13 @@ export async function uploadSkillFolder(
   files: File[],
   skillName: string,
   source?: SkillsSource,
-  sharing: SkillSharing = "user"
+  sharing: SkillSharing = "user",
 ): Promise<Skill> {
   if (isCloud(source)) {
     const skillMdFile = files.find(
       (f) =>
         f.name === "SKILL.md" ||
-        ((f as any).webkitRelativePath || "").endsWith("/SKILL.md")
+        ((f as any).webkitRelativePath || "").endsWith("/SKILL.md"),
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
     // 1. Create the skill from SKILL.md. A 409 here is a genuine name
@@ -261,10 +284,25 @@ export async function uploadSkillFolder(
     const rawSkillMd = await skillMdFile.text();
     const { description, body } = parseSkillMd(rawSkillMd);
     const supporting = files.filter((f) => f !== skillMdFile);
+    let createdCloudSkillId: string | null = null;
     const skill = await uploadSkill(
-      { name: skillName, description, content: body, skillMd: rawSkillMd },
+      {
+        name: skillName,
+        description,
+        content: body,
+        skillMd: rawSkillMd,
+        // Only when files actually follow: a SKILL.md-only folder is complete
+        // the moment it is created, and marking it pending would leave it
+        // hidden with no attach coming to commit it.
+        ...(supporting.length > 0 && isCloud(source)
+          ? { importPending: true }
+          : {}),
+      },
       source,
-      sharing
+      sharing,
+      (id) => {
+        createdCloudSkillId = id;
+      },
     );
 
     // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
@@ -274,13 +312,19 @@ export async function uploadSkillFolder(
     if (supporting.length === 0) return skill;
 
     const failedPaths: string[] = [];
-    let skillId: string | null = null;
-    try {
-      skillId = await resolveCloudSkillId(source.projectId, skillName);
-    } catch {
-      // Can't even address the created skill's file APIs — treat every
-      // supporting file as failed so the rollback below runs.
-      failedPaths.push(...supporting.map(skillRelativePath));
+    // The create response's id, NOT a lookup by name: an import draft is hidden
+    // from every listing until its attach commits it, so re-resolving by name
+    // would fail on exactly the path that needs it. The lookup stays as a
+    // fallback for a create that returned no id (an older server).
+    let skillId: string | null = createdCloudSkillId;
+    if (!skillId) {
+      try {
+        skillId = await resolveCloudSkillId(source.projectId, skillName);
+      } catch {
+        // Can't even address the created skill's file APIs — treat every
+        // supporting file as failed so the rollback below runs.
+        failedPaths.push(...supporting.map(skillRelativePath));
+      }
     }
     if (skillId) {
       const attachInputs: {
@@ -342,7 +386,21 @@ export async function uploadSkillFolder(
       // half-created skill is left behind.
       let rollbackFailed = false;
       try {
-        await deleteSkill(skillName, source);
+        // By ID when we have one: the draft this rollback exists to clean up is
+        // hidden from listings, so deleting it by NAME would fail and leave the
+        // very orphan the rollback is for. (Deleting a draft hard-deletes it —
+        // it was never a real skill.)
+        if (skillId) {
+          await webPost<
+            { projectId: string; skillId: string },
+            { success: boolean }
+          >("/api/web/skills/delete", {
+            projectId: source.projectId,
+            skillId,
+          });
+        } else {
+          await deleteSkill(skillName, source);
+        }
       } catch {
         rollbackFailed = true;
       }
@@ -352,12 +410,12 @@ export async function uploadSkillFolder(
           `Upload failed — ${failedPaths.length} supporting file(s) failed ` +
             `(${failing}), and removing the partially created skill also ` +
             `failed. Delete skill '${skillName}' manually, then fix the ` +
-            `failing files and retry.`
+            `failing files and retry.`,
         );
       }
       throw new Error(
         `Upload failed — nothing was saved. Fix the failing files ` +
-          `(${failing}) and retry.`
+          `(${failing}) and retry.`,
       );
     }
     return skill;
@@ -382,7 +440,7 @@ export async function uploadSkillFolder(
   } catch {}
   if (!res.ok) {
     throw new Error(
-      body?.error || body?.message || `Upload skill failed (${res.status})`
+      body?.error || body?.message || `Upload skill failed (${res.status})`,
     );
   }
   return body.skill as Skill;
@@ -398,7 +456,7 @@ export async function uploadSkillFolder(
 export async function updateSkill(
   skillId: string,
   data: { description?: string; content?: string },
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<Skill> {
   if (!isCloud(source)) {
     throw new Error("Editing is only supported for cloud skills.");
@@ -419,15 +477,81 @@ export async function updateSkill(
   return cloudToSkill(body.skill);
 }
 
+/** One revision in a cloud skill's history (newest first from the backend). */
+export interface CloudSkillVersionSummary {
+  versionId: string;
+  versionNumber: number;
+  versionHash: string;
+  contentHash: string;
+  name: string;
+  description: string;
+  fileCount: number;
+  /** The revision this skill's "Latest" resolves to right now. */
+  isCurrent: boolean;
+  /** Set when this revision was minted by restoring an older one. */
+  restoredFromVersionNumber?: number;
+  createdByUserId: string;
+  createdAt: number;
+}
+
+/**
+ * A cloud skill's revisions, newest first. Cloud-only: local filesystem skills
+ * have no version history (git is their history).
+ */
+export async function listSkillVersions(
+  projectId: string,
+  skillId: string,
+): Promise<CloudSkillVersionSummary[]> {
+  const body = await webPost<
+    { projectId: string; skillId: string },
+    { versions: CloudSkillVersionSummary[] }
+  >("/api/web/skills/versions/list", { projectId, skillId });
+  return body?.versions ?? [];
+}
+
+export interface CloudSkillVersionDetail extends CloudSkillVersionSummary {
+  content: string;
+  files: { path: string; size: number; contentHash: string }[];
+}
+
+/** One revision in full — body plus the file manifest it froze. */
+export async function getSkillVersion(args: {
+  projectId: string;
+  skillId: string;
+  versionId: string;
+}): Promise<CloudSkillVersionDetail> {
+  const body = await webPost<typeof args, { version: CloudSkillVersionDetail }>(
+    "/api/web/skills/versions/get",
+    args,
+  );
+  return body.version;
+}
+
+/**
+ * Bring an older revision's bytes back as the live skill. A revert, not a
+ * rewind: the backend mints the restored content as the NEXT revision, so
+ * environments tracking Latest pick it up while exact-pinned ones do not.
+ */
+export async function restoreSkillVersion(args: {
+  projectId: string;
+  skillId: string;
+  versionId: string;
+}): Promise<void> {
+  await webPost<typeof args, { success: boolean }>(
+    "/api/web/skills/versions/restore",
+    args,
+  );
+}
+
 export async function deleteSkill(
   name: string,
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<void> {
   if (isCloud(source)) {
     const skillId = await resolveCloudSkillId(source.projectId, name);
     await webPost<{ projectId: string; skillId: string }, { success: boolean }>(
       "/api/web/skills/delete",
-      { projectId: source.projectId, skillId }
+      { projectId: source.projectId, skillId },
     );
     return;
   }
@@ -448,12 +572,12 @@ export async function deleteSkill(
 /** Cloud only: promote a personal skill to project-shared (admin). */
 export async function promoteSkill(
   name: string,
-  projectId: string
+  projectId: string,
 ): Promise<void> {
   const skillId = await resolveCloudSkillId(projectId, name);
   await webPost<{ projectId: string; skillId: string }, { success: boolean }>(
     "/api/web/skills/promote",
-    { projectId, skillId }
+    { projectId, skillId },
   );
 }
 
@@ -517,7 +641,7 @@ export function buildSkillFileTree(files: CloudSkillFileWire[]): SkillFile[] {
 
 export async function listSkillFiles(
   name: string,
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<SkillFile[]> {
   if (isCloud(source)) {
     const skillId = await resolveCloudSkillId(source.projectId, name);
@@ -546,7 +670,7 @@ export async function listSkillFiles(
 export async function readSkillFile(
   name: string,
   filePath: string,
-  source?: SkillsSource
+  source?: SkillsSource,
 ): Promise<SkillFileContent> {
   if (isCloud(source)) {
     // SKILL.md is the skill body (not a stored file); everything else is a
