@@ -59,3 +59,30 @@ export function SupportChip({
     </span>
   );
 }
+
+/**
+ * Same pill geometry as `SupportChip`, for spec-identity values (protocol
+ * versions, client version) rather than support levels. No status dot and a
+ * neutral surface: these values name a spec era — there is nothing good or
+ * bad about one — but they read as a distinct kind of value, not as prose.
+ */
+export function SpecChip({
+  label,
+  className,
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <span
+      data-spec-value={label}
+      className={cn(
+        "inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-0.5",
+        "font-mono text-[11.5px] font-medium leading-none tabular-nums whitespace-nowrap text-foreground",
+        className
+      )}
+    >
+      {label}
+    </span>
+  );
+}
