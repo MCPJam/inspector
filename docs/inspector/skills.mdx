@@ -133,3 +133,24 @@ Together with the inlined catalog, these tools let the LLM progressively load sk
 <Note>
 `listSkills` is not a general discovery tool. It appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists those server-provided skills only — their catalog is fetched from the server on demand rather than inlined in the prompt.
 </Note>
+
+## Skills over MCP (Server-Provided Skills)
+
+When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and shows them in the catalog alongside local and hosted skills. Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
+
+### Unloadable skills
+
+A server skill can appear in the catalog but be refused for loading. MCPJam shows the skill so you can see what the server advertises, but declines to inject unverifiable content into a model turn. The reason is always shown:
+
+| Reason | What it means |
+|--------|---------------|
+| `no_resources` | The server omitted the `resources` manifest the spec requires. MCPJam cannot verify the skill's contents without one. |
+| `dynamic_resources` | The server declared `"resources": "dynamic"` — a form the spec defines for skills generated per request. There is no manifest to verify against, so MCPJam declines to load it. |
+| `too_many_resources` | The skill's manifest lists more than 512 files, which is the per-skill limit the spec requires hosts to support. |
+| `too_large` | The skill's manifest declares a total size over 16 MiB, which is the per-skill byte budget the spec requires hosts to support. |
+
+A skill that is unloadable for a limit reason (`too_many_resources` or `too_large`) is a real skill whose manifest exceeds what any conforming host is required to handle — it is not a server bug. The skill remains visible in the catalog with its advertised manifest so you can inspect what was declared.
+
+### Prompt injection cap
+
+Verification uses the spec's per-skill budget (16 MiB). A separate, lower cap of **128 KiB** applies to how much skill content MCPJam will place in a single model turn. A skill that verifies correctly but exceeds this cap is refused rather than truncated — a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.

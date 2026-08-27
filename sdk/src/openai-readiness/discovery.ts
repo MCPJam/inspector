@@ -36,8 +36,10 @@ import {
   type DirectoryRedirectHop,
   type PrmDiscoveryResult,
 } from "../directory-readiness/discovery.js";
-import { sha256HexOfText } from "../mcp-client-manager/skills-integrity.js";
-import { parseYamlLite, splitFrontmatter } from "../plugin-bundle/skill.js";
+import {
+  sha256HexOfBytes,
+  splitSkillMarkdown,
+} from "../mcp-client-manager/skills-integrity.js";
 import {
   OPENAI_DOMAIN_VERIFICATION_PATH,
   OPENAI_MCP_SKILL_LIMITS,
@@ -323,12 +325,17 @@ export async function fetchOpenAIDomainVerification(
 
 /** One skill the server advertises for import, as the scan saw it. */
 export interface OpenAIImportedSkillEvidence {
+  /** The skill's frontmatter name, when the server supplies one. */
   name?: string;
   description?: string;
   /** The digest the listing declares for the skill's markdown. */
   declaredDigest?: string;
   /** The resource the skill's markdown is served from. */
   resourceUri?: string;
+  /** The frontmatter object advertised by a current SEP-2640 listing. */
+  declaredFrontmatter?: Record<string, unknown>;
+  /** The complete resource manifest advertised by a current SEP-2640 listing. */
+  declaredResources?: OpenAIImportedSkillResourceEvidence[];
   /** Bytes of the markdown actually fetched. */
   markdownBytes?: number;
   /** SHA-256 of the markdown actually fetched, when it was fetched. */
@@ -356,6 +363,13 @@ export interface OpenAIImportedSkillEvidence {
   /** Markdown plus every page. Absent when any page could not be sized. */
   totalBytes?: number;
   fetchError?: string;
+}
+
+/** One supporting resource from a current SEP-2640 skill manifest. */
+export interface OpenAIImportedSkillResourceEvidence {
+  uri: string;
+  declaredDigest?: string;
+  declaredSize?: number;
 }
 
 export interface OpenAISkillsEvidence {
@@ -442,46 +456,207 @@ async function callJsonRpc(
   };
 }
 
+/** The content returned by one standard `resources/read` response. */
+interface ReadResourceContent {
+  bytes: Uint8Array;
+  text?: string;
+}
+
+function parseDeclaredResources(
+  value: unknown
+): OpenAIImportedSkillResourceEvidence[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const resources: OpenAIImportedSkillResourceEvidence[] = [];
+  for (const candidate of value) {
+    const resource = asRecord(candidate);
+    const uri = resource && asString(resource.uri);
+    if (!uri) continue;
+    const declaredSize =
+      typeof resource.size === "number" &&
+      Number.isInteger(resource.size) &&
+      resource.size >= 0
+        ? resource.size
+        : undefined;
+    resources.push({
+      uri,
+      declaredDigest: asString(resource.digest),
+      declaredSize,
+    });
+  }
+  return resources;
+}
+
+function decodeBase64(value: string): Uint8Array | undefined {
+  try {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return undefined;
+  }
+}
+
+function readResourceContent(
+  document: Record<string, unknown>,
+  uri: string
+): ReadResourceContent | undefined {
+  const result = asRecord(document.result);
+  const contents =
+    result && Array.isArray(result.contents) ? result.contents : [];
+  const content = contents
+    .map((candidate) => asRecord(candidate))
+    .find((candidate) => candidate && asString(candidate.uri) === uri);
+  if (!content) return undefined;
+
+  const text = asString(content.text);
+  if (text !== undefined) {
+    return { bytes: new TextEncoder().encode(text), text };
+  }
+  const blob = asString(content.blob);
+  const bytes = blob === undefined ? undefined : decodeBase64(blob);
+  return bytes ? { bytes } : undefined;
+}
+
+function parseFetchedMarkdown(
+  skill: OpenAIImportedSkillEvidence,
+  content: ReadResourceContent
+): string {
+  const markdown = content.text ?? new TextDecoder().decode(content.bytes);
+  skill.markdownBytes = content.bytes.byteLength;
+  return markdown;
+}
+
+function recordFetchedMarkdown(
+  skill: OpenAIImportedSkillEvidence,
+  content: ReadResourceContent
+): Promise<void> {
+  const markdown = parseFetchedMarkdown(skill, content);
+  return sha256HexOfBytes(content.bytes).then((digest) => {
+    skill.observedDigest = digest;
+    // The REAL YAML parser, not `parseYamlLite`. This value is compared against
+    // the server's advertised frontmatter by `checkFrontmatterDrift`, which
+    // diffs the union of keys on canonical JSON — so any place the lite
+    // subset parser disagrees with YAML becomes a reported violation against a
+    // CONFORMING server. Both divergences are easy to hit: a nested map
+    // (`metadata:\n  author: acme`) becomes `""`, and a `description: |` block
+    // loses the trailing newline YAML preserves.
+    //
+    // `splitSkillMarkdown` is the same function the host re-parses with, which
+    // is the only parser this comparison can be correct against.
+    const parsed = splitSkillMarkdown(markdown).frontmatter;
+    if (parsed) skill.frontmatter = parsed;
+  });
+}
+
+async function fetchCurrentSepSkillBody(
+  options: OpenAIDiscoveryOptions,
+  id: number,
+  skill: OpenAIImportedSkillEvidence,
+  entry: Record<string, unknown>
+): Promise<void> {
+  const uri = skill.resourceUri;
+  if (!uri) {
+    skill.fetchError = "the SEP-2640 listing entry declared no skill URI";
+    return;
+  }
+
+  const resources =
+    parseDeclaredResources(entry.resources) ?? skill.declaredResources;
+  if (resources) {
+    skill.declaredResources = resources;
+    const pageResources = resources.filter((resource) => resource.uri !== uri);
+    skill.declaredPageCount = pageResources.length;
+  }
+
+  // A SEPARATE id space, not `id + 1`. Callers allocate `200 + index` for the
+  // `skills/get`, so `id + 1` made skill N's read collide with skill N+1's
+  // get — breaking `callJsonRpc`'s stated invariant that ids increment across
+  // a run, and tripping any server that rejects a reused request id.
+  const markdownCall = await callJsonRpc(options, id + 1000, "resources/read", {
+    uri,
+  });
+  if (!markdownCall.document) {
+    skill.fetchError =
+      markdownCall.transportError ??
+      (markdownCall.status !== undefined
+        ? `resources/read answered ${markdownCall.status} with no readable JSON body`
+        : "resources/read returned no result");
+    return;
+  }
+  if (asRecord(markdownCall.document.error)) {
+    skill.fetchError =
+      asString(asRecord(markdownCall.document.error)?.message) ??
+      "resources/read returned an error";
+    return;
+  }
+  const markdownContent = readResourceContent(markdownCall.document, uri);
+  if (!markdownContent) {
+    skill.fetchError = "resources/read returned no readable SKILL.md content";
+    return;
+  }
+  await recordFetchedMarkdown(skill, markdownContent);
+  const markdownBytes = skill.markdownBytes;
+  if (markdownBytes === undefined) {
+    skill.fetchError = "resources/read returned no measurable SKILL.md content";
+    return;
+  }
+
+  const pageResources = (resources ?? []).filter(
+    (resource) => resource.uri !== uri
+  );
+  const pages: { uri: string; bytes: number }[] = [];
+  let unmeasuredPages = Math.max(
+    0,
+    pageResources.length - OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill
+  );
+
+  for (const resource of pageResources.slice(
+    0,
+    OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill
+  )) {
+    // SEP-2640 requires hosts to retrieve supporting files lazily. Their
+    // manifest sizes are enough for the readiness cap checks, so do not read
+    // every reference/template/script merely because it was listed.
+    const page = { uri: resource.uri, bytes: resource.declaredSize ?? 0 };
+    pages.push(page);
+    if (resource.declaredSize === undefined) unmeasuredPages += 1;
+  }
+
+  if (pages.length > 0) skill.pages = pages;
+  if (unmeasuredPages > 0) skill.unmeasuredPages = unmeasuredPages;
+  skill.totalBytes =
+    unmeasuredPages > 0
+      ? undefined
+      : markdownBytes + pages.reduce((sum, page) => sum + page.bytes, 0);
+}
+
 /**
- * Read ONE skill's body with `skills/get`.
+ * Read ONE skill's body.
  *
- * WHY THE LISTING IS NOT ENOUGH. `skills/list` returns what the server SAYS
- * about each skill — its name, its description, the digest it claims for its
- * markdown. Three of this lane's checks are about whether those claims are
- * true: that the declared digest matches the bytes actually served, that the
- * markdown is within its size limit, that the frontmatter agrees with the
- * listing. None of them can be answered from the listing alone, and a run that
- * never fetched a body would report all three as `not-evaluated` forever —
- * three checks that exist and never fire.
- *
- * TOLERANT ABOUT SPELLING, deliberately. The skills extension is young and
- * servers in the wild spell the body field `content`, `markdown` or `text`,
- * and the page list `pages` or `resources`. Reading whichever is present costs
- * nothing; insisting on one would report a working server as unreadable. What
- * this does NOT do is guess: a response with no body field at all records a
- * `fetchError` and leaves the derived fields absent, so the checks above it
- * stay `not-evaluated` rather than grading a body that was never returned.
+ * Current SEP-2640 servers return metadata from `skills/get` and content from
+ * the standard `resources/read` method. The legacy branch remains tolerant of
+ * the pre-draft `{name, content}` shape so existing readiness evidence can be
+ * replayed while servers migrate.
  */
 async function fetchImportedSkillBody(
   options: OpenAIDiscoveryOptions,
   id: number,
-  skill: OpenAIImportedSkillEvidence,
+  skill: OpenAIImportedSkillEvidence
 ): Promise<void> {
+  const uri = skill.resourceUri;
   const name = skill.name;
-  if (!name) {
-    skill.fetchError = "the listing entry declared no name to fetch by";
+  if (!uri && !name) {
+    skill.fetchError =
+      "the listing entry declared neither a skill URI nor name";
     return;
   }
 
-  const call = await callJsonRpc(options, id, OPENAI_MCP_SKILLS_METHODS.get, {
-    name,
-  });
+  const call = await callJsonRpc(
+    options,
+    id,
+    OPENAI_MCP_SKILLS_METHODS.get,
+    uri ? { uri } : { name }
+  );
   const document = call.document;
-
-  // The transport's own failure, named. Every check that reads a derived field
-  // treats a skill carrying `fetchError` as unfetched, so the text here only
-  // ever has to explain the gap to a human — but "skills/get returned no
-  // result" explains the wrong gap when what happened was a timeout.
   if (!document) {
     skill.fetchError =
       call.transportError ??
@@ -490,7 +665,6 @@ async function fetchImportedSkillBody(
         : "skills/get returned no result");
     return;
   }
-
   const error = asRecord(document.error);
   if (error) {
     skill.fetchError =
@@ -504,92 +678,72 @@ async function fetchImportedSkillBody(
   }
 
   const body = asRecord(result.skill) ?? result;
+  // SEP-2640's entry has a URI plus frontmatter/resources metadata and no
+  // inline body. A conforming host reads the actual bytes through resources/read.
+  if (
+    uri &&
+    asString(body.uri) === uri &&
+    ("frontmatter" in body || "resources" in body)
+  ) {
+    await fetchCurrentSepSkillBody(options, id, skill, body);
+    return;
+  }
+
+  // Legacy response compatibility: older readiness fixtures embedded markdown
+  // directly in skills/get and called supporting files "pages".
   const markdown =
     asString(body.content) ?? asString(body.markdown) ?? asString(body.text);
   if (markdown === undefined) {
     skill.fetchError = "skills/get returned no markdown body";
     return;
   }
-
-  // MEASURED IN BYTES, not characters. The limit this feeds is a byte limit,
-  // and a skill whose markdown is mostly non-ASCII would otherwise be measured
-  // as comfortably inside a limit it exceeds.
-  const encoder = new TextEncoder();
-  const markdownBytes = encoder.encode(markdown).length;
-  skill.markdownBytes = markdownBytes;
-  skill.observedDigest = await sha256HexOfText(markdown);
-
-  const split = splitFrontmatter(markdown);
-  if (split) {
-    const parsed = parseYamlLite(split.frontmatter);
-    // `tooDeep` is an ARRAY of the paths that nested too far, so its emptiness
-    // is the thing to test — the array itself is always truthy.
-    if (parsed.tooDeep.length === 0) skill.frontmatter = parsed.data;
+  await recordFetchedMarkdown(skill, {
+    bytes: new TextEncoder().encode(markdown),
+    text: markdown,
+  });
+  const markdownBytes = skill.markdownBytes;
+  if (markdownBytes === undefined) {
+    skill.fetchError = "skills/get returned no measurable markdown body";
+    return;
   }
 
   const listed = Array.isArray(body.pages)
     ? body.pages
     : Array.isArray(body.resources)
-      ? body.resources
-      : [];
+    ? body.resources
+    : [];
   const pages: { uri: string; bytes: number }[] = [];
   let unmeasuredPages = 0;
-
-  // THE COUNT BEFORE THE CAP. The loop below reads at most
-  // `maxPagesPerSkill` pages, which means `pages.length` can never exceed the
-  // cap — so the check that grades "this skill ships too many pages" could
-  // never fire from wire evidence, however many the server declared. Recording
-  // the declared count is what lets that check see the number it is about.
   const declaredPageCount = listed.length;
   if (declaredPageCount > 0) skill.declaredPageCount = declaredPageCount;
-
   for (const entry of listed.slice(
     0,
-    OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
+    OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill
   )) {
     const page = asRecord(entry);
     if (!page) continue;
-    const uri = asString(page.uri) ?? asString(page.resourceUri);
+    const pageUri = asString(page.uri) ?? asString(page.resourceUri);
     const text =
       asString(page.content) ?? asString(page.markdown) ?? asString(page.text);
-    if (!uri) continue;
-
-    // A SERVED page is measured. A page that only DECLARES its size is taken
-    // at the server's word, and only when that word is a real byte count:
-    // `typeof x === "number"` admits `NaN`, `Infinity` and negatives, all of
-    // which come straight off the submitted server's own response. `NaN` is
-    // the dangerous one — it propagates into the total, and a `NaN` total
-    // compares `false` against every limit, so the size check this fetch
-    // exists to feed would report a pass having measured nothing.
+    if (!pageUri) continue;
     let bytes: number | undefined;
-    if (text !== undefined) {
-      bytes = encoder.encode(text).length;
-    } else if (
+    if (text !== undefined) bytes = new TextEncoder().encode(text).length;
+    else if (
       typeof page.bytes === "number" &&
       Number.isInteger(page.bytes) &&
       page.bytes >= 0
     ) {
       bytes = page.bytes;
     }
-
     if (bytes === undefined) unmeasuredPages += 1;
-    pages.push({ uri, bytes: bytes ?? 0 });
+    pages.push({ uri: pageUri, bytes: bytes ?? 0 });
   }
-
-  // The pages past the cap are unmeasured in the same sense as a page with no
-  // readable size: nobody read them, and a total that omits them silently is
-  // below the real one.
   if (declaredPageCount > OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill) {
     unmeasuredPages +=
       declaredPageCount - OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill;
   }
   if (pages.length > 0) skill.pages = pages;
   if (unmeasuredPages > 0) skill.unmeasuredPages = unmeasuredPages;
-
-  // ABSENT rather than understated. A total that silently omits the pages
-  // nobody could size is a number below the real one, and the check that reads
-  // it would pass a skill that is over its limit. Absence is what the check
-  // already knows how to report.
   skill.totalBytes =
     unmeasuredPages > 0
       ? undefined
@@ -608,7 +762,7 @@ async function fetchImportedSkillBody(
  */
 export async function discoverOpenAIImportedSkills(
   options: OpenAIDiscoveryOptions,
-  now: () => Date = () => new Date(),
+  now: () => Date = () => new Date()
 ): Promise<OpenAISkillsEvidence> {
   const skills: OpenAIImportedSkillEvidence[] = [];
   let cursor: string | undefined;
@@ -623,7 +777,7 @@ export async function discoverOpenAIImportedSkills(
       options,
       100 + page,
       OPENAI_MCP_SKILLS_METHODS.list,
-      cursor ? { cursor } : {},
+      cursor ? { cursor } : {}
     );
     const document = call.document;
     pagesWalked += 1;
@@ -659,11 +813,38 @@ export async function discoverOpenAIImportedSkills(
     for (const entry of listed) {
       const skill = asRecord(entry);
       if (!skill) continue;
+
+      // Current SEP-2640 entries are identified by URI and carry the complete
+      // frontmatter plus a manifest of individually readable resources.
+      const uri = asString(skill.uri);
+      const frontmatter = asRecord(skill.frontmatter);
+      if (uri && frontmatter) {
+        const declaredResources = parseDeclaredResources(skill.resources);
+        const ownResource = declaredResources?.find(
+          (resource) => resource.uri === uri
+        );
+        const pageCount = declaredResources
+          ? declaredResources.filter((resource) => resource.uri !== uri).length
+          : undefined;
+        skills.push({
+          name: asString(frontmatter.name),
+          description: asString(frontmatter.description),
+          declaredFrontmatter: frontmatter,
+          declaredDigest: ownResource?.declaredDigest,
+          resourceUri: uri,
+          declaredResources,
+          declaredPageCount: pageCount,
+        });
+        continue;
+      }
+
+      // Keep accepting the pre-draft shape for already captured evidence and
+      // servers that have not migrated yet.
       skills.push({
         name: asString(skill.name),
         description: asString(skill.description),
         declaredDigest:
-          asString(skill.digest) ?? asString(skill.sha256) ?? undefined,
+          asString(skill.digest) ?? asString(skill.sha256),
         resourceUri: asString(skill.resourceUri) ?? asString(skill.uri),
       });
     }
@@ -681,7 +862,7 @@ export async function discoverOpenAIImportedSkills(
   // nothing reads as graded that was not fetched.
   const bodiesToFetch = Math.min(
     skills.length,
-    OPENAI_MCP_SKILL_LIMITS.maxSkills + 1,
+    OPENAI_MCP_SKILL_LIMITS.maxSkills + 1
   );
   for (let index = 0; index < bodiesToFetch; index += 1) {
     await fetchImportedSkillBody(options, 200 + index, skills[index]);
