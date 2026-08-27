@@ -72,6 +72,22 @@ function jsonOk(payload: Record<string, unknown>) {
   );
 }
 
+/**
+ * The classification call. `/preflight` asks the backend twice — once to learn
+ * whether the family is deployed at all, then once for real — and only the
+ * second carries a snapshot, which is what tells them apart.
+ */
+function classifyCall(
+  fetchMock: ReturnType<typeof jsonOk>,
+): [string, RequestInit] {
+  const call = fetchMock.mock.calls.find(
+    ([, init]) =>
+      typeof init?.body === "string" && init.body.includes("toolSnapshot"),
+  );
+  if (!call) throw new Error("the backend was never asked to classify");
+  return call as [string, RequestInit];
+}
+
 function postPreflight(app: Hono, body: Record<string, unknown> = {}) {
   return app.request("/api/web/bench/preflight", {
     method: "POST",
@@ -148,7 +164,7 @@ describe("POST /api/web/bench/preflight", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).receiptId).toBe("rcpt_1");
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = classifyCall(fetchMock);
     expect(url).toBe("https://convex.test/internal/v1/bench/preflight");
     const headers = init.headers as Record<string, string>;
     // The service token says "this is the inspector"; the caller bearer says
@@ -170,7 +186,7 @@ describe("POST /api/web/bench/preflight", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).toolCount).toBe(1);
 
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = classifyCall(fetchMock);
     const sent = JSON.parse(init.body as string);
     expect(sent.projectId).toBe("proj_1");
     expect(sent.toolSnapshot.tools).toEqual([
@@ -224,8 +240,36 @@ describe("POST /api/web/bench/preflight", () => {
       toolCount: 500,
       toolSnapshotTruncated: true,
     });
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = classifyCall(fetchMock);
     expect(init.body as string).not.toContain("do-not-persist");
+  });
+
+  it("measures the snapshot cap in UTF-8 bytes, not UTF-16 units", async () => {
+    // 200k CJK characters: 200k UTF-16 code units, comfortably under the 512
+    // KiB cap by the old measure — and 600 KB on the wire, comfortably over it
+    // by the honest one. The bound calls itself bytes, so it has to count them.
+    listAllToolsMock.mockResolvedValue({
+      tools: [
+        { name: "ascii", description: "small" },
+        { name: "cjk", description: "文".repeat(200_000) },
+      ],
+      toolsMetadata: {},
+    });
+    const fetchMock = jsonOk({ receiptId: "rcpt_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await postPreflight(app);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      toolCount: 1,
+      toolSnapshotTruncated: true,
+    });
+    const [, init] = classifyCall(fetchMock);
+    expect(Buffer.byteLength(init.body as string, "utf8")).toBeLessThan(
+      512 * 1024,
+    );
   });
 
   it("400s a body with no serverId without dialing anything", async () => {
@@ -308,6 +352,51 @@ describe("a backend that has not enabled benchmark runs", () => {
       expect(body.code, path).toBe("FEATURE_NOT_SUPPORTED");
       expect(body.message, path).toMatch(/not enabled/i);
     }
+
+    // And `/preflight` never opened the caller's server to find that out. The
+    // capability probe answers first, so a disabled deployment costs the target
+    // nothing — no dial, no OAuth, no `tools/list`.
+    expect(listAllToolsMock).not.toHaveBeenCalled();
+  });
+
+  it("probes before dialing, so a down target cannot mask the real answer", async () => {
+    // The second failure mode of dialing first: the connection fails on its own
+    // merits and the caller is shown the TARGET's error for a feature that was
+    // never on. The probe has to land before `runEphemeralConnection` for this
+    // to come back as FEATURE_NOT_SUPPORTED.
+    global.fetch = vi.fn(
+      async () => new Response("Not Found", { status: 404 }),
+    ) as any;
+    listAllToolsMock.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const app = await freshApp();
+    const res = await postPreflight(app);
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(connectBodies).toEqual([]);
+  });
+
+  it("lets a deployed backend through on any answer that is not a bare 404", async () => {
+    // The probe may only ever short-circuit the disabled case. A backend that
+    // rejects the probe body on shape has PROVED the route exists, so preflight
+    // must proceed rather than reading the rejection as "not enabled".
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) =>
+      JSON.parse(init.body as string).probe
+        ? Response.json(
+            { ok: false, error: "projectId required" },
+            { status: 400 },
+          )
+        : Response.json({ ok: true, receiptId: "rcpt_1" }, { status: 200 }),
+    );
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await postPreflight(app);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).receiptId).toBe("rcpt_1");
+    expect(listAllToolsMock).toHaveBeenCalled();
   });
 
   it("still reports a genuinely missing run as a 404", async () => {
@@ -346,12 +435,12 @@ describe("per-IP start-work budget", () => {
     const app = await freshApp();
     for (let i = 0; i < 30; i++) {
       expect(
-        (await startRun(app, { "x-real-ip": "198.51.100.7" })).status,
+        (await startRun(app, { "cf-connecting-ip": "198.51.100.7" })).status,
       ).toBe(200);
     }
-    expect((await startRun(app, { "x-real-ip": "198.51.100.7" })).status).toBe(
-      429,
-    );
+    expect(
+      (await startRun(app, { "cf-connecting-ip": "198.51.100.7" })).status,
+    ).toBe(429);
   });
 
   /**
@@ -362,7 +451,7 @@ describe("per-IP start-work budget", () => {
     global.fetch = jsonOk({ runId: "run_1", status: "running" }) as any;
 
     const app = await freshApp();
-    const ip = { "x-real-ip": "198.51.100.8" };
+    const ip = { "cf-connecting-ip": "198.51.100.8" };
     for (let i = 0; i < 30; i++) {
       expect((await startRun(app, ip)).status).toBe(200);
     }
@@ -389,19 +478,123 @@ describe("per-IP start-work budget", () => {
     expect((await startRun(app, ip)).status).toBe(429);
   });
 
+  /**
+   * The lockout this exists to prevent: a forwarding header is caller-written,
+   * so keying a window per VALUE lets one actor mint entries until the map is
+   * full — after which the limiter fails closed on every new key and refuses
+   * everyone who arrives next. Unplaceable requests share one bucket instead,
+   * so the table only ever grows with addresses the deployment can vouch for.
+   */
+  it("cannot be locked out by a caller rotating forwarding headers", async () => {
+    global.fetch = jsonOk({ runId: "run_1" }) as any;
+
+    const app = await freshApp();
+    const { BENCH_WINDOW_MAX_ENTRIES } = await import("../bench");
+
+    // Past the map cap, which is the point at which the old keying started
+    // refusing strangers.
+    for (let i = 0; i <= BENCH_WINDOW_MAX_ENTRIES; i++) {
+      await startRun(app, {
+        "x-forwarded-for": `198.51.${Math.floor(i / 256) % 256}.${i % 256}`,
+      });
+    }
+
+    // A caller the edge CAN place is untouched by any of it.
+    expect(
+      (await startRun(app, { "cf-connecting-ip": "203.0.113.42" })).status,
+    ).toBe(200);
+  });
+
+  it("gives an unattested caller a shared bucket, not one per header value", async () => {
+    global.fetch = jsonOk({ runId: "run_1" }) as any;
+
+    const app = await freshApp();
+    const { benchStartWorkWindowCountForTests } = await import("../bench");
+
+    for (let i = 0; i < 200; i++) {
+      await startRun(app, { "x-forwarded-for": `198.51.100.${i % 256}` });
+    }
+
+    // One entry for the whole pool. Rotating the header buys a seat in the
+    // busiest bucket, never a fresh allowance and never a new table row.
+    expect(benchStartWorkWindowCountForTests()).toBe(1);
+  });
+
   it("keeps each address on its own budget", async () => {
     global.fetch = jsonOk({ runId: "run_1" }) as any;
 
     const app = await freshApp();
     for (let i = 0; i < 30; i++) {
-      await startRun(app, { "x-real-ip": "198.51.100.1" });
+      await startRun(app, { "cf-connecting-ip": "198.51.100.1" });
     }
-    expect((await startRun(app, { "x-real-ip": "198.51.100.1" })).status).toBe(
-      429,
-    );
-    expect((await startRun(app, { "x-real-ip": "198.51.100.2" })).status).toBe(
-      200,
-    );
+    expect(
+      (await startRun(app, { "cf-connecting-ip": "198.51.100.1" })).status,
+    ).toBe(429);
+    expect(
+      (await startRun(app, { "cf-connecting-ip": "198.51.100.2" })).status,
+    ).toBe(200);
+  });
+});
+
+describe("POST /api/web/bench/runs preferences", () => {
+  /**
+   * `preferences` is forwarded verbatim and the backend may persist it against
+   * the run and price from it, so "the 1 MB body cap will catch it" is not a
+   * bound. Each of these passes that cap and must still be refused here.
+   */
+  function runWith(app: Hono, preferences: Record<string, unknown>) {
+    return app.request("/api/web/bench/runs", {
+      method: "POST",
+      headers: AUTHED,
+      body: JSON.stringify({
+        projectId: "proj_1",
+        serverId: "srv_1",
+        receiptId: "rcpt_1",
+        preferences,
+      }),
+    });
+  }
+
+  it.each([
+    [
+      "too many keys",
+      () =>
+        Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`k${i}`, 1])),
+    ],
+    ["an overlong key", () => ({ ["k".repeat(129)]: 1 })],
+    [
+      "nesting past the depth cap",
+      () => {
+        let nested: unknown = "leaf";
+        for (let i = 0; i < 12; i++) nested = { nested };
+        return { deep: nested } as Record<string, unknown>;
+      },
+    ],
+    ["more than 8 KiB of JSON", () => ({ blob: "x".repeat(9 * 1024) })],
+  ])("rejects %s before it reaches the backend", async (_label, build) => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await runWith(app, build());
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still relays prefill of an ordinary size", async () => {
+    const fetchMock = jsonOk({ runId: "run_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await runWith(app, { actor_gpt: { temperature: 0.2 } });
+
+    expect(res.status).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).preferences).toEqual({
+      actor_gpt: { temperature: 0.2 },
+    });
   });
 });
 
@@ -445,7 +638,7 @@ describe("GET /api/web/bench/results/:secret", () => {
     const app = await freshApp();
     const guess = (n: number) =>
       app.request(`/api/web/bench/results/guess-${n}`, {
-        headers: { "x-real-ip": "203.0.113.77" },
+        headers: { "cf-connecting-ip": "203.0.113.77" },
       });
 
     for (let i = 0; i < 60; i++) {

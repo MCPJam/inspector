@@ -634,6 +634,15 @@ export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
   if (!job.runnerBearer) {
     throw new JobUnexecutableError("the claim carried no runner bearer");
   }
+  // The parent id is what LICENSES this job's children to carry the hidden
+  // `benchmark` source — `startTestSuiteRun` refuses that source without it.
+  // The type says `string`, but the claim is hand-mirrored from the wire and
+  // unknown/absent fields are ignored rather than rejected, so a backend that
+  // stopped sending it would otherwise reach Convex as `undefined` and fail
+  // every cell with an opaque FORBIDDEN, one lease and one MCP session in.
+  if (!job.benchmarkRunId) {
+    throw new JobUnexecutableError("the claim carried no benchmark run id");
+  }
   if (job.pins?.definitionHash !== job.definitionHash) {
     throw new JobUnexecutableError(
       `definition hash changed between admission and claim (job ${job.definitionHash}, claim ${job.pins?.definitionHash})`,
@@ -708,7 +717,20 @@ async function defaultRunEvalCell(
       ...(job.serverName ? { serverNames: [job.serverName] } : {}),
       convexAuthToken: job.runnerBearer,
       suiteRerun: true,
+      // ── PROVENANCE IS A CAPABILITY, NOT A LABEL ──────────────────────────
+      //
+      // `source: 'benchmark'` hides the child from every project list and
+      // suppresses its notifications, so the backend stopped taking the word
+      // for it (mcpjam-backend#1160): `startTestSuiteRun` now demands the
+      // `benchmarkRunId` of a LIVE parent run the caller can already reach,
+      // and refuses a missing or terminal one.
+      //
+      // Straight pass-through from the claim — the same id the idempotency key
+      // below is derived from. Nothing is looked up or re-derived: the parent
+      // this cell belongs to is a fact of the job, and re-deriving it is how a
+      // child ends up filed under the wrong benchmark.
       source: "benchmark",
+      benchmarkRunId: job.benchmarkRunId,
       ...(cell.environmentId ? { environmentId: cell.environmentId } : {}),
       ...(cell.namedHostId ? { namedHostId: cell.namedHostId } : {}),
       // The CELL's pinned repetition count, not the suite's `runs` default.
