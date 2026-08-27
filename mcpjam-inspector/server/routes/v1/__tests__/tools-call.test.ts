@@ -57,9 +57,20 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
     validateGuestTokenMock.mockResolvedValue({ valid: false });
   });
 
+  /**
+   * The sleep is far longer than the floor on purpose. `durationMs` is two
+   * `Date.now()` reads, which truncate to whole milliseconds, and a
+   * `setTimeout(n)` may fire a fraction before n. So a floor equal to the
+   * sleep is a coin flip on a loaded runner: this asserted >= 5 against a
+   * 5ms sleep and CI kept measuring 4.
+   *
+   * The point is that the route reports the time the call really took, so
+   * the sleep carries 20ms of headroom and the floor stays a number that
+   * only real elapsed work can reach.
+   */
   it("returns the MCP CallToolResult plus additive durationMs", async () => {
     const executeTool = vi.fn().mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 25));
       return {
         content: [{ type: "text", text: "ok" }],
       };
