@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertClaimExecutable,
+  BENCH_SERVICE_ROUTES,
   claimNextForTests,
+  decodeClaimedJob,
+  resolveEvalCellSpec,
+  sendHeartbeatForTests,
   evalChildIdempotencyKey,
   executeClaimedJob,
   JobUnexecutableError,
@@ -15,24 +19,30 @@ import {
 
 const CLAIMED_BY = "inspector-bench-test";
 const DEFINITION_HASH = "def-hash-1";
+const TARGET_URL = "https://target.example/mcp";
 
+/**
+ * One roster row, in the shape `rosterFor()` sends it.
+ *
+ * `environmentId` is set here even though the backend does not send it yet:
+ * these tests exercise the path where a cell CAN be launched, and the path
+ * where it cannot is asserted separately in `resolveEvalCellSpec`.
+ */
 function cell(
   cellId: string,
-  options?: { writeCases?: boolean; status?: BenchmarkRosterEntry["status"] },
+  options?: { status?: BenchmarkRosterEntry["status"] },
 ): BenchmarkRosterEntry {
   return {
     evidenceKey: `eval:${cellId}`,
+    externalRunId: `benchmark:brun-1:eval:${cellId}`,
+    pillar: "agentic",
     kind: "eval_run",
     status: options?.status ?? "expected",
     required: true,
     repetitions: 1,
-    evalCell: {
-      cellId,
-      suiteId: "suite-1",
-      environmentId: `env-${cellId}`,
-      namedHostId: null,
-      writeCases: options?.writeCases ?? false,
-    },
+    cellId,
+    environmentId: `env-${cellId}`,
+    namedHostId: null,
   };
 }
 
@@ -45,13 +55,21 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
     serverId: "srv-1",
     serverName: "Target",
     leaseGeneration: 7,
-    definitionHash: DEFINITION_HASH,
-    pins: { definitionHash: DEFINITION_HASH, consentHash: "consent-1" },
+    pins: {
+      definitionHash: DEFINITION_HASH,
+      consentHash: "consent-1",
+      suiteId: "suite-1",
+    },
+    target: { targetKind: "server", targetKey: "srv-1", serverUrl: TARGET_URL },
+    // Read-only by default: the whole matrix runs in parallel unless the payer
+    // consented to write cases, which is the only per-run signal the claim
+    // carries about side effects.
+    consent: { authenticatedChecks: false, writeCases: false },
     roster: [
       // A pillar this lane does not own; it must be left entirely alone.
       {
-        evidenceKey: "conformance",
-        kind: "conformance_run",
+        evidenceKey: "claude-readiness",
+        kind: "claude_readiness",
         status: "expected",
         required: true,
       },
@@ -59,6 +77,7 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
       cell("b"),
     ],
     grant: "grant-token",
+    grantExpiresAt: 4_000_000_000_000,
     runnerBearer: "runner-bearer",
     ...overrides,
   };
@@ -145,11 +164,15 @@ function deferred<T>() {
 }
 
 describe("assertClaimExecutable", () => {
-  it("refuses a job whose definition was republished after admission", () => {
+  // WAS: "refuses a job whose definition was republished after admission",
+  // comparing a job-level `definitionHash` against `pins.definitionHash`. The
+  // claim response carries ONE hash, so that compared a field with itself. The
+  // republish check lives backend-side (`loadDefinition` re-hashes on read;
+  // `claimNextBenchmarkJob` fails the job DEFINITION_UNRESOLVABLE). What is
+  // left to assert here is that the pin arrived at all.
+  it("refuses a claim that names no pinned definition", () => {
     expect(() =>
-      assertClaimExecutable(
-        job({ pins: { definitionHash: "def-hash-2" } }),
-      ),
+      assertClaimExecutable(job({ pins: { definitionHash: "" } })),
     ).toThrow(JobUnexecutableError);
   });
 
@@ -161,9 +184,32 @@ describe("assertClaimExecutable", () => {
         kind: "eval_run",
         status: "expected",
         required: true,
+        cellId: "a",
       },
     ];
+    // No environmentId/namedHostId: the model this cell is supposed to run is
+    // unknown, and launching it anyway would spend the payer's credits on an
+    // exam the backend then refuses to attach.
     expect(() => assertClaimExecutable(claimed)).toThrow(JobUnexecutableError);
+    expect(() => assertClaimExecutable(claimed)).toThrow(
+      /environmentId\/namedHostId/,
+    );
+  });
+
+  it("does not refuse the job over a cell that already ran", () => {
+    // A terminal row owes no child, so it needs no launch spec. Refusing here
+    // would strand a run that is nearly finished.
+    const claimed = job();
+    claimed.roster = [
+      {
+        evidenceKey: "eval:a",
+        kind: "eval_run",
+        status: "completed",
+        required: true,
+        cellId: "a",
+      },
+    ];
+    expect(() => assertClaimExecutable(claimed)).not.toThrow();
   });
 
   it("refuses a claim carrying no grant", () => {
@@ -297,37 +343,36 @@ describe("executeClaimedJob", () => {
     expect(recorded.completed).toEqual([{}]);
   });
 
-  it("runs write cells one at a time, and only after every read-only cell", async () => {
-    const claimed = job();
-    claimed.roster = [
-      cell("w1", { writeCases: true }),
-      cell("r1"),
-      cell("w2", { writeCases: true }),
-      cell("r2"),
-    ];
+  it("runs cells one at a time once the run may write at all", async () => {
+    // The claim says nothing about which CELL writes — per-case side effects
+    // live in the definition's `caseMetadata`, keyed by case. What it does say
+    // is whether the payer consented to write cases at all, and a run that may
+    // write anywhere is run strictly serially: two concurrent write cells
+    // create artifacts on someone else's server at the same time, and a
+    // list-style case then observes its sibling's.
+    const claimed = job({
+      consent: { authenticatedChecks: false, writeCases: true },
+    });
+    claimed.roster = [cell("w1"), cell("r1"), cell("w2"), cell("r2")];
 
     const order: string[] = [];
-    let writeInFlight = 0;
-    let maxWriteInFlight = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
     const { deps } = harness({
       runEvalCell: async (args) => {
-        const isWrite = args.cell.writeCases === true;
-        if (isWrite) {
-          writeInFlight++;
-          maxWriteInFlight = Math.max(maxWriteInFlight, writeInFlight);
-        }
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
         order.push(args.cell.cellId);
         await Promise.resolve();
-        if (isWrite) writeInFlight--;
+        inFlight--;
         return { runId: `run-${args.cell.cellId}`, executed: true };
       },
     });
 
     await executeClaimedJob(claimed, CLAIMED_BY, deps);
 
-    expect(order.slice(0, 2).sort()).toEqual(["r1", "r2"]);
-    expect(order.slice(2)).toEqual(["w1", "w2"]);
-    expect(maxWriteInFlight).toBe(1);
+    expect(order).toEqual(["r1", "r2", "w1", "w2"]);
+    expect(maxInFlight).toBe(1);
   });
 
   it("treats a cell with no declared side effects as a write cell", async () => {
@@ -336,7 +381,8 @@ describe("executeClaimedJob", () => {
     // its sibling's.
     const claimed = job();
     const unknown = cell("u");
-    delete unknown.evalCell!.writeCases;
+    // No consent decision at all on the wire: not "read only", just unsaid.
+    (claimed as { consent?: unknown }).consent = undefined;
     claimed.roster = [unknown, cell("r1"), cell("r2")];
 
     const order: string[] = [];
@@ -477,7 +523,13 @@ describe("executeClaimedJob", () => {
     const gate = deferred<void>();
     const seen: Array<Record<string, string>> = [];
     const { deps } = harness({
-      heartbeat: async () => ({ leaseOk: true, grant: "grant-token-2" }),
+      // The backend spells a reissue `credentials: { grant, grantExpiresAt }`,
+      // spread alongside the beat — there is no `result` wrapper and no
+      // top-level `grant`.
+      heartbeat: async () => ({
+        leaseOk: true,
+        credentials: { grant: "grant-token-2", grantExpiresAt: 9_000 },
+      }),
       runEvalCell: async (args) => {
         seen.push(args.grantHeaders);
         await gate.promise;
@@ -493,6 +545,11 @@ describe("executeClaimedJob", () => {
     // The SAME object the in-flight child is holding — a replaced object would
     // leave it stamping the expired grant for the rest of its steps.
     expect(seen[0]["x-mcpjam-benchmark-grant"]).toBe("grant-token-2");
+    // And the JOB, because that is what every post-claim write sends. Rotating
+    // one and not the other leaves half the job authenticating with a grant
+    // that has expired.
+    expect(claimed.grant).toBe("grant-token-2");
+    expect(claimed.grantExpiresAt).toBe(9_000);
 
     gate.resolve();
     await running;
@@ -589,7 +646,7 @@ describe("executeClaimedJob", () => {
   it("aborts non-retryably when the claim can never be executed", async () => {
     const { deps, recorded } = harness();
     await executeClaimedJob(
-      job({ pins: { definitionHash: "def-hash-2" } }),
+      job({ pins: { definitionHash: "" } }),
       CLAIMED_BY,
       deps,
     );
@@ -597,7 +654,34 @@ describe("executeClaimedJob", () => {
     expect(recorded.launched).toEqual([]);
     expect(recorded.aborted).toHaveLength(1);
     expect(recorded.aborted[0].retryable).toBe(false);
-    expect(recorded.aborted[0].reason).toContain("definition hash changed");
+    expect(recorded.aborted[0].reason).toContain("pinned definition hash");
+  });
+
+  it("launches nothing and aborts non-retryably when a cell has no launch spec", async () => {
+    // THE FINDING THIS LOCKS: the claim roster has no launch parameters on it,
+    // so filtering the matrix by "has a spec" left `cells` empty and the worker
+    // reported a complete execution phase having run nothing at all. A cell
+    // that cannot be launched must end the job with a reason, never be dropped.
+    const claimed = job();
+    claimed.roster = [
+      {
+        evidenceKey: "eval:a",
+        kind: "eval_run",
+        status: "expected",
+        required: true,
+        cellId: "a",
+      },
+    ];
+    const { deps, recorded } = harness();
+
+    await executeClaimedJob(claimed, CLAIMED_BY, deps);
+
+    expect(recorded.launched).toEqual([]);
+    // The one thing that must not happen: reporting a clean phase.
+    expect(recorded.completed).toEqual([]);
+    expect(recorded.aborted).toHaveLength(1);
+    expect(recorded.aborted[0].retryable).toBe(false);
+    expect(recorded.aborted[0].reason).toContain("eval:a");
   });
 
   it("aborts retryably when the phase cannot be reported", async () => {
@@ -617,8 +701,187 @@ describe("executeClaimedJob", () => {
     await executeClaimedJob(job(), CLAIMED_BY, deps);
 
     expect(recorded.attached.map((a) => a.evidenceKey)).not.toContain(
-      "conformance",
+      "claude-readiness",
     );
+  });
+});
+
+/**
+ * ── THE BACKEND'S WORKER-FAMILY ROUTES, COPIED OUT OF ITS ROUTER ──────────
+ *
+ * Every `http.route({ path })` `registerBenchmarkJobRoutes` publishes under
+ * `/internal/v1/bench` that the WORKER calls, transcribed from
+ * `convex/benchmarkJobRoutes.ts` on `main`. The relay family (`/preflight`,
+ * `/quotes`, `/runs`, `/runs/get`, `/runs/cancel`, `/results/get`) is
+ * deliberately absent: those are called by `routes/web/bench.ts` on a person's
+ * behalf and need a forwarded user bearer this process does not have.
+ *
+ * A path typo is invisible without this: the backend answers an unregistered
+ * path with a bare 404, `isFeatureDisabled` reads a bare 404 as "benchmark
+ * runs are switched off here", and the worker then parks on a slow poll
+ * forever rather than reporting anything at all.
+ */
+const BACKEND_WORKER_ROUTES = [
+  "/internal/v1/bench/jobs/claim",
+  "/internal/v1/bench/jobs/heartbeat",
+  "/internal/v1/bench/jobs/complete",
+  "/internal/v1/bench/jobs/abort",
+  "/internal/v1/bench/evidence/attach",
+  "/internal/v1/bench/evidence/unobtainable",
+  "/internal/v1/bench/artifacts",
+  "/internal/v1/bench/evidence/claim-child",
+  "/internal/v1/bench/evidence/probe",
+  "/internal/v1/bench/runs/roster",
+  "/internal/v1/bench/runs/finalize",
+  "/internal/v1/bench/runs/execution-complete",
+];
+
+describe("service route paths", () => {
+  it("matches the backend's registered worker routes exactly", () => {
+    expect(Object.values(BENCH_SERVICE_ROUTES).slice().sort()).toEqual(
+      BACKEND_WORKER_ROUTES.slice().sort(),
+    );
+  });
+
+  it("reports the execution phase at /runs/execution-complete", () => {
+    // THE FINDING THIS LOCKS: it was posted to `/jobs/execution-complete`,
+    // which the backend does not register. Every call 404'd, the run never
+    // reached `awaiting_evidence`, and nothing ever finalized.
+    expect(BENCH_SERVICE_ROUTES.executionComplete).toBe(
+      "/internal/v1/bench/runs/execution-complete",
+    );
+  });
+});
+
+describe("decodeClaimedJob", () => {
+  const CLAIM_BODY = {
+    ok: true,
+    claimed: true,
+    job: {
+      jobId: "job-9",
+      benchmarkRunId: "brun-9",
+      organizationId: "org-9",
+      projectId: "proj-9",
+      serverId: "srv-9",
+      leaseGeneration: 4,
+      leaseExpiresAt: 1_700_000_090_000,
+      deadlineAt: 1_700_003_600_000,
+      heartbeatIntervalMs: 20_000,
+      attempt: 1,
+      maxAttempts: 3,
+      cancelRequested: false,
+    },
+    pins: { definitionHash: "def-9", suiteId: "suite-9", consentHash: "c-9" },
+    target: { targetKind: "server", targetKey: "k", serverUrl: TARGET_URL },
+    consent: { authenticatedChecks: true, writeCases: false },
+    payerKind: "org_credits",
+    roster: [
+      {
+        evidenceKey: "eval:a",
+        externalRunId: "benchmark:brun-9:eval:a",
+        pillar: "agentic",
+        kind: "eval_run",
+        required: true,
+        status: "expected",
+        cellId: "a",
+        repetitions: 3,
+      },
+    ],
+    credentials: {
+      grant: "grant-9",
+      grantExpiresAt: 1_700_000_600_000,
+      runnerBearer: "bearer-9",
+      runnerBearerExpiresAt: 1_700_003_000_000,
+    },
+  };
+
+  it("assembles the job from the claim's siblings, not from `claimed`", () => {
+    // THE FINDING THIS LOCKS: `body.claimed` is the literal boolean `true`, and
+    // casting it into the job type produced an object whose every property was
+    // `undefined` — no ids, no grant, no bearer, no roster. Every claimed job
+    // then died at `assertClaimExecutable` before launching anything.
+    const decoded = decodeClaimedJob(CLAIM_BODY)!;
+
+    expect(decoded.jobId).toBe("job-9");
+    expect(decoded.benchmarkRunId).toBe("brun-9");
+    expect(decoded.projectId).toBe("proj-9");
+    expect(decoded.serverId).toBe("srv-9");
+    expect(decoded.leaseGeneration).toBe(4);
+    expect(decoded.grant).toBe("grant-9");
+    expect(decoded.grantExpiresAt).toBe(1_700_000_600_000);
+    expect(decoded.runnerBearer).toBe("bearer-9");
+    expect(decoded.pins.definitionHash).toBe("def-9");
+    expect(decoded.pins.suiteId).toBe("suite-9");
+    expect(decoded.target.serverUrl).toBe(TARGET_URL);
+    expect(decoded.consent).toEqual({
+      authenticatedChecks: true,
+      writeCases: false,
+    });
+    expect(decoded.roster).toHaveLength(1);
+    expect(decoded.roster[0].cellId).toBe("a");
+    expect(decoded.roster[0].repetitions).toBe(3);
+  });
+
+  it("reads an idle claim as no job", () => {
+    expect(decodeClaimedJob({ ok: true, claimed: false, retryAfterMs: 5000 }))
+      .toBeNull();
+  });
+
+  it("refuses a claim missing a credential rather than executing without it", () => {
+    const body = {
+      ...CLAIM_BODY,
+      credentials: { runnerBearer: "bearer-9" },
+    };
+    expect(() => decodeClaimedJob(body)).toThrow(JobUnexecutableError);
+    expect(() => decodeClaimedJob(body)).toThrow(/credentials\.grant/);
+  });
+
+  it("treats absent consent as consent to nothing", () => {
+    const decoded = decodeClaimedJob({ ...CLAIM_BODY, consent: undefined })!;
+    expect(decoded.consent).toEqual({
+      authenticatedChecks: false,
+      writeCases: false,
+    });
+  });
+});
+
+describe("resolveEvalCellSpec", () => {
+  it("takes the exam from the pins and the cell from the roster row", () => {
+    const claimed = job();
+    const spec = resolveEvalCellSpec(claimed, cell("a"));
+    expect(spec.cellId).toBe("a");
+    expect(spec.suiteId).toBe("suite-1");
+  });
+
+  it("refuses a row whose model and client profile are unpinned", () => {
+    const claimed = job();
+    const entry: BenchmarkRosterEntry = {
+      evidenceKey: "eval:a",
+      kind: "eval_run",
+      status: "expected",
+      required: true,
+      cellId: "a",
+    };
+    expect(() => resolveEvalCellSpec(claimed, entry)).toThrow(
+      JobUnexecutableError,
+    );
+  });
+
+  it("refuses a row when the claim pins no suite", () => {
+    const claimed = job({ pins: { definitionHash: DEFINITION_HASH } });
+    expect(() => resolveEvalCellSpec(claimed, cell("a"))).toThrow(
+      /suiteId \(claim pins\)/,
+    );
+  });
+
+  it("calls a cell read-only only when the run may not write at all", () => {
+    expect(resolveEvalCellSpec(job(), cell("a")).writeCases).toBe(false);
+    expect(
+      resolveEvalCellSpec(
+        job({ consent: { authenticatedChecks: false, writeCases: true } }),
+        cell("a"),
+      ).writeCases,
+    ).toBe(true);
   });
 });
 
@@ -711,6 +974,300 @@ describe("claim transport", () => {
     expect(init.method).toBe("POST");
     expect(init.headers["x-inspector-service-token"]).toBe("service-token");
     expect(JSON.parse(init.body)).toEqual({ claimedBy: CLAIMED_BY });
+  });
+
+  it("returns a decoded job from a real claim, never the `claimed` flag", async () => {
+    // THE FINDING THIS LOCKS: `claimNext` cast `body.claimed` — the literal
+    // boolean `true` — into the job type, so `executeClaimedJob` received
+    // `true` and every id, the grant, the bearer and the roster were
+    // `undefined`.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            claimed: true,
+            job: {
+              jobId: "job-7",
+              benchmarkRunId: "brun-7",
+              organizationId: "org-7",
+              projectId: "proj-7",
+              serverId: "srv-7",
+              leaseGeneration: 2,
+            },
+            pins: { definitionHash: "def-7", suiteId: "suite-7" },
+            target: { serverUrl: TARGET_URL },
+            consent: { authenticatedChecks: false, writeCases: false },
+            roster: [
+              {
+                evidenceKey: "eval:a",
+                kind: "eval_run",
+                status: "expected",
+                required: true,
+                cellId: "a",
+              },
+            ],
+            credentials: { grant: "grant-7", runnerBearer: "bearer-7" },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const claimed = await claimNextForTests(CLAIMED_BY);
+
+    expect(claimed).not.toBe(true);
+    expect(typeof claimed).toBe("object");
+    const decoded = claimed as ClaimedBenchmarkJob;
+    expect(decoded.jobId).toBe("job-7");
+    expect(decoded.grant).toBe("grant-7");
+    expect(decoded.runnerBearer).toBe("bearer-7");
+    expect(decoded.roster).toHaveLength(1);
+  });
+
+  it("never follows a redirect that would replay the service token", async () => {
+    // THE FINDING THIS LOCKS: `fetch` follows redirects by default and replays
+    // request headers to wherever it lands, so a 3xx would hand the service
+    // token — which can claim, heartbeat and abort jobs — plus the execution
+    // grant to another origin.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://attacker.test/internal/v1/bench/jobs/claim" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(claimNextForTests(CLAIMED_BY)).rejects.toThrow(/redirected/);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
+  });
+
+  it("refuses to send the service token over cleartext to a remote host", async () => {
+    // Same policy `callBackend` applies in routes/web/bench.ts: HTTPS, or
+    // loopback for local dev, and nothing else.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("CONVEX_HTTP_URL", "http://convex.test");
+
+    await expect(claimNextForTests(CLAIMED_BY)).rejects.toThrow(
+      /non-HTTPS CONVEX_HTTP_URL/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still allows loopback over http, for local dev", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, claimed: false }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("CONVEX_HTTP_URL", "http://127.0.0.1:3210");
+
+    await expect(claimNextForTests(CLAIMED_BY)).resolves.toBeNull();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:3210/internal/v1/bench/jobs/claim",
+    );
+  });
+
+  it("refuses a non-http scheme rather than letting fetch report it as an outage", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    vi.stubEnv("CONVEX_HTTP_URL", "ftp://localhost");
+
+    await expect(claimNextForTests(CLAIMED_BY)).rejects.toThrow(
+      /non-HTTPS CONVEX_HTTP_URL/,
+    );
+  });
+});
+
+describe("post-claim routes carry the execution grant", () => {
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function okFetch() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, leaseOk: true }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** Every request the real deps make, keyed by path. */
+  async function driveRealTransport(claimed: ClaimedBenchmarkJob) {
+    const fetchMock = okFetch();
+    // The default deps ARE the transport under test here — only the child
+    // launch is stubbed, because that talks to an MCP server.
+    await executeClaimedJob(claimed, CLAIMED_BY, {
+      runEvalCell: async (args) => ({
+        runId: `run-${args.cell.cellId}`,
+        executed: true,
+      }),
+      heartbeat: async () => ({ leaseOk: true }),
+      heartbeatIntervalMs: 20_000,
+    });
+    return fetchMock.mock.calls.map((call: any[]) => ({
+      path: new URL(call[0] as string).pathname,
+      grant: call[1].headers["x-mcpjam-benchmark-grant"] as string | undefined,
+      body: JSON.parse(call[1].body as string),
+    }));
+  }
+
+  it("sends the grant on attach and on execution-complete", async () => {
+    // THE FINDING THIS LOCKS: the transport sent only the inspector service
+    // token. The backend's `boundGrant()` reads the run, the job and the lease
+    // generation out of `x-mcpjam-benchmark-grant` and answers 401 without it,
+    // so every attach and every completion was refused.
+    const claimed = job();
+    claimed.roster = [cell("a")];
+
+    const calls = await driveRealTransport(claimed);
+
+    const attach = calls.find(
+      (c) => c.path === "/internal/v1/bench/evidence/attach",
+    );
+    expect(attach?.grant).toBe("grant-token");
+    const complete = calls.find(
+      (c) => c.path === "/internal/v1/bench/runs/execution-complete",
+    );
+    expect(complete?.grant).toBe("grant-token");
+  });
+
+  it("attaches a conformance child as the conformance variant, with kind", async () => {
+    // THE FINDING THIS LOCKS: the conformance payload omitted `kind`, so it
+    // had no discriminator at all and `parseEvidenceAttachment` answered 400
+    // — every persisted conformance child was rejected and the job stayed in
+    // the unattached/retry path.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const claimed = job();
+    claimed.roster = [
+      {
+        evidenceKey: "conformance",
+        kind: "conformance_run",
+        status: "expected",
+        required: true,
+        conformance: { suites: ["protocol"] },
+      },
+    ];
+
+    await executeClaimedJob(claimed, CLAIMED_BY, {
+      runConformanceChild: async () => ({ runId: "conf-1" }),
+      heartbeat: async () => ({ leaseOk: true }),
+      heartbeatIntervalMs: 20_000,
+    });
+
+    const attach = fetchMock.mock.calls
+      .map((call: any[]) => ({
+        path: new URL(call[0] as string).pathname,
+        grant: call[1].headers["x-mcpjam-benchmark-grant"] as string,
+        body: JSON.parse(call[1].body as string),
+      }))
+      .find((c) => c.path === "/internal/v1/bench/evidence/attach");
+
+    expect(attach?.grant).toBe("grant-token");
+    expect(attach?.body).toEqual({
+      benchmarkRunId: "brun-1",
+      kind: "conformance",
+      conformanceRunId: "conf-1",
+    });
+  });
+
+  it("attaches an eval child as the eval_cell variant the parser accepts", async () => {
+    // THE FINDING THIS LOCKS: `/evidence/attach` parses a DISCRIMINATED
+    // payload. Without `kind: "eval_cell"` it answers 400 `"kind" must be
+    // conformance, readiness, eval_cell or auth_probe`; and the id field is
+    // `suiteRunId`, not `testSuiteRunId`.
+    const claimed = job();
+    claimed.roster = [cell("a")];
+
+    const calls = await driveRealTransport(claimed);
+    const attach = calls.find(
+      (c) => c.path === "/internal/v1/bench/evidence/attach",
+    );
+
+    expect(attach?.body).toEqual({
+      benchmarkRunId: "brun-1",
+      kind: "eval_cell",
+      cellId: "a",
+      suiteRunId: "run-a",
+    });
+  });
+});
+
+describe("heartbeat transport", () => {
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("sends the grant and its expiry, and reads the reissue off credentials", async () => {
+    // THE FINDING THIS LOCKS: the reissued grant arrives at
+    // `body.credentials.grant`, spread alongside the beat. The worker read
+    // `body.result` / `body.grant`, so rotation never happened — and the
+    // heartbeat carried no grant header at all, which `boundGrant()` answers
+    // 401 to, so the very first beat failed.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          leaseOk: true,
+          cancelRequested: false,
+          budgetStatus: "active",
+          runStatus: "running",
+          credentials: { grant: "grant-2", grantExpiresAt: 1_800_000_000_000 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const beat = await sendHeartbeatForTests(job(), CLAIMED_BY);
+
+    const call = fetchMock.mock.calls[0] as any[];
+    expect(new URL(call[0] as string).pathname).toBe(
+      "/internal/v1/bench/jobs/heartbeat",
+    );
+    expect(call[1].headers["x-mcpjam-benchmark-grant"]).toBe("grant-token");
+    // What the backend compares against its reissue window. Absent reads as 0,
+    // which asks for a fresh grant on every single beat.
+    expect(JSON.parse(call[1].body as string).grantExpiresAt).toBe(
+      4_000_000_000_000,
+    );
+    expect(beat.leaseOk).toBe(true);
+    expect(beat.credentials?.grant).toBe("grant-2");
+  });
+
+  it("reads a 409 lease_lost as a lost lease, not a transport failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: false, error: "lease_lost" }), {
+          status: 409,
+        }),
+      ),
+    );
+
+    await expect(sendHeartbeatForTests(job(), CLAIMED_BY)).rejects.toThrow(
+      LeaseLostError,
+    );
   });
 });
 
