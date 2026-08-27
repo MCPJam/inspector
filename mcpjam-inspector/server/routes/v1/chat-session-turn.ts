@@ -96,6 +96,23 @@ const TURN_WALL_CLOCK_MS = 90_000;
 const MAX_CONCURRENT_TURNS_PER_ORG = 4;
 /** Connect budget for the target's MCP servers, inside the turn wall clock. */
 const CONNECT_TIMEOUT_MS = 30_000;
+/**
+ * Enumeration budget, the peer of {@link CONNECT_TIMEOUT_MS}.
+ *
+ * Connecting was bounded; listing was not. A server that answers `initialize`
+ * and then never answers `tools/list` is not hypothetical — it is how a
+ * half-healthy server usually presents — and it left the turn hanging on an
+ * unbounded promise. `TURN_WALL_CLOCK_MS` could not save it: that abort signal
+ * is never handed to `getTools`, so nothing in-process observed the stall. The
+ * request eventually died at the edge proxy instead, which returns a 502 with
+ * NO body, so the SDK could only report `Request to … failed (502)` — no code,
+ * no message, nothing naming the server that hung.
+ *
+ * With a budget the same stall becomes this route's own 502, carrying
+ * `SERVER_UNREACHABLE` and a message that says what timed out. Sized to match
+ * the connect budget, so connect + list still sit well inside the wall clock.
+ */
+const LIST_TOOLS_TIMEOUT_MS = 30_000;
 
 // ── Request contract ────────────────────────────────────────────────────────
 
@@ -380,6 +397,40 @@ async function resolveTarget(
  * model's plan, and still produces a turn that reads as a refusal rather than
  * a capability boundary.
  */
+/**
+ * `manager.getTools`, but it cannot hang forever.
+ *
+ * Rejects rather than degrading to "no tools": the caller turns any failure
+ * into a 502, and that fail-closed choice is deliberate — a target we cannot
+ * enumerate is a target we cannot apply `read_only` to, and answering with an
+ * empty exclusion list would advertise everything.
+ */
+async function listToolsWithinBudget(
+  manager: MCPClientManager,
+  serverIds: string[],
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      manager.getTools(serverIds),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `the server did not answer tools/list within ${LIST_TOOLS_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, LIST_TOOLS_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    // The loser of the race is abandoned, not cancelled — leaving the timer
+    // live would hold the event loop open for the rest of the budget on every
+    // healthy turn.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function computeExcludedToolNames(
   manager: MCPClientManager,
   serverIds: string[],
@@ -392,7 +443,7 @@ async function computeExcludedToolNames(
 ): Promise<{ excluded: string[]; advertised: number }> {
   let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
   try {
-    tools = (await manager.getTools(serverIds)) as typeof tools;
+    tools = (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
   } catch (error) {
     // A target we cannot enumerate is a target we cannot apply a tool policy
     // to. Failing OPEN here would advertise every tool on a `read_only` turn,
