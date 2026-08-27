@@ -1,9 +1,8 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome: identity row (back · title · time · actions) above Insights |
- * Sessions. Insights is the default landing tab: persona chips, wave-scoped
- * session-flow Sankey, then rubric findings.
+ * Chrome: identity row (back · title · time · actions) above Findings |
+ * Insights | Sessions. Findings is the default landing tab.
  *
  * This page is also where a live run lives once the create wizard is left: the
  * wizard's Running step has no URL, so a finding followed out of it lands here,
@@ -40,31 +39,24 @@ import {
   type SwarmOverview,
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
-import { SwarmTargetHealthStrip } from "@/components/swarms/swarm-target-health-strip";
-import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { formatSwarmAbsoluteTime } from "@/components/swarms/journey-run-format";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
-import {
-  RunInsightsProvider,
-  RunInsightsRecommendations,
-} from "@/components/shared/usage-insights/run-insights";
 import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
   swarmWaveRouteId,
   swarmWaveTitle,
   waveLiveProgress,
-  SwarmWaveFindingsList,
   type SwarmWave,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
 
 const DETAIL_TAB_OPTIONS = [
+  { value: "findings" as const, label: "Findings" },
   { value: "insights" as const, label: "Insights" },
   { value: "sessions" as const, label: "Sessions" },
-  { value: "findings" as const, label: "Findings" },
 ] as const;
 
 export interface SwarmRunDetailProps {
@@ -133,9 +125,9 @@ export function SwarmRunDetail({
     [overview, waves, swarmId]
   );
 
-  // Same subscription the insights rail mounts — Convex dedupes identical
-  // queries, so this costs nothing extra and keeps launch health on screen
-  // regardless of which tab is open.
+  // The Findings tab consumes this alongside the wave data. Keep the
+  // subscription at the detail-page level so switching tabs does not discard
+  // the signal state.
   const waveGroupId = wave?.runs[0]?.swarmRunGroupId;
   const waveSignals = useQuery(
     SWARM_QUERIES.getWaveSignals as any,
@@ -189,24 +181,6 @@ export function SwarmRunDetail({
    * `replace`: arriving here from a finding pushed an entry, so a viewer who
    * came that way keeps a working browser Back too.
    */
-  // Actionable findings resolve through ANY run of the wave — the backend
-  // walks from the run to its wave, so the first run is as good a handle as
-  // any. Keyed on the RUN, not the wave id, so a legacy run that predates
-  // server-minted wave ids still gets a panel (its envelope answers
-  // `not_available`, which is the honest thing to render).
-  const actionableFindings = wave?.runs[0]?.runId ? (
-    <ActionableFindings
-      boundaryName="swarm-actionable-findings"
-      surface={{
-        kind: "journey_run",
-        projectId: queryable ? projectId : null,
-        runId: wave.runs[0].runId,
-      }}
-      context={{ rerunLabel: "this swarm wave" }}
-      onOpenSession={handleOpenSession}
-    />
-  ) : null;
-
   const handleBackToRun = useCallback(() => {
     navigate(
       buildSwarmPath(swarmId, {
@@ -414,109 +388,7 @@ export function SwarmRunDetail({
         </div>
       ) : null}
 
-      {/* Launch outcomes, above the tabs and OUTSIDE the findings: a target
-          that never reached a session says nothing about the server's tools,
-          and used to be mined as if it did. */}
-      <SwarmTargetHealthStrip
-        targetHealth={waveSignals?.targetHealth}
-        terminal={waveSignals?.terminal ?? false}
-      />
-
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {tab === "insights" ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {projectId && wave.runs[0]?.swarmRunGroupId ? (
-                <RunInsightsProvider
-                  surface={{
-                    kind: "swarm",
-                    projectId,
-                    swarmRunGroupId: wave.runs[0].swarmRunGroupId,
-                  }}
-                  onOpenSession={handleOpenSession}
-                >
-                  <InsightsWorkbench
-                    scope={{
-                      kind: "swarm",
-                      projectId,
-                      ...(runIds.length ? { journeyRunIds: [...runIds] } : {}),
-                    }}
-                    cohortKey={`${projectId}\0${runIds.join("\0")}`}
-                    onOpenSession={handleOpenSession}
-                    onOpenSessionsTab={() => handleTabChange("sessions")}
-                    urlSelection={urlSelection}
-                    onSelectionChange={handleSelectionChange}
-                    recommendationsSlot={
-                      <>
-                        {/* Repair tasks first, patterns beneath: the rail
-                            explains what concentrated, this says what to
-                            change. */}
-                        {actionableFindings}
-                        <RunInsightsRecommendations />
-                      </>
-                    }
-                    checksExtras={
-                      wave.runs.some((run) => run.findings.length > 0) ? (
-                        <SwarmWaveFindingsList
-                          runs={wave.runs}
-                          onOpenSession={handleOpenSession}
-                        />
-                      ) : null
-                    }
-                    autoBackfillTopicMap
-                    emptyState={
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        No sessions in this swarm run yet.
-                      </div>
-                    }
-                    testIdPrefix="swarm-insights"
-                  />
-                </RunInsightsProvider>
-              ) : (
-                <InsightsWorkbench
-                  scope={
-                    projectId
-                      ? {
-                          kind: "swarm",
-                          projectId,
-                          ...(runIds.length
-                            ? { journeyRunIds: [...runIds] }
-                            : {}),
-                        }
-                      : null
-                  }
-                  cohortKey={`${projectId ?? ""}\0${runIds.join("\0")}`}
-                  onOpenSession={handleOpenSession}
-                  onOpenSessionsTab={() => handleTabChange("sessions")}
-                  urlSelection={urlSelection}
-                  onSelectionChange={handleSelectionChange}
-                  // A wave with no group id (legacy, or an unauthenticated
-                  // view) still gets its repair tasks: the panel keys on the
-                  // RUN, and renders the envelope's own honest status when the
-                  // wave has no identity to analyze.
-                  recommendationsSlot={actionableFindings}
-                  checksExtras={
-                    wave.runs.some((run) => run.findings.length > 0) ? (
-                      <SwarmWaveFindingsList
-                        runs={wave.runs}
-                        onOpenSession={handleOpenSession}
-                      />
-                    ) : null
-                  }
-                  autoBackfillTopicMap
-                  emptyState={
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                      {projectId
-                        ? "No sessions in this swarm run yet."
-                        : "Sign in to view swarm insights."}
-                    </div>
-                  }
-                  testIdPrefix="swarm-insights"
-                />
-              )}
-            </div>
-          </div>
-        ) : null}
         {tab === "findings" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
             <SwarmFindingsTab
@@ -525,6 +397,39 @@ export function SwarmRunDetail({
               personas={personas}
               onOpenSession={handleOpenSession}
             />
+          </div>
+        ) : null}
+        {tab === "insights" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <InsightsWorkbench
+                scope={
+                  projectId
+                    ? {
+                        kind: "swarm",
+                        projectId,
+                        ...(runIds.length
+                          ? { journeyRunIds: [...runIds] }
+                          : {}),
+                      }
+                    : null
+                }
+                cohortKey={`${projectId ?? ""}\0${runIds.join("\0")}`}
+                onOpenSession={handleOpenSession}
+                onOpenSessionsTab={() => handleTabChange("sessions")}
+                urlSelection={urlSelection}
+                onSelectionChange={handleSelectionChange}
+                autoBackfillTopicMap
+                emptyState={
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    {projectId
+                      ? "No sessions in this swarm run yet."
+                      : "Sign in to view swarm insights."}
+                  </div>
+                }
+                testIdPrefix="swarm-insights"
+              />
+            </div>
           </div>
         ) : null}
         {tab === "sessions" && projectId ? (

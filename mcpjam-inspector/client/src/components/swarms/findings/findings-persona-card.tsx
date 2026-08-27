@@ -35,11 +35,11 @@ export function FindingsPersonaCard({
       id="findings-persona-panel"
       role="tabpanel"
       aria-labelledby={selectedTabId}
-      className="grid overflow-hidden rounded-2xl border border-border/60 bg-card md:grid-cols-[minmax(230px,0.68fr)_minmax(0,1.6fr)]"
+      className="grid overflow-hidden rounded-xl border border-border bg-card shadow-sm md:grid-cols-[minmax(224px,0.7fr)_minmax(0,1.6fr)]"
       data-testid="findings-persona-card"
     >
-      <aside className="border-b border-border/60 bg-muted/30 p-6 md:border-b-0 md:border-r">
-        <div className="flex items-start gap-3.5">
+      <aside className="border-b border-border bg-muted p-5 md:border-b-0 md:border-r">
+        <div className="flex items-start gap-3">
           <PersonaPixelAvatar
             seed={persona.avatarSeed}
             shapeIndex={persona.avatarShape ?? null}
@@ -47,34 +47,34 @@ export function FindingsPersonaCard({
             size="lg"
           />
           <div className="min-w-0">
-            <h3 className="text-xl font-semibold tracking-tight text-foreground">
+            <h3 className="text-[18px] font-semibold leading-tight tracking-tight text-foreground">
               {persona.name}
             </h3>
             <p
-              className="mt-1 text-[11px] text-muted-foreground"
+              className="mt-1 text-xs text-muted-foreground"
               data-testid="findings-persona-meta"
             >
-              {persona.role ? `${persona.role} · ` : ""}Authored ·{" "}
+              {persona.role ? `${persona.role} · ` : ""}
               {persona.sessionsAuthored} session
               {persona.sessionsAuthored === 1 ? "" : "s"}
             </p>
           </div>
         </div>
         <p
-          className="mt-5 border-t border-border/60 pt-4 text-lg font-medium leading-snug text-foreground"
+          className="mt-[18px] border-t border-border pt-4 text-[15px] leading-snug text-foreground"
           data-testid="findings-persona-issue"
         >
           {persona.issue}
         </p>
-        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="mt-3.5 text-[11px] leading-relaxed text-muted-foreground">
           <SentimentPill sentiment={persona.sentiment} className="mr-1.5" />
           is the inferred feeling attached to the experience, not a score for
           the person.
         </p>
       </aside>
 
-      <div className="p-5 sm:px-6">
-        <p className="pb-1 font-mono text-[9px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+      <div className="px-5 pb-5 pt-4">
+        <p className="pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
           Goals they tried
         </p>
         {persona.goals.map((goal) => {
@@ -88,14 +88,14 @@ export function FindingsPersonaCard({
                   ? { "aria-controls": `findings-goal-${goal.runId}` }
                   : {})}
                 onClick={() => onToggleGoal(goal.runId)}
-                className="flex w-full items-center justify-between gap-4 border-t border-border/60 px-1 py-4 text-left"
+                className="flex w-full items-center justify-between gap-4 border-t border-border px-1 py-3.5 text-left"
                 data-testid="findings-goal-row"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold text-foreground">
+                  <span className="block truncate text-[15px] font-semibold leading-snug text-foreground">
                     {goal.title}
                   </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <span className="mt-0.5 block text-[13px] text-muted-foreground">
                     {goal.sessions} session{goal.sessions === 1 ? "" : "s"}
                   </span>
                 </span>

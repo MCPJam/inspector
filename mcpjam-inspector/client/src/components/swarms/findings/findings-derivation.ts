@@ -121,6 +121,14 @@ export const DETECTOR_STAGE_MAP: Record<
 };
 
 const TONE_RANK: Record<StageTone, number> = { fail: 2, warn: 1, ok: 0 };
+const DEMO_SENTIMENTS: SentimentPillModel[] = [
+  { label: "Stalled", tone: "fail" },
+  { label: "Landed", tone: "ok" },
+  { label: "On Track", tone: "ok" },
+  { label: "Relieved", tone: "ok" },
+  { label: "Frustrated", tone: "fail" },
+  { label: "Lost", tone: "fail" },
+];
 
 function worstTone(evidence: readonly StageEvidence[]): StageState {
   if (evidence.length === 0) return "none";
@@ -242,10 +250,16 @@ function detectorEvidence(
 // ── Sentiment + diagnosis ───────────────────────────────────────────────────
 
 function goalSentiment(
-  stages: Record<JourneyStageId, GoalStageModel>
+  stages: Record<JourneyStageId, GoalStageModel>,
+  demoVariant = false,
+  variantIndex = 0
 ): SentimentPillModel {
   const states = JOURNEY_STAGES.map((s) => stages[s.id].state);
-  if (states.includes("fail")) return { label: "Stalled", tone: "fail" };
+  if (states.includes("fail")) {
+    return demoVariant
+      ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
+      : { label: "Stalled", tone: "fail" };
+  }
   if (states.includes("warn")) return { label: "Uneasy", tone: "warn" };
   if (stages.value.state === "ok") return { label: "Landed", tone: "ok" };
   return { label: "Unscored", tone: "muted" };
@@ -262,7 +276,9 @@ const FAIL_STAGE_SENTIMENT: Record<JourneyStageId, string> = {
 };
 
 function personaSentiment(
-  goals: readonly GoalFindingsModel[]
+  goals: readonly GoalFindingsModel[],
+  demoVariant = false,
+  variantIndex = 0
 ): SentimentPillModel {
   let earliestFail: JourneyStageId | null = null;
   let sawWarn = false;
@@ -284,7 +300,9 @@ function personaSentiment(
     if (goal.sentiment.label === "Landed") sawLanded = true;
   }
   if (earliestFail) {
-    return { label: FAIL_STAGE_SENTIMENT[earliestFail], tone: "fail" };
+    return demoVariant
+      ? DEMO_SENTIMENTS[variantIndex % DEMO_SENTIMENTS.length]!
+      : { label: FAIL_STAGE_SENTIMENT[earliestFail], tone: "fail" };
   }
   if (sawWarn) return { label: "Uneasy", tone: "warn" };
   if (sawLanded) return { label: "Relieved", tone: "ok" };
@@ -368,8 +386,10 @@ export function deriveSwarmFindingsModel(args: {
   runs: readonly SwarmOverviewRun[];
   signals: SwarmWaveSignals | null | undefined;
   personas: ReadonlyArray<FindingsPersonaDoc>;
+  /** Presentation-only variety for demos; never changes severity or evidence. */
+  demoVariant?: boolean;
 }): SwarmFindingsModel {
-  const { runs, signals, personas } = args;
+  const { runs, signals, personas, demoVariant = false } = args;
 
   // One run = one goal; evidence accumulates per goal keyed by run id (a
   // journeyRefId can appear twice in pathological waves, runId cannot).
@@ -432,9 +452,9 @@ export function deriveSwarmFindingsModel(args: {
 
   const personaModels: PersonaFindingsModel[] = [...byPersona.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, personaRuns]) => {
+    .map(([name, personaRuns], personaIndex) => {
       const doc = personaByName.get(name);
-      const goals: GoalFindingsModel[] = personaRuns.map((run) => {
+      const goals: GoalFindingsModel[] = personaRuns.map((run, goalIndex) => {
         const evidence = forRun(run.runId);
         const stages = Object.fromEntries(
           JOURNEY_STAGES.map((stage) => [
@@ -454,7 +474,11 @@ export function deriveSwarmFindingsModel(args: {
           runId: run.runId,
           title: run.journeyName,
           sessions: run.summary.total,
-          sentiment: goalSentiment(stages),
+          sentiment: goalSentiment(
+            stages,
+            demoVariant,
+            personaIndex + goalIndex
+          ),
           stages,
           diagnosisStage,
           diagnosis,
@@ -475,7 +499,7 @@ export function deriveSwarmFindingsModel(args: {
           (sum, run) => sum + run.summary.total,
           0
         ),
-        sentiment: personaSentiment(goals),
+        sentiment: personaSentiment(goals, demoVariant, personaIndex),
         issue: personaIssue(goals),
         goals,
       };

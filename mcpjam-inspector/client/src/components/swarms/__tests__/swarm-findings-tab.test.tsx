@@ -14,9 +14,10 @@ import { SwarmRunDetail } from "../swarm-run-detail";
 /**
  * Two layers under test:
  *
- *  1. `SwarmFindingsTab` — pure props, no convex: defaults land on the
- *     trouble (failing persona → failing goal → diagnosis stage), the
- *     empty-stage copy refuses to read as a pass, sentiment is a pill only.
+ *  1. `SwarmFindingsTab` — pure props, no convex: the failing persona is
+ *     selected by default with goals collapsed (expanding one lands on its
+ *     diagnosis stage), the empty-stage copy refuses to read as a pass,
+ *     sentiment is a pill only.
  *  2. `SwarmRunDetail` wiring — Findings sits beside Insights | Sessions and
  *     a `?tab=findings` deep link renders it.
  */
@@ -171,7 +172,7 @@ afterEach(() => {
 // ── SwarmFindingsTab (pure props) ───────────────────────────────────────────
 
 describe("SwarmFindingsTab", () => {
-  it("defaults to the failing persona, its failing goal, and the diagnosis stage", () => {
+  it("defaults to the failing persona with goals collapsed; expanding lands on the diagnosis stage", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -179,14 +180,16 @@ describe("SwarmFindingsTab", () => {
         personas={personas}
       />
     );
-    expect(screen.getByTestId("findings-headline").textContent).toContain(
-      `Maya Chen's "Export the board" broke at discovery`
-    );
     // Maya's tab is selected (she has the failing goal).
     const tabs = screen.getAllByRole("tab");
     const maya = tabs.find((t) => t.textContent?.includes("Maya Chen"))!;
     expect(maya).toHaveAttribute("aria-selected", "true");
-    // Her failing goal auto-expanded on the diagnosis stage.
+    // Goals start collapsed — the reader opens one to inspect it.
+    expect(
+      screen.queryByTestId("findings-goal-inspect")
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    // The failing goal opens on its diagnosis stage.
     expect(screen.getByTestId("findings-goal-inspect")).toBeInTheDocument();
     expect(screen.getByTestId("findings-stage-discovery")).toHaveAttribute(
       "aria-pressed",
@@ -207,6 +210,7 @@ describe("SwarmFindingsTab", () => {
       />
     );
     // The call stage has no evidence in this fixture.
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
     fireEvent.click(screen.getByTestId("findings-stage-call"));
     expect(screen.getByTestId("findings-empty-stage").textContent).toBe(
       EMPTY_STAGE_COPY
@@ -232,7 +236,7 @@ describe("SwarmFindingsTab", () => {
     expect(within(panel).getByText("Jonah Okoye")).toBeInTheDocument();
     expect(panel.textContent).toContain("not a score for the person");
     expect(within(panel).getByTestId("findings-persona-meta").textContent).toBe(
-      "New hire · Authored · 4 sessions"
+      "New hire · 4 sessions"
     );
     // Jonah landed — pill says Relieved, and no card wash exists (tone lives
     // on the pill element only).
@@ -250,11 +254,12 @@ describe("SwarmFindingsTab", () => {
         onOpenSession={onOpenSession}
       />
     );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
     fireEvent.click(screen.getByTestId("findings-evidence-open-session"));
     expect(onOpenSession).toHaveBeenCalledWith("sess-1");
   });
 
-  it("survives a legacy wave with no signals (rubric-only footnote, no crash)", () => {
+  it("survives a legacy wave with no signals (no crash)", () => {
     const legacyRuns = overview.runs.map((r) => {
       const { swarmRunGroupId: _drop, ...rest } = r;
       return rest as SwarmOverviewRun;
@@ -266,9 +271,25 @@ describe("SwarmFindingsTab", () => {
         personas={personas}
       />
     );
+    expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("findings-summary-card")).toBeInTheDocument();
     expect(screen.getByTestId("findings-footnotes").textContent).toContain(
       "Rubric findings only"
     );
+  });
+
+  it("renders the finding summary headline above the persona picker", () => {
+    render(
+      <SwarmFindingsTab
+        wave={wave()}
+        waveSignals={waveSignals}
+        personas={personas}
+      />
+    );
+    expect(screen.getByTestId("findings-headline").textContent).toBe(
+      'Maya Chen left lost. "Export the board" broke at discovery.'
+    );
+    expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });
 });
 
@@ -288,9 +309,9 @@ describe("SwarmRunDetail findings wiring", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("still lands on Insights by default", () => {
+  it("still lands on Findings by default", () => {
     renderDetail();
-    expect(screen.queryByTestId("swarm-findings-tab")).not.toBeInTheDocument();
-    expect(screen.getByTestId("stub-insights-workbench")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-findings-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-insights-workbench")).not.toBeInTheDocument();
   });
 });

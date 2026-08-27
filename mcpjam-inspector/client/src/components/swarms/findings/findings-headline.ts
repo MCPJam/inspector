@@ -25,19 +25,20 @@ function firstFailingGoal(
   return persona.goals.find((goal) => goal.diagnosisStage !== null);
 }
 
-/** First failure evidence on the goal's diagnosis stage, for the headline. */
-function diagnosisEvidence(goal: GoalFindingsModel): string | null {
-  if (!goal.diagnosisStage) return null;
-  const failing = goal.stages[goal.diagnosisStage].evidence.find(
-    (e) => e.tone === "fail"
-  );
-  return failing?.observation ?? null;
+/** Keep quoted goal titles short enough to sit on one display line. */
+export function shortenGoalTitle(title: string, max = 40): string {
+  const trimmed = title.trim();
+  if (trimmed.length <= max) return trimmed;
+  const slice = trimmed.slice(0, max);
+  const breakAt = slice.lastIndexOf(" ");
+  const base = (breakAt > 16 ? slice.slice(0, breakAt) : slice).trimEnd();
+  return `${base}…`;
 }
 
 /**
  * Branch order is the contract: broken goals outrank friction outranks
- * landed outranks silence. The experience is the failure's subject — the
- * persona only ever "left" with a feeling.
+ * landed outranks silence. Lead with one persona; extra failures become a
+ * count so the summary card stays a headline, not a report.
  */
 export function composeFindingsHeadline(model: SwarmFindingsModel): string {
   const failingPersonas = model.personas.filter(
@@ -45,18 +46,16 @@ export function composeFindingsHeadline(model: SwarmFindingsModel): string {
   );
 
   if (failingPersonas.length > 0) {
-    return failingPersonas
-      .slice(0, 2)
-      .map((persona) => {
-        const goal = firstFailingGoal(persona)!;
-        const stage = journeyStageTitle(goal.diagnosisStage!).toLowerCase();
-        const evidence = diagnosisEvidence(goal);
-        const broke = evidence
-          ? `${persona.name}'s "${goal.title}" broke at ${stage} — ${evidence}.`
-          : `${persona.name}'s "${goal.title}" broke at ${stage}.`;
-        return `${broke} They left ${feelingWord(persona)}.`;
-      })
-      .join(" ");
+    const lead = failingPersonas[0]!;
+    const goal = firstFailingGoal(lead)!;
+    const stage = journeyStageTitle(goal.diagnosisStage!).toLowerCase();
+    const title = shortenGoalTitle(goal.title);
+    let headline = `${lead.name} left ${feelingWord(lead)}. "${title}" broke at ${stage}.`;
+    const others = failingPersonas.length - 1;
+    if (others > 0) {
+      headline += ` ${others} other${others === 1 ? "" : "s"} never landed.`;
+    }
+    return headline;
   }
 
   const goals = model.personas.flatMap((persona) => persona.goals);

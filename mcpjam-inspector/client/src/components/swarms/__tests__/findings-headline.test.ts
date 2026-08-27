@@ -5,6 +5,7 @@ import { deriveSwarmFindingsModel } from "../findings/findings-derivation";
 import {
   composeFindingsHeadline,
   deriveHonestyFootnotes,
+  shortenGoalTitle,
 } from "../findings/findings-headline";
 
 /**
@@ -62,8 +63,19 @@ const failingRun = (name: string, runId: string, journeyRefId: string) =>
     goalScoreSummary: { gradedCount: 4, passedCount: 1, avgScore: 0.2 },
   });
 
+describe("shortenGoalTitle", () => {
+  it("leaves short titles intact and ellipsizes long ones at a word break", () => {
+    expect(shortenGoalTitle("Export the board")).toBe("Export the board");
+    expect(
+      shortenGoalTitle(
+        "Execute custom code to sync external data into monday.com"
+      )
+    ).toBe("Execute custom code to sync external…");
+  });
+});
+
 describe("composeFindingsHeadline", () => {
-  it("names up to two personas whose goal broke, with stage, evidence and feeling", () => {
+  it("leads with one failing persona and counts the rest", () => {
     const headline = composeFindingsHeadline(
       modelFor([
         failingRun("Maya Chen", "run-1", "journey-1"),
@@ -71,15 +83,12 @@ describe("composeFindingsHeadline", () => {
         failingRun("Ada Third", "run-3", "journey-3"),
       ])
     );
-    // Personas order alphabetically (the DetailPersonasChip convention), so
-    // the two named are Ada and Jonah.
-    expect(headline).toContain(
-      `Ada Third's "Export the board" broke at user value`
+    // Personas order alphabetically, so Ada leads; Jonah and Maya are the
+    // "2 others". Evidence stays off the headline.
+    expect(headline).toBe(
+      'Ada Third left stalled. "Export the board" broke at user value. 2 others never landed.'
     );
-    expect(headline).toContain("Goal completion missed in 3 graded sessions");
-    expect(headline).toContain("They left stalled.");
-    expect(headline).toContain("Jonah Okoye's");
-    // Caps at two personas.
+    expect(headline).not.toContain("Goal completion missed");
     expect(headline).not.toContain("Maya Chen");
   });
 

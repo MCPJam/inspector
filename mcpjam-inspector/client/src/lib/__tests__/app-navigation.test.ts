@@ -72,9 +72,12 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
   });
 
-  it("omits insights (default) from the query and includes sessions", () => {
-    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+  it("omits findings (default) from the query and includes other tabs", () => {
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
       "/swarms/wave-1"
+    );
+    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+      "/swarms/wave-1?tab=insights"
     );
     expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
       "/swarms/wave-1?tab=sessions"
@@ -90,20 +93,20 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     );
   });
 
-  it("parses known tabs, maps legacy aliases to insights, defaults to insights", () => {
+  it("parses known tabs, maps legacy aliases to insights, defaults to findings", () => {
     expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
-    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("findings");
     expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
-    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("findings");
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
   });
 
   it("parses the findings tab", () => {
     expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
     expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
-      "/swarms/wave-1?tab=findings"
+      "/swarms/wave-1"
     );
   });
 });

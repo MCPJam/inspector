@@ -44,7 +44,7 @@ export function FindingsPersonaTabs({
       ref={listRef}
       role="tablist"
       aria-label="Personas"
-      className="grid gap-2.5 sm:grid-cols-[repeat(auto-fit,minmax(220px,1fr))]"
+      className="grid grid-cols-[repeat(auto-fit,minmax(224px,1fr))] gap-2"
       data-testid="findings-persona-tabs"
     >
       {personas.map((persona, index) => {
@@ -61,10 +61,10 @@ export function FindingsPersonaTabs({
             onClick={() => onSelect(index)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              "flex min-h-[4.25rem] items-center gap-3 rounded-xl border bg-card px-3.5 py-3 text-left transition-colors",
+              "flex min-h-14 items-center gap-2.5 rounded-xl border bg-card px-3.5 py-2.5 text-left transition-colors",
               selected
-                ? "border-foreground/70 shadow-sm"
-                : "border-border/60 hover:border-border"
+                ? "border-foreground/45 shadow-sm"
+                : "border-border hover:border-foreground/25"
             )}
             data-testid="findings-persona-tab"
           >

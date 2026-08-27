@@ -4,11 +4,9 @@
  * `waveSignals`, and `personas` the detail page already holds, through the
  * pure `deriveSwarmFindingsModel`.
  *
- * Selection state is local and defaults toward the trouble: the first
- * persona with a failing goal, that persona's first failing goal, and the
- * goal's diagnosis stage. User choices are keyed to what they were made on
- * (persona name / run id), so a live wave re-deriving the model never
- * teleports the reader.
+ * Selection state is local and defaults to collapsed goals. User choices are
+ * keyed to what they were made on (persona name / run id), so a live wave
+ * re-deriving the model never teleports the reader.
  */
 
 import { useMemo, useState } from "react";
@@ -73,8 +71,7 @@ export function SwarmFindingsTab({
   );
   const persona = model.personas[personaIndex];
 
-  const defaultExpanded =
-    persona?.goals.find((goal) => goal.diagnosisStage !== null)?.runId ?? null;
+  const defaultExpanded = null;
   const expandedGoalRunId =
     expandedChoice && expandedChoice.personaName === persona?.name
       ? expandedChoice.runId
@@ -99,17 +96,16 @@ export function SwarmFindingsTab({
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl" data-testid="swarm-findings-tab">
+    <div className="w-full" data-testid="swarm-findings-tab">
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         headline={headline}
-        sub="Personas and goals from the swarm you authored."
         footnotes={footnotes}
       />
-      <p className="mb-3 mt-7 font-mono text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+      <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
         Choose a persona
       </p>
-      <div className="mb-4">
+      <div className="mb-3">
         <FindingsPersonaTabs
           personas={model.personas}
           selectedIndex={personaIndex}

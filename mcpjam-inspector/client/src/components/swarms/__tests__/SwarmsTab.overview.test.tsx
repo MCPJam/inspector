@@ -10,6 +10,7 @@ import type {
   JourneySessionRow,
   SwarmOverview,
   SwarmOverviewRun,
+  SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import {
   SWARM_COLUMN_HEADER,
@@ -243,6 +244,7 @@ const paginatedCalls: Array<{ name: string; args: unknown }> = [];
 let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
 let overviewThrows = false;
+let waveSignalsData: SwarmWaveSignals | undefined;
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -258,6 +260,8 @@ vi.mock("convex/react", () => ({
           throw new Error("Could not find public function getSwarmOverview");
         }
         return overviewData;
+      case "swarmWaveInsights:getWaveSignals":
+        return waveSignalsData;
       default:
         return undefined;
     }
@@ -345,6 +349,7 @@ beforeEach(() => {
   overviewData = overview;
   personasData = [persona];
   overviewThrows = false;
+  waveSignalsData = undefined;
   launchJourneyRunMock.mockReset();
   window.history.replaceState({}, "", "/swarms");
 });
@@ -673,17 +678,47 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
       "Swarm run-2b"
     );
-    expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
+    expect(await screen.findByTestId("swarm-findings-tab")).toBeTruthy();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Findings" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeTruthy();
     expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
 
-  it("shows persona chips, wave-scoped Sankey, and findings on the Insights tab", async () => {
+  it("does not render the retired launch-outcome strip", async () => {
+    waveSignalsData = {
+      candidates: [],
+      targetHealth: [
+        {
+          subjectKind: "environment",
+          subjectId: "env-1",
+          subjectLabel: "Prod stack",
+          attempted: 4,
+          succeeded: 1,
+          failed: 2,
+          rateLimited: 1,
+        },
+      ],
+      sessionCount: 0,
+      unanalyzedSessionCount: 0,
+      judgeCoverage: { graded: 0, total: 0 },
+      truncated: false,
+      lowConfidence: false,
+      terminal: true,
+    };
+
+    renderTab("run-2b");
+
+    expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-target-health")).toBeNull();
+    expect(screen.queryByText(/Some launches did not reach a session/i)).toBeNull();
+  });
+
+  it("shows persona chips and wave-scoped Sankey on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
 
@@ -692,6 +727,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.getAllByTestId("swarm-run-detail-persona").length).toBeGreaterThan(
       0
     );
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     const sankeyCall = queryCalls.find(
       (c) => c.name === "chatSessions:getSwarmUsageBreakdown"
@@ -701,14 +737,10 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       projectId: "proj-1",
       journeyRunIds: expect.arrayContaining(["run-2b", "run-2"]),
     });
-    expect(await screen.findByTestId("swarm-insights-scorecard")).toBeTruthy();
-    expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
-
-    const findings = screen.getAllByTestId("swarm-overview-finding");
-    expect(findings).toHaveLength(2);
-    expect(within(findings[0]!).getByText("Quick resolution")).toBeTruthy();
-    expect(within(findings[0]!).getByText(/4 of 6 sessions/)).toBeTruthy();
-    expect(screen.queryByText("Invoice lookup")).toBeNull();
+    expect(screen.queryByTestId("swarm-insights-scorecard")).toBeNull();
+    expect(screen.queryByTestId("swarm-insights-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 
   it("copies the share URL", async () => {
@@ -781,22 +813,12 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
-  it("expands finding sessions on the Insights tab", async () => {
+  it("does not show rubric findings on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
-    await screen.findByTestId("swarm-insights-scorecard");
-
-    const finding = (
-      await screen.findAllByTestId("swarm-overview-finding")
-    )[0]!;
-    fireEvent.click(finding);
-
-    const sessions = await screen.findAllByTestId(
-      "swarm-overview-finding-session"
-    );
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
+    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 });
 
