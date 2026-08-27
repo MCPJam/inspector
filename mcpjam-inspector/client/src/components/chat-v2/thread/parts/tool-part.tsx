@@ -60,6 +60,8 @@ import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { resolveMcpServerIconSrc } from "@/lib/mcp-server-icon";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
@@ -190,6 +192,22 @@ export function ToolPart({
   const resolvedThemeMode = scenarioHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
+  // `serverId` keys AppState.servers (see part-switch.tsx). Optional state
+  // because this part also renders in the eval trace viewer, outside the
+  // provider; no state means the MCP mark.
+  const connectedServers = useOptionalSharedAppState()?.servers;
+  const serverIconSrc = serverId
+    ? resolveMcpServerIconSrc(
+        connectedServers?.[serverId]?.initializationInfo?.serverVersion?.icons,
+        resolvedThemeMode,
+      )
+    : undefined;
+  // The src is a URL the server author chose, so it can 404 or be blocked.
+  // Remember WHICH src failed, not that one did: a theme flip or a reconnect
+  // swaps in a different icon that deserves its own attempt.
+  const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null);
+  const showServerIcon =
+    Boolean(serverIconSrc) && serverIconSrc !== failedIconSrc;
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
@@ -933,11 +951,17 @@ export function ToolPart({
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
           <span className="inline-flex items-center gap-2 min-w-0">
             <img
-              src="/mcp.svg"
+              data-testid="tool-server-icon"
+              src={showServerIcon ? serverIconSrc : "/mcp.svg"}
               alt=""
               role="presentation"
               aria-hidden="true"
-              className={`${mcpIconClassName} shrink-0`}
+              onError={() => setFailedIconSrc(serverIconSrc ?? null)}
+              // /mcp.svg is monochrome and needs inverting to stay legible on a
+              // dark background. A server's own icon is not ours to recolour.
+              className={`${
+                showServerIcon ? "h-3 w-3" : mcpIconClassName
+              } shrink-0`}
             />
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {displayLabel}
