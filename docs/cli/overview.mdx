@@ -20,6 +20,12 @@ To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval imp
 npx skills add mcpjam/inspector --skill mcpjam-eval-import
 ```
 
+To drive MCPJam's hosted eval tools — launch a run, poll it to a verdict, and triage a failure down to the step — use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+
+```bash
+npx skills add mcpjam/inspector --skill run-mcpjam-evals
+```
+
 Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
 
 ## Install
