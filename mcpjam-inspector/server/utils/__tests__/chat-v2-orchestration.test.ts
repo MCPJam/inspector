@@ -1460,6 +1460,21 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
   });
 });
 
+function emptyCapabilities() {
+  return {
+    explicitServerIds: [],
+    pluginServerIds: [],
+    effectiveServerIds: [],
+    servers: [],
+    pluginSkills: [],
+    standaloneSkills: [],
+    serverSkills: [],
+    localSkills: [],
+    pluginVersions: [],
+    problems: [],
+  } as any;
+}
+
 describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
   it("does not wrap an explicit none source with live MCP server skills", async () => {
     const manager = mockManager({});
@@ -1497,6 +1512,28 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         },
       })
     ).rejects.toThrow(/receive pinned skills on box via `pinnedHarnessSkills`/);
+  });
+
+  it("never composes LIVE server skills onto a harness turn, flag or no flag", async () => {
+    // The flag says "this surface is live"; the harness says "skills arrive on
+    // box". A harness turn that also merged live server skills would deliver
+    // the same skill twice by two mechanisms — the exact double-delivery the
+    // disjointness rule exists to prevent — so harness wins unconditionally.
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv-1"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      harness: "claude-code" as any,
+      skillsSource: {
+        kind: "resolved",
+        capabilities: emptyCapabilities(),
+        composeLiveServerSkills: true,
+      },
+    });
+    expect(Object.keys(result.allTools)).not.toContain("listSkills");
+    expect(Object.keys(result.allTools)).not.toContain("loadSkill");
   });
 
   it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {

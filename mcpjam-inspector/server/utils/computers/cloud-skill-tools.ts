@@ -242,7 +242,10 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function skillsFailureFrom(err: unknown, latencyMs: number): SkillsFetchFailure {
+export function skillsFailureFrom(
+  err: unknown,
+  latencyMs: number
+): SkillsFetchFailure {
   const errorClass =
     err instanceof Error ? err.constructor.name : typeof err;
   const status = err instanceof CloudSkillsError ? err.status : undefined;

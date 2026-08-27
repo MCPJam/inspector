@@ -6,6 +6,14 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
+import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
+import {
+  listCloudRuntimeSkills,
+  skillsFailureFrom,
+} from "../../utils/computers/cloud-skill-tools.js";
+import { buildLiveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import type { SkillsFetchFailure } from "../../utils/computers/cloud-skill-tools.js";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
@@ -1258,6 +1266,48 @@ chatV2.post("/", async (c) => {
       });
     }
 
+    // ONE catalog for this turn, replacing the exclusive either/or the
+    // orchestrator used to pick between.
+    //
+    // Local files are always in it (this route only runs where there IS a local
+    // filesystem). The project's skills join them when the request is
+    // authenticated and names a project — the same three conditions
+    // `shouldEnableCloudSkillTools` applies on the hosted routes, restated here
+    // because this route derives guest-ness from the absence of an
+    // Authorization header rather than from a guest id.
+    //
+    // Signed out, or with no project: local-only, which is exactly what this
+    // route did before. What is new is that signing IN no longer means choosing.
+    const localRuntimeSkills = await listLocalRuntimeSkills().catch((error) => {
+      logger.warn("[chat-v2] local skill scan failed; continuing without them", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
+    let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
+    let skillsFetchFailed: SkillsFetchFailure | undefined;
+    if (requestAuthHeader && body.projectId) {
+      try {
+        cloudRuntimeSkills = await listCloudRuntimeSkills({
+          authHeader: requestAuthHeader,
+          projectId: body.projectId,
+        });
+      } catch (error) {
+        // A failed catalog fetch is NOT an empty project, and the difference is
+        // what tells "this user has no skills" from "we lost their skills this
+        // turn". Same signal the hosted path already reports.
+        skillsFetchFailed = skillsFailureFrom(error, 0);
+        logger.warn("[chat-v2] project skill catalog fetch failed", {
+          projectId: body.projectId,
+          message: skillsFetchFailed.message,
+        });
+      }
+    }
+    const turnCapabilities = buildLiveEffectiveCapabilities({
+      standaloneSkills: cloudRuntimeSkills,
+      localSkills: localRuntimeSkills,
+    });
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -1276,6 +1326,17 @@ chatV2.post("/", async (c) => {
           : {}),
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
+        // A harness turn takes its skills on-box and must be handed none here —
+        // the two delivery channels are deliberately disjoint.
+        skillsSource: resolvedExecution.harness
+          ? { kind: "none" as const }
+          : {
+              kind: "resolved" as const,
+              capabilities: turnCapabilities,
+              // Live surface: server skills come from the connected servers,
+              // not from a captured set.
+              composeLiveServerSkills: true,
+            },
         // Body for direct chat (project default), host-re-resolved for
         // scenario-bound sessions. undefined → auto policy.
         ...(resolvedProgressiveToolDiscovery !== undefined

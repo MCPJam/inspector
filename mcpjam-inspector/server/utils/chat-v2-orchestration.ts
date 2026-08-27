@@ -802,6 +802,22 @@ export interface PrepareChatV2Options {
          * disconnected.
          */
         abortSignal?: AbortSignal;
+        /**
+         * Whether to ALSO compose live SEP-2640 skills from the connected
+         * servers (see the `withServerSkills` block below).
+         *
+         * Opt-in, and the distinction is the whole reason this flag exists.
+         * An ENVIRONMENT-resolved set is a snapshot: its server skills were
+         * captured, and fetching more from a live connection would falsify the
+         * claim that the set describes the turn. An INTERACTIVE surface — the
+         * desktop app, the hosted Playground's default target — resolves no
+         * environment; its set is just "what the user has right now", and its
+         * server skills are only available live. Without this flag those
+         * surfaces would lose server skills the moment they started passing a
+         * `skillsSource` at all, which is exactly how a convergence quietly
+         * drops a capability.
+         */
+        composeLiveServerSkills?: boolean;
       }
     | { kind: "none" };
 }
@@ -1333,30 +1349,40 @@ export async function prepareChatV2(
   // extension, which is what keeps every pre-existing turn byte-identical.
   // The wrapper applies its own always-on approval to server-origin loads —
   // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
-  const finalSkillTools: Record<string, unknown> =
-    skillsSource !== undefined || harness
-      ? approvalWrappedSkillTools
-      : withServerSkills(approvalWrappedSkillTools, {
-          manager: mcpClientManager,
-          // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
-          // Slug collision suffixes are assigned over whatever set they are
-          // given, and the playground picker mints its refs from the raw
-          // selection because it cannot see which ids the manager registered.
-          // Handing the filtered list here would shift every suffix behind a
-          // dropped id, so the picker's `acme-2/refunds` would address a
-          // different server than `loadSkill`'s. `withServerSkills` filters to
-          // extension-active servers itself, and an unregistered id is not
-          // active, so nothing unknown is contacted either way.
-          servers: (selectedServers ?? []).map((serverId) => ({
-            serverId,
-            // The user-assigned label from OUR registry, never
-            // `serverInfo.name` — a server must not be able to choose the
-            // namespace its skills are addressed under. Falls back to the
-            // server id, which is host-assigned too and therefore still safe;
-            // it just reads worse in a ref.
-            serverLabel: serverLabels?.[serverId] ?? serverId,
-          })),
-        });
+  // A LIVE turn composes server skills whether or not it also carries an
+  // explicit source; a captured or frozen one never does. `skillsSource ===
+  // undefined` is the legacy live shape (no caller passes it once every surface
+  // is explicit); `resolved` + the opt-in flag is how a live surface says so
+  // while still using the merged, ref-addressed catalog.
+  const composeLiveServerSkills =
+    !harness &&
+    (skillsSource === undefined ||
+      (skillsSource.kind === "resolved" &&
+        skillsSource.composeLiveServerSkills === true));
+
+  const finalSkillTools: Record<string, unknown> = !composeLiveServerSkills
+    ? approvalWrappedSkillTools
+    : withServerSkills(approvalWrappedSkillTools, {
+        manager: mcpClientManager,
+        // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
+        // Slug collision suffixes are assigned over whatever set they are
+        // given, and the playground picker mints its refs from the raw
+        // selection because it cannot see which ids the manager registered.
+        // Handing the filtered list here would shift every suffix behind a
+        // dropped id, so the picker's `acme-2/refunds` would address a
+        // different server than `loadSkill`'s. `withServerSkills` filters to
+        // extension-active servers itself, and an unregistered id is not
+        // active, so nothing unknown is contacted either way.
+        servers: (selectedServers ?? []).map((serverId) => ({
+          serverId,
+          // The user-assigned label from OUR registry, never
+          // `serverInfo.name` — a server must not be able to choose the
+          // namespace its skills are addressed under. Falls back to the
+          // server id, which is host-assigned too and therefore still safe;
+          // it just reads worse in a ref.
+          serverLabel: serverLabels?.[serverId] ?? serverId,
+        })),
+      });
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
