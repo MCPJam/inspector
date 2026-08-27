@@ -2118,6 +2118,48 @@ export interface PlatformEnvironmentResolved {
   sandboxImageId?: string;
 }
 
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// An authored SKILL.md stored in Convex. Environments pin them by id
+// (`skillSelection.skillIds`) and eval runs pin them with `--compose-skill`,
+// so the id is the load-bearing value — and this READ-ONLY surface is the only
+// programmatic way to obtain one. Authoring stays on the app's `/api/web`
+// surface behind the `skills-enabled` beta gate.
+
+/** Why a skill cannot be pinned into an environment's `skillSelection`. */
+export type PlatformSkillPinnability =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/** One skill visible to the caller: project-shared, or their own draft. */
+export interface PlatformProjectSkill {
+  id: string;
+  projectId: string;
+  /** Load-bearing identity: the on-box dir name and `loadSkill(name)` arg. */
+  name: string;
+  description: string;
+  /** `project` = shared with the org (the only kind an environment may pin). */
+  sharing: "user" | "project";
+  isOwner: boolean;
+  /** Drift key folding in the body and any supporting files. */
+  aggregateHash: string;
+  provenance?: string;
+  /**
+   * Whether this skill may be pinned. Absent on older backends — treat absent
+   * as UNKNOWN, never as `{ok:true}`: a skill with supporting files or extra
+   * frontmatter is rejected at save time, and guessing would just move the
+   * failure later.
+   */
+  pinnability?: PlatformSkillPinnability;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One skill with its SKILL.md body (frontmatter stripped). */
+export interface PlatformProjectSkillDetail extends PlatformProjectSkill {
+  content: string;
+}
+
 // ── Agent Plugins ────────────────────────────────────────────────────────────
 //
 // A plugin bundle (agent-plugins.org format) imported into a project. Each

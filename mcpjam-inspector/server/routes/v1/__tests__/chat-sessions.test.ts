@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  withSkillsExtensionCapability,
+  clientDeclaresSkillsExtension,
+  mergeClientCapabilities,
+  getDefaultClientCapabilities,
+} from "@mcpjam/sdk";
 import { Hono } from "hono";
 
 /**
@@ -563,6 +569,62 @@ describe("computeExcludedToolNames", () => {
       ),
     ).rejects.toThrow(/tool policy cannot be applied/);
   });
+
+  it("fails CLOSED, and in bounded time, when tools/list never answers", async () => {
+    // The failure this exists for: a server that answers `initialize` and then
+    // hangs on `tools/list`. Connecting was already bounded; listing was not,
+    // so the turn sat on a promise that never settled until the edge proxy
+    // killed the request and returned a 502 with no body — no code, no
+    // message, nothing naming the server. Now it is this route's own 502.
+    vi.useFakeTimers();
+    try {
+      const hangs = { getTools: () => new Promise(() => {}) } as never;
+      const pending = computeExcludedToolNames(hangs, ["srv"], {
+        toolMode: "read_only",
+      });
+      const assertion = expect(pending).rejects.toThrow(
+        /did not answer tools\/list/,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("unappliedBuiltInToolIds", () => {
+  const { unappliedBuiltInToolIds } = __testing;
+
+  // This surface does not wire built-in tools — `bash` and `web_search` are
+  // applied in routes/web/chat-v2.ts, not here. Observed on a real turn: a
+  // client with a computer attached and `builtInToolIds: ["bash"]` ran with
+  // the MCP server's tools alone and the model answered "I don't actually
+  // have a bash tool", which a caller cannot tell apart from the model
+  // declining to use one. Naming it is the fix; refusing the turn is not.
+  it("names the built-ins a client asked for", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: ["bash"] })).toEqual([
+      "bash",
+    ]);
+    expect(
+      unappliedBuiltInToolIds({ builtInToolIds: ["bash", "web_search"] }),
+    ).toEqual(["bash", "web_search"]);
+  });
+
+  // A client that asked for nothing must not grow a field in the response.
+  it("is empty for a client that configures none", () => {
+    expect(unappliedBuiltInToolIds({})).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [] })).toEqual([]);
+    expect(unappliedBuiltInToolIds(undefined)).toEqual([]);
+  });
+
+  // The config blob is opaque to this route, so it is not assumed well-formed.
+  it("ignores a malformed builtInToolIds", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: "bash" })).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [1, "", null] })).toEqual(
+      [],
+    );
+  });
 });
 
 // ── Target narrowing ────────────────────────────────────────────────────────
@@ -606,6 +668,109 @@ describe("allowedServerIds narrowing", () => {
       undefined,
     );
     expect(result.names).toBeUndefined();
+  });
+});
+
+// ── Server-skill namespacing ────────────────────────────────────────────────
+
+describe("serverLabels on the agent turn", () => {
+  const { narrowTarget, serverLabelsFor } = __testing;
+
+  it("namespaces skill refs by the user-assigned name, not the raw id", () => {
+    // The bug this pins: the hosted turn called `prepareChatV2` without
+    // `serverLabels`, so every SEP-2640 ref fell back to the server id and the
+    // model (and the user) saw `p176vpy587jn4v51vd9bm5g3rx8d8yry/run-evals`
+    // instead of `mcpjam-staging-skills/run-evals` — in the `listSkills`
+    // catalog AND in the origin banner on loaded skill content.
+    const { selected } = narrowTarget(
+      {
+        serverIds: ["p176vpy587jn4v51vd9bm5g3rx8d8yry"],
+        serverNames: ["mcpjam-staging-skills"],
+      },
+      undefined,
+    );
+    expect(serverLabelsFor(selected)).toEqual({
+      p176vpy587jn4v51vd9bm5g3rx8d8yry: "mcpjam-staging-skills",
+    });
+  });
+
+  it("keys by id, so a missing name only costs that one server its label", () => {
+    // Keyed rather than positional precisely BECAUSE `narrowTarget().names` is
+    // all-or-nothing: reusing that array would let one unnamed server strip
+    // the labels off every named one. An entry with no name is simply absent
+    // here and falls back to the id in `prepareChatV2` — never to a neighbor's
+    // name, which would be confidently wrong.
+    const { selected, names } = narrowTarget(
+      { serverIds: ["a", "b", "c"], serverNames: ["Alpha"] },
+      undefined,
+    );
+    expect(names).toBeUndefined();
+    expect(serverLabelsFor(selected)).toEqual({ a: "Alpha" });
+  });
+
+  it("returns undefined when nothing is labelled", () => {
+    // So the call site can keep to spread-only-when-present and leave the
+    // option off entirely rather than passing an empty map.
+    const { selected } = narrowTarget({ serverIds: ["a", "b"] }, undefined);
+    expect(serverLabelsFor(selected)).toBeUndefined();
+  });
+});
+
+// ── Skills extension declaration ────────────────────────────────────────────
+
+describe("skills capability on the agent turn", () => {
+  it("declares the extension in a form the SDK's own gate recognises", () => {
+    // The bug this pins: a hosted turn that advertises nothing leaves the
+    // extension inactive, so `withServerSkills` merges no tools and the model
+    // is handed no `listSkills` / `loadSkill` at all — a server that serves
+    // skills is then indistinguishable from one that does not.
+    //
+    // Asserted through `clientDeclaresSkillsExtension`, the same predicate the
+    // dispatch gate uses, rather than against a hand-written object: a
+    // declaration the gate does not accept is not a declaration. `true` or a
+    // misspelled id would satisfy a shape check and fail this.
+    expect(clientDeclaresSkillsExtension(withSkillsExtensionCapability({}))).toBe(
+      true,
+    );
+  });
+
+  it("MERGES with the SDK defaults instead of replacing them", () => {
+    // The regression this exists to prevent, named concretely. Passing the
+    // extension as a per-server `clientCapabilities` takes
+    // `MCPClientManager`'s exact-set branch, which advertises the object
+    // VERBATIM — and the default set declares `io.modelcontextprotocol/ui`,
+    // so the agent turn would silently stop advertising MCP Apps and lose
+    // widget rendering. The fix sets it on the manager's DEFAULTS, which
+    // merge.
+    const UI = "io.modelcontextprotocol/ui";
+    const SKILLS = "io.modelcontextprotocol/skills";
+
+    const alone = withSkillsExtensionCapability({}) as {
+      extensions?: Record<string, unknown>;
+    };
+    // The counterfactual is what gives the merge its point: alone, this
+    // object carries skills and nothing else.
+    expect(alone.extensions).toHaveProperty(SKILLS);
+    expect(alone.extensions).not.toHaveProperty(UI);
+
+    // `mergeClientCapabilities(getDefaultClientCapabilities(), …)` is exactly
+    // what the manager constructor does with `defaultCapabilities`, so this
+    // asserts the real composition rather than an approximation.
+    const merged = mergeClientCapabilities(
+      getDefaultClientCapabilities(),
+      withSkillsExtensionCapability({}),
+    ) as { extensions?: Record<string, unknown> };
+    expect(merged.extensions).toHaveProperty(SKILLS);
+    expect(merged.extensions).toHaveProperty(UI);
+    expect(clientDeclaresSkillsExtension(merged)).toBe(true);
+  });
+
+  it("leaves a connection that declares nothing inactive", () => {
+    // The other half of advertise = enforce: absence stays absent, so an
+    // emulated third-party host does not start claiming skills support it
+    // was never configured for.
+    expect(clientDeclaresSkillsExtension({})).toBe(false);
+    expect(clientDeclaresSkillsExtension(undefined)).toBe(false);
   });
 });
 

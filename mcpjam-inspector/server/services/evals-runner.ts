@@ -388,6 +388,34 @@ export function runFrozenSkillOptions(run: {
 }
 
 /**
+ * Which skills source an ITERATION hands `prepareChatV2` — the second half of
+ * the two-channel decision `runFrozenSkillOptions` bundles.
+ *
+ * Eval runs never use local-FS skills (decision 10), so the answer is always
+ * explicit. The part that is not obvious: a HARNESS iteration takes
+ * `{ kind: "none" }` EVEN WHEN THE RUN HAS PINS. Its pins are already travelling
+ * on the other channel (`pinnedHarnessSkills` → SKILL.md on the box), and
+ * `prepareChatV2` THROWS on harness+pinned because delivering both would hand
+ * the model the same skill twice by two mechanisms — an in-memory `loadSkill`
+ * tool AND an on-box copy.
+ *
+ * This is a seam guard, in the same spirit as `runFrozenSkillOptions` and for a
+ * bug of the same family. #4146 wired a run's pins into `pinnedSkillSource`
+ * without teaching the two iteration paths that a harness must not receive
+ * them, so every harness run whose environment carried a skill died at
+ * `prepareChatV2` with `tokensUsed: 0` — while runs with no skills stayed green,
+ * which is why it shipped. Both call sites now ask this one function, so the
+ * two paths cannot drift apart again.
+ */
+export function resolveIterationSkillsSource(args: {
+  harness?: string | undefined;
+  pinnedSkillSource?: EvalPinnedSkillSource;
+}): EvalPinnedSkillSource | { kind: "none" } {
+  if (args.harness) return { kind: "none" };
+  return args.pinnedSkillSource ?? { kind: "none" };
+}
+
+/**
  * The match options the `toolCalls:match` score definition hashes over.
  *
  * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
@@ -3069,8 +3097,6 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
   const toolPolicyGate = toolPolicy
     ? createToolPolicyGate({
         policy: toolPolicy,
@@ -3175,6 +3201,10 @@ const runLocalIteration = async ({
           : undefined,
     },
     precedence: "override-wins",
+  });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
   });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
@@ -4163,8 +4193,6 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
   const toolPolicyGate = toolPolicy
     ? createToolPolicyGate({
         policy: toolPolicy,
@@ -4256,6 +4284,10 @@ const runHostedIterationWithBrowser = async (
           : undefined,
     },
     precedence: "override-wins",
+  });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,

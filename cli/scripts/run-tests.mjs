@@ -6,7 +6,17 @@
  * the local tsx binary. Does not rely on shell glob expansion, which is
  * not performed by every shell (notably default zsh and Windows cmd).
  *
- * `npm test -w @mcpjam/cli` is the authoritative full-suite entrypoint.
+ * `npm test -w @mcpjam/cli` is the authoritative full-suite entrypoint. It
+ * builds the SDK first, because the suite imports `@mcpjam/sdk` bare and tsx
+ * resolves that to `sdk/dist`.
+ *
+ * `test:fast` skips that build and is what the root `test:parallel:rest` lane
+ * runs. The build must not happen there: `sdk/tsup.config.ts` sets
+ * `clean: true`, so rebuilding the SDK from one lane empties `sdk/dist` under
+ * the sibling lanes, and whichever one happens to be resolving an
+ * `@mcpjam/sdk/*` subpath at that moment fails with `Failed to resolve
+ * import`. The root chain already builds the SDK once, in `test:checks`,
+ * before any lane starts. Same split as `@mcpjam/mcp`.
  */
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
