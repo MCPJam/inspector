@@ -103,6 +103,93 @@ describe("collectConnectedServerDoctorState", () => {
   });
 });
 
+describe("the skills check", () => {
+  const SKILL_URI = "skill://demo/good/SKILL.md";
+  const MARKDOWN = `---\nname: good\ndescription: A verifiable skill.\n---\n# Good\n`;
+
+  async function sha256(text: string): Promise<string> {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(text)
+    );
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function skillsManager(options: { tamper?: boolean } = {}) {
+    const entry = {
+      uri: SKILL_URI,
+      frontmatter: { name: "good", description: "A verifiable skill." },
+      resources: [
+        {
+          uri: SKILL_URI,
+          digest: `sha256:${await sha256(
+            options.tamper ? "different bytes entirely" : MARKDOWN
+          )}`,
+          size: new TextEncoder().encode(MARKDOWN).byteLength,
+        },
+      ],
+    };
+    return createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest.fn().mockResolvedValue({ skills: [entry] }),
+      getServerSkill: jest.fn().mockResolvedValue(entry),
+      readResource: jest.fn().mockResolvedValue({
+        contents: [
+          { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
+        ],
+      }),
+    });
+  }
+
+  it("skips when the extension was never negotiated", async () => {
+    // Most servers serve no skills. Reporting that as a failure would make the
+    // doctor cry wolf on almost every run.
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: false,
+        advertised: true,
+        directoryRead: false,
+        active: false,
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("skipped");
+    expect(result.skills).toEqual([]);
+  });
+
+  it("verifies the skills it lists, rather than counting them", async () => {
+    const manager = await skillsManager();
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("ok");
+    expect(result.checks.skills.detail).toContain("verified");
+    expect(result.skills).toHaveLength(1);
+  });
+
+  it("reports a digest that does not match its bytes, naming the kind", async () => {
+    // The reason this check exists at all: a listing looks identical whether
+    // or not the content behind it verifies, so counting proves nothing. The
+    // KIND is in the detail because `digest_mismatch` and `frontmatter_drift`
+    // send a server author to completely different code.
+    const manager = await skillsManager({ tamper: true });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain("digest_mismatch");
+  });
+});
+
 describe("runServerDoctor", () => {
   it("returns a ready report for a healthy server", async () => {
     const result = await runServerDoctor(
