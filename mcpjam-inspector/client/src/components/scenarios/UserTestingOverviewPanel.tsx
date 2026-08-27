@@ -220,10 +220,14 @@ function LoadFailureState({
  * yet: a persona avatar says "a user", but this page is about a study — the
  * desk, the brief and the observed subject are the thing being described.
  *
- * Drawn at the height of the Swarm empty state's characters, so the two
- * empty pages carry the same weight: `PersonaPixelAvatar size="lg"` is 19
- * cells of 2.75px plus 4, i.e. 56px — `h-14`. At its native 250px it
- * towered over the heading below it.
+ * Sized against the Swarm empty state, but by MASS rather than by height.
+ * That page puts four `PersonaPixelAvatar size="lg"` characters in a row —
+ * 56px tall but roughly 180px wide — so a single 44x56 bitmap matched the
+ * height and still read as a quarter of the picture. At 2x that height
+ * (112px, `h-28`) the two illustrations occupy about the same area.
+ *
+ * 112px is also well down from the native 250px, which towered over the
+ * heading beneath it.
  *
  * `w-auto` rather than a matching width: 196×250 has no clean integer
  * downscale (their GCD is 2), so pinning both dimensions would round the
@@ -253,7 +257,7 @@ function EmptyState({
         height={250}
         aria-hidden
         data-testid="user-testing-empty-illustration"
-        className="h-14 w-auto max-w-full object-contain"
+        className="h-28 w-auto max-w-full object-contain"
       />
       <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
