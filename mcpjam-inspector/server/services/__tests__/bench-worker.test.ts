@@ -104,6 +104,8 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
 type Recorded = {
   launched: string[];
   attached: Array<{ evidenceKey: string; testSuiteRunId: string }>;
+  /** Every call, including the ones that threw — the retry ladder is the point. */
+  attachAttempts: number;
   completed: Array<{ stoppedReason?: string }>;
   aborted: Array<{ reason: string; retryable: boolean }>;
   /** Header objects handed to each cell, so grant rotation is observable. */
@@ -119,12 +121,15 @@ function harness(options?: {
   ) => Promise<BenchmarkHeartbeat>;
   runEvalCell?: BenchExecutionDeps["runEvalCell"];
   attachThrows?: unknown;
+  /** Throw from `attachEvidence` for the first N calls, then succeed. */
+  attachThrowsTimes?: number;
 }): { deps: Partial<BenchExecutionDeps>; recorded: Recorded } {
   const recorded: Recorded = {
     launched: [],
     attached: [],
-    completed: [],
+    attachAttempts: 0,
     aborted: [],
+    completed: [],
     grantHeaders: [],
     terminal: [],
   };
@@ -142,7 +147,14 @@ function harness(options?: {
       return runCell(args);
     },
     attachEvidence: async (args) => {
+      recorded.attachAttempts++;
       if (options?.attachThrows) throw options.attachThrows;
+      if (
+        options?.attachThrowsTimes &&
+        recorded.attachAttempts <= options.attachThrowsTimes
+      ) {
+        throw new Error("evidence attach rejected (503)");
+      }
       recorded.attached.push({
         evidenceKey: args.evidenceKey,
         testSuiteRunId: args.testSuiteRunId,
@@ -550,6 +562,70 @@ describe("executeClaimedJob", () => {
       { evidenceKey: "eval:b", testSuiteRunId: "run-b" },
     ]);
     expect(recorded.completed).toEqual([{}]);
+  });
+
+  it("rides out a transient attach failure instead of losing the child", async () => {
+    const claimed = job();
+    claimed.roster = [cell("a")];
+
+    const { deps, recorded } = harness({ attachThrowsTimes: 2 });
+
+    const running = executeClaimedJob(claimed, CLAIMED_BY, deps);
+    // Two backoffs, then the third call lands.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await running;
+
+    expect(recorded.attachAttempts).toBe(3);
+    expect(recorded.attached).toEqual([
+      { evidenceKey: "eval:a", testSuiteRunId: "run-a" },
+    ]);
+    expect(recorded.completed).toEqual([{}]);
+    expect(recorded.aborted).toEqual([]);
+  });
+
+  it("hands the job back rather than reporting a phase that lost a child", async () => {
+    // The unrecoverable one. `execution-complete` moves the run to
+    // `awaiting_evidence` and a scorecard is inserted once and never patched,
+    // so an unattached child that really ran is dropped from the result for
+    // good — showing as a coverage gap that never existed. Another attempt
+    // costs one requeue and re-attaches the same child rather than re-running
+    // it.
+    const claimed = job();
+    claimed.roster = [cell("a"), cell("b")];
+
+    const { deps, recorded } = harness({
+      attachThrows: new Error("evidence attach rejected (503)"),
+    });
+
+    const running = executeClaimedJob(claimed, CLAIMED_BY, deps);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await running;
+
+    // Both cells ran, both exhausted the ladder, and NOTHING was reported as
+    // complete.
+    expect(recorded.launched).toEqual(["a", "b"]);
+    expect(recorded.completed).toEqual([]);
+    expect(recorded.aborted).toHaveLength(1);
+    expect(recorded.aborted[0].retryable).toBe(true);
+    expect(recorded.aborted[0].reason).toContain("eval:a");
+    expect(recorded.aborted[0].reason).toContain("eval:b");
+  });
+
+  it("does not retry an attach the lease was taken away from", async () => {
+    // A lost lease refuses every write, so retrying is pure delay — and the
+    // whole point of standing down is to stop writing at all.
+    const claimed = job();
+    claimed.roster = [cell("a")];
+
+    const { deps, recorded } = harness({
+      attachThrows: new LeaseLostError("attach rejected the lease generation"),
+    });
+
+    await executeClaimedJob(claimed, CLAIMED_BY, deps);
+
+    expect(recorded.attachAttempts).toBe(1);
+    expect(recorded.completed).toEqual([]);
+    expect(recorded.aborted).toEqual([]);
   });
 
   it("aborts non-retryably when the claim can never be executed", async () => {
