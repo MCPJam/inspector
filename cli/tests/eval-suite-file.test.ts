@@ -1581,6 +1581,51 @@ ${cases}
 `;
 }
 
+
+/**
+ * The `verdictPolicyDefaults` contract as `POST /eval-suites/from-file`
+ * actually states it — see `mcpjam-inspector/server/routes/v1/evals.ts`, where
+ * both objects are `.strict()`.
+ *
+ * Spelled out here rather than imported: the route lives in another workspace,
+ * and a copy that drifts is still a far better guard than a fixture that
+ * grades nothing. The keys are the whole point, so drift is visible.
+ */
+const VERDICT_POLICY_DEFAULT_KEYS = [
+  "repetitions",
+  "passThreshold",
+  "validity",
+] as const;
+const VALIDITY_KEYS = [
+  "minEligibleTrials",
+  "minCompletionRate",
+  "maxEvaluatorErrorRate",
+] as const;
+
+function validateVerdictPolicyDefaults(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") {
+    return "verdictPolicyDefaults: expected object";
+  }
+  const defaults = value as Record<string, unknown>;
+  for (const key of Object.keys(defaults)) {
+    if (!(VERDICT_POLICY_DEFAULT_KEYS as readonly string[]).includes(key)) {
+      return `verdictPolicyDefaults: Unrecognized key: "${key}"`;
+    }
+  }
+  const validity = defaults.validity;
+  if (validity === undefined) return undefined;
+  if (validity === null || typeof validity !== "object") {
+    return "verdictPolicyDefaults.validity: expected object";
+  }
+  for (const key of Object.keys(validity as Record<string, unknown>)) {
+    if (!(VALIDITY_KEYS as readonly string[]).includes(key)) {
+      return `verdictPolicyDefaults.validity: Unrecognized key: "${key}"`;
+    }
+  }
+  return undefined;
+}
+
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
   existingHosts?: Array<{
@@ -1663,6 +1708,29 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       fromFileBodies.push(body);
+
+      // Enforce the route's contract, do not just echo it back.
+      //
+      // This fixture used to accept any body, so the whole suite stayed green
+      // while production refused EVERY hosted `eval run --file`: the uploader
+      // sent the suite-file loader's RESOLVED validity, whose `coverage` union
+      // is an in-memory representation the strict route validator rejects.
+      // Recording the body without grading it is what let a wire-shape bug
+      // ship behind passing tests, so the check lives here, where every
+      // upload test pays for it.
+      const rejection = validateVerdictPolicyDefaults(
+        body.verdictPolicyDefaults
+      );
+      if (rejection) {
+        res.statusCode = 400;
+        res.end(
+          JSON.stringify({
+            error: { code: "VALIDATION_ERROR", message: rejection },
+          })
+        );
+        return;
+      }
+
       res.statusCode = fromFileBodies.length === 1 ? 201 : 200;
       res.end(
         JSON.stringify({
@@ -2703,14 +2771,15 @@ describe("eval run --file", () => {
         const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
         assert.equal("minIterations" in synced, false);
         assert.equal(synced.verdictPolicyVersion, 2);
+        // The DECLARED shape the route accepts, not the loader's resolved one.
+        // `minEligibleTrials` is absent because the file omitted it, and
+        // omission is what selects the `allConfiguredTrialsAttempted` rule on
+        // both sides — the receiver re-resolves it identically, so dropping the
+        // key preserves the policy instead of approximating it.
         assert.deepEqual(synced.verdictPolicyDefaults, {
           repetitions: 5,
           passThreshold: 0.8,
           validity: {
-            coverage: {
-              kind: "allConfiguredTrialsAttempted",
-              minGradeableTrials: 1,
-            },
             minCompletionRate: 0.8,
             maxEvaluatorErrorRate: 0.1,
           },
@@ -2782,11 +2851,10 @@ describe("eval run --file", () => {
         );
         assert.equal(validity.result.exitCode, 0, validity.stderr);
         const synced = fixture.fromFileBodies.at(-1) as Record<string, any>;
+        // An explicit `minEligibleTrials` carries back out as the number the
+        // file wrote, rather than as the `coverage` union it resolves to.
         assert.deepEqual(synced.verdictPolicyDefaults.validity, {
-          coverage: {
-            kind: "minEligibleTrials",
-            minEligibleTrials: 3,
-          },
+          minEligibleTrials: 3,
           minCompletionRate: 0.8,
           maxEvaluatorErrorRate: 0.1,
         });

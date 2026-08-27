@@ -31,6 +31,7 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformEvalVerdictPolicyDefaults,
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
@@ -1701,9 +1702,22 @@ export class PlatformApiClient {
    * file-owned suite by declared id. Lookup is by declared id within the
    * project, never by name. A UI-authored suite has no declared id and
    * cannot be claimed.
+   *
+   * `verdictPolicyDefaults` is pinned to its type rather than left inside the
+   * untyped bag. It is the one member of this body whose in-memory
+   * counterpart has a DIFFERENT shape — the suite-file loader resolves
+   * `validity.minEligibleTrials` into a `coverage` union — and an untyped body
+   * let the resolved shape reach a strict route validator, which rejected
+   * every hosted `eval run --file` upload. Typing the field makes that
+   * substitution a compile error instead of a runtime rejection.
    */
   syncFileOwnedEvalSuite(
-    params: { projectId: string; body: Record<string, unknown> },
+    params: {
+      projectId: string;
+      body: Record<string, unknown> & {
+        verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+      };
+    },
     options?: RequestOptions,
   ): Promise<PlatformFileOwnedEvalSuiteSynced> {
     return this.request(

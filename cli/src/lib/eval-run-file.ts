@@ -11,6 +11,7 @@
 import { createHash } from "node:crypto";
 import {
   canonicalDigest,
+  declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
   type ResolvedEvalSuiteFileCase,
@@ -1013,7 +1014,13 @@ export async function executeEvalRunFromFile(
         verdictPolicyDefaults: {
           repetitions: loaded.resolved.defaults.repetitions,
           passThreshold: loaded.resolved.defaults.passThreshold,
-          validity: loaded.resolved.defaults.validity,
+          // The AUTHORED shape, never the resolved one. `resolved.validity`
+          // carries a `coverage` union that exists only in memory — the route's
+          // body validator is strict and refuses it, so sending it rejected
+          // every upload regardless of what the file declared.
+          validity: declareEvalSuiteFileValidity(
+            loaded.resolved.defaults.validity
+          ),
         },
         environment: {
           servers: servers.map((server) => server.name),
