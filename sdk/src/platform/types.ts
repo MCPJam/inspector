@@ -1417,6 +1417,13 @@ export interface PlatformEvalCase {
   title: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
+  /**
+   * The analytics intent label, in its STORED form.
+   *
+   * A DTO reports what is stored, so `string | undefined` and never `null` —
+   * the nullable form is an UPDATE word, and it lives on the write schemas.
+   */
+  intent?: string;
   expectedOutput?: string;
   /** Iterations to run per eval run (← internal runs). */
   iterations: number;

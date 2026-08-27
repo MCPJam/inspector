@@ -76,6 +76,15 @@ function slimPhaseSignal(
     ...(signal.egressVerified !== undefined
       ? { egressVerified: signal.egressVerified }
       : {}),
+    // Carried through the cap, unlike `spanIds`.
+    //
+    // This slimming runs exactly on OVER-CAP payloads, which skew toward
+    // failure-heavy runs — so shedding the duration here would bias setup
+    // latency toward small clean runs, which is worse than reporting nothing.
+    // It is a scalar; the cap's real target is the unbounded id list.
+    ...(signal.durationMs !== undefined
+      ? { durationMs: signal.durationMs }
+      : {}),
   };
 }
 
@@ -273,6 +282,38 @@ function foldAttribution(
   return "theirs";
 }
 
+/**
+ * The phase's wall-clock ENVELOPE: first start to last end, across the targets
+ * actually observed.
+ *
+ * An envelope, deliberately, and not the union the per-trial stage latency
+ * uses. A setup phase is measured once per run and the question it answers is
+ * "how long was the run held up here", which includes the gaps between
+ * sequential connects. The two bases must never be mixed into one aggregate,
+ * which is why the contract names them separately.
+ *
+ * `undefined` whenever the answer would be a guess: a target whose timestamps
+ * are missing or non-finite, or an end before its start (a clock fault). A
+ * wrong duration is worse than a missing one — once summed into an aggregate it
+ * is indistinguishable from a right one.
+ */
+function phaseEnvelopeMs(
+  observed: readonly SetupTargetObservation[]
+): number | undefined {
+  if (observed.length === 0) return undefined;
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const row of observed) {
+    if (!Number.isFinite(row.startedAt) || !Number.isFinite(row.endedAt)) {
+      return undefined;
+    }
+    if (row.startedAt < earliest) earliest = row.startedAt;
+    if (row.endedAt > latest) latest = row.endedAt;
+  }
+  const envelope = latest - earliest;
+  return Number.isFinite(envelope) && envelope >= 0 ? envelope : undefined;
+}
+
 function foldPhase(
   expectedIds: readonly string[],
   observations: ReadonlyMap<string, SetupTargetObservation>,
@@ -316,6 +357,13 @@ function foldPhase(
     };
   }
 
+  // Both branches below saw EVERY expected target settle, so the envelope is
+  // over a complete observation set. The `missing.length > 0` branch above
+  // deliberately carries no duration: an unsettled target makes the phase's end
+  // unknowable, and its synthesized `startedAt: 0 / endedAt: 0` placeholder
+  // rows must never reach timing.
+  const durationMs = phaseEnvelopeMs(observed);
+
   if (failures.length > 0) {
     return {
       outcome: "failed",
@@ -323,11 +371,15 @@ function foldPhase(
       spanIds: failures
         .map((row) => spanIdFor(row.serverId))
         .slice(0, MAX_CULPRIT_SPAN_IDS),
+      ...(durationMs !== undefined ? { durationMs } : {}),
     };
   }
 
   if (observed.every((row) => row.outcome === "ok")) {
-    return { outcome: "ok" };
+    return {
+      outcome: "ok",
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    };
   }
 
   return {

@@ -934,6 +934,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
           },
           expectedOutput: { type: "string" },
           isNegativeTest: { type: "boolean" },
+          intent: { type: "string", minLength: 1, maxLength: 64 },
           model: { type: "string", minLength: 1 },
           repetitions: { type: "integer", minimum: 1, maximum: 100 },
           passThreshold: { type: "number", minimum: 0, maximum: 1 },

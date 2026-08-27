@@ -26,6 +26,7 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  attachStageMeasurements,
   deriveStageResults,
   stageDerivationToMetadata,
   type EvalSuiteFileToolPolicy,
@@ -220,26 +221,32 @@ export function buildStageMetadata(args: {
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
   if (!stageCase) return {};
-  return stageDerivationToMetadata(
-    deriveStageResults({
-      authored: stageCase,
-      evidence: buildStageEvidence({
-        spans: args.spans,
-        prompts: args.prompts,
-        messages: args.messages,
-        predicateResults: args.predicateResults,
-        widgetRenderObservations: args.widgetRenderObservations,
-        toolErrors: args.stageToolErrors,
-        toolSignals: args.toolSignals,
-        setupSignals: args.setupSignals,
-        ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
-        ...(args.metadataAttribution
-          ? { metadataAttribution: args.metadataAttribution }
-          : {}),
+  // Derive ONCE, serialize, then measure the SERIALIZED rows. The measurements
+  // describe the exact chain that gets stored, so a second derivation — here or
+  // anywhere else — could only produce a pair able to disagree with itself.
+  return attachStageMeasurements(
+    stageDerivationToMetadata(
+      deriveStageResults({
+        authored: stageCase,
+        evidence: buildStageEvidence({
+          spans: args.spans,
+          prompts: args.prompts,
+          messages: args.messages,
+          predicateResults: args.predicateResults,
+          widgetRenderObservations: args.widgetRenderObservations,
+          toolErrors: args.stageToolErrors,
+          toolSignals: args.toolSignals,
+          setupSignals: args.setupSignals,
+          ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+          ...(args.metadataAttribution
+            ? { metadataAttribution: args.metadataAttribution }
+            : {}),
+        }),
+        iteration: { status, ...(error ? { error } : {}) },
+        policy: args.policy,
       }),
-      iteration: { status, ...(error ? { error } : {}) },
-      policy: args.policy,
-    }),
+    ),
+    args.spans,
   );
 }
 

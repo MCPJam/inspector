@@ -3024,6 +3024,26 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(updated.expectedOutput, "");
   });
 
+  test("case bodies carry intent, and CLEAR it when the file dropped it", () => {
+    // The file is authoritative and has no `null` of its own: it says "no
+    // label" by omitting the key. So the reconciler is what turns that absence
+    // into the explicit clear PATCH needs — without it a label deleted from a
+    // file lives on in the hosted row forever, and every later analytics funnel
+    // keeps slicing by a word the author already removed.
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const unlabelled = loaded.resolved.enabledCases[0];
+    // Create omits it (nothing to clear, and create rejects null)...
+    assert.equal("intent" in fileCaseToCreateBody(unlabelled), false);
+    // ...update states it.
+    assert.equal(fileCaseToUpdateBody(unlabelled).intent, null);
+
+    const labelled = { ...unlabelled, intent: "search" };
+    assert.equal(fileCaseToCreateBody(labelled).intent, "search");
+    assert.equal(fileCaseToUpdateBody(labelled).intent, "search");
+  });
+
   test("case bodies carry the converter's claim, and clear it on re-sync", () => {
     const imported = loadEvalSuiteFile(IMPORTED_SUITE_FILE);
     assert.equal(imported.ok, true);

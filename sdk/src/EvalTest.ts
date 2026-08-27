@@ -1,4 +1,5 @@
 import type { HostExecutor } from "./HostExecutor.js";
+import { caseIntentSchema, normalizeIntent } from "./contract/stage-intent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
@@ -307,6 +308,15 @@ export interface EvalTestConfig {
    */
   externalCaseId?: string;
   /**
+   * The analytics INTENT label — why this case exists, never how it is graded.
+   *
+   * Stage analytics slices funnels by it; no verdict, threshold or assertion
+   * ever reads it. Normalized and length-checked at construction so an
+   * unusable label is a authoring-time error rather than a row silently
+   * dropped at ingest six weeks later.
+   */
+  intent?: string;
+  /**
    * Hosted "negative case" semantics: the test passes iff NO tool was called.
    *
    * Not a per-tool `toolNeverCalled` translation — the matcher already
@@ -586,6 +596,24 @@ export class EvalTest {
           delete rest.externalCaseId;
         }
         config = rest;
+      }
+    }
+    // Intent is normalized and length-checked HERE, at authoring time, for the
+    // same reason `externalCaseId` is: one value in play for this object's
+    // life. Refusing an over-long label at construction is also the only place
+    // the author sees it — accepted here, it is dropped silently at ingest,
+    // and the case quietly stops appearing in the funnel it was labelled for.
+    if (config.intent !== undefined) {
+      const normalized = normalizeIntent(config.intent);
+      if (normalized === undefined) {
+        const rest = { ...config };
+        delete rest.intent;
+        config = rest;
+      } else {
+        caseIntentSchema.parse(normalized);
+        if (normalized !== config.intent) {
+          config = { ...config, intent: normalized };
+        }
       }
     }
     assertDeclaredCaseId(config);
@@ -1187,6 +1215,12 @@ export class EvalTest {
         ...(this.config.expectedOutput !== undefined
           ? { expectedOutput: this.config.expectedOutput }
           : {}),
+        // Unconditional, like `caseId` and unlike the optional siblings: a
+        // code-authored case that carries no label is AUTHORITATIVELY
+        // unlabelled, so it sends an explicit `null` clear rather than staying
+        // silent. Only a pre-intent SDK omits the field, and only that omission
+        // preserves a label somebody set elsewhere.
+        intent: normalizeIntent(this.config.intent) ?? null,
       }
     );
   }

@@ -222,6 +222,7 @@ export {
   STAGE_MEASUREMENTS_METADATA_KEY,
   STAGE_MEASUREMENTS_SCHEMA_VERSION,
   STAGE_REACH_STATES,
+  attachStageMeasurements,
   deriveStageMeasurements,
   reachForStageState,
   reachIsConsistentWithState,

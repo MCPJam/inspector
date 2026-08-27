@@ -1,4 +1,5 @@
 import type { HostExecutor } from "./HostExecutor.js";
+import { normalizeIntent } from "./contract/stage-intent.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
@@ -298,6 +299,12 @@ export class EvalSuite {
         ...(config.expectedOutput !== undefined
           ? { expectedOutput: config.expectedOutput }
           : {}),
+        // Unconditional, like `caseId` and unlike the optional siblings: a
+        // code-authored case that carries no label is AUTHORITATIVELY
+        // unlabelled, so it sends an explicit `null` clear rather than staying
+        // silent. Only a pre-intent SDK omits the field, and only that omission
+        // preserves a label somebody set elsewhere.
+        intent: normalizeIntent(config.intent) ?? null,
       };
       if (Object.keys(identity).length > 0) {
         caseIdentityByTest[name] = identity;

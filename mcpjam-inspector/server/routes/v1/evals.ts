@@ -49,6 +49,7 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  caseIntentUpdateSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
   opaqueIdSchema,
@@ -348,6 +349,7 @@ const publicInlineTestSchema = z.object({
     .passthrough()
     .optional(),
   matchOptions: matchOptionsSchema.optional(),
+  intent: caseIntentUpdateSchema.optional(),
   predicates: casePredicatesSchema.optional(),
 });
 type PublicInlineTest = z.infer<typeof publicInlineTestSchema>;
@@ -375,6 +377,7 @@ function publicInlineTestToRunTest(
     ...(test.advancedConfig !== undefined
       ? { advancedConfig: test.advancedConfig }
       : {}),
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     ...(test.matchOptions !== undefined
       ? { matchOptions: test.matchOptions }
       : {}),
@@ -493,6 +496,7 @@ const createEvalSuiteSchema = z.strictObject({
           .passthrough()
           .optional(),
         matchOptions: matchOptionsSchema.optional(),
+  intent: caseIntentUpdateSchema.optional(),
         predicates: casePredicatesSchema.optional(),
       }),
     )
@@ -637,6 +641,7 @@ function normalizeCreateTestsToRunTests(
       ...(test.advancedConfig !== undefined
         ? { advancedConfig: test.advancedConfig }
         : {}),
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       ...(test.matchOptions !== undefined
         ? { matchOptions: test.matchOptions }
         : {}),
@@ -1786,6 +1791,7 @@ function toCaseDto(testCase: CaseDoc) {
           ...(m.provider ? { provider: String(m.provider) } : {}),
         }))
       : [],
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     ...(testCase.matchOptions
       ? { matchOptions: toPublicMatchOptions(testCase.matchOptions) }
       : {}),
@@ -2066,6 +2072,10 @@ const publicCaseBodyShape = {
     )
     .optional(),
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
+  // Analytics grouping only — never a grading input. Nullable for the same
+  // reason `matchOptions` is: omitted PRESERVES the stored label, `null`
+  // CLEARS it, a string sets it.
+  intent: caseIntentUpdateSchema.optional(),
   checks: z
     .object({
       mode: z.enum(["inherit", "replace", "extend"]),
@@ -2421,6 +2431,10 @@ function buildCaseMutationArgs(
         opts.forCreate
         ? toInternalMatchOptions(body.matchOptions)
         : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+  // Same create/update asymmetry as `matchOptions`: on create there is no
+  // stored label to clear, and the create mutation does not accept null.
+  if (body.intent !== undefined && !(opts.forCreate && body.intent === null))
+    args.intent = body.intent;
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null

@@ -6,6 +6,7 @@
  * product catalog unchanged.
  */
 import { z } from "zod";
+import { caseIntentUpdateSchema } from "../contract/stage-intent.js";
 import { opaqueIdSchema } from "../contract/identity.js";
 import {
   GATE_WAIVER_MAX_REASON_LENGTH,
@@ -4500,6 +4501,15 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  // Nullable for the same reason `matchOptions` is, and it is the same rule
+  // spelled at every authoritative boundary: omitted PRESERVES the stored
+  // label, `null` CLEARS it, a string sets it. Analytics slices by this; no
+  // verdict reads it.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics intent label for the case (grouping only, never affects grading). Omit to leave unchanged; null to clear."
+    ),
   // THE CONVERTER'S CLAIM, on the operation surface too.
   //
   // Without it Zod strips the key and `buildCaseBody` never sees it, so a

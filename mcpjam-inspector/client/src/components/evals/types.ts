@@ -177,6 +177,8 @@ export type EvalSuiteConfigTest = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
+  /** Analytics grouping label — stage analytics slices by it; never graded. */
+  intent?: string;
   expectedOutput?: string; // The output or experience expected from the MCP server
   /**
    * Unified authored test steps — the source of truth for execution. Replaces
@@ -338,6 +340,8 @@ export type EvalCase = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
+  /** Analytics grouping label — stage analytics slices by it; never graded. */
+  intent?: string;
   expectedOutput?: string; // The output or experience expected from the MCP server
   /**
    * Unified authored test steps — the source of truth for execution and the
@@ -401,6 +405,10 @@ export type EvalIteration = {
     }>;
     isNegativeTest?: boolean; // When true, test passes if NO tools are called
     scenario?: string; // Description of why app should NOT trigger (negative tests only)
+    /** Analytics grouping label — stage analytics slices by it; never graded. */
+    intent?: string;
+  /** Analytics grouping label — stage analytics slices by it; never graded. */
+  intent?: string;
     expectedOutput?: string; // The output or experience expected from the MCP server
     /**
      * Unified authored test steps frozen at run-precreate time. The snapshot

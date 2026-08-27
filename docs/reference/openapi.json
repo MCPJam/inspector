@@ -10971,6 +10971,10 @@
             },
             "description": "Ordered test steps. A `prompt` step is a model turn; a single model-free `toolCall` step is a render-check; `assert` steps hold the expectations."
           },
+          "intent": {
+            "type": "string",
+            "description": "Analytics grouping label. Stage analytics slices funnels by it; no verdict, threshold or assertion ever reads it. On write: omit to leave the stored label unchanged, send null to clear it, or send a string to set it."
+          },
           "expectedOutput": {
             "type": "string"
           },

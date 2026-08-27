@@ -106,8 +106,10 @@ describe("createRunSetupObserver folding", () => {
       observer.recordToolsList(id, { outcome: "ok", startedAt: 1, endedAt: 2 });
     }
     expect(observer.buildSignals()).toEqual({
-      connection: { outcome: "ok" },
-      discovery: { outcome: "ok" },
+      // Each phase now also carries its wall-clock ENVELOPE, sampled once per
+      // attempt. Connects ran 0→1 across both targets, tools/list 1→2.
+      connection: { outcome: "ok", durationMs: 1 },
+      discovery: { outcome: "ok", durationMs: 1 },
     });
   });
 
@@ -397,5 +399,108 @@ describe("createRunSetupObserver canary + spans", () => {
     expect(capped.truncated).toBe(true);
     expect(capped.signals.connection?.spanIds).toBeUndefined();
     expect(JSON.stringify(capped).length).toBeLessThan(JSON.stringify(raw).length);
+  });
+});
+
+// =============================================================================
+// The setup phase's wall-clock envelope (D5 B5c).
+//
+// An ENVELOPE — first start to last end — and deliberately not the union the
+// per-trial stage latency uses. A setup phase is measured once per run, and the
+// question it answers is "how long was the run held up here", which includes
+// the gaps between sequential connects. The two bases must never be averaged
+// together, which is why the contract names them separately.
+//
+// Every case below is really one rule: a duration is emitted only when it can
+// be KNOWN. A wrong number is worse than a missing one — once summed into an
+// aggregate it is indistinguishable from a right one.
+// =============================================================================
+
+describe("setup phase durationMs", () => {
+  it("spans first start to last end across the phase's targets", () => {
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["a", "b"],
+    });
+    observer.recordConnect("a", { outcome: "ok", startedAt: 100, endedAt: 300 });
+    observer.recordConnect("b", { outcome: "ok", startedAt: 500, endedAt: 900 });
+    observer.recordToolsList("a", {
+      outcome: "ok",
+      startedAt: 900,
+      endedAt: 950,
+    });
+    observer.recordToolsList("b", {
+      outcome: "ok",
+      startedAt: 950,
+      endedAt: 1000,
+    });
+    const signals = observer.buildSignals();
+    // 900 - 100, INCLUDING the 200ms gap between the two connects: the run was
+    // held up for the whole span, not just for the sum of the two attempts.
+    expect(signals?.connection?.durationMs).toBe(800);
+    expect(signals?.discovery?.durationMs).toBe(100);
+  });
+
+  it("is emitted on a FAILED phase too", () => {
+    // A failed connect is exactly the case somebody wants the duration for —
+    // a slow failure and a fast one are different operational stories.
+    const observer = createRunSetupObserver({ expectedServerIds: ["a"] });
+    observer.recordConnect("a", {
+      outcome: "failed",
+      error: httpError(500),
+      startedAt: 10,
+      endedAt: 210,
+    });
+    expect(observer.buildSignals()?.connection?.durationMs).toBe(200);
+  });
+
+  it("is OMITTED when a target never settled", () => {
+    // An unsettled target makes the phase's end unknowable, and the
+    // synthesized placeholder rows for it must never reach timing.
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["a", "ghost"],
+    });
+    observer.recordConnect("a", { outcome: "ok", startedAt: 0, endedAt: 100 });
+    const connection = observer.buildSignals()?.connection;
+    expect(connection?.outcome).toBe("failed");
+    expect(connection?.durationMs).toBeUndefined();
+  });
+
+  it("is OMITTED when a timestamp is not finite", () => {
+    const observer = createRunSetupObserver({ expectedServerIds: ["a"] });
+    observer.recordConnect("a", {
+      outcome: "ok",
+      startedAt: 0,
+      endedAt: Number.NaN,
+    });
+    expect(observer.buildSignals()?.connection?.durationMs).toBeUndefined();
+  });
+
+  it("is OMITTED when the clock ran backwards", () => {
+    // A negative envelope is a clock fault, not a zero-length phase.
+    const observer = createRunSetupObserver({ expectedServerIds: ["a"] });
+    observer.recordConnect("a", { outcome: "ok", startedAt: 500, endedAt: 100 });
+    expect(observer.buildSignals()?.connection?.durationMs).toBeUndefined();
+  });
+
+  it("survives the over-cap slimming that sheds spanIds", () => {
+    // The cap runs exactly on failure-heavy payloads, so shedding the duration
+    // there would bias setup latency toward small clean runs. It is a scalar;
+    // the cap's real target is the unbounded id list.
+    const raw = {
+      signals: {
+        connection: {
+          outcome: "failed" as const,
+          attribution: "theirs" as const,
+          egressVerified: true,
+          durationMs: 2500,
+          spanIds: Array.from({ length: 5 }, (_, i) => `span-${i}`),
+        },
+      },
+      egressCanary: undefined,
+    };
+    const capped = capSetupAuditMetadata(raw, 1);
+    expect(capped.truncated).toBe(true);
+    expect(capped.signals.connection?.durationMs).toBe(2500);
+    expect(capped.signals.connection?.spanIds).toBeUndefined();
   });
 });

@@ -1,7 +1,9 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentUpdateSchema,
+  normalizeIntent, evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
@@ -229,6 +231,7 @@ export const RunEvalsRequestSchema = z.object({
           .passthrough()
           .optional(),
         matchOptions: matchOptionsSchema.optional(),
+        intent: caseIntentUpdateSchema.optional(),
         // Case-level predicate gate override; threaded through every Zod
         // boundary on the wire so it doesn't get silently stripped
         // (feedback_zod_strips_unthreaded_fields).
@@ -501,6 +504,7 @@ export const RunTestCaseRequestSchema = z.object({
         .passthrough()
         .optional(),
       matchOptions: matchOptionsSchema.optional(),
+      intent: caseIntentUpdateSchema.optional(),
       // State-based predicate gate (see shared/predicates). Accepted as a
       // per-run override so SDK / corpus cases can gate on predicates without
       // the deferred Convex `testCase` schema change. Loosely typed like
@@ -1185,6 +1189,7 @@ function toCaseBatchItem(
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     predicates?: import("@/shared/eval-matching").CasePredicates;
+    intent?: string | null;
   },
   opts: { idempotencyKey?: string }
 ): EvalCaseBatchItem {
@@ -1203,6 +1208,11 @@ function toCaseBatchItem(
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
     predicates: testCaseData.predicates,
+    // Forwarded, never defaulted: an absent intent means this request does not
+    // speak to it, and the transport must not turn that into a clear.
+    ...(testCaseData.intent !== undefined
+      ? { intent: testCaseData.intent }
+      : {}),
     ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
   };
 }
@@ -1431,6 +1441,7 @@ export async function authorEvalSuite(args: {
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+      intent?: string | null;
       predicates?: import("@/shared/eval-matching").CasePredicates;
     }
   >();
@@ -1452,6 +1463,7 @@ export async function authorEvalSuite(args: {
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
+        ...(test.intent !== undefined ? { intent: test.intent } : {}),
       });
     }
     // Probe entries carry display-only model sentinels — never collect them
@@ -1580,7 +1592,15 @@ export async function authorEvalSuite(args: {
                 normalizeForComparison(existingTestCase.predicates)
               ) !==
               JSON.stringify(normalizeForComparison(testCaseData.predicates));
+            // Compared through `normalizeIntent` on BOTH sides, so whitespace
+            // never reads as a retag. Only a request that SPEAKS to intent can
+            // change it — an omitted field compares equal by construction.
+            const intentChanged =
+              testCaseData.intent !== undefined &&
+              (normalizeIntent(existingTestCase.intent) ?? null) !==
+                (normalizeIntent(testCaseData.intent ?? undefined) ?? null);
             const hasChanges =
+              intentChanged ||
               modelsChanged ||
               runsChanged ||
               expectedToolCallsChanged ||
@@ -1610,6 +1630,9 @@ export async function authorEvalSuite(args: {
                 ),
                 matchOptions: testCaseData.matchOptions,
                 predicates: testCaseData.predicates,
+                ...(testCaseData.intent !== undefined
+                  ? { intent: testCaseData.intent }
+                  : {}),
               });
             }
             outcomes[slot] = {

@@ -273,10 +273,17 @@ describe("the write it does make", () => {
       "stageAnalyzerVersion",
       "setupSignals",
       "toolSignals",
+      // Rides WITH the rewritten chain: the measurements describe those exact
+      // rows, so posting one without the other is what leaves the backend
+      // re-validating stale timings against a chain they never described.
+      "stageMeasurements",
       "scores",
       "evaluationConfig",
     ]);
     for (const key of Object.keys(body)) expect(allowed.has(key)).toBe(true);
+    // The pair travels together, always.
+    expect(body).toHaveProperty("stageResults");
+    expect(body).toHaveProperty("stageMeasurements");
     expect(body.goalCompletionJobId).toBe("job1");
     expect(typeof body.judgeStageDerivedAt).toBe("number");
   });

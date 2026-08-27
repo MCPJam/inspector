@@ -39,6 +39,7 @@
  */
 
 import { parseAllDocuments, stringify as stringifyYaml } from "yaml";
+import { normalizeIntent } from "./contract/stage-intent.js";
 import type { z } from "zod";
 import {
   evalSuiteFileSchema,
@@ -162,6 +163,15 @@ export type ResolvedEvalSuiteFileCase = {
   assertions: NonNullable<EvalSuiteFileCase["assertions"]>;
   expectedOutput?: string;
   isNegativeTest: boolean;
+  /**
+   * The analytics intent, in its STORED form: a normalized string, or absent.
+   *
+   * A file's absence and a file's blank both resolve to absent here. Turning
+   * that absence into the explicit wire clear is the RECONCILER's job, not the
+   * loader's — a resolved case describes what the file says, not what should be
+   * sent to change it.
+   */
+  intent?: string;
   /** Resolved from `cases[].model`, else `defaults.model`. */
   model: string;
   /** Resolved from `defaults.provider`; cases cannot override it. */
@@ -554,6 +564,9 @@ function resolveCase(
       ? {}
       : { expectedOutput: authoredCase.expectedOutput }),
     isNegativeTest: authoredCase.isNegativeTest ?? false,
+    ...(normalizeIntent(authoredCase.intent) === undefined
+      ? {}
+      : { intent: normalizeIntent(authoredCase.intent) }),
     model: authoredCase.model ?? defaults.model,
     ...(defaults.provider === undefined ? {} : { provider: defaults.provider }),
     repetitions: authoredCase.repetitions ?? defaults.repetitions,
@@ -623,6 +636,7 @@ const CASE_KEY_ORDER = [
   "repetitions",
   "passThreshold",
   "isNegativeTest",
+  "intent",
   "expectedOutput",
   "steps",
   "assertions",

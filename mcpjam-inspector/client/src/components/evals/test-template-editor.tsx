@@ -1,3 +1,4 @@
+import { MAX_INTENT_CHARS } from "@mcpjam/sdk/contract";
 import {
   useCallback,
   useEffect,
@@ -215,6 +216,12 @@ interface TestTemplate {
   title: string;
   runs: number;
   scenario?: string;
+  /**
+   * Analytics grouping label. Held as a plain string in the form (blank means
+   * "no label"); `buildSavePayload` is what turns blank into the explicit
+   * `null` clear the mutation needs.
+   */
+  intent?: string;
   steps: TestStep[];
   advancedConfig?: Record<string, unknown>;
   matchOptions?: EvalMatchOptions;
@@ -1150,6 +1157,7 @@ export function TestTemplateEditor({
       title: currentTestCase.title,
       runs: currentTestCase.runs,
       scenario: currentTestCase.scenario ?? "",
+      intent: currentTestCase.intent ?? "",
       steps,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
@@ -1441,6 +1449,9 @@ export function TestTemplateEditor({
     const normalizedScenario = (editForm.scenario ?? "").trim();
     const normalizedCurrentScenario = (currentTestCase.scenario ?? "").trim();
 
+    const normalizedIntent = (editForm.intent ?? "").trim();
+    const normalizedCurrentIntent = (currentTestCase.intent ?? "").trim();
+
     const effectiveNegativeOnServer =
       deriveIsNegativeTestFromSteps(currentSteps);
     const serverNegativeFlagMismatch =
@@ -1463,6 +1474,7 @@ export function TestTemplateEditor({
       editForm.title !== currentTestCase.title ||
       editForm.runs !== currentTestCase.runs ||
       normalizedScenario !== normalizedCurrentScenario ||
+      normalizedIntent !== normalizedCurrentIntent ||
       normalizedSteps !== normalizedCurrentSteps ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
@@ -1777,6 +1789,12 @@ export function TestTemplateEditor({
       title: form.title,
       runs: form.runs,
       scenario: form.scenario?.trim() ? form.scenario.trim() : undefined,
+      // `null` on blank, NOT `undefined` like `scenario` above — and the
+      // difference is deliberate. The editor is an AUTHORITATIVE boundary: a
+      // user who clears this field means "remove the label", and `undefined`
+      // means "I did not speak", which would leave the old label in place and
+      // make clearing impossible from the one surface that owns it.
+      intent: form.intent?.trim() ? form.intent.trim() : null,
       query,
       expectedToolCalls,
       // No per-step `expectedOutput` in the steps model (the legacy per-turn
@@ -2955,6 +2973,39 @@ export function TestTemplateEditor({
                   justification for a claim without changing the claim, which is
                   the one edit that makes the record actively misleading.
                 */}
+                {/*
+                  The analytics INTENT label.
+
+                  Grouping only: stage analytics slices funnels by it and no
+                  verdict, threshold or assertion ever reads it. Clearing the
+                  box is a real edit — `buildSavePayload` sends an explicit
+                  `null` — because this editor is the surface that OWNS the
+                  label, and a blank that meant "no change" would leave a case
+                  permanently stuck in a funnel somebody wanted it out of.
+                */}
+                <div className="mt-2 flex items-center gap-2">
+                  <label
+                    htmlFor="case-intent"
+                    className="shrink-0 text-[11px] text-muted-foreground"
+                  >
+                    Intent
+                  </label>
+                  <input
+                    id="case-intent"
+                    type="text"
+                    value={editForm?.intent ?? ""}
+                    maxLength={MAX_INTENT_CHARS}
+                    placeholder="Optional analytics label — never affects grading"
+                    onChange={(event) =>
+                      editForm &&
+                      setEditForm({
+                        ...editForm,
+                        intent: event.target.value,
+                      })
+                    }
+                    className="min-w-0 flex-1 rounded border border-border bg-transparent px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
                 <ImportClaimDetails
                   claim={
                     (

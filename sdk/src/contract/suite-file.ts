@@ -55,6 +55,7 @@
  */
 
 import { z } from "zod";
+import { caseIntentSchema } from "./stage-intent.js";
 import { predicateSchema } from "../predicates/types.js";
 import { importMappingStatusSchema } from "./chain.js";
 import { opaqueIdSchema } from "./identity.js";
@@ -441,6 +442,19 @@ export const evalSuiteFileCaseSchema = z
     expectedOutput: z.string().optional(),
     /** The case passes only when NO tool was called. */
     isNegativeTest: z.boolean().optional(),
+    /**
+     * The analytics INTENT label — why this case exists, never how it is
+     * graded. Stage analytics slices by it; no verdict ever reads it.
+     *
+     * STRING-ONLY, and deliberately not nullable: `null` is a MUTATION-wire
+     * word, not a file word. A file says "no label" by OMITTING the key, and
+     * the CLI reconciler is what turns that absence into the explicit
+     * `intent: null` clear it sends to the update endpoint. Accepting `null`
+     * here would give an author two spellings of one absence, and would put
+     * this schema out of step with the backend's suite-file validator, which
+     * refuses it.
+     */
+    intent: caseIntentSchema.optional(),
     /** Per-case overrides of the suite defaults. */
     model: z.string().min(1).optional(),
     repetitions: repetitionsSchema.optional(),

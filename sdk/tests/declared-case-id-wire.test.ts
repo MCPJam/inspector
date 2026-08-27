@@ -250,7 +250,14 @@ describe("declared case id on the upload", () => {
     expect(withoutCaseId).toEqual(legacy[0]);
 
     // And on the wire, a config with no `externalCaseId` gains `caseId` and
-    // no other key.
+    // `intent` and no other key.
+    //
+    // `intent` is the second deliberate addition, and it is present here while
+    // ABSENT from the bare-mapper payload above on purpose: a suite-driven
+    // upload is an authoritative reporter, so a case with no label says so
+    // explicitly (`intent: null`) rather than staying silent. A bare
+    // `iterationsToEvalResultInputs` call with no identity does not speak to
+    // intent at all, which is what preserves a label set elsewhere.
     const suite = new EvalSuite({ name: "legacy" });
     suite.add(
       new EvalTest({
@@ -265,8 +272,10 @@ describe("declared case id on the upload", () => {
     const [uploaded] = await runSuiteAndCapture(suite);
     expect(uploaded.caseId).toBe("c_legacy");
     // `externalIterationId` is stamped on by the reporter, not the mapper.
+    expect(uploaded.intent).toBeNull();
     const {
       caseId: _uploadedId,
+      intent: _uploadedIntent,
       externalIterationId,
       ...uploadedMapped
     } = uploaded;

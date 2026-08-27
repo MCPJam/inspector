@@ -493,3 +493,44 @@ export function deriveStageMeasurements(
  * whether they were believed.
  */
 export const STAGE_MEASUREMENTS_METADATA_KEY = "stageMeasurements" as const;
+
+/**
+ * Attach measurements to a chain's serialized metadata, from that exact chain.
+ *
+ * The ONE helper both producers use — the hosted finalizer and the SDK result
+ * mappers — so there is exactly one timing derivation in the product. A second
+ * call site computing its own is how the funnel and the timings start
+ * describing different runs.
+ *
+ * Derives from the SERIALIZED rows rather than from the in-memory derivation:
+ * the rows that get stored are the rows the measurements must describe, and
+ * deriving from anything else leaves the pair able to disagree the moment
+ * serialization changes.
+ *
+ * A no-op without a chain — measurements that vouch for rows nobody wrote
+ * describe nothing, and the backend rejects them on exactly that ground.
+ * Everything else the contract already guarantees: all six reach rows are
+ * emitted even with no spans at all, and a stage whose cited spans lack usable
+ * timing simply carries no latency sample.
+ */
+export function attachStageMeasurements(
+  metadata: Record<string, unknown>,
+  spans?: readonly MeasurementSpanLike[]
+): Record<string, unknown> {
+  const stageResults = metadata.stageResults;
+  if (!Array.isArray(stageResults) || stageResults.length === 0) {
+    return metadata;
+  }
+  const stageAnalyzerVersion =
+    typeof metadata.stageAnalyzerVersion === "number"
+      ? metadata.stageAnalyzerVersion
+      : undefined;
+  return {
+    ...metadata,
+    [STAGE_MEASUREMENTS_METADATA_KEY]: deriveStageMeasurements({
+      stageResults: stageResults as readonly StageResultRow[],
+      ...(stageAnalyzerVersion !== undefined ? { stageAnalyzerVersion } : {}),
+      ...(spans !== undefined ? { spans } : {}),
+    }),
+  };
+}

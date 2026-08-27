@@ -414,6 +414,22 @@ function stageFields(stage: Record<string, unknown>) {
       typeof stage.stageAnalyzerVersion === "number"
         ? stage.stageAnalyzerVersion
         : STAGE_ANALYZER_VERSION,
+    // The measurements the rewritten chain was measured with, posted WITH it.
+    //
+    // No separate `traceComplete` guard is needed here, and adding one would be
+    // dead code: `stage` is `{}` when the trace is unusable, and both send
+    // sites already skip the write entirely on an empty `stage`. So an
+    // incomplete trace posts no chain, and therefore no measurements — leaving
+    // the first pass's verified pair exactly as it was.
+    //
+    // Because the pair is always derived together and always posted together,
+    // the backend never has to re-validate stale measurements against a chain
+    // they did not describe.
+    ...(stage.stageMeasurements !== null &&
+    typeof stage.stageMeasurements === "object" &&
+    !Array.isArray(stage.stageMeasurements)
+      ? { stageMeasurements: stage.stageMeasurements }
+      : {}),
   };
 }
 

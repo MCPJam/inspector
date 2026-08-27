@@ -123,6 +123,10 @@ export function fileCaseToCreateBody(
     // here" and "imported, claim unknown" are different facts, and once a case
     // is persisted nothing downstream can tell them apart again.
     ...(testCase.import ? { import: testCase.import } : {}),
+    // Omitted on create when the file carries no label, for the same reason
+    // `import` is: on a create there is no stored value to clear, and the
+    // create endpoint does not accept `null`.
+    ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
   };
 }
 
@@ -153,6 +157,13 @@ export function fileCaseToUpdateBody(
     // block would otherwise leave a stale claim describing a conversion that
     // is no longer being asserted.
     import: testCase.import ?? null,
+    // THE file-is-authoritative rule, and the one place absence becomes a
+    // clear. A file says "no label" by omitting the key — it has no `null` of
+    // its own — so the reconciler is what turns that omission into the explicit
+    // clear PATCH needs. Without this a label removed from a file would live on
+    // in the hosted row forever, and every later analytics funnel would keep
+    // slicing by a word the author already deleted.
+    intent: testCase.intent ?? null,
   };
 }
 

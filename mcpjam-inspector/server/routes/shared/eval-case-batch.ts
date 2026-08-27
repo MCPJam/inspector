@@ -62,6 +62,17 @@ export type EvalCaseBatchItem = Record<string, unknown> & {
    * with a case.
    */
   import?: EvalCaseImportClaim;
+  /**
+   * The analytics INTENT label, in its wire form.
+   *
+   * Named on the type for the same reason `import` is: the index signature
+   * would carry it either way, but its absence is silent and directional. An
+   * omitted intent PRESERVES the stored label and a `null` CLEARS it, so a
+   * caller that drops the field while meaning to clear leaves a stale label
+   * attached to a funnel nobody is measuring — and one that invents `null`
+   * while meaning to stay quiet wipes a label somebody set in the UI.
+   */
+  intent?: string | null;
 };
 
 /**

@@ -22,6 +22,10 @@ import {
 } from "./matchers.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 import {
+  attachStageMeasurements,
+  type MeasurementSpanLike,
+} from "./contract/stage-measurements.js";
+import {
   deriveStageResults,
   stageDerivationToMetadata,
 } from "./contract/stage-derivation.js";
@@ -789,12 +793,35 @@ function syntheticStepsForCase(
  * WHICH case this is and how it is graded, not what it expected — and the
  * backend reads them to join a local run to a hosted case's history.
  */
+/**
+ * The spans an iteration trace carries, if it carries any.
+ *
+ * Defensive because `trace` is an open shape at this layer: a caller-supplied
+ * host executor may return no `spans` key at all, and a missing key must mean
+ * "no timing samples", never a thrown mapper.
+ */
+function traceSpansOf(trace: unknown): MeasurementSpanLike[] | undefined {
+  if (typeof trace !== "object" || trace === null) return undefined;
+  const spans = (trace as { spans?: unknown }).spans;
+  return Array.isArray(spans) ? (spans as MeasurementSpanLike[]) : undefined;
+}
+
 export type EvalCaseIdentity = {
   /** The case's DECLARED identity — `EvalTestConfig.id`. */
   caseId?: string;
   externalCaseId?: string;
   isNegativeTest?: boolean;
   expectedOutput?: string;
+  /**
+   * The analytics intent, in its WIRE form.
+   *
+   * `string | null`, not `string | undefined`, because this crosses an
+   * authoritative boundary: a code-authored case that carries no label is
+   * saying so, and must send `null` to clear a stale one. Only `undefined`
+   * means "this reporter does not speak to intent", which is what a pre-intent
+   * SDK sends and what preserves whatever is stored.
+   */
+  intent?: string | null;
 };
 
 /**
@@ -997,6 +1024,10 @@ export function iterationsToEvalResultInputs(
       ...(caseIdentity?.expectedOutput !== undefined
         ? { expectedOutput: caseIdentity.expectedOutput }
         : {}),
+      // `null` is SENT (an authoritative clear); only `undefined` is omitted.
+      ...(caseIdentity?.intent !== undefined
+        ? { intent: caseIdentity.intent }
+        : {}),
       tokens: {
         input: iteration.tokens.input,
         output: iteration.tokens.output,
@@ -1015,7 +1046,13 @@ export function iterationsToEvalResultInputs(
             ? { predicates: iteration.predicateResults }
             : {}),
           ...scoreMetadata(iteration, evaluationConfig),
-          ...stageDerivationToMetadata(stageDerivation),
+          // Measurements ride WITH the chain, derived from the rows actually
+          // serialized here — one helper, shared with the hosted finalizer, so
+          // there is exactly one timing derivation in the product.
+          ...attachStageMeasurements(
+            stageDerivationToMetadata(stageDerivation),
+            traceSpansOf(trace)
+          ),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
@@ -1089,6 +1126,8 @@ export function suiteTestResultsToEvalResultInputs(
         ...(identity?.expectedOutput !== undefined
           ? { expectedOutput: identity.expectedOutput }
           : {}),
+        // `null` is SENT (an authoritative clear); only `undefined` is omitted.
+        ...(identity?.intent !== undefined ? { intent: identity.intent } : {}),
         tokens: {
           input: iteration.tokens.input,
           output: iteration.tokens.output,
@@ -1109,14 +1148,17 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
-            ...stageDerivationToMetadata(
-              deriveSdkStageResults({
-                iteration,
-                trace,
-                expectedToolCalls,
-                predicates,
-                caseIdentity: identity,
-              })
+            ...attachStageMeasurements(
+              stageDerivationToMetadata(
+                deriveSdkStageResults({
+                  iteration,
+                  trace,
+                  expectedToolCalls,
+                  predicates,
+                  caseIdentity: identity,
+                })
+              ),
+              traceSpansOf(trace)
             ),
           },
           resolveIterationHostExtras(iteration, hostExtras)

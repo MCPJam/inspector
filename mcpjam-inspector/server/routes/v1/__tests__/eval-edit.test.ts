@@ -1545,6 +1545,62 @@ describe("v1 eval-edit routes", () => {
     expect(args.predicates).toBeNull();
   });
 
+  it("PATCH case sets, preserves and clears intent by the three wire states", async () => {
+    // The whole contract, on the surface a UI and the CLI both write through.
+    // Getting it wrong is not cosmetic: a silent clear re-attributes a case's
+    // history to "Unlabeled", and a silent preserve makes a retag invisible.
+    const argsOf = () =>
+      convexMutationMock.mock.calls.findLast(
+        (c: unknown[]) => c[0] === "testSuites:updateTestCase"
+      )![1] as Record<string, unknown>;
+
+    const set = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { intent: "search" }
+    );
+    expect(set.status).toBe(200);
+    expect(argsOf().intent).toBe("search");
+
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { intent: null }
+    );
+    expect(cleared.status).toBe(200);
+    expect(argsOf().intent).toBeNull();
+
+    // Omitted: the mutation must not be told anything about intent at all.
+    // Passing `undefined` through would be the same bug spelled differently —
+    // Convex reads a present-but-undefined key as a clear.
+    const untouched = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { title: "renamed" }
+    );
+    expect(untouched.status).toBe(200);
+    expect("intent" in argsOf()).toBe(false);
+  });
+
+  it("POST case drops a null intent rather than sending it to create", async () => {
+    // On create there is no stored label to clear, and the create mutation does
+    // not accept null — the same asymmetry `matchOptions` has.
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "new case",
+        steps: [{ id: "s1", kind: "prompt", prompt: "go" }],
+        intent: null,
+      }
+    );
+    expect([200, 201]).toContain(res.status);
+    const created = convexMutationMock.mock.calls.findLast((c: unknown[]) =>
+      String(c[0]).includes("createTestCase")
+    );
+    if (created) expect("intent" in (created[1] as object)).toBe(false);
+  });
+
   it("PATCH on a render-check case stays a render-check via toolCall steps", async () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "testSuites:getTestCase")

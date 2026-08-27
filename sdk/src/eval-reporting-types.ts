@@ -132,6 +132,16 @@ export type EvalResultInput = {
    */
   caseId?: string;
   /**
+   * The case's analytics intent: omitted PRESERVES what is stored, `null`
+   * clears it, a string sets it.
+   *
+   * Requires a backend that accepts the field — Convex arg validation is
+   * strict, so an intent-bearing payload sent to a deployment without it has
+   * the WHOLE upload rejected, not the field dropped. Backend D5a must be
+   * deployed before an SDK carrying this is published.
+   */
+  intent?: string | null;
+  /**
    * This trial's LIFECYCLE status — what happened to the execution, which is a
    * different question from `passed` (the task verdict).
    *

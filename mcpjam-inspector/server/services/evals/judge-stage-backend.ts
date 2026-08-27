@@ -142,6 +142,8 @@ export type JudgeStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  /** The measurements derived beside `stageResults`, posted with it. */
+  stageMeasurements?: unknown;
   setupSignals?: unknown;
   toolSignals?: unknown;
   scores?: unknown[];
@@ -316,6 +318,8 @@ export type MetadataAttributionStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  /** The measurements derived beside `stageResults`, posted with it. */
+  stageMeasurements?: unknown;
 };
 
 /**

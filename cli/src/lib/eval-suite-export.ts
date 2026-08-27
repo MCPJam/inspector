@@ -801,6 +801,14 @@ export function buildSuiteFileFromPlatform(
         ? {}
         : { repetitions: evalCase.iterations }),
       ...(evalCase.isNegative ? { isNegativeTest: true } : {}),
+      // Written into the exported file, so an export -> re-sync round-trip
+      // preserves the label. It has to be here: a file's ABSENT intent is an
+      // explicit clear on the way back in, so an export that dropped the field
+      // would silently wipe every label the next `eval run` sync touched. The
+      // deep-equal exactness proof below covers it for free.
+      ...(typeof evalCase.intent === "string" && evalCase.intent.length > 0
+        ? { intent: evalCase.intent }
+        : {}),
       ...(evalCase.expectedOutput === undefined ||
       evalCase.expectedOutput === null
         ? {}

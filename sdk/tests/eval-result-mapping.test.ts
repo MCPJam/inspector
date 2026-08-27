@@ -814,22 +814,41 @@ describe("iterationsToEvalResultInputs", () => {
 
     const results = iterationsToEvalResultInputs("t", iterations);
 
-    // Every SDK iteration now also carries the derived user-value chain. Split
-    // those keys off rather than loosening this to `toMatchObject`: the exact
-    // shape of the rest of the metadata is what this test exists to pin.
+    // Every SDK iteration now also carries the derived user-value chain AND the
+    // measurements derived from it. Split those keys off rather than loosening
+    // this to `toMatchObject`: the exact shape of the rest of the metadata is
+    // what this test exists to pin.
     const split = (index: number) => {
-      const { stageResults, stageAnalyzerVersion, ...rest } = results[index]
-        .metadata as Record<string, unknown>;
-      return { stageResults, stageAnalyzerVersion, rest };
+      const {
+        stageResults,
+        stageAnalyzerVersion,
+        stageMeasurements,
+        ...rest
+      } = results[index].metadata as Record<string, unknown>;
+      return { stageResults, stageAnalyzerVersion, stageMeasurements, rest };
     };
 
     expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
     expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
 
     for (const index of [0, 1]) {
-      const { stageResults, stageAnalyzerVersion } = split(index);
+      const { stageResults, stageAnalyzerVersion, stageMeasurements } =
+        split(index);
       expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
       expect((stageResults as StageResultRow[]).map((r) => r.stage)).toEqual([
+        ...USER_VALUE_STAGES,
+      ]);
+      // The measurements ride WITH the chain and describe the same six stages,
+      // in the same order — that pairing is what the backend re-validates, and
+      // a chain shipped without its measurements is what makes a funnel
+      // unmeasurable rather than merely empty.
+      const measurements = stageMeasurements as {
+        schemaVersion: number;
+        stageAnalyzerVersion: number;
+        rows: Array<{ stage: string }>;
+      };
+      expect(measurements.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+      expect(measurements.rows.map((r) => r.stage)).toEqual([
         ...USER_VALUE_STAGES,
       ]);
     }
