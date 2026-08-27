@@ -249,7 +249,7 @@ export function HostOverlayBar({
       {isLoading || !effectiveHost ? (
         <div className="h-8 w-44 animate-pulse rounded-md bg-muted/50" />
       ) : (
-        <div className="flex items-center rounded-md border border-border/40 bg-muted/30">
+        <div className="flex items-center rounded-md border border-chrome-control-border bg-chrome-control">
           <button
             type="button"
             aria-label="Previous client"
@@ -258,7 +258,7 @@ export function HostOverlayBar({
             onClick={() => cycle(-1)}
             className={cn(
               "inline-flex h-8 w-7 items-center justify-center rounded-l-md text-muted-foreground transition-colors",
-              "hover:bg-muted/60 hover:text-foreground",
+              "hover:bg-chrome-hover hover:text-foreground",
               "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-40"
             )}
@@ -273,8 +273,8 @@ export function HostOverlayBar({
                 aria-label="Client used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
-                  "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
-                  "hover:bg-muted/60 data-[state=open]:bg-muted/60",
+                  "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-chrome-control-border bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
+                  "hover:bg-chrome-hover data-[state=open]:bg-chrome-hover",
                   "focus-visible:ring-2 focus-visible:ring-ring/45"
                 )}
               >
