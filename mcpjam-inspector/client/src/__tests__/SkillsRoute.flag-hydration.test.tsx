@@ -57,21 +57,6 @@ vi.mock("../components/SkillsTab", () => ({
   ),
 }));
 
-// SkillsRoute resolves hosted server ids through this hook (a name is not an
-// addressable serverId hosted). Irrelevant to the flag, but it must not reach
-// a real Convex query under jsdom.
-vi.mock("../hooks/useViews", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../hooks/useViews")>();
-  return {
-    ...actual,
-    useProjectServers: () => ({
-      serversByName: new Map<string, string>(),
-      serversById: new Map<string, string>(),
-      isLoading: false,
-    }),
-  };
-});
-
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
   ConnectViewHeader: () => <div data-testid="connect-header" />,
 }));

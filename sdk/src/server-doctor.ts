@@ -239,11 +239,47 @@ export async function collectConnectedServerDoctorState(
 const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
 
 /**
+ * Why `skills/*` was not attempted, attributed to whoever actually withheld the
+ * declaration.
+ *
+ * `active` is the AND of two independent declarations, so one message covering
+ * both sides reports OUR omission as a fact about the server. That matters more
+ * here than it looks: `runServerDoctor` now advertises the extension itself, so
+ * the only way to reach `declared && !advertised` is a caller that pinned an
+ * exact client-capability set — `--host cursor` and friends. That caller is
+ * asking "what would this host see", and the honest answer is that the host, not
+ * the server, is the reason there is nothing to see. The CLI's `skills` verbs
+ * already refuse that case by name (`applySkillsExtensionCapability`); a doctor
+ * that blamed the server would contradict them on the same connection.
+ *
+ * Status stays `skipped` in every branch. A host pin is a legitimate way to run
+ * the doctor, not a defect in the server being examined.
+ */
+function inactiveSkillsDetail(
+  support: { declared?: boolean; advertised?: boolean } | undefined
+): string {
+  if (support?.declared && !support.advertised) {
+    return (
+      "This server DOES declare Skills over MCP, but the client capabilities " +
+      "pinned for this run did not advertise the extension, so no `skills/*` " +
+      "call was made. Drop the host/capability pin to inspect them."
+    );
+  }
+  if (support && !support.declared) {
+    return "The server does not declare the Skills over MCP extension (`io.modelcontextprotocol/skills`).";
+  }
+  // `getSkillsSupport` threw — we know nothing about either side, so the
+  // original both-sides wording is the only honest one left.
+  return "Skills over MCP is not active on this connection (the server must declare the extension and the client must advertise it).";
+}
+
+/**
  * Skills over MCP (SEP-2640), verified rather than counted.
  *
  * Three outcomes, deliberately distinct:
  *   - extension inactive -> `skipped`, because most servers serve no skills and
- *     that is not a fault;
+ *     that is not a fault. Which SIDE withheld it is named — see
+ *     {@link inactiveSkillsDetail};
  *   - listing works and the sample verifies -> `ok`;
  *   - a skill fails verification -> `error` naming the refusal KIND, since
  *     `digest_mismatch` and `frontmatter_drift` send a server author to
@@ -257,19 +293,16 @@ async function collectSkills(
   manager: MCPClientManager,
   serverId: string
 ): Promise<DoctorSkillsCollectionResult> {
-  let support: { active?: boolean } | undefined;
+  let support:
+    | { active?: boolean; declared?: boolean; advertised?: boolean }
+    | undefined;
   try {
     support = manager.getSkillsSupport(serverId);
   } catch {
     support = undefined;
   }
   if (!support?.active) {
-    return {
-      skills: [],
-      check: skippedCheck(
-        "Skills over MCP is not active on this connection (the server must declare the extension and the client must advertise it)."
-      ),
-    };
+    return { skills: [], check: skippedCheck(inactiveSkillsDetail(support)) };
   }
 
   try {
@@ -295,10 +328,18 @@ async function collectSkills(
     }
 
     const unloadable = listing.skills.filter((skill) => skill.unloadable).length;
+    const loadable = listing.skills.length - unloadable;
     const parts = [describeCount(listing.skills.length, "skill")];
     if (sample.length > 0) {
+      // Name the cap when it bit. "200 skills discovered. 5 verified" reads as
+      // "only 5 of them could be verified", which is a much worse claim than
+      // the true one — that the doctor deliberately stopped at 5.
+      const scope =
+        loadable > sample.length
+          ? `${sample.length} of ${loadable} sampled and verified`
+          : `${sample.length} verified`;
       parts.push(
-        `${sample.length} verified against ${sample.length === 1 ? "its manifest" : "their manifests"}.`
+        `${scope} against ${sample.length === 1 ? "its manifest" : "their manifests"}.`
       );
     }
     if (unloadable > 0) {

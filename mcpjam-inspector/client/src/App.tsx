@@ -21,7 +21,6 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
-import type { ServerSkillsSectionServer } from "./components/skills/ServerSkillsSection";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
@@ -1913,42 +1912,22 @@ export function SkillsRoute() {
   const servers = appState?.servers as
     | Record<string, ServerWithName>
     | undefined;
-  // HOSTED addressing. `appState.servers` is keyed by the user-assigned NAME,
-  // which is what the local manager registers connections under — but a hosted
-  // `/server-skills/*` call carries its `serverId` all the way to Convex
-  // `authorizeBatch`, which needs the `servers` table id. Passing the name
-  // there fails argument validation before any MCP frame is sent, and the
-  // section renders the backend's "projectId or serverIds are invalid".
-  const { serversByName } = useProjectServers({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
+  // Names, in both modes. The local manager registers connections under their
+  // name, and the hosted API layer resolves a name to its Convex server id
+  // inside `buildServerRequest` — so resolving here too would duplicate that,
+  // and the label must stay the name regardless: a server must never choose
+  // the namespace its skills are addressed under.
+  //
   // Memoized on a stable signature rather than rebuilt per render: the
   // consuming section fetches per connection, and a fresh array identity on
   // every render would restart those fetches indefinitely.
   const skillsMcpServers = useMemo(
     () =>
-      Object.entries(servers ?? {})
-        .map(([name, server]) => {
-          // Local mode keys the manager by name, so the name IS the id there.
-          const serverId = HOSTED_MODE ? serversByName.get(name) : name;
-          return serverId
-            ? {
-                serverId,
-                // Always the user-assigned label from OUR registry, never the
-                // id and never `serverInfo.name` — a server must not choose the
-                // namespace its skills are addressed under.
-                label: name,
-                connected: server.connectionStatus === "connected",
-              }
-            : // Hosted, and this connection has no saved project server behind
-              // it (or the query has not resolved yet). Dropped rather than
-              // sent under its name: an unaddressable server has no catalog to
-              // list, and guessing produces a validation error that reads like
-              // a broken feature.
-              null;
-        })
-        .filter((entry): entry is ServerSkillsSectionServer => entry !== null),
+      Object.entries(servers ?? {}).map(([name, server]) => ({
+        serverId: name,
+        label: name,
+        connected: server.connectionStatus === "connected",
+      })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       // JSON, not concatenation: a server NAME may contain the separators, so
@@ -1960,7 +1939,6 @@ export function SkillsRoute() {
           server.connectionStatus,
         ])
       ),
-      serversByName,
     ]
   );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
