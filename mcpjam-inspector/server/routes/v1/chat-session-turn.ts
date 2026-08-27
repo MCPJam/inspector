@@ -322,6 +322,37 @@ interface ResolvedTarget {
   serverIds: string[];
   serverNames?: string[];
   environmentId?: string;
+  /**
+   * Built-in tool ids the target's client advertises that THIS surface does
+   * not run — see {@link unappliedBuiltInToolIds}.
+   */
+  unappliedCapabilities?: string[];
+}
+
+/**
+ * The client's `builtInToolIds`, which this route deliberately does not apply.
+ *
+ * Built-in tools (`bash`, `web_search`) are wired in `routes/web/chat-v2.ts`
+ * via `resolveHostTools`; nothing in this route reads them, so an environment
+ * whose client attaches a computer and asks for `bash` runs here with the MCP
+ * server tools alone. That is a real limitation, not an oversight to paper
+ * over — the computer-backed shell needs a reserved box and a data plane this
+ * synchronous surface does not stand up.
+ *
+ * What was wrong is that it happened SILENTLY. The write path accepts the
+ * capability, the turn drops it, and the caller sees a model that simply never
+ * uses the tool it was configured with — indistinguishable from the model
+ * choosing not to. Reporting it turns an invisible gap into a named one.
+ *
+ * Reported, not refused: a client carrying a computer is a perfectly good
+ * client for a plain MCP turn, and refusing the turn would break every caller
+ * whose client happens to have one attached.
+ */
+function unappliedBuiltInToolIds(runtimeConfig: unknown): string[] {
+  const ids = (runtimeConfig as { builtInToolIds?: unknown } | undefined)
+    ?.builtInToolIds;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((id): id is string => typeof id === "string" && id !== "");
 }
 
 /**
@@ -360,10 +391,14 @@ async function resolveTarget(
     );
   }
   const serverNames = runtimeServerNames(spec);
+  const unappliedCapabilities = unappliedBuiltInToolIds(
+    spec.host?.runtimeConfig,
+  );
   return {
     serverIds,
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
+    ...(unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {}),
   };
 }
 
@@ -1097,6 +1132,11 @@ async function handleTurn(c: Context): Promise<Response> {
       toolMode: pins.toolMode,
       advertisedToolCount: Object.keys(tools).length,
       excludedToolCount: excluded.length,
+      // Present only when the client asked for something this surface does not
+      // run, so a caller that never configures built-ins sees no new field.
+      ...(target.unappliedCapabilities
+        ? { unappliedCapabilities: target.unappliedCapabilities }
+        : {}),
       persisted: {
         outcome: persisted.outcome,
         ...("version" in persisted && persisted.version !== undefined
@@ -1192,6 +1232,7 @@ export const __testing = {
   shouldReleaseLease,
   wantsNoTools,
   computeExcludedToolNames,
+  unappliedBuiltInToolIds,
   CONFIG_FIELDS,
   turnSchema,
 };
