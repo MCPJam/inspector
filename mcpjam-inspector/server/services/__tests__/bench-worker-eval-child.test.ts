@@ -137,6 +137,36 @@ describe("defaultRunEvalCell", () => {
     expect(request.extraHeaders).toBe(grantHeaders);
   });
 
+  it("runs the cell at its PINNED repetition count, not the suite default", async () => {
+    // `minimumRepetitionsPerRequiredCell` is a publication floor, so a cell
+    // declared at N that runs at the suite's default (often 1) is not merely
+    // thinner evidence — it can never clear the floor, and every hosted run of
+    // that definition comes out provisional.
+    await run();
+
+    expect(
+      (prepareEvalRun.mock.calls[0][1] as Record<string, unknown>)
+        .iterationOverride,
+    ).toBe(2);
+  });
+
+  it("sends no override when the roster pins no repetition count", async () => {
+    const entry = { ...ENTRY };
+    delete entry.repetitions;
+
+    await defaultRunEvalCellForTests()({
+      job: JOB,
+      entry,
+      cell: entry.evalCell!,
+      grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+    });
+
+    expect(
+      (prepareEvalRun.mock.calls[0][1] as Record<string, unknown>)
+        .iterationOverride,
+    ).toBeUndefined();
+  });
+
   it("does not re-execute a replayed child that already finished", async () => {
     // The double-charge this whole idempotency story exists to prevent: the
     // exam would run a second time against someone else's server, against a
@@ -154,6 +184,47 @@ describe("defaultRunEvalCell", () => {
 
     expect(execute).not.toHaveBeenCalled();
     expect(result).toEqual({ runId: "run-1", executed: false });
+  });
+
+  it("does not drive a replayed child that is still RUNNING", async () => {
+    // `shouldSkipExecution` answers false here on purpose — for ordinary evals
+    // a replay of a non-terminal run is more likely a crashed process worth
+    // resuming than a live one worth leaving alone. That trade inverts for a
+    // benchmark: a lease expires on a network partition as readily as on a
+    // dead worker, so driving it can mean two workers running the same exam
+    // against somebody else's server and billing the budget for both.
+    shouldSkipExecution.mockReturnValue(false);
+    prepareEvalRun.mockResolvedValue({
+      runId: "run-1",
+      recorder: null,
+      execute,
+      deduped: true,
+      status: "running",
+    });
+
+    const result = await run();
+
+    expect(execute).not.toHaveBeenCalled();
+    // The pointer still comes back, so the row gets bound to the child that
+    // does exist rather than reading as a cell that never started.
+    expect(result).toEqual({ runId: "run-1", executed: false });
+  });
+
+  it("still executes a child this process actually created", async () => {
+    // The byte-identity guard for the guard above: a fresh run is not deduped,
+    // and refusing to drive it would mean no benchmark ever runs at all.
+    prepareEvalRun.mockResolvedValue({
+      runId: "run-1",
+      recorder: null,
+      execute,
+      deduped: false,
+      status: "running",
+    });
+
+    const result = await run();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ runId: "run-1", executed: true });
   });
 
   it("keeps the run id when the exam itself fails", async () => {

@@ -15,7 +15,7 @@ import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 const ENDPOINT = "https://connector.example.com/mcp";
 
 function probe(
-  overrides: Partial<ProbeMcpServerResult> & {
+  overrides: Omit<Partial<ProbeMcpServerResult>, "oauth"> & {
     oauth?: Partial<ProbeMcpServerResult["oauth"]>;
   } = {},
 ): ProbeMcpServerResult {
@@ -184,7 +184,9 @@ describe("runBenchmarkAuthProbe", () => {
 
     expect(evidence.status).toBe("completed");
     expect(probeServer).toHaveBeenCalledTimes(1);
-    expect(probeServer.mock.calls[0]![0]).toMatchObject({ url: ENDPOINT });
+    expect((probeServer.mock.calls[0] as unknown[])[0]).toMatchObject({
+      url: ENDPOINT,
+    });
   });
 
   it("refuses a loopback endpoint rather than probing it", async () => {

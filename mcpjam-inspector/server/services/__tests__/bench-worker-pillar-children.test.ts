@@ -256,6 +256,33 @@ describe("bench worker pillar children", () => {
     expect(recorded.conformance).toEqual([]);
   });
 
+  it("refuses to report the phase when evidence that RAN could not be attached", async () => {
+    // A scorecard is inserted once and never patched, so a conformance run that
+    // dialled the target and never got pointed at would be dropped for good.
+    // The job goes back instead; the re-attempt adopts the same run.
+    const completed: string[] = [];
+    const aborted: string[] = [];
+    const { deps } = harness();
+    const running = executeClaimedJob(job([CONFORMANCE_ROW]), CLAIMED_BY, {
+      ...deps,
+      attachConformance: async () => {
+        throw new Error("convex refused the write");
+      },
+      executionComplete: async () => {
+        completed.push("reported");
+      },
+      abort: async (args) => {
+        aborted.push(args.reason);
+      },
+    });
+    // Past both backoffs on the attach ladder.
+    await vi.advanceTimersByTimeAsync(30_000);
+    await running;
+
+    expect(completed).toEqual([]);
+    expect(aborted[0]).toMatch(/could not be attached/);
+  });
+
   it("does not attach conformance evidence when no child run was created", async () => {
     const { deps, recorded } = harness({
       runConformanceChild: async () => {
