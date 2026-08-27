@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
+import { isHostedUnsupportedServer } from "@/lib/hosted-server-support";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -41,22 +42,18 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The one surviving toast on this path, and it is deliberately hard to
+ * reach: only a MULTI-server failure raises it. Switching hosts is routine
+ * navigation, and a single flaky server interrupting that navigation with a
+ * toast was most of the noise this hook used to generate — the row already
+ * animates through `connecting` and lands on its own status, which is the
+ * progress indicator. Several servers failing at once is different: that
+ * usually means the network or the whole backend, not one bad URL, and it
+ * is worth saying out loud.
+ */
 function reconnectFailureToastMessage(count: number): string {
-  return count === 1
-    ? "Failed to reconnect 1 server."
-    : `Failed to reconnect ${count} servers.`;
-}
-
-function reconnectingToastMessage(count: number): string {
-  return count === 1
-    ? "Reconnecting 1 server…"
-    : `Reconnecting ${count} servers…`;
-}
-
-function reconnectSuccessToastMessage(count: number): string {
-  return count === 1
-    ? "Reconnected 1 server."
-    : `Reconnected ${count} servers.`;
+  return `Failed to reconnect ${count} servers.`;
 }
 
 function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
@@ -183,12 +180,26 @@ export function useAutoConnectProjectServers({
       return null;
     }
     const candidates = requiredNames.filter((name) => {
-      const status = sharedAppState.servers[name]?.connectionStatus;
-      return (
-        status !== "connected" &&
-        status !== "connecting" &&
-        status !== "oauth-flow"
-      );
+      const server = sharedAppState.servers[name];
+      const status = server?.connectionStatus;
+      if (
+        status === "connected" ||
+        status === "connecting" ||
+        status === "oauth-flow"
+      ) {
+        return false;
+      }
+      // Waiting on a human. A second non-interactive attempt takes the same
+      // 401 and lands back here, so it can only re-run the work that
+      // produced the amber card — it cannot produce a different answer. The
+      // Authorize button on the card is the way out of this state.
+      if (status === "needs-auth") return false;
+      // Impossible in this deployment (hosted stdio, hosted `http://`).
+      // Excluded from the batch entirely rather than attempted and painted
+      // red: there is no retry that fixes "the cloud cannot run your local
+      // command". The card says so with a neutral chip instead.
+      if (server && isHostedUnsupportedServer(server.config)) return false;
+      return true;
     });
     if (candidates.length === 0) return null;
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
@@ -232,15 +243,11 @@ export function useAutoConnectProjectServers({
       .map(([name]) => name);
     if (connectedNow.length === 0) return;
 
-    // Surface the client-switch recycle as one progress toast so the dev can
-    // see it happening: a "Reconnecting…" spinner flips in place to
-    // "Reconnected" (or a failure message) once the batch settles. Reusing the
-    // same toast id keeps the loading → result transition on a single toast
-    // instead of stacking a second one.
-    const toastId = toast.loading(
-      reconnectingToastMessage(connectedNow.length)
-    );
-
+    // No progress toast. This fires on every host switch — routine
+    // navigation — and a "Reconnecting N servers…" spinner flipping to
+    // "Reconnected N servers." announced work the user did not ask about
+    // and cannot act on. The rows animate through `connecting` on their
+    // own; that IS the progress indicator.
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -257,19 +264,16 @@ export function useAutoConnectProjectServers({
         ];
       });
 
-      if (failures.length === 0) {
-        toast.success(reconnectSuccessToastMessage(connectedNow.length), {
-          id: toastId,
-        });
-        return;
-      }
-
       for (const failure of failures) {
         logger.error("Failed to reconnect server after client switch", failure);
       }
-      toast.error(reconnectFailureToastMessage(failures.length), {
-        id: toastId,
-      });
+
+      // Only a multi-server failure is loud enough to be worth a toast —
+      // see `reconnectFailureToastMessage`. One server failing leaves its
+      // own row red, which is where the user is already looking.
+      if (failures.length > 1) {
+        toast.error(reconnectFailureToastMessage(failures.length));
+      }
     });
     // `sharedAppState.servers` is read via closure but excluded from deps on
     // purpose: this must fire only on scope transitions, not whenever the

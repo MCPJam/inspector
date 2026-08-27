@@ -37,6 +37,16 @@ describe("getConnectionStatusMeta", () => {
     expect(meta.iconClassName).toContain("text-red-500");
   });
 
+  it("returns needs-auth status meta in amber, not red", () => {
+    const meta = getConnectionStatusMeta("needs-auth");
+    expect(meta.label).toBe("Sign in");
+    // Amber (#f59e0b), deliberately NOT the failure red (#ef4444): this
+    // server is working, it just has nobody signed in.
+    expect(meta.indicatorColor).toBe("#f59e0b");
+    expect(meta.indicatorColor).not.toBe("#ef4444");
+    expect(meta.iconClassName).toContain("text-amber-500");
+  });
+
   it("returns disconnected status meta", () => {
     const meta = getConnectionStatusMeta("disconnected");
     expect(meta.label).toBe("Disconnected");

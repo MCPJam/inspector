@@ -59,10 +59,9 @@ export function ServerSelectionCard({
     }
   };
 
-  const totalRetriesLabel =
-    server.connectionStatus === "failed"
-      ? `${connectionStatusLabel} (${server.retryCount} retries)`
-      : connectionStatusLabel;
+  // Was `Failed (N retries)`. Nothing ever incremented `retryCount`, so it
+  // was always "(0 retries)" — a fixed number dressed up as a diagnostic.
+  const totalRetriesLabel = connectionStatusLabel;
 
   return (
     <Card

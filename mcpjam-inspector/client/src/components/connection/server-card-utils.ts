@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Check, Loader2, Wifi, X } from "lucide-react";
+import { Check, KeyRound, Loader2, Wifi, X } from "lucide-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
@@ -28,6 +28,15 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     indicatorColor: "#a855f7",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-purple-500 animate-spin",
+  },
+  // Amber, not red: the server is fine, it just has nobody signed in. The
+  // vocabulary matches the `needsReconnect` affordance on the card, which
+  // already uses amber for "this needs a decision from you".
+  "needs-auth": {
+    label: "Sign in",
+    indicatorColor: "#f59e0b",
+    Icon: KeyRound,
+    iconClassName: "h-3 w-3 text-amber-500",
   },
   failed: {
     label: "Failed",

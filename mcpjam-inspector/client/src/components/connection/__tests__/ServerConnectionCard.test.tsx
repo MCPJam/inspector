@@ -407,7 +407,7 @@ describe("ServerConnectionCard", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("shows failed status with retry count", () => {
+    it("shows failed status without a retry-count suffix", () => {
       const server = createServer({
         connectionStatus: "failed",
         retryCount: 3,
@@ -415,7 +415,59 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("Failed (3)")).toBeInTheDocument();
+      // Nothing increments `retryCount` today, so the suffix always read
+      // "(0)" — a constant dressed up as a diagnostic. The label is now
+      // just the status.
+      expect(screen.getByText("Failed")).toBeInTheDocument();
+      expect(screen.queryByText("Failed (3)")).not.toBeInTheDocument();
+    });
+
+    it("shows needs-auth as an actionable Sign in state, not an error", () => {
+      const server = createServer({
+        connectionStatus: "needs-auth",
+        useOAuth: true,
+        lastError:
+          'Server "test-server" requires authorization. Sign in to connect.',
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.getByText("Sign in")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /authorize/i })
+      ).toBeInTheDocument();
+
+      // The whole point of the split: none of the failure affordances fire
+      // for a server whose only problem is that nobody has signed in.
+      expect(screen.queryByText("Error")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Check troubleshooting")
+      ).not.toBeInTheDocument();
+    });
+
+    it("runs an INTERACTIVE reconnect when Authorize is clicked", async () => {
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      const server = createServer({
+        connectionStatus: "needs-auth",
+        useOAuth: true,
+        lastError: "requires authorization",
+      });
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /authorize/i }));
+
+      // `allowInteractiveOAuthFlow: true` is the difference that matters —
+      // it is what permits the redirect the auto-connect path withholds.
+      await waitFor(() =>
+        expect(onReconnect).toHaveBeenCalledWith("test-server", {
+          allowInteractiveOAuthFlow: true,
+        })
+      );
     });
 
     it("shows a connection settings indicator without reconnect badge copy", () => {

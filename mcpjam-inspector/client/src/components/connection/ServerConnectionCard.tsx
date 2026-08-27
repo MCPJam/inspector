@@ -40,6 +40,8 @@ import {
   FileText,
   FolderInput,
   Building2,
+  Cloud,
+  KeyRound,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -73,21 +75,14 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  getHostedUnsupportedReason,
+  hostedUnsupportedChipLabel,
+  hostedUnsupportedExplanation,
+} from "@/lib/hosted-server-support";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
-
-function isHostedInsecureHttpServer(server: ServerWithName): boolean {
-  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
-    return false;
-  }
-
-  try {
-    return new URL(server.config.url.toString()).protocol === "http:";
-  } catch {
-    return false;
-  }
-}
 
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";
@@ -224,10 +219,18 @@ export function ServerConnectionCard({
   const canManageTunnels = isAuthenticated;
   const showTunnelActions = isConnected && isTunnelEnabled;
   const hasTunnel = Boolean(tunnelUrl);
+  // `failed`-only on purpose. `needs-auth` deliberately does NOT set this,
+  // which is what keeps the Error pill, the ErrorCard and the
+  // troubleshooting link off a card whose only problem is that nobody has
+  // signed in yet.
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
+  const needsAuth = server.connectionStatus === "needs-auth";
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
-  const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
+  // What this deployment structurally cannot connect at all (hosted stdio
+  // as well as hosted `http://`). Such a server gets a neutral chip
+  // explaining the deployment rather than a red failure blaming it.
+  const hostedUnsupportedReason = getHostedUnsupportedReason(server.config);
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
@@ -623,6 +626,31 @@ export function ServerConnectionCard({
                     Error
                   </button>
                 )}
+                {/* Neutral, not red. This server is not broken and not
+                    retryable — the deployment simply cannot run it. Stating
+                    that is the whole affordance; there is no action to
+                    offer beyond running MCPJam locally. */}
+                {hostedUnsupportedReason && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      data-server-card-context-menu-exempt
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground"
+                    >
+                      <Cloud className="h-3 w-3" />
+                      {hostedUnsupportedChipLabel(hostedUnsupportedReason)}
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      sideOffset={4}
+                      variant="muted"
+                      className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                    >
+                      {hostedUnsupportedExplanation(hostedUnsupportedReason)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
             </div>
 
@@ -640,11 +668,13 @@ export function ServerConnectionCard({
                       style={{ backgroundColor: indicatorColor }}
                     />
                   )}
-                  <span>
-                    {server.connectionStatus === "failed"
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
-                  </span>
+                  {/* No `(retryCount)` suffix: nothing increments that
+                      counter, so every failed card read "Failed (0)" — a
+                      number that looked like a diagnostic and was always
+                      the same. The field stays on the model; when retries
+                      become real the suffix can come back meaning
+                      something. */}
+                  <span>{connectionStatusLabel}</span>
                   {needsReconnect ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -667,6 +697,42 @@ export function ServerConnectionCard({
                   ) : null}
                 </span>
 
+                {/* The primary action for a server that only needs a human.
+                    Runs the same interactive reconnect the kebab's
+                    Reconnect does — `allowInteractiveOAuthFlow: true` is
+                    what lets it redirect, which the auto-connect path
+                    deliberately withholds. */}
+                {needsAuth && !hostedUnsupportedReason ? (
+                  <Button
+                    data-server-card-context-menu-exempt
+                    size="sm"
+                    variant="outline"
+                    disabled={isReconnecting}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      track("authorize_server_clicked", {
+                        location: "server_connection_card",
+                      });
+                      void handleReconnect({
+                        allowInteractiveOAuthFlow: true,
+                      });
+                    }}
+                    className="h-6 gap-1 border-amber-300/60 bg-amber-500/10 px-2 text-[11px] text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200 cursor-pointer"
+                  >
+                    {isReconnecting ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <KeyRound className="h-3 w-3" />
+                    )}
+                    {isReconnecting ? "Authorizing..." : "Authorize"}
+                  </Button>
+                ) : null}
+
+                {/* Left ENABLED on purpose for an impossible-here server.
+                    The chip already says why at a glance; a disabled switch
+                    would swallow the click and explain nothing to someone
+                    who tries anyway. Clicking gets the actionable
+                    sentence. */}
                 <Switch
                   data-server-card-context-menu-exempt
                   checked={server.connectionStatus === "connected"}
@@ -674,9 +740,9 @@ export function ServerConnectionCard({
                     track("connection_switch_toggled", {
                       location: "server_connection_card",
                     });
-                    if (checked && isHostedHttpReconnectBlocked) {
+                    if (checked && hostedUnsupportedReason) {
                       toast.error(
-                        "HTTP servers are not supported in hosted mode"
+                        hostedUnsupportedExplanation(hostedUnsupportedReason)
                       );
                       return;
                     }
@@ -706,9 +772,11 @@ export function ServerConnectionCard({
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem
                       onClick={() => {
-                        if (isHostedHttpReconnectBlocked) {
+                        if (hostedUnsupportedReason) {
                           toast.error(
-                            "HTTP servers are not supported in hosted mode"
+                            hostedUnsupportedExplanation(
+                              hostedUnsupportedReason
+                            )
                           );
                           return;
                         }

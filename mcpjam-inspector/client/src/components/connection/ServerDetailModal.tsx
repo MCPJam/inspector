@@ -611,12 +611,10 @@ export function ServerDetailModal({
                     style={{ backgroundColor: indicatorColor }}
                   />
                 )}
+                {/* No `(retryCount)` suffix — nothing increments it, so it
+                    always read "(0)". See ServerConnectionCard. */}
                 <span>
-                  {isReconnecting
-                    ? "Connecting..."
-                    : server.connectionStatus === "failed"
-                    ? `${connectionStatusLabel} (${server.retryCount})`
-                    : connectionStatusLabel}
+                  {isReconnecting ? "Connecting..." : connectionStatusLabel}
                 </span>
               </span>
               <Switch

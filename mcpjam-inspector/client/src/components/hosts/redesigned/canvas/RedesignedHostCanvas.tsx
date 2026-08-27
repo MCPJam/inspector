@@ -209,6 +209,8 @@ export function getServerStatusDot(data: {
             ? "OAuth in progress"
             : "Connecting",
       };
+    case "needs-auth":
+      return { dotClass: "bg-amber-500", statusLabel: "Sign in to connect" };
     case "failed":
       return { dotClass: "bg-red-500", statusLabel: "Connection failed" };
     case "disconnected":

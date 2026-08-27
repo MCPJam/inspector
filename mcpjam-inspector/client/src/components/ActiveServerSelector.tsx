@@ -1,29 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ConnectionStatus } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { track } from "@/lib/analytics";
-import { HOSTED_MODE } from "@/lib/config";
+import {
+  hostedUnsupportedExplanation,
+  isHostedInsecureHttpServer as isHostedInsecureHttpConfig,
+} from "@/lib/hosted-server-support";
 import {
   isOAuthDebuggerHeaderServer,
   isXaaDebuggerHeaderServer,
 } from "@/lib/debugger-header-servers";
 
-const HOSTED_HTTPS_REQUIRED_HINT =
-  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
+const HOSTED_HTTPS_REQUIRED_HINT = hostedUnsupportedExplanation("insecure-http");
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
-  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
-    return false;
-  }
-
-  try {
-    return new URL(server.config.url.toString()).protocol === "http:";
-  } catch {
-    return false;
-  }
+  return isHostedInsecureHttpConfig(server.config);
 }
 
 export interface ActiveServerSelectorProps {
@@ -84,34 +79,37 @@ export type PlaygroundServerSelectorProps = Omit<
   "hasMessages" | "className"
 >;
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "connected":
-      return "bg-green-500 dark:bg-green-400";
-    case "connecting":
-      return "bg-yellow-500 dark:bg-yellow-400 animate-pulse";
-    case "failed":
-      return "bg-red-500 dark:bg-red-400";
-    case "disconnected":
-      return "bg-muted-foreground";
-    default:
-      return "bg-muted-foreground";
-  }
+/**
+ * Exhaustive by construction. These were `switch (status: string)` with a
+ * `default: "Unknown"` arm, which meant a new `ConnectionStatus` member
+ * compiled cleanly and then rendered a chip labelled literally "Unknown" —
+ * a silent regression no type or test would catch. `Record<ConnectionStatus,
+ * …>` makes the next addition a build error instead.
+ */
+const STATUS_DOT_CLASS: Record<ConnectionStatus, string> = {
+  connected: "bg-green-500 dark:bg-green-400",
+  connecting: "bg-yellow-500 dark:bg-yellow-400 animate-pulse",
+  "oauth-flow": "bg-purple-500 dark:bg-purple-400 animate-pulse",
+  "needs-auth": "bg-amber-500 dark:bg-amber-400",
+  failed: "bg-red-500 dark:bg-red-400",
+  disconnected: "bg-muted-foreground",
+};
+
+const STATUS_TEXT: Record<ConnectionStatus, string> = {
+  connected: "Connected",
+  connecting: "Connecting...",
+  "oauth-flow": "Authorizing in browser...",
+  "needs-auth": "Sign in to connect",
+  failed: "Failed",
+  disconnected: "Disconnected",
+};
+
+function getStatusColor(status: ConnectionStatus): string {
+  return STATUS_DOT_CLASS[status] ?? STATUS_DOT_CLASS.disconnected;
 }
 
-function getStatusText(status: string): string {
-  switch (status) {
-    case "connected":
-      return "Connected";
-    case "connecting":
-      return "Connecting...";
-    case "failed":
-      return "Failed";
-    case "disconnected":
-      return "Disconnected";
-    default:
-      return "Unknown";
-  }
+function getStatusText(status: ConnectionStatus): string {
+  return STATUS_TEXT[status] ?? STATUS_TEXT.disconnected;
 }
 
 export function ActiveServerSelector({

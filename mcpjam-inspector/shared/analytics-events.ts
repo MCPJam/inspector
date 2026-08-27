@@ -339,6 +339,11 @@ export const ANALYTICS_EVENTS = {
   project_members_facepile_clicked: { source: "client" },
   project_share_button_clicked: { source: "client" },
   project_visibility_changed: { source: "client" },
+  // The Authorize action on a `needs-auth` server card. Distinct from
+  // `reconnect_server_clicked` on purpose: this one measures how often the
+  // amber "Sign in" affordance is the thing a user actually reaches for,
+  // which is the question the status split was introduced to answer.
+  authorize_server_clicked: { source: "client" },
   reconnect_server_clicked: { source: "client" },
   refresh_tools_clicked: { source: "client" },
   remove_server_clicked: { source: "client" },

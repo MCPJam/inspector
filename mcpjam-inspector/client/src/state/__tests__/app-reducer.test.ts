@@ -692,6 +692,70 @@ describe("appReducer", () => {
 
       expect(result.servers["orphan"].connectionStatus).toBe("disconnected");
     });
+
+    it("preserves client-owned statuses the agent cannot express", () => {
+      // The agent only reports connected/connecting/disconnected, and a
+      // server missing from its list is forced to "disconnected". Without
+      // this guard the next sync tick would repaint an amber "Sign in"
+      // card as an idle gray one seconds after we asked the user to act.
+      const needsAuth = createServer("needs-auth-server", {
+        connectionStatus: "needs-auth",
+        lastError: "Sign in to connect.",
+      });
+      const inOAuth = createServer("oauth-server", {
+        connectionStatus: "oauth-flow",
+      });
+      const state = createInitialState({
+        servers: { "needs-auth-server": needsAuth, "oauth-server": inOAuth },
+      });
+
+      const result = appReducer(state, {
+        type: "SYNC_AGENT_STATUS",
+        servers: [{ id: "needs-auth-server", status: "disconnected" }],
+      });
+
+      expect(result.servers["needs-auth-server"].connectionStatus).toBe(
+        "needs-auth"
+      );
+      expect(result.servers["needs-auth-server"].lastError).toBe(
+        "Sign in to connect."
+      );
+      // Absent from the agent list entirely — still not clobbered.
+      expect(result.servers["oauth-server"].connectionStatus).toBe(
+        "oauth-flow"
+      );
+    });
+  });
+
+  describe("CONNECT_NEEDS_AUTH", () => {
+    it("parks the server on needs-auth while keeping the error detail", () => {
+      const server = createServer("gated", { connectionStatus: "connecting" });
+      const state = createInitialState({ servers: { gated: server } });
+
+      const result = appReducer(state, {
+        type: "CONNECT_NEEDS_AUTH",
+        name: "gated",
+        error: 'Server "gated" requires authorization. Sign in to connect.',
+      });
+
+      expect(result.servers["gated"].connectionStatus).toBe("needs-auth");
+      // The message is still worth keeping for the detail view; it is the
+      // STATUS, not the payload, that distinguishes this from a failure.
+      expect(result.servers["gated"].lastError).toContain(
+        "requires authorization"
+      );
+      expect(result.servers["gated"].lastNormalizedError).toBeDefined();
+    });
+
+    it("ignores an unknown server, like CONNECT_FAILURE does", () => {
+      const state = createInitialState({ servers: {} });
+      const result = appReducer(state, {
+        type: "CONNECT_NEEDS_AUTH",
+        name: "ghost",
+        error: "nope",
+      });
+      expect(result.servers["ghost"]).toBeUndefined();
+    });
   });
 
   describe("SET_INITIALIZATION_INFO", () => {

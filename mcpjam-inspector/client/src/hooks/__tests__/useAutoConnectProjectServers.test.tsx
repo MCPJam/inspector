@@ -210,6 +210,41 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
   });
 
+  it("skips servers parked on needs-auth (only a human can move them)", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["alpha"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "disconnected" },
+        // Already established as waiting on authorization. A second
+        // non-interactive attempt would take the same 401 and land right
+        // back here, so it is pure noise.
+        beta: { name: "beta", connectionStatus: "needs-auth" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-needs-auth",
+          hostScopeKey: "host-a",
+          requiredServerNames: ["alpha", "beta"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState }),
+      }
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+  });
+
   it("never re-attempts after a failure (refresh-keeps-failing guard)", async () => {
     const ensureServersReady = vi.fn().mockRejectedValue(new Error("nope"));
     const appState = makeAppState(["alpha"]);
@@ -316,7 +351,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).not.toHaveBeenCalled();
   });
 
-  it("logs and shows one toast when client-switch reconnects fail", async () => {
+  it("logs a single client-switch reconnect failure without toasting", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: [],
@@ -351,21 +386,60 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(reconnectServer).toHaveBeenCalledTimes(2);
-    // A single progress toast opens as "Reconnecting…" and, on partial failure,
-    // is replaced in place (same id) by the failure message.
-    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 2 servers…");
+    // The failure is still recorded for us...
     expect(mocks.logger.error).toHaveBeenCalledWith(
       "Failed to reconnect server after client switch",
       { serverName: "beta", error: "beta exploded" }
     );
-    expect(mocks.toastError).toHaveBeenCalledWith(
-      errorToastMessage("Failed to reconnect 1 server."),
-      { duration: 8000, id: "reconnect-toast" }
-    );
+    // ...but ONE server failing does not interrupt the user's navigation.
+    // Its own row goes red, which is where they are already looking.
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(mocks.toastLoading).not.toHaveBeenCalled();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("shows a Reconnecting… → Reconnected progress toast on client switch", async () => {
+  it("toasts only when MORE THAN ONE server fails the client-switch recycle", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const reconnectServer = vi
+      .fn()
+      .mockRejectedValue(new Error("everything exploded"));
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reconnect-multi-failure",
+          hostScopeKey: "host-a",
+          requiredServerNames: [],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      }
+    );
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // Several at once usually means the network or the backend, not one bad
+    // URL — worth saying out loud.
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      errorToastMessage("Failed to reconnect 2 servers."),
+      { duration: 8000 }
+    );
+  });
+
+  it("stays silent on a fully successful client switch", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: [],
@@ -397,11 +471,10 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(reconnectServer).toHaveBeenCalledTimes(2);
-    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 2 servers…");
-    // Same toast id → the loading toast becomes the success toast in place.
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Reconnected 2 servers.", {
-      id: "reconnect-toast",
-    });
+    // Switching hosts is routine navigation. The rows animate through
+    // `connecting` on their own; nothing needs announcing.
+    expect(mocks.toastLoading).not.toHaveBeenCalled();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 

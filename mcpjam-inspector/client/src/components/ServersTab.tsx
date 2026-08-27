@@ -1099,9 +1099,13 @@ export function ServersTab({
       return;
     }
 
+    // Terminal outcomes clear the quick-connect marker — `needs-auth`
+    // among them, since the connect attempt has finished and only the user
+    // can move it further.
     if (
       pendingServer.connectionStatus === "connected" ||
       pendingServer.connectionStatus === "failed" ||
+      pendingServer.connectionStatus === "needs-auth" ||
       pendingServer.connectionStatus === "disconnected"
     ) {
       clearPendingQuickConnect();
@@ -1116,7 +1120,8 @@ export function ServersTab({
   const isPendingDashboardOAuthVisible =
     !!pendingDashboardOAuth &&
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
-    pendingDashboardOAuthServer?.connectionStatus !== "failed";
+    pendingDashboardOAuthServer?.connectionStatus !== "failed" &&
+    pendingDashboardOAuthServer?.connectionStatus !== "needs-auth";
   const hasAnyServers = connectedCount > 0;
   const shouldShowServerActionsInChrome =
     !!selectedProject && !isLoadingProjects && !isBillingContextPending;
@@ -1177,7 +1182,8 @@ export function ServersTab({
         !isPendingDashboardOAuthVisible ||
         pendingDashboardOAuth?.serverName !== server.name ||
         server.connectionStatus === "connected" ||
-        server.connectionStatus === "failed"
+        server.connectionStatus === "failed" ||
+        server.connectionStatus === "needs-auth"
       ) {
         return server;
       }
