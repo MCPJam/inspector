@@ -260,13 +260,37 @@ const toUserMessage = (text) => ({
     const npmrc = bootstrap?.files.find((file) =>
       file.path.endsWith("/.npmrc")
     );
+    const workspace = bootstrap?.files.find((file) =>
+      file.path.endsWith("/pnpm-workspace.yaml")
+    );
 
     // Without this, pnpm skips `@anthropic-ai/claude-code`'s postinstall. On a
     // pnpm that treats the skip as an error the install step aborts the whole
     // recipe, so the adapter's own `install.cjs` rescue never runs and the CLI
     // never exists — the bootstrap dies before a single turn.
+    //
+    // BOTH files are required and neither is redundant: pnpm 10 reads these
+    // settings only from `.npmrc`, pnpm 11 only from `pnpm-workspace.yaml`,
+    // and the template installs pnpm unpinned so either major can be present.
+    // Shipping just one is exactly how this broke the first time.
     expect(npmrc?.path).toBe(`${bootstrap?.bootstrapDir}/.npmrc`);
     expect(npmrc?.content).toContain("dangerously-allow-all-builds=true");
+    expect(workspace?.path).toBe(
+      `${bootstrap?.bootstrapDir}/pnpm-workspace.yaml`
+    );
+    expect(workspace?.content).toContain("dangerouslyAllowAllBuilds: true");
+
+    // The second, load-bearing layer: even if the allow-list setting is
+    // renamed again, a skipped build must stay a WARNING so the adapter's
+    // `install.cjs` step can repair the install. Verified end to end against
+    // pnpm 11 with the allow-list setting deliberately absent.
+    expect(npmrc?.content).toContain("strict-dep-builds=false");
+    expect(workspace?.content).toContain("strictDepBuilds: false");
+    expect(
+      bootstrap?.commands.some((command) =>
+        command.command.includes("install.cjs")
+      )
+    ).toBe(true);
 
     // It has to sit BESIDE the adapter's manifest, not inside it: the install
     // runs `--frozen-lockfile`, so amending `package.json` to carry

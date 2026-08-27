@@ -466,34 +466,49 @@ function patchClaudeCodeBridgeContent(content: string): string {
 }
 
 /**
- * The `.npmrc` written beside the adapter's bundled manifest, so its
- * `pnpm install` is allowed to run dependency build scripts.
+ * Config written beside the adapter's bundled manifest so its `pnpm install`
+ * can install a working Claude Code CLI.
  *
  * WHY THIS EXISTS. `@anthropic-ai/claude-code` ships a `postinstall`
  * (`node install.cjs`) that fetches its platform-native binary; without it the
  * CLI starts and immediately reports `claude native binary not installed`.
  * pnpm 10 stopped running dependency build scripts by default, and the
- * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so the
- * behaviour of a rebuilt image changes with whatever pnpm is current.
+ * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so a
+ * rebuilt image changes behaviour with whatever pnpm is current.
  *
- * The adapter's own recipe already anticipates the skip: after `pnpm install`
- * it re-runs `install.cjs` by hand. That rescue only fires when the install
- * step EXITS ZERO. Where the skip is a hard error rather than a warning —
- * `ERR_PNPM_IGNORED_BUILDS`, which is what a strict or newer pnpm produces —
- * the install step aborts the whole recipe and the rescue never runs. That is
- * the failure this file prevents, and it is why a warning-only pnpm looks fine.
+ * TWO INDEPENDENT LAYERS, because the first one is a moving target:
  *
- * WHY A FILE AND NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower,
- * but pnpm reads it only from `package.json` / `pnpm-workspace.yaml` — never
- * from `.npmrc` — and the manifest here is a bundled asset of
- * `@ai-sdk/harness-claude-code`, not ours to amend. Editing it would also
- * invalidate the `--frozen-lockfile` the adapter installs with. A sibling
- * `.npmrc` changes neither, and `--dir` makes pnpm read it.
+ *   1. ALLOW the build to run, so the postinstall happens normally.
+ *   2. Failing that, do not let a SKIPPED build be FATAL. The adapter's own
+ *      recipe re-runs `install.cjs` by hand after the install — but that
+ *      rescue only fires when the install step exits zero. Turning
+ *      `ERR_PNPM_IGNORED_BUILDS` back into a warning is what lets the
+ *      adapter repair itself.
+ *
+ * Layer 2 is the durable one. It survives a rename of the allow-list setting,
+ * which has already happened once: the first version of this patch shipped
+ * only `.npmrc`, verified against pnpm 10 — and pnpm 11 reads none of its
+ * settings from `.npmrc`, so it broke every harness bootstrap the moment the
+ * recipe hash changed and snapshots stopped hiding it. Both spellings are
+ * written for that reason, and BOTH FILES ARE REQUIRED: `.npmrc` is the only
+ * one pnpm 10 reads, `pnpm-workspace.yaml` the only one pnpm 11 reads.
+ * Verified against pnpm 10.34.5 and 11.24.0.
+ *
+ * WHY NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower, but the
+ * manifest is a bundled asset of `@ai-sdk/harness-claude-code`, not ours to
+ * amend, and editing it would invalidate the `--frozen-lockfile` the adapter
+ * installs with. It also does not work here: pnpm 11 ignored it under `--dir`
+ * in testing, while the settings below took effect.
  *
  * The permissiveness is bounded by where it lands: one directory inside a
  * disposable sandbox that already runs an agent with full shell access.
  */
-const CLAUDE_CODE_BOOTSTRAP_NPMRC = "dangerously-allow-all-builds=true\n";
+const CLAUDE_CODE_BOOTSTRAP_NPMRC =
+  "dangerously-allow-all-builds=true\nstrict-dep-builds=false\n";
+
+/** pnpm 11's home for the same two settings; see {@link CLAUDE_CODE_BOOTSTRAP_NPMRC}. */
+const CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE =
+  "dangerouslyAllowAllBuilds: true\nstrictDepBuilds: false\n";
 
 export function patchClaudeCodeHarnessBootstrap(
   harness: HarnessAgentAdapter
@@ -513,8 +528,8 @@ export function patchClaudeCodeHarnessBootstrap(
       cachedPatchedBootstrap = {
         ...bootstrap,
         // Appended rather than merged over an existing entry: the adapter
-        // ships no `.npmrc` today, and if a future version starts shipping one
-        // we want the duplicate to surface instead of silently winning.
+        // ships neither file today, and if a future version starts shipping
+        // one we want the duplicate to surface instead of silently winning.
         files: [
           ...bootstrap.files.map((file) =>
             file.path.endsWith("/bridge.mjs")
@@ -524,6 +539,10 @@ export function patchClaudeCodeHarnessBootstrap(
           {
             path: `${bootstrap.bootstrapDir}/.npmrc`,
             content: CLAUDE_CODE_BOOTSTRAP_NPMRC,
+          },
+          {
+            path: `${bootstrap.bootstrapDir}/pnpm-workspace.yaml`,
+            content: CLAUDE_CODE_BOOTSTRAP_PNPM_WORKSPACE,
           },
         ],
       };
