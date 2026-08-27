@@ -21,6 +21,7 @@ import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
+import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import {
   adaptTraceToUiMessages,
@@ -125,6 +126,13 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /**
+   * How the chat panel presents reasoning. Defaults to `collapsed`, which is
+   * what a recorded eval trace wants — a long scratch-work block would swamp
+   * the transcript. A Playground shell that reveals a live chat here passes
+   * the emulated host's own mode instead. BB-136.
+   */
+  reasoningDisplayMode?: ReasoningDisplayMode;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -328,6 +336,7 @@ export function TraceViewer({
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
+  reasoningDisplayMode = "collapsed",
   hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
   chatSessionId,
@@ -976,7 +985,7 @@ export function TraceViewer({
                     minimalMode={true}
                     interactive={threadInteractive}
                     recorder={recorder}
-                    reasoningDisplayMode="collapsed"
+                    reasoningDisplayMode={reasoningDisplayMode}
                     focusMessageId={transcriptNavigation.focusMessageId}
                     highlightedMessageIds={
                       transcriptNavigation.highlightedMessageIds

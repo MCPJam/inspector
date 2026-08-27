@@ -791,6 +791,10 @@ export function MultiModelPlaygroundCard({
                     effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
                   }
                   forcedViewMode="chat"
+                  // Revealing a live trace in chat renders the transcript through
+                  // TraceViewer, so the host's reasoning mode has to follow it here
+                  // too or the same chat would present reasoning two ways. BB-136.
+                  reasoningDisplayMode={effectiveReasoningDisplayMode}
                   hideToolbar
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
