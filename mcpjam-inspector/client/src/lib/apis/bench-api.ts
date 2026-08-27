@@ -466,8 +466,21 @@ export interface BenchScorecard {
   };
   slices?: BenchSlice[];
   provisionalReasons?: string[];
-  /** The scorer's own eligibility verdict — NOT the publication lifecycle. */
-  publication?: { publicEligible: boolean; reasons: string[] };
+  /**
+   * The scorer's own eligibility verdict. A bare boolean on the scorecard —
+   * it is NOT an object, and it is not `publication`.
+   */
+  publicEligible?: boolean;
+  /**
+   * The publication LIFECYCLE, and it lives HERE rather than on the result:
+   * the backend nests lifecycle state with the document it describes. A
+   * deprecated or deleted result still resolves — a link somebody shared
+   * should explain itself rather than 404 — and must be labelled as such.
+   */
+  publication?: {
+    status: "active" | "deprecated" | "deleted";
+    reason?: string;
+  };
 }
 
 /**
@@ -493,15 +506,6 @@ export interface BenchResult extends Record<string, unknown> {
   definition?: BenchDefinitionIdentity;
   category?: BenchCategoryProvenance;
   scorecard?: BenchScorecard;
-  /**
-   * The publication LIFECYCLE, separate from the scorer's eligibility verdict.
-   * A deprecated or deleted result still resolves — a link somebody shared
-   * should explain itself rather than 404 — and must be labelled as such.
-   */
-  publication?: {
-    status: "active" | "deprecated" | "deleted";
-    reason?: string;
-  };
   cleanup?: BenchRunCleanup;
   /** Set when a newer definition of the same profile exists. */
   rerun?: {
