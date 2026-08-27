@@ -156,6 +156,17 @@ export function conformanceConfigFromOptions(options: {
   };
 }
 
+/**
+ * Did the CALLER choose `--timeout`, as opposed to commander defaulting it?
+ *
+ * `getOptionValueSourceWithGlobals` walks parent commands, which matters
+ * because `--timeout` is declared once on the program and read from a leaf.
+ */
+function timeoutWasSupplied(command: Command): boolean {
+  const source = command.getOptionValueSourceWithGlobals?.("timeout");
+  return source !== undefined && source !== "default";
+}
+
 export function getGlobalOptions(
   command: Command,
   defaultTimeoutMs = 30_000,
@@ -166,12 +177,21 @@ export function getGlobalOptions(
       options.format as string | undefined,
       process.stdout.isTTY,
     ),
-    // `defaultTimeoutMs` applies ONLY when `--timeout` was not passed, so an
-    // explicit flag always wins. Commands that drive a model turn override it:
-    // 30s is right for an MCP probe and far too short for an agent that
-    // installs packages, and the turn keeps running server-side after the
-    // client gives up.
-    timeout: options.timeout ?? defaultTimeoutMs,
+    // `defaultTimeoutMs` applies ONLY when the caller did not supply
+    // `--timeout`, so an explicit flag always wins. Commands that drive a model
+    // turn override it: 30s is right for an MCP probe and far too short for an
+    // agent that installs packages, and the turn keeps running server-side
+    // after the client gives up.
+    //
+    // Keyed off the option's SOURCE, not its value. The program registers
+    // `--timeout` with a commander default of 30_000, so the value is never
+    // `undefined` and an `options.timeout ?? …` fallback is dead code that
+    // silently pins every command to 30s. `"default"` means commander filled
+    // it in; anything else (`"cli"`, `"env"`, `"config"`) means the caller
+    // chose it and must win.
+    timeout: timeoutWasSupplied(command)
+      ? (options.timeout ?? defaultTimeoutMs)
+      : defaultTimeoutMs,
     rpc: options.rpc ?? false,
     quiet: options.quiet ?? false,
     telemetry: options.telemetry ?? true,
