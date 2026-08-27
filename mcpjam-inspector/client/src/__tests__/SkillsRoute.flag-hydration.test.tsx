@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { routePaths } from "../lib/app-navigation";
 
-// Controls the tri-state PostHog flag the route guard reads. `undefined`
-// models the pre-hydration window; the regression is that the guard must NOT
-// redirect during it (only on an explicit `false`).
+// Controls the tri-state PostHog flag. `undefined` models the pre-hydration
+// window. The flag gates the CLOUD half of the tab, never the route: Skills
+// over MCP is a protocol capability whose routes carry no product flag, so no
+// value of this may keep the page from rendering.
 let flagState: boolean | undefined = undefined;
 
 const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
@@ -49,7 +49,12 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 vi.mock("../components/SkillsTab", () => ({
-  SkillsTab: () => <div data-testid="skills-view" />,
+  SkillsTab: ({ cloudSkillsEnabled }: { cloudSkillsEnabled?: boolean }) => (
+    <div
+      data-testid="skills-view"
+      data-cloud-skills={String(cloudSkillsEnabled)}
+    />
+  ),
 }));
 
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
@@ -121,19 +126,26 @@ function renderRoute(element: React.ReactElement) {
   return render(<MemoryRouter>{element}</MemoryRouter>);
 }
 
-describe("SkillsRoute — flag hydration + Connect chrome", () => {
-  it("does not redirect while the flag is still loading (undefined)", () => {
+describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
+  it("renders the tab with the cloud half off while the flag loads", () => {
     flagState = undefined;
     renderRoute(<SkillsRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-    // Nothing renders yet either — it waits for the flag to settle.
-    expect(screen.queryByTestId("skills-view")).not.toBeInTheDocument();
+    // The protocol half needs no flag, so the page paints immediately rather
+    // than holding every user behind PostHog.
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
   });
 
-  it("does not redirect across an undefined -> true transition", () => {
+  it("turns the cloud half on across an undefined -> true transition", () => {
     flagState = undefined;
     const { rerender } = renderRoute(<SkillsRoute />);
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
 
     // PostHog resolves the flag to enabled.
     flagState = true;
@@ -147,16 +159,32 @@ describe("SkillsRoute — flag hydration + Connect chrome", () => {
     );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
-    expect(screen.getByTestId("skills-view")).toBeInTheDocument();
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "true"
+    );
     expect(screen.getByTestId("connect-header")).toBeInTheDocument();
   });
 
-  it("redirects to servers only on an explicit false", () => {
+  it("keeps the route on an explicit false, with the cloud half hidden", () => {
     flagState = false;
     renderRoute(<SkillsRoute />);
-    const nav = screen.getByTestId("navigate");
-    expect(nav).toBeInTheDocument();
-    expect(nav).toHaveAttribute("data-to", routePaths.servers);
+    // The regression this guards: redirecting here would hold Skills over MCP
+    // hostage to Cloud Skills' rollout. They are separate features that happen
+    // to share a page.
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  it("renders nothing until the hosted project resolves", () => {
+    flagState = true;
+    mockRouteContext.convexProjectId = null;
+    renderRoute(<SkillsRoute />);
+    // Hosted has no local FS to fall back to, and the server-skills routes
+    // address their connection by project.
     expect(screen.queryByTestId("skills-view")).not.toBeInTheDocument();
   });
 
