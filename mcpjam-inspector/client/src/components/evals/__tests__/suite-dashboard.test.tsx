@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalSuite, EvalSuiteRun } from "../types";
@@ -72,7 +73,7 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     // The run rail (master) + compare affordance, not a Runs/Cases tablist.
@@ -98,7 +99,7 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
@@ -116,10 +117,41 @@ describe("SuiteDashboard", () => {
         modelStats={[]}
         onTestCaseClick={() => {}}
         onRunClick={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
     expect(screen.queryByText("Run insights")).not.toBeInTheDocument();
+  });
+
+  it("shows the UI-only Monday.com report and can return to results", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SuiteDashboard
+        suite={{ ...suite, name: "Monday.com" }}
+        cases={[]}
+        allIterations={[]}
+        runs={[completedRun]}
+        runsLoading={false}
+        runTrendData={[]}
+        modelStats={[]}
+        onTestCaseClick={() => {}}
+        onRunClick={() => {}}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Monday.com reliability report" })
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("81%")).toHaveLength(2);
+    expect(
+      screen.getByRole("heading", { name: "Eval test cases" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Results" }));
+    expect(screen.getByTestId("cases-overview")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("monday-reporting-dashboard")
+    ).not.toBeInTheDocument();
   });
 });

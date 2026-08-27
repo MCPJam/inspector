@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BarChart3, ListChecks } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   SuiteInsightsCollapsible,
@@ -11,6 +12,8 @@ import { SuiteResultsSplit } from "./suite-results-split";
 import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
 import { isModelFree } from "@/shared/steps";
+import { cn } from "@/lib/utils";
+import { MondayReportingDashboard } from "./monday-reporting-dashboard";
 
 interface RunTrendPoint {
   runId: string;
@@ -194,6 +197,14 @@ export function SuiteDashboard({
   // Selected multi-host run group reported up by the results split; drives the
   // banner's cross-host diagnosis mode.
   const [groupScope, setGroupScope] = useState<InsightGroupScope | null>(null);
+  const isMondayDemo = /\bmonday(?:\.com)?\b/i.test(suite.name);
+  const [surface, setSurface] = useState<"results" | "report">(() =>
+    isMondayDemo ? "report" : "results",
+  );
+
+  useEffect(() => {
+    setSurface(isMondayDemo ? "report" : "results");
+  }, [isMondayDemo, suite._id]);
 
   // Scope the header KPIs the same way the results split + insight banner scope:
   // a single selected run → its point-in-time numbers; a selected run group →
@@ -220,43 +231,89 @@ export function SuiteDashboard({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-      {hasRuns ? (
-        <div className="shrink-0">
-          <SuiteMetricStrip
-            runs={metricRuns}
-            allIterations={metricIterations}
-            aggregate={metricAggregate}
-          />
+      {isMondayDemo ? (
+        <div className="flex shrink-0 items-center justify-between">
+          <div className="inline-flex rounded-lg border bg-muted/30 p-0.5">
+            <button
+              type="button"
+              onClick={() => setSurface("results")}
+              aria-pressed={surface === "results"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                surface === "results"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              Results
+            </button>
+            <button
+              type="button"
+              onClick={() => setSurface("report")}
+              aria-pressed={surface === "report"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                surface === "report"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              Report
+            </button>
+          </div>
+          {surface === "report" ? (
+            <p className="text-[11px] text-muted-foreground">
+              UI-only preview · no eval records changed
+            </p>
+          ) : null}
         </div>
       ) : null}
-      {hasRuns ? (
-        <div className="shrink-0">
-          <SuiteInsightsCollapsible
+
+      {surface === "report" && isMondayDemo ? (
+        <MondayReportingDashboard />
+      ) : (
+        <>
+          {hasRuns ? (
+            <div className="shrink-0">
+              <SuiteMetricStrip
+                runs={metricRuns}
+                allIterations={metricIterations}
+                aggregate={metricAggregate}
+              />
+            </div>
+          ) : null}
+          {hasRuns ? (
+            <div className="shrink-0">
+              <SuiteInsightsCollapsible
+                runs={runs}
+                groupScope={groupScope}
+                selectedRunId={selectedRunId}
+              />
+            </div>
+          ) : null}
+          <SuiteResultsSplit
+            onGroupScopeChange={setGroupScope}
+            suite={suite}
+            cases={cases}
             runs={runs}
-            groupScope={groupScope}
+            allIterations={allIterations}
+            hostNamesById={hostNamesById}
+            environments={environments}
+            allRunsPane={caseLibrary}
+            onTestCaseClick={onTestCaseClick}
+            onOpenCaseIteration={onOpenCaseIteration}
+            onRunClick={onRunClick}
+            showMonitoring={showMonitoring}
             selectedRunId={selectedRunId}
+            runDetailPane={runDetailPane}
+            onExitRun={onExitRun}
+            onDeleteRun={onDirectDeleteRun}
+            onDeleteTestCasesBatch={onDeleteTestCasesBatch}
           />
-        </div>
-      ) : null}
-      <SuiteResultsSplit
-        onGroupScopeChange={setGroupScope}
-        suite={suite}
-        cases={cases}
-        runs={runs}
-        allIterations={allIterations}
-        hostNamesById={hostNamesById}
-        environments={environments}
-        allRunsPane={caseLibrary}
-        onTestCaseClick={onTestCaseClick}
-        onOpenCaseIteration={onOpenCaseIteration}
-        onRunClick={onRunClick}
-        showMonitoring={showMonitoring}
-        selectedRunId={selectedRunId}
-        runDetailPane={runDetailPane}
-        onExitRun={onExitRun}
-        onDeleteRun={onDirectDeleteRun}
-        onDeleteTestCasesBatch={onDeleteTestCasesBatch}
-      />
+        </>
+      )}
     </div>
   );
 }
