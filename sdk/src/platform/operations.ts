@@ -8713,8 +8713,47 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
       ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
   })
   .describe(
     "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."

@@ -14254,6 +14254,84 @@
           "summary"
         ]
       },
+      "EvalRunCompareSkillsSide": {
+        "type": "object",
+        "properties": {
+          "excluded": {
+            "type": "boolean",
+            "description": "This run deliberately ran with skills disabled — distinct from a run that simply pinned none."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many skills this run pinned."
+          }
+        },
+        "required": ["excluded", "count"]
+      },
+      "EvalRunCompareSkillSide": {
+        "type": "object",
+        "description": "One skill's identity on one side of the comparison.",
+        "properties": {
+          "contentHash": {
+            "type": "string"
+          },
+          "aggregateHash": {
+            "type": "string",
+            "description": "Complete-artifact hash; present only when supporting files diverge it from `contentHash`."
+          },
+          "versionNumber": {
+            "type": "integer",
+            "description": "Authored-skill revision, when the run recorded one."
+          },
+          "serverSkillVersionNumber": {
+            "type": "integer",
+            "description": "MCP-captured revision, when the run recorded one."
+          }
+        },
+        "required": ["contentHash"]
+      },
+      "EvalRunCompareSkillChange": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable match key; opaque, safe for list keys and dedupe."
+          },
+          "name": {
+            "type": "string"
+          },
+          "modelRef": {
+            "type": "string",
+            "description": "Namespaced runtime address for a plugin-channel skill."
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["host", "environment", "plugin", "mcp-server"]
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["added", "removed", "changed"]
+          },
+          "renamedFrom": {
+            "type": "string",
+            "description": "Present when the skill was renamed between the runs; it is still matched as ONE skill by its logical id."
+          },
+          "base": {
+            "$ref": "#/components/schemas/EvalRunCompareSkillSide"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/EvalRunCompareSkillSide"
+          },
+          "versionDelta": {
+            "type": "string",
+            "description": "Human-readable revision move (`v3 → v4`), present only when BOTH sides recorded a number. A change with no delta is a real content change whose revisions are unknown, not a smaller change."
+          }
+        },
+        "required": ["key", "name", "channels", "kind"]
+      },
       "EvalRunCompare": {
         "type": "object",
         "properties": {
@@ -14339,6 +14417,30 @@
               }
             },
             "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
+          },
+          "skills": {
+            "type": "object",
+            "nullable": true,
+            "description": "Which skills changed between the two runs — the configuration attribution that usually explains the case-level differences. `null` when NEITHER run recorded pinned skills (an empty section would instead claim no skills were involved). Absent when the deployment predates skill attribution, so clients must tolerate all three states.",
+            "properties": {
+              "base": {
+                "$ref": "#/components/schemas/EvalRunCompareSkillsSide"
+              },
+              "compare": {
+                "$ref": "#/components/schemas/EvalRunCompareSkillsSide"
+              },
+              "changes": {
+                "type": "array",
+                "description": "Added, removed and changed skills only, changed first. Unchanged skills are counted, not listed.",
+                "items": {
+                  "$ref": "#/components/schemas/EvalRunCompareSkillChange"
+                }
+              },
+              "unchangedCount": {
+                "type": "integer"
+              }
+            },
+            "required": ["base", "compare", "changes", "unchangedCount"]
           },
           "scoreContract": {
             "type": "object",
@@ -16622,7 +16724,24 @@
             "items": {
               "type": "string"
             },
-            "description": "Project-shared skill IDs. Skills carrying supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+            "description": "Project-shared skill IDs. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+          },
+          "versionPins": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["skillId", "versionId"],
+              "properties": {
+                "skillId": {
+                  "type": "string"
+                },
+                "versionId": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs \"Latest\" — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
           }
         }
       },
