@@ -22590,6 +22590,7 @@
       "ServerSkillsSupport": {
         "type": "object",
         "description": "Mutual-declaration state of the skills extension on this connection. `active` false means the extension was never negotiated — a capability state, not a failure.",
+        "required": ["declared", "advertised", "directoryRead", "active"],
         "properties": {
           "declared": {
             "type": "boolean",
@@ -22628,6 +22629,13 @@
       "ServerSkillSummary": {
         "type": "object",
         "description": "One skill as the server advertises it, before any content is fetched.",
+        "required": [
+          "serverId",
+          "skillUri",
+          "name",
+          "description",
+          "resources"
+        ],
         "properties": {
           "serverId": {
             "type": "string"
@@ -22674,6 +22682,13 @@
       "ServerSkillCatalog": {
         "type": "object",
         "description": "The server's skill catalog, drained across every page of `skills/list`.",
+        "required": [
+          "support",
+          "serverId",
+          "skills",
+          "duplicateUris",
+          "rejected"
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"
@@ -22720,6 +22735,15 @@
       "VerifiedServerSkill": {
         "type": "object",
         "description": "A skill whose SKILL.md was fetched and checked against its manifest digest, its advertised frontmatter, and its URI identity before any byte was returned.",
+        "required": [
+          "serverId",
+          "skillUri",
+          "name",
+          "description",
+          "content",
+          "contentSha256",
+          "resources"
+        ],
         "properties": {
           "serverId": {
             "type": "string"
@@ -22752,6 +22776,21 @@
       "ServerSkillResult": {
         "type": "object",
         "description": "Either the verified skill, or the refusal that stopped it. Never both.",
+        "required": ["support"],
+        "oneOf": [
+          {
+            "required": ["skill"],
+            "not": {
+              "required": ["refusal"]
+            }
+          },
+          {
+            "required": ["refusal"],
+            "not": {
+              "required": ["skill"]
+            }
+          }
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"
@@ -22767,6 +22806,21 @@
       "ServerSkillFileResult": {
         "type": "object",
         "description": "Either the verified file contents, or the refusal that stopped it.",
+        "required": ["support"],
+        "oneOf": [
+          {
+            "required": ["file"],
+            "not": {
+              "required": ["refusal"]
+            }
+          },
+          {
+            "required": ["refusal"],
+            "not": {
+              "required": ["file"]
+            }
+          }
+        ],
         "properties": {
           "support": {
             "$ref": "#/components/schemas/ServerSkillsSupport"

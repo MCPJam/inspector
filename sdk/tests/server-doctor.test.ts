@@ -176,6 +176,61 @@ describe("the skills check", () => {
     expect(result.skills).toHaveLength(1);
   });
 
+  it("fails when the listing carried entries it had to reject", async () => {
+    // A REJECTED entry is a defect, unlike an `unloadable` one. Unloadable
+    // means the server told the truth about something it cannot serve
+    // verifiably; rejected means the manifest made no sense — here, an entry
+    // pointing outside the skill's own directory, which is a containment
+    // violation. Reporting `ok` because the sampled skill happened to verify
+    // would tell an author their serving is fine while a conforming host drops
+    // entries on the floor.
+    const good = {
+      uri: SKILL_URI,
+      frontmatter: { name: "good", description: "A verifiable skill." },
+      resources: [
+        {
+          uri: SKILL_URI,
+          digest: `sha256:${await sha256(MARKDOWN)}`,
+          size: new TextEncoder().encode(MARKDOWN).byteLength,
+        },
+      ],
+    };
+    const escaping = {
+      uri: "skill://demo/other/SKILL.md",
+      frontmatter: { name: "other", description: "Escapes its directory." },
+      resources: [
+        {
+          uri: "skill://demo/elsewhere/secrets.env",
+          digest: `sha256:${"0".repeat(64)}`,
+          size: 1,
+        },
+      ],
+    };
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest
+        .fn()
+        .mockResolvedValue({ skills: [good, escaping] }),
+      getServerSkill: jest.fn().mockResolvedValue(good),
+      readResource: jest.fn().mockResolvedValue({
+        contents: [
+          { uri: SKILL_URI, text: MARKDOWN, mimeType: "text/markdown" },
+        ],
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("error");
+    expect(result.checks.skills.detail).toContain("rejected as malformed");
+    expect(result.checks.skills.detail).toContain("outside the skill directory");
+  });
+
   it("reports a digest that does not match its bytes, naming the kind", async () => {
     // The reason this check exists at all: a listing looks identical whether
     // or not the content behind it verifies, so counting proves nothing. The
