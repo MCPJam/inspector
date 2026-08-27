@@ -506,12 +506,16 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
     const headless = options.headless ?? webMcpHeadlessRequested();
 
     try {
+      // Chromium cannot start its sandbox as uid 0 (the pinned CI/browser
+      // container runs as root). Playwright adds the minimal no-sandbox
+      // fallback in that environment; every unprivileged local/production
+      // process keeps the renderer sandbox enabled.
+      const chromiumSandbox = process.getuid?.() !== 0;
       browser = await chromium.launch({
         headless,
         // The inspector opens arbitrary pages. Keep Chromium's renderer
-        // sandbox enabled; container/root deployments must opt out explicitly
-        // through their environment rather than weakening every local session.
-        chromiumSandbox: true,
+        // sandbox enabled wherever the OS permits it.
+        chromiumSandbox,
         args: buildWebMcpLaunchArgs(),
       });
       context = await browser.newContext({
