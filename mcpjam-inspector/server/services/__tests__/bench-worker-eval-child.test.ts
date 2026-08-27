@@ -23,6 +23,7 @@ vi.mock("../../routes/web/auth.js", () => ({
 
 import {
   defaultRunEvalCellForTests,
+  resolveEvalCellSpec,
   type BenchmarkRosterEntry,
   type ClaimedBenchmarkJob,
 } from "../bench-worker";
@@ -35,8 +36,9 @@ const JOB: ClaimedBenchmarkJob = {
   serverId: "srv-1",
   serverName: "Target",
   leaseGeneration: 3,
-  definitionHash: "def-1",
-  pins: { definitionHash: "def-1" },
+  pins: { definitionHash: "def-1", suiteId: "suite-1" },
+  target: { targetKind: "server", targetKey: "srv-1" },
+  consent: { authenticatedChecks: false, writeCases: false },
   roster: [],
   grant: "grant-token",
   runnerBearer: "runner-bearer",
@@ -48,20 +50,18 @@ const ENTRY: BenchmarkRosterEntry = {
   status: "expected",
   required: true,
   repetitions: 2,
-  evalCell: {
-    cellId: "sonnet-emulated",
-    suiteId: "suite-1",
-    environmentId: "env-sonnet",
-    namedHostId: "host-emulated",
-    writeCases: false,
-  },
+  cellId: "sonnet-emulated",
+  environmentId: "env-sonnet",
+  namedHostId: "host-emulated",
 };
+
+const CELL = resolveEvalCellSpec(JOB, ENTRY);
 
 function run(grantHeaders?: Record<string, string>) {
   return defaultRunEvalCellForTests()({
     job: JOB,
     entry: ENTRY,
-    cell: ENTRY.evalCell!,
+    cell: CELL,
     grantHeaders: grantHeaders ?? { "x-mcpjam-benchmark-grant": "grant-token" },
   });
 }
@@ -143,7 +143,7 @@ describe("defaultRunEvalCell", () => {
     await defaultRunEvalCellForTests()({
       job: { ...JOB, benchmarkRunId: "brun-2" },
       entry: ENTRY,
-      cell: ENTRY.evalCell!,
+      cell: CELL,
       grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
     });
 
@@ -192,7 +192,7 @@ describe("defaultRunEvalCell", () => {
     await defaultRunEvalCellForTests()({
       job: JOB,
       entry,
-      cell: entry.evalCell!,
+      cell: resolveEvalCellSpec(JOB, entry),
       grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
     });
 
