@@ -11,7 +11,7 @@
   "runCompletedAt": 1700000100000,
   "sourceIterationCount": 7,
   "sourceMaxUpdatedAt": 1700000090000,
-  "stageAnalyzerVersion": 4,
+  "stageAnalyzerVersion": 5,
   "measurementsSchemaVersion": 1,
   "materializationState": "provisional",
   "createdAt": 1700000150000,
