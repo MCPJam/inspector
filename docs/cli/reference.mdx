@@ -2046,6 +2046,10 @@ Send one message to a project's MCP servers and print the reply plus the raw too
 
 Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
 
+<Note>
+`sessions send` defaults to a **300 s timeout** instead of the global 30 s default. A model turn with tools routinely runs longer than 30 s, and the client giving up does **not** stop the turn — it keeps running and keeps spending. Pass `--timeout <ms>` to override in either direction. If a turn times out, retry with the **same `--idempotency-key`** to replay the completed turn rather than start a new one.
+</Note>
+
 | Flag | Description |
 |------|-------------|
 | `--message <text>` | The message to send, as the user (required) |
