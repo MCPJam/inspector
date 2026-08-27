@@ -1,5 +1,9 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { extractReasoningMiddleware, wrapLanguageModel } from "ai";
+import {
+  extractReasoningMiddleware,
+  wrapLanguageModel,
+  type LanguageModel,
+} from "ai";
 
 /**
  * Reasoning models that have no separate reasoning channel stream their scratch
@@ -17,4 +21,20 @@ export function withInlineReasoningExtracted(
     model,
     middleware: extractReasoningMiddleware({ tagName: "think" }),
   });
+}
+
+/**
+ * Same extraction for org-configured models, which come from the SDK factory
+ * typed as the AI SDK `LanguageModel` union — that union also admits a bare
+ * model-id string and the legacy v2 shape, and only a v3 model can carry
+ * middleware. Narrowing on `specificationVersion` keeps the union honest
+ * instead of casting it away. BB-136.
+ */
+export function withOrgInlineReasoningExtracted(
+  model: LanguageModel,
+): LanguageModel {
+  if (typeof model === "string" || model.specificationVersion !== "v3") {
+    return model;
+  }
+  return withInlineReasoningExtracted(model);
 }

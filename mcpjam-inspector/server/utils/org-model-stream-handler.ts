@@ -37,6 +37,7 @@ import {
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { withOrgInlineReasoningExtracted } from "./inline-reasoning";
 import {
   isClientFulfilledToolName,
   type UiToolApprovalClassification,
@@ -419,7 +420,9 @@ export function handleLocalOrgChatModel(
   let llmModel: ReturnType<typeof buildOrgModelFromResolvedConfig>;
   try {
     assertOrgModelAllowed(provider, modelId);
-    llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+    llmModel = withOrgInlineReasoningExtracted(
+      buildOrgModelFromResolvedConfig(provider, modelId),
+    );
   } catch (configErr) {
     // The response is still a 200 stream whose first chunk is the error, so
     // the HTTP failure events never see this — the typed event is the only
