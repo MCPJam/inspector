@@ -76,6 +76,10 @@ const URI_AUTHORITY = "mcpjam";
  * suite the platform tools run.
  */
 export const WORKER_SKILL_ROOTS = [
+  // The one skill here that teaches THIS server's tools rather than how to
+  // author eval files elsewhere. Everything below it is about writing evals;
+  // this is about running them through the 22 eval tools the worker exposes.
+  "skills/run-mcpjam-evals",
   "skills/mcpjam-eval-import",
   "sdk/skills/create-mcp-eval",
   "sdk/skills/explore-to-sdk-evals",

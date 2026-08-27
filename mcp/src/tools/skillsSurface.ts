@@ -7,10 +7,10 @@
  * the skills about evals. The extension exists so that connecting to a server
  * delivers its tools AND the relevant how-to knowledge in one step.
  *
- * Precision, because an earlier version of this comment claimed more: these
- * skills teach authoring the eval files and suites the tools OPERATE on, not
- * the tools themselves. `WORKER_SKILL_ROOTS` in the generator carries the full
- * inclusion/exclusion reasoning.
+ * Precision, because an earlier version of this comment claimed more: only
+ * `run-mcpjam-evals` teaches these tools. The rest teach authoring the eval
+ * files and suites the tools OPERATE on. `WORKER_SKILL_ROOTS` in the generator
+ * carries the full inclusion/exclusion reasoning.
  *
  * ## Everything here is precomputed
  *
