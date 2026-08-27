@@ -71,15 +71,15 @@ export function MultiServerToolsPaneInner({
   const reconnectingServerNames = useMemo(
     () =>
       activeServerNames.filter(
-        (name) => appState.servers[name]?.connectionStatus === "connecting"
+        (name) => appState.servers[name]?.connectionStatus === "connecting",
       ),
-    [activeServerNames, appState.servers]
+    [activeServerNames, appState.servers],
   );
   const { flat, collidingNames, loadingByServer, refetch } = useAggregatedTools(
     activeServerNames,
     {
       unavailableServerNames: reconnectingServerNames,
-    }
+    },
   );
 
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -103,7 +103,7 @@ export function MultiServerToolsPaneInner({
       flat.find(
         (entry) =>
           entry.serverId === selected.serverId &&
-          entry.toolName === selected.toolName
+          entry.toolName === selected.toolName,
       ) ?? null
     );
   }, [flat, selected]);
@@ -119,7 +119,7 @@ export function MultiServerToolsPaneInner({
     }
     const entry = flat.find(
       (e) =>
-        e.serverId === selected.serverId && e.toolName === selected.toolName
+        e.serverId === selected.serverId && e.toolName === selected.toolName,
     );
     if (entry) {
       setFormFields(generateFormFieldsFromSchema(entry.tool.inputSchema));
@@ -152,15 +152,15 @@ export function MultiServerToolsPaneInner({
   const handleFieldChange = (name: string, value: unknown) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, value, isSet: true } : field
-      )
+        field.name === name ? { ...field, value, isSet: true } : field,
+      ),
     );
   };
   const handleToggleField = (name: string, isSet: boolean) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, isSet } : field
-      )
+        field.name === name ? { ...field, isSet } : field,
+      ),
     );
   };
 
@@ -384,7 +384,7 @@ function FlatToolList({
                     "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
                     isSelected
                       ? "cursor-pointer bg-primary/10"
-                      : "cursor-pointer hover:bg-muted/50"
+                      : "cursor-pointer hover:bg-muted/50",
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -409,7 +409,7 @@ function FlatToolList({
                   )}
                   {(() => {
                     const visibility = getToolVisibility(
-                      entry.tool._meta as Record<string, unknown> | undefined
+                      entry.tool._meta as Record<string, unknown> | undefined,
                     );
                     const visibilityLabel = `[${visibility
                       .map((v) => `"${v}"`)
@@ -500,7 +500,7 @@ function SelectedToolView({
 }: SelectedToolViewProps) {
   const hasParameters = formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(
-    hasParameters ? ["parameters"] : ["description"]
+    hasParameters ? ["parameters"] : ["description"],
   );
 
   useEffect(() => {

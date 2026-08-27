@@ -237,6 +237,80 @@ describe("webmcp inspector store", () => {
     expect(useWebmcpInspectorStore.getState().chatEnabled).toBe(false);
   });
 
+  it("resolves an invocation whose settle beat the invoke response", async () => {
+    const source = await openSession();
+    // The POST answers with the id, and the settle arrives on the stream
+    // before the caller can park on it — a fast tool always races this way.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      source.emit(activityEvent(settled("a2", "inv-1"), 2));
+      return new Response(JSON.stringify({ invokeId: "inv-1" }), {
+        status: 202,
+      });
+    });
+
+    // Without the early-settle cache this would sit out the 90s timeout and
+    // then report a failure for a tool that succeeded.
+    await expect(
+      useWebmcpInspectorStore.getState().invokeToolForResult(TOOL.toolKey, {}),
+    ).resolves.toMatchObject({ state: "succeeded", output: "ok" });
+  });
+
+  it("settles callers waiting on a session that closes underneath them", async () => {
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invokeId: "inv-9" }), { status: 202 }),
+    );
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult(TOOL.toolKey, {});
+    // Give the invoke a turn to park on its waiter before the session goes.
+    await Promise.resolve();
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ closed: true }), { status: 200 }),
+    );
+    await useWebmcpInspectorStore.getState().closeSession();
+
+    // A model turn must not block for the full timeout on a browser that has
+    // already gone away.
+    await expect(pending).resolves.toMatchObject({ state: "failed" });
+  });
+
+  it("settles waiters when the server reports the session is gone", async () => {
+    const source = await openSession();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invokeId: "inv-7" }), { status: 202 }),
+    );
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult(TOOL.toolKey, {});
+    await Promise.resolve();
+
+    source.emit({ type: "session_gone", error: "That session is gone." });
+    await expect(pending).resolves.toMatchObject({ state: "failed" });
+  });
+
+  it("does not hand one session's cached result to the next", async () => {
+    const source = await openSession();
+    source.emit(activityEvent(settled("a2", "inv-1"), 2));
+
+    await openSession();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ invokeId: "inv-1" }), { status: 202 }),
+    );
+    const pending = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult(TOOL.toolKey, {});
+
+    // The id repeats across sessions in this test on purpose: a cache that
+    // survived would resolve the new call with the old page's answer.
+    const settledFirst = await Promise.race([
+      pending.then(() => "settled" as const),
+      Promise.resolve("still-waiting" as const),
+    ]);
+    expect(settledFirst).toBe("still-waiting");
+  });
+
   it("handles an empty tool set", async () => {
     const source = await openSession();
     source.emit({ type: "tools", seq: 2, tools: [TOOL] });

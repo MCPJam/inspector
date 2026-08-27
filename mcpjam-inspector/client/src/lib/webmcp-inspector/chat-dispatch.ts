@@ -29,8 +29,14 @@ export function setAdvertisedPageTools(entries: PageToolSnapshotEntry[]): void {
  * the user moves through it, and a turn should offer what the page has now.
  */
 export function snapshotPageToolsForTurn(): PageToolSnapshotEntry[] {
-  const { session, tools } = useWebmcpInspectorStore.getState();
-  const entries = buildPageToolSnapshot(session?.sessionId, tools);
+  const { session, tools, pageToolsLive } = useWebmcpInspectorStore.getState();
+  // Gated here as well as at the caller. A "closed" status arrives as an
+  // ordinary session event and leaves the last tool snapshot in place, so a
+  // snapshot taken from state alone would advertise a browser that is gone —
+  // and the model would then be offered tools nothing can run.
+  const entries = pageToolsLive()
+    ? buildPageToolSnapshot(session?.sessionId, tools)
+    : [];
   setAdvertisedPageTools(entries);
   return entries;
 }

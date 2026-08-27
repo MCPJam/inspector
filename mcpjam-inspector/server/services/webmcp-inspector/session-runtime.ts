@@ -91,6 +91,15 @@ export class WebMcpSessionRuntime {
   private readonly queue: QueuedInvocation[] = [];
   private running: QueuedInvocation | undefined;
   private draining = false;
+  /**
+   * The in-flight drain, so `close()` can wait for it.
+   *
+   * `hub.publish()` is a silent no-op once the hub is closed, so a close that
+   * lands mid-invocation would otherwise swallow that invocation's
+   * `invocation_settled` and leave it looking like it never finished — in the
+   * timeline, which is the record the session exists to produce.
+   */
+  private draining_ = Promise.resolve();
   private readonly now: () => number;
   private readonly invokeTimeoutMs: number;
   private readonly queueLimit: number;
@@ -299,7 +308,8 @@ export class WebMcpSessionRuntime {
       resolve,
       reject,
     });
-    void this.drain();
+    this.draining_ = this.drain();
+    void this.draining_;
     return { invokeId, settled };
   }
 
@@ -518,6 +528,10 @@ export class WebMcpSessionRuntime {
     this.failAllPending(new Error("The session was closed."));
     this.setStatus("closed");
     await this.session?.dispose().catch(() => {});
+    // Awaited BEFORE the hub closes. `failAllPending` aborts the running
+    // invocation, but its `settle` still has to publish the terminal entry, and
+    // a closed hub would drop it on the floor.
+    await this.draining_.catch(() => {});
     this.hub.close();
   }
 }

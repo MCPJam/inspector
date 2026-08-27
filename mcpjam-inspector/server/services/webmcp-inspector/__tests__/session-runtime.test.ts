@@ -199,6 +199,29 @@ describe("invocation", () => {
     await second.settled;
   });
 
+  it("still publishes the settle when the session closes mid-invocation", async () => {
+    const { runtime, session, activity } = makeRuntime();
+    session.emitTools([fakeTool()]);
+    session.hangOnInvoke = true;
+
+    const { settled } = runtime.invoke(
+      "https://example.test::echo",
+      {},
+      "manual",
+    );
+    settled.catch(() => {});
+    await vi.waitFor(() => expect(session.invocations).toHaveLength(1));
+
+    // The hub drops anything published after it closes, so a close that does
+    // not wait for the running invocation loses its terminal entry — and the
+    // last call of a session reads as though it never finished.
+    await runtime.close();
+
+    expect(
+      activity().filter((entry) => entry.kind === "invocation_settled"),
+    ).toHaveLength(1);
+  });
+
   it("publishes each settle before the next invocation starts", async () => {
     const { runtime, session, activity } = makeRuntime();
     session.emitTools([fakeTool()]);

@@ -60,6 +60,11 @@ interface WebMcpInspectorState {
    */
   chatEnabled: boolean;
   setChatEnabled(enabled: boolean): void;
+  /**
+   * Whether this turn may advertise the page's tools: opted in AND still
+   * attached to a live browser.
+   */
+  pageToolsLive(): boolean;
 
   startSession(url: string): Promise<void>;
   closeSession(): Promise<void>;
@@ -156,6 +161,57 @@ const invocationWaiters = new Map<
  */
 let seenActivityIds = new Set<string>();
 
+/**
+ * Results that arrived before anyone was waiting for them.
+ *
+ * `invokePageTool` can only register its waiter after the invoke POST responds
+ * with an id, and a fast tool can settle on the stream before that. Without
+ * this the result would be dropped, the dedup above would refuse the replayed
+ * copy, and the caller would sit out the full timeout before reporting a
+ * failure for a tool that actually succeeded.
+ *
+ * Bounded like the activity ring, since a caller that never arrives must not
+ * pin results for the life of the tab.
+ */
+const settledResults = new Map<string, PageToolInvocationResult>();
+const MAX_EARLY_SETTLES = 64;
+
+function rememberSettled(invokeId: string, result: PageToolInvocationResult) {
+  settledResults.set(invokeId, result);
+  while (settledResults.size > MAX_EARLY_SETTLES) {
+    const oldest = settledResults.keys().next().value;
+    if (oldest === undefined) break;
+    settledResults.delete(oldest);
+  }
+}
+
+/**
+ * Settle every caller still waiting on this session.
+ *
+ * Called when the session goes away for any reason. Without it a model turn
+ * blocked on a page tool would wait out the full timeout after the browser it
+ * was talking to had already closed.
+ */
+function failOutstandingWaiters(errorMessage: string) {
+  sessionGeneration += 1;
+  for (const [invokeId, waiter] of [...invocationWaiters]) {
+    invocationWaiters.delete(invokeId);
+    waiter({ state: "failed", errorMessage });
+  }
+  settledResults.clear();
+}
+
+/**
+ * Bumped every time a session goes away.
+ *
+ * A caller cannot park on its waiter until the invoke POST answers with an id,
+ * so a close landing during that round trip would find nothing to settle and
+ * the waiter registered a moment later would wait out the full timeout.
+ * Comparing the generation across the await closes that window from the other
+ * side.
+ */
+let sessionGeneration = 0;
+
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
     function applyEvent(event: WebMcpEvent) {
@@ -191,15 +247,20 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       });
 
       if (entry.kind === "invocation_settled") {
+        const result: PageToolInvocationResult = {
+          state: entry.state,
+          output: entry.output,
+          outputTruncated: entry.outputTruncated,
+          errorMessage: entry.errorMessage,
+        };
         const waiter = invocationWaiters.get(entry.invokeId);
         if (waiter) {
           invocationWaiters.delete(entry.invokeId);
-          waiter({
-            state: entry.state,
-            output: entry.output,
-            outputTruncated: entry.outputTruncated,
-            errorMessage: entry.errorMessage,
-          });
+          waiter(result);
+        } else {
+          // Nobody is parked on this yet — hold it for the caller still waiting
+          // on the invoke POST to come back with the id.
+          rememberSettled(entry.invokeId, result);
         }
       }
     }
@@ -231,6 +292,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               tools: [],
               pending: [],
             });
+            failOutstandingWaiters(
+              "The browser session went away before this tool finished.",
+            );
             disconnectStream();
             return;
           }
@@ -265,10 +329,21 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         set({ chatEnabled: enabled });
       },
 
+      pageToolsLive() {
+        // A "closed" status arrives as an ordinary session event, which leaves
+        // `chatEnabled` and the last tool snapshot untouched. Deriving liveness
+        // here means every consumer gets it right; asking each caller to
+        // re-check the status is how a dead session's aliases end up advertised
+        // to a model.
+        const { session, chatEnabled } = get();
+        return chatEnabled && Boolean(session) && session?.status !== "closed";
+      },
+
       async startSession(url) {
         // A new session starts a new timeline, so the dedup set starts over
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
+        settledResults.clear();
         set({
           starting: true,
           error: undefined,
@@ -291,6 +366,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       async closeSession() {
         const sessionId = get().session?.sessionId;
         disconnectStream();
+        failOutstandingWaiters(
+          "The browser session was closed before this tool finished.",
+        );
         // Opting the next page in has to be a fresh decision: carrying the
         // choice across sessions would silently grant a DIFFERENT site's tools
         // to chat.
@@ -346,6 +424,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async invokeToolForResult(toolKey, input) {
+        const generation = sessionGeneration;
         const response = (await get().sendCommand({
           type: "invoke_tool",
           toolKey,
@@ -359,8 +438,24 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           return { state: "failed", errorMessage: message };
         }
 
+        const invokeId = response.invokeId;
+        if (generation !== sessionGeneration) {
+          // The session went away while this call was being queued; nothing
+          // will ever settle it.
+          return {
+            state: "failed",
+            errorMessage:
+              "The browser session went away before this tool finished.",
+          };
+        }
+        // The settle may already have arrived while the POST was in flight.
+        const early = settledResults.get(invokeId);
+        if (early) {
+          settledResults.delete(invokeId);
+          return early;
+        }
+
         return new Promise<PageToolInvocationResult>((resolve) => {
-          const invokeId = response.invokeId!;
           const timer = setTimeout(() => {
             // The server enforces its own per-invocation timeout, so reaching
             // this one means the settle event itself never arrived — a dropped

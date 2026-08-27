@@ -157,19 +157,19 @@ export class WidgetModelContextValidationError extends Error {
 function assertJsonByteSize(
   value: unknown,
   label: string,
-  maxBytes: number
+  maxBytes: number,
 ): void {
   let size = 0;
   try {
     size = new TextEncoder().encode(JSON.stringify(value)).length;
   } catch {
     throw new WidgetModelContextValidationError(
-      `${label} is not JSON-serializable`
+      `${label} is not JSON-serializable`,
     );
   }
   if (size > maxBytes) {
     throw new WidgetModelContextValidationError(
-      `${label} exceeds ${maxBytes} bytes`
+      `${label} exceeds ${maxBytes} bytes`,
     );
   }
 }
@@ -192,7 +192,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
   }
   if (input.length > APP_TOOL_MAX_ENTRIES) {
     throw new AppToolValidationError(
-      `appTools accepts at most ${APP_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+      `appTools accepts at most ${APP_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
     );
   }
   const out: AppToolEntry[] = [];
@@ -205,17 +205,17 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     const alias = raw.alias;
     if (typeof alias !== "string" || !APP_TOOL_ALIAS_REGEX.test(alias)) {
       throw new AppToolValidationError(
-        `appTools[${i}].alias must match ${APP_TOOL_ALIAS_REGEX}`
+        `appTools[${i}].alias must match ${APP_TOOL_ALIAS_REGEX}`,
       );
     }
     if (seenAliases.has(alias)) {
       throw new AppToolValidationError(
-        `appTools[${i}].alias '${alias}' is duplicated`
+        `appTools[${i}].alias '${alias}' is duplicated`,
       );
     }
     seenAliases.add(alias);
     const checkName = (
-      key: "appName" | "rawName" | "serverId" | "parentToolCallId"
+      key: "appName" | "rawName" | "serverId" | "parentToolCallId",
     ) => {
       const v = raw[key];
       if (
@@ -224,7 +224,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
         v.length > APP_TOOL_MAX_NAME_CHARS
       ) {
         throw new AppToolValidationError(
-          `appTools[${i}].${key} must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`
+          `appTools[${i}].${key} must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`,
         );
       }
       return v;
@@ -235,7 +235,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     const parentToolCallId = checkName("parentToolCallId");
     if (raw.appVersion !== undefined && typeof raw.appVersion !== "string") {
       throw new AppToolValidationError(
-        `appTools[${i}].appVersion must be a string`
+        `appTools[${i}].appVersion must be a string`,
       );
     }
     const appVersion = raw.appVersion as string | undefined;
@@ -243,12 +243,12 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     if (raw.description !== undefined) {
       if (typeof raw.description !== "string") {
         throw new AppToolValidationError(
-          `appTools[${i}].description must be a string`
+          `appTools[${i}].description must be a string`,
         );
       }
       if (raw.description.length > APP_TOOL_MAX_DESCRIPTION_CHARS) {
         throw new AppToolValidationError(
-          `appTools[${i}].description exceeds ${APP_TOOL_MAX_DESCRIPTION_CHARS} chars`
+          `appTools[${i}].description exceeds ${APP_TOOL_MAX_DESCRIPTION_CHARS} chars`,
         );
       }
       description = raw.description;
@@ -261,7 +261,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
         Array.isArray(raw.inputSchema)
       ) {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema must be a JSON object`
+          `appTools[${i}].inputSchema must be a JSON object`,
         );
       }
       let size = 0;
@@ -269,19 +269,19 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
         size = new TextEncoder().encode(JSON.stringify(raw.inputSchema)).length;
       } catch {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema is not JSON-serializable`
+          `appTools[${i}].inputSchema is not JSON-serializable`,
         );
       }
       if (size > APP_TOOL_MAX_INPUT_SCHEMA_BYTES) {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema exceeds ${APP_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+          `appTools[${i}].inputSchema exceeds ${APP_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`,
         );
       }
       inputSchema = raw.inputSchema as Record<string, unknown>;
     }
     if (typeof raw.readOnly !== "boolean") {
       throw new AppToolValidationError(
-        `appTools[${i}].readOnly must be a boolean`
+        `appTools[${i}].readOnly must be a boolean`,
       );
     }
     out.push({
@@ -317,24 +317,24 @@ const UI_TOOL_ANNOTATION_KEYS = [
  */
 function validateUiToolAnnotations(
   raw: unknown,
-  index: number
+  index: number,
 ): UiToolAnnotations | undefined {
   if (raw === undefined) return undefined;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new UiToolValidationError(
-      `uiTools[${index}].annotations must be an object`
+      `uiTools[${index}].annotations must be an object`,
     );
   }
   const out: UiToolAnnotations = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!(UI_TOOL_ANNOTATION_KEYS as readonly string[]).includes(key)) {
       throw new UiToolValidationError(
-        `uiTools[${index}].annotations has unknown key '${key}'`
+        `uiTools[${index}].annotations has unknown key '${key}'`,
       );
     }
     if (typeof value !== "boolean") {
       throw new UiToolValidationError(
-        `uiTools[${index}].annotations.${key} must be a boolean`
+        `uiTools[${index}].annotations.${key} must be a boolean`,
       );
     }
     out[key as (typeof UI_TOOL_ANNOTATION_KEYS)[number]] = value;
@@ -360,7 +360,7 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
   }
   if (input.length > UI_TOOL_MAX_ENTRIES) {
     throw new UiToolValidationError(
-      `uiTools accepts at most ${UI_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+      `uiTools accepts at most ${UI_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
     );
   }
   const out: UiToolEntry[] = [];
@@ -373,12 +373,12 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
     const name = raw.name;
     if (typeof name !== "string" || !UI_TOOL_NAME_REGEX.test(name)) {
       throw new UiToolValidationError(
-        `uiTools[${i}].name must match ${UI_TOOL_NAME_REGEX}`
+        `uiTools[${i}].name must match ${UI_TOOL_NAME_REGEX}`,
       );
     }
     if (seenNames.has(name)) {
       throw new UiToolValidationError(
-        `uiTools[${i}].name '${name}' is duplicated`
+        `uiTools[${i}].name '${name}' is duplicated`,
       );
     }
     seenNames.add(name);
@@ -387,12 +387,12 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
       raw.description.trim().length === 0
     ) {
       throw new UiToolValidationError(
-        `uiTools[${i}].description must be a non-empty string`
+        `uiTools[${i}].description must be a non-empty string`,
       );
     }
     if (raw.description.length > UI_TOOL_MAX_DESCRIPTION_CHARS) {
       throw new UiToolValidationError(
-        `uiTools[${i}].description exceeds ${UI_TOOL_MAX_DESCRIPTION_CHARS} chars`
+        `uiTools[${i}].description exceeds ${UI_TOOL_MAX_DESCRIPTION_CHARS} chars`,
       );
     }
     let inputSchema: Record<string, unknown> | undefined;
@@ -403,7 +403,7 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
         Array.isArray(raw.inputSchema)
       ) {
         throw new UiToolValidationError(
-          `uiTools[${i}].inputSchema must be a JSON object`
+          `uiTools[${i}].inputSchema must be a JSON object`,
         );
       }
       let size = 0;
@@ -411,19 +411,19 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
         size = new TextEncoder().encode(JSON.stringify(raw.inputSchema)).length;
       } catch {
         throw new UiToolValidationError(
-          `uiTools[${i}].inputSchema is not JSON-serializable`
+          `uiTools[${i}].inputSchema is not JSON-serializable`,
         );
       }
       if (size > UI_TOOL_MAX_INPUT_SCHEMA_BYTES) {
         throw new UiToolValidationError(
-          `uiTools[${i}].inputSchema exceeds ${UI_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+          `uiTools[${i}].inputSchema exceeds ${UI_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`,
         );
       }
       inputSchema = raw.inputSchema as Record<string, unknown>;
     }
     if (typeof raw.readOnly !== "boolean") {
       throw new UiToolValidationError(
-        `uiTools[${i}].readOnly must be a boolean`
+        `uiTools[${i}].readOnly must be a boolean`,
       );
     }
     const annotations = validateUiToolAnnotations(raw.annotations, i);
@@ -435,7 +435,7 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
       // reading: trusting `readOnlyHint` would let a contradictory entry skip
       // approval. Reject rather than pick a winner.
       throw new UiToolValidationError(
-        `uiTools[${i}].annotations.readOnlyHint must equal readOnly`
+        `uiTools[${i}].annotations.readOnlyHint must equal readOnly`,
       );
     }
     out.push({
@@ -450,24 +450,24 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
 }
 
 export function validateWidgetModelContextEntries(
-  input: unknown
+  input: unknown,
 ): WidgetModelContextEntry[] {
   if (input === undefined || input === null) return [];
   if (!Array.isArray(input)) {
     throw new WidgetModelContextValidationError(
-      "widgetModelContext must be an array"
+      "widgetModelContext must be an array",
     );
   }
   if (input.length > WIDGET_MODEL_CONTEXT_MAX_ENTRIES) {
     throw new WidgetModelContextValidationError(
-      `widgetModelContext accepts at most ${WIDGET_MODEL_CONTEXT_MAX_ENTRIES} entries, got ${input.length}`
+      `widgetModelContext accepts at most ${WIDGET_MODEL_CONTEXT_MAX_ENTRIES} entries, got ${input.length}`,
     );
   }
 
   return input.map((entry, i): WidgetModelContextEntry => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new WidgetModelContextValidationError(
-        `widgetModelContext[${i}] must be an object`
+        `widgetModelContext[${i}] must be an object`,
       );
     }
     const raw = entry as Record<string, unknown>;
@@ -477,7 +477,7 @@ export function validateWidgetModelContextEntries(
       raw.toolCallId.length > APP_TOOL_MAX_NAME_CHARS
     ) {
       throw new WidgetModelContextValidationError(
-        `widgetModelContext[${i}].toolCallId must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`
+        `widgetModelContext[${i}].toolCallId must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`,
       );
     }
     if (
@@ -486,7 +486,7 @@ export function validateWidgetModelContextEntries(
       Array.isArray(raw.context)
     ) {
       throw new WidgetModelContextValidationError(
-        `widgetModelContext[${i}].context must be an object`
+        `widgetModelContext[${i}].context must be an object`,
       );
     }
 
@@ -499,26 +499,26 @@ export function validateWidgetModelContextEntries(
     if (context.content !== undefined) {
       if (!Array.isArray(context.content)) {
         throw new WidgetModelContextValidationError(
-          `widgetModelContext[${i}].context.content must be an array`
+          `widgetModelContext[${i}].context.content must be an array`,
         );
       }
       if (context.content.length > WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS) {
         throw new WidgetModelContextValidationError(
-          `widgetModelContext[${i}].context.content accepts at most ${WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS} blocks`
+          `widgetModelContext[${i}].context.content accepts at most ${WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS} blocks`,
         );
       }
       for (let j = 0; j < context.content.length; j++) {
         const block = context.content[j];
         if (!block || typeof block !== "object" || Array.isArray(block)) {
           throw new WidgetModelContextValidationError(
-            `widgetModelContext[${i}].context.content[${j}] must be an object`
+            `widgetModelContext[${i}].context.content[${j}] must be an object`,
           );
         }
       }
       assertJsonByteSize(
         context.content,
         `widgetModelContext[${i}].context.content`,
-        WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES
+        WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES,
       );
       out.context.content = context.content as Record<string, unknown>[];
     }
@@ -530,13 +530,13 @@ export function validateWidgetModelContextEntries(
         Array.isArray(context.structuredContent)
       ) {
         throw new WidgetModelContextValidationError(
-          `widgetModelContext[${i}].context.structuredContent must be an object`
+          `widgetModelContext[${i}].context.structuredContent must be an object`,
         );
       }
       assertJsonByteSize(
         context.structuredContent,
         `widgetModelContext[${i}].context.structuredContent`,
-        WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES
+        WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES,
       );
       out.context.structuredContent = context.structuredContent as Record<
         string,
@@ -549,7 +549,7 @@ export function validateWidgetModelContextEntries(
 }
 
 function renderWidgetContextContentBlock(
-  block: Record<string, unknown>
+  block: Record<string, unknown>,
 ): string {
   switch (block.type) {
     case "text":
@@ -594,7 +594,7 @@ function renderWidgetContextContentBlock(
 }
 
 export function buildWidgetModelContextSystemPrompt(
-  entries: WidgetModelContextEntry[]
+  entries: WidgetModelContextEntry[],
 ): string {
   if (entries.length === 0) return "";
 
@@ -604,7 +604,7 @@ export function buildWidgetModelContextSystemPrompt(
     if (content.length > 0) {
       lines.push(
         "Content:",
-        ...content.map((block) => renderWidgetContextContentBlock(block))
+        ...content.map((block) => renderWidgetContextContentBlock(block)),
       );
     }
     if (entry.context.structuredContent) {
@@ -612,7 +612,7 @@ export function buildWidgetModelContextSystemPrompt(
         "Structured content:",
         "```json",
         JSON.stringify(entry.context.structuredContent, null, 2),
-        "```"
+        "```",
       );
     }
     return lines.join("\n");
@@ -636,21 +636,20 @@ export function buildWidgetModelContextSystemPrompt(
  * calls are UI-only and filtered upstream).
  */
 export function buildWidgetInteractionContextSystemPrompt(
-  calls: ReadonlyArray<{ toolName: string; result?: unknown }>
+  calls: ReadonlyArray<{ toolName: string; result?: unknown }>,
 ): string {
   if (calls.length === 0) return "";
 
   const sections = calls.map((call) => {
     const result = call.result as
-      | { content?: Array<Record<string, unknown>> }
-      | undefined;
+      { content?: Array<Record<string, unknown>> } | undefined;
     const content = result?.content ?? [];
     const lines = [
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
     ];
     if (content.length > 0) {
       lines.push(
-        ...content.map((block) => renderWidgetContextContentBlock(block))
+        ...content.map((block) => renderWidgetContextContentBlock(block)),
       );
     } else {
       lines.push("(no textual content)");
@@ -822,7 +821,7 @@ function toNoExecuteAiSdkTool(args: {
         type: "object",
         properties: {},
         additionalProperties: false,
-      }
+      },
     ),
     ...(args.needsApproval ? { needsApproval: true } : {}),
     // No execute — client fulfills via onToolCall.
@@ -866,7 +865,7 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
  */
 export function buildUiTools(
   uiTools: UiToolEntry[] | undefined,
-  opts?: { requireToolApproval?: boolean }
+  opts?: { requireToolApproval?: boolean },
 ): ToolSet {
   if (!uiTools || uiTools.length === 0) return {};
   const out: ToolSet = {};
@@ -920,7 +919,7 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
   }
   if (input.length > PAGE_TOOL_MAX_ENTRIES) {
     throw new PageToolValidationError(
-      `pageTools accepts at most ${PAGE_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+      `pageTools accepts at most ${PAGE_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
     );
   }
   const out: PageToolEntry[] = [];
@@ -933,12 +932,12 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
     const alias = raw.alias;
     if (typeof alias !== "string" || !PAGE_TOOL_ALIAS_REGEX.test(alias)) {
       throw new PageToolValidationError(
-        `pageTools[${i}].alias must match ${PAGE_TOOL_ALIAS_REGEX}`
+        `pageTools[${i}].alias must match ${PAGE_TOOL_ALIAS_REGEX}`,
       );
     }
     if (seenAliases.has(alias)) {
       throw new PageToolValidationError(
-        `pageTools[${i}].alias '${alias}' is duplicated`
+        `pageTools[${i}].alias '${alias}' is duplicated`,
       );
     }
     seenAliases.add(alias);
@@ -950,7 +949,7 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
         value.length > PAGE_TOOL_MAX_NAME_CHARS
       ) {
         throw new PageToolValidationError(
-          `pageTools[${i}].${key} must be a non-empty string ≤${PAGE_TOOL_MAX_NAME_CHARS} chars`
+          `pageTools[${i}].${key} must be a non-empty string ≤${PAGE_TOOL_MAX_NAME_CHARS} chars`,
         );
       }
       return value;
@@ -967,7 +966,7 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
         raw.description.length > PAGE_TOOL_MAX_DESCRIPTION_CHARS
       ) {
         throw new PageToolValidationError(
-          `pageTools[${i}].description must be a string ≤${PAGE_TOOL_MAX_DESCRIPTION_CHARS} chars`
+          `pageTools[${i}].description must be a string ≤${PAGE_TOOL_MAX_DESCRIPTION_CHARS} chars`,
         );
       }
       description = raw.description;
@@ -975,15 +974,19 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
 
     let inputSchema: Record<string, unknown> | undefined;
     if (raw.inputSchema !== undefined) {
-      if (typeof raw.inputSchema !== "object" || raw.inputSchema === null) {
+      if (
+        typeof raw.inputSchema !== "object" ||
+        raw.inputSchema === null ||
+        Array.isArray(raw.inputSchema)
+      ) {
         throw new PageToolValidationError(
-          `pageTools[${i}].inputSchema must be an object`
+          `pageTools[${i}].inputSchema must be an object`,
         );
       }
       const bytes = Buffer.byteLength(JSON.stringify(raw.inputSchema), "utf8");
       if (bytes > PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES) {
         throw new PageToolValidationError(
-          `pageTools[${i}].inputSchema exceeds ${PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+          `pageTools[${i}].inputSchema exceeds ${PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`,
         );
       }
       inputSchema = raw.inputSchema as Record<string, unknown>;
@@ -1014,7 +1017,9 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
  * description carries the origin because a model choosing between tools should
  * be able to see whose page each one belongs to.
  */
-export function buildPageTools(pageTools: PageToolEntry[] | undefined): ToolSet {
+export function buildPageTools(
+  pageTools: PageToolEntry[] | undefined,
+): ToolSet {
   if (!pageTools || pageTools.length === 0) return {};
   const out: ToolSet = {};
   for (const entry of pageTools) {
@@ -1039,7 +1044,7 @@ export function buildPageTools(pageTools: PageToolEntry[] | undefined): ToolSet 
  */
 export function buildUiToolsSystemPrompt(
   uiTools: UiToolEntry[] | undefined,
-  opts?: { requireToolApproval?: boolean }
+  opts?: { requireToolApproval?: boolean },
 ): string {
   if (!uiTools || uiTools.length === 0) return "";
   const names = new Set(uiTools.map((t) => t.name));
@@ -1050,17 +1055,17 @@ export function buildUiToolsSystemPrompt(
   ];
   if (has("ui_open_playground", "ui_select_tool", "ui_execute_tool")) {
     lines.push(
-      "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead."
+      "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
     );
   }
   if (has("ui_snapshot_app")) {
     lines.push(
-      "`ui_snapshot_app` is read-only and works from anywhere — use it to see where the user is and what is selected before acting, rather than assuming."
+      "`ui_snapshot_app` is read-only and works from anywhere — use it to see where the user is and what is selected before acting, rather than assuming.",
     );
   }
   lines.push(
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
-    approvalGuidance(uiTools, opts?.requireToolApproval === true)
+    approvalGuidance(uiTools, opts?.requireToolApproval === true),
   );
   return lines.join("\n");
 }
@@ -1075,7 +1080,7 @@ export function buildUiToolsSystemPrompt(
  */
 function approvalGuidance(
   uiTools: UiToolEntry[],
-  requireToolApproval: boolean
+  requireToolApproval: boolean,
 ): string {
   if (requireToolApproval) {
     return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
@@ -1121,7 +1126,7 @@ export interface PrepareChatV2Result {
  * Throws if Anthropic tool name validation fails.
  */
 export async function prepareChatV2(
-  options: PrepareChatV2Options
+  options: PrepareChatV2Options,
 ): Promise<PrepareChatV2Result> {
   const {
     mcpClientManager,
@@ -1149,7 +1154,7 @@ export async function prepareChatV2(
   // a stale id baked into a scenario config). Passing them through reaches
   // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
   const knownSelectedServers = selectedServers?.filter((id) =>
-    mcpClientManager.hasServer(id)
+    mcpClientManager.hasServer(id),
   );
 
   // `undefined` for every default turn, which is what keeps those turns on the
@@ -1166,7 +1171,7 @@ export async function prepareChatV2(
   try {
     mcpTools = await mcpClientManager.getToolsForAiSdk(
       knownSelectedServers,
-      toolOptions
+      toolOptions,
     );
   } catch (error) {
     // The ONE hop in this function that leaves MCPJam: listing tools reaches
@@ -1243,7 +1248,7 @@ export async function prepareChatV2(
   // this throw is belt-and-suspenders at the single point both paths funnel through.
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills)."
+      "Pinned skills are not supported on harness runs (they live-fetch skills).",
     );
   }
   const modelContextTokens =
@@ -1259,28 +1264,28 @@ export async function prepareChatV2(
     ? skillsSource.kind === "pinned"
       ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
       : skillsSource.kind === "resolved" ||
-        skillsSource.kind === "pinned-effective"
-      ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-          ...(skillsSource.abortSignal
-            ? { signal: skillsSource.abortSignal }
-            : {}),
-          // The discovery listing is budgeted against THIS model's context
-          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-          // model definition; the budget helper falls back to 8,000 chars.
-          ...modelContextTokens,
-        })
-      : { tools: {}, systemPromptSection: "" }
+          skillsSource.kind === "pinned-effective"
+        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+            ...(skillsSource.abortSignal
+              ? { signal: skillsSource.abortSignal }
+              : {}),
+            // The discovery listing is budgeted against THIS model's context
+            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+            // model definition; the budget helper falls back to 8,000 chars.
+            ...modelContextTokens,
+          })
+        : { tools: {}, systemPromptSection: "" }
     : cloudSkills
-    ? await getCloudSkillToolsAndPrompt(
-        {
-          authHeader: cloudSkills.authHeader,
-          projectId: cloudSkills.projectId,
-        },
-        modelContextTokens
-      )
-    : HOSTED_MODE
-    ? { tools: {}, systemPromptSection: "" }
-    : await getSkillToolsAndPrompt();
+      ? await getCloudSkillToolsAndPrompt(
+          {
+            authHeader: cloudSkills.authHeader,
+            projectId: cloudSkills.projectId,
+          },
+          modelContextTokens,
+        )
+      : HOSTED_MODE
+        ? { tools: {}, systemPromptSection: "" }
+        : await getSkillToolsAndPrompt();
   const {
     tools: skillTools,
     systemPromptSection: skillsPromptSection,
@@ -1298,7 +1303,7 @@ export async function prepareChatV2(
               ...(tool && typeof tool === "object" ? tool : {}),
               needsApproval: true,
             },
-          ])
+          ]),
         )
       : (skillTools as Record<string, unknown>);
 
@@ -1362,7 +1367,7 @@ export async function prepareChatV2(
       return true;
     }
     logger.warn(
-      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`
+      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`,
     );
     return false;
   });
@@ -1387,7 +1392,7 @@ export async function prepareChatV2(
   for (const name of Object.keys(builtInToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
       );
       delete mcpTools[name];
     }
@@ -1398,7 +1403,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, page, or skill tool.`
+        `Built-in tool '${name}' collides with an existing app, UI, page, or skill tool.`,
       );
     }
   }
@@ -1413,7 +1418,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `WebMCP page tool '${name}' collides with an existing tool of the same name.`
+        `WebMCP page tool '${name}' collides with an existing tool of the same name.`,
       );
     }
   }
@@ -1464,7 +1469,7 @@ export async function prepareChatV2(
     hydrateDiscoveryStateFromHistory(
       discoveryState,
       options.priorMessages,
-      catalog
+      catalog,
     );
   }
   const envOverride = harness
@@ -1503,7 +1508,7 @@ export async function prepareChatV2(
       const providerLabel =
         modelDefinition.provider === "bedrock" ? "Amazon Bedrock" : "Anthropic";
       throw new Error(
-        `Invalid tool name(s) for ${providerLabel}: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`
+        `Invalid tool name(s) for ${providerLabel}: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
       );
     }
   }
@@ -1517,7 +1522,7 @@ export async function prepareChatV2(
       // tool already claimed the name.
       if (Object.prototype.hasOwnProperty.call(realTools, name)) {
         throw new Error(
-          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
         );
       }
     }
@@ -1537,8 +1542,8 @@ export async function prepareChatV2(
         ? `${skillsPromptSection}${SERVER_SKILLS_PROMPT_SECTION}`
         : skillsPromptSection
       : serverSkillsAttached
-      ? SERVER_SKILLS_PROMPT_SECTION
-      : skillsPromptSection,
+        ? SERVER_SKILLS_PROMPT_SECTION
+        : skillsPromptSection,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))
@@ -1556,7 +1561,7 @@ export async function prepareChatV2(
   // The persisted `hostConfig.temperature` is unaffected and stays numeric:
   // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
   const resolvedTemperature = modelDefinitionSupportsTemperature(
-    modelDefinition
+    modelDefinition,
   )
     ? temperature
     : undefined;
@@ -1567,10 +1572,10 @@ export async function prepareChatV2(
       scrubMcpAppsToolResultsForBackend(
         scrubUnavailableToolHistoryForBackend(msgs, availableToolNames),
         mcpClientManager,
-        knownSelectedServers
+        knownSelectedServers,
       ),
       mcpClientManager,
-      knownSelectedServers
+      knownSelectedServers,
     );
 
   return {

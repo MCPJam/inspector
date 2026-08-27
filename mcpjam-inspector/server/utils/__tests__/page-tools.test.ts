@@ -85,6 +85,14 @@ describe("validatePageToolEntries", () => {
     ).toThrow(/origin/);
   });
 
+  it("rejects an inputSchema that is an array", () => {
+    // `typeof [] === "object"`, so an array slips past a bare object check and
+    // reaches `jsonSchema` as a cast Record — a JSON Schema it is not.
+    expect(() =>
+      validatePageToolEntries([entry({ inputSchema: [] as never })]),
+    ).toThrow(/must be an object/);
+  });
+
   it("rejects a non-array snapshot", () => {
     expect(() => validatePageToolEntries({ alias: "page_1a2b3c4d" })).toThrow(
       /must be an array/,

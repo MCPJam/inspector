@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   invokePageToolForChat,
   setAdvertisedPageTools,
+  snapshotPageToolsForTurn,
 } from "../chat-dispatch";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
@@ -121,5 +122,69 @@ describe("invokePageToolForChat", () => {
     await expect(invokePageToolForChat(ENTRY.alias, {})).resolves.toMatchObject(
       { isError: true },
     );
+  });
+});
+
+describe("snapshotPageToolsForTurn", () => {
+  const SESSION = {
+    sessionId: "session-1",
+    status: "ready",
+    url: "https://shop.test/",
+    createdAt: 1,
+    expiresAt: 2,
+    hardExpiresAt: 3,
+    viewportTransport: { kind: "native-window" },
+    protocolVersion: 1,
+  } as ReturnType<typeof useWebmcpInspectorStore.getState>["session"];
+
+  const TOOL = {
+    toolKey: "https://shop.test::add_to_cart",
+    name: "add_to_cart",
+    origin: "https://shop.test",
+    fromSubframe: false,
+    registrationKind: "imperative",
+  } as ReturnType<typeof useWebmcpInspectorStore.getState>["tools"][number];
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useWebmcpInspectorStore.setState({
+      session: SESSION,
+      tools: [TOOL],
+      chatEnabled: true,
+    });
+  });
+
+  it("advertises the open page's tools when opted in", () => {
+    const entries = snapshotPageToolsForTurn();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      rawName: "add_to_cart",
+      origin: "https://shop.test",
+    });
+    expect(entries[0].alias).toMatch(/^page_[0-9a-f]{8}$/);
+  });
+
+  it("advertises nothing until someone opts in", () => {
+    useWebmcpInspectorStore.setState({ chatEnabled: false });
+    expect(snapshotPageToolsForTurn()).toEqual([]);
+  });
+
+  it("advertises nothing for a session that has closed", () => {
+    // The opt-in and the tool list both survive a close, so this is the only
+    // thing between a dead browser and a model being offered its tools.
+    useWebmcpInspectorStore.setState({
+      session: { ...SESSION!, status: "closed" },
+    });
+    expect(snapshotPageToolsForTurn()).toEqual([]);
+  });
+
+  it("advertises nothing when the page has registered no tools", () => {
+    useWebmcpInspectorStore.setState({ tools: [] });
+    expect(snapshotPageToolsForTurn()).toEqual([]);
+  });
+
+  it("advertises nothing when no session is open at all", () => {
+    useWebmcpInspectorStore.setState({ session: undefined });
+    expect(snapshotPageToolsForTurn()).toEqual([]);
   });
 });

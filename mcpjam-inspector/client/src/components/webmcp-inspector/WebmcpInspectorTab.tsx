@@ -106,7 +106,10 @@ export function WebmcpInspectorTab() {
     anchor.href = href;
     anchor.download = exportFilename(session?.sessionId, kind);
     anchor.click();
-    URL.revokeObjectURL(href);
+    // Deferred: Firefox starts the download on a later task, so revoking in
+    // this one invalidates the URL before it is read and the file never
+    // arrives — with no error to show for it.
+    setTimeout(() => URL.revokeObjectURL(href), 0);
   };
 
   return (
