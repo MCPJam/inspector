@@ -2354,6 +2354,14 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   get_plugin_version:
     "Plugin version detail is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
 
+  // Cloud Skills. Same shape and same decision as plugins: read-only
+  // inventory, shipped for the MCP catalog and the CLI, not registered on the
+  // in-turn agent brief until skill questions become a turn concern.
+  list_project_skills:
+    "Skill inventory is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+  get_project_skill:
+    "Skill detail (including the SKILL.md body) is a setup/administration read, not a turn concern yet; exposed on the MCP catalog and public API.",
+
   // Sandbox images and computers: minutes-long builds and billable compute.
   list_sandbox_images:
     "Image lifecycle is an operator surface, exposed via the CLI.",

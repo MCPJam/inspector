@@ -2025,6 +2025,8 @@ describe("operation catalog consistency", () => {
     get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
