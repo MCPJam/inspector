@@ -15,15 +15,12 @@ import {
 // covers that gap. What this test catches: a vendor that IS in the snapshot,
 // has no logo, and isn't listed here — add a logo, or add it here on purpose.
 const KNOWN_MONOGRAM_PREFIXES = new Set([
-  "amazon",
-  "arcee-ai",
-  "bytedance",
-  "cohere",
-  "inception",
-  "kwaipilot",
-  "nvidia",
+  "inclusionai",
+  "interfaze",
   "sakana",
-  "stepfun",
+  "thinkingmachines",
+  // Only a `Xiaomi MiMo` WORDMARK is available upstream — unreadable at the
+  // 12px the badge renders at, so the monogram is the better badge here.
   "xiaomi",
 ]);
 
@@ -44,6 +41,7 @@ describe("normalizeProviderKey", () => {
   it("collapses every raw/aliased prefix to one canonical key", () => {
     expect(normalizeProviderKey("x-ai")).toBe("xai");
     expect(normalizeProviderKey("xai")).toBe("xai");
+    expect(normalizeProviderKey("spacexai")).toBe("xai");
     expect(normalizeProviderKey("meta-llama")).toBe("meta");
     expect(normalizeProviderKey("meta")).toBe("meta");
     expect(normalizeProviderKey("mistralai")).toBe("mistral");
@@ -68,9 +66,15 @@ describe("getProviderDisplayName", () => {
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
     expect(getProviderDisplayName("x-ai")).toBe("xAI");
     expect(getProviderDisplayName("z-ai")).toBe("Zhipu AI");
+    expect(getProviderDisplayName("spacexai")).toBe("xAI");
     expect(getProviderDisplayName("custom:My Provider")).toBe("My Provider");
+    // Registered vendors keep their branded casing rather than the fallback.
+    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee AI");
+    expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");
     // Unknown catalog vendors → clean title-cased name, no code change needed.
-    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
-    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    expect(getProviderDisplayName("sakana")).toBe("Sakana");
+    expect(getProviderDisplayName("thinking-machines")).toBe(
+      "Thinking Machines"
+    );
   });
 });
