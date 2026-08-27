@@ -243,6 +243,8 @@ Current readiness checks:
 
 - `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+- `readiness-protocol-version-header-required` — fires when the server accepts a POST that omits `MCP-Protocol-Version`. The header is required by SEP-2243, but servers supporting pre-2025-06-18 clients may treat its absence as `2025-03-26`, so this is `MAY` advice.
+- `readiness-resource-error-echoes-uri` — fires when a resource-not-found error does not echo the requested URI in `error.data.uri`. SEP-2164 shows this in an example but does not state it as a MUST or SHOULD.
 
 ## CI reporting
 
