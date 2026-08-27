@@ -446,11 +446,26 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
    * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
-   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
-   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
+   * the scheduled-evals worker passes 'schedule', the GitHub-checks
+   * worker passes 'github_check', and the bench worker passes 'benchmark'.
+   * Server-internal on purpose: it is NOT on `RunEvalsRequestSchema`, so API
+   * callers cannot spoof run provenance.
    */
-  source?: "ui" | "api" | "schedule" | "github_check";
+  source?: "ui" | "api" | "schedule" | "github_check" | "benchmark";
+  /**
+   * Extra headers stamped on every per-step Convex request this run makes.
+   *
+   * The bench worker's channel for `x-mcpjam-benchmark-grant`: a benchmark
+   * cell's model calls are billed against the run's budget, and the grant is
+   * what tells `/stream` which run to charge. It rides the request headers
+   * rather than the run row because it is a short-lived credential — a run
+   * snapshot is member-readable and would make it forgeable.
+   *
+   * Passed by REFERENCE all the way to `processOneStep`, which reads it per
+   * step, so a caller holding the same object can rotate a credential inside
+   * it mid-run without restarting anything.
+   */
+  extraHeaders?: Record<string, string>;
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -1928,6 +1943,7 @@ export async function prepareEvalRun(
     ephemeralEnvironment,
     toolPolicy,
     importApprovals,
+    extraHeaders,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2488,6 +2504,8 @@ export async function prepareEvalRun(
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
+      // The SAME object, never a copy — see `extraHeaders` on the request type.
+      ...(extraHeaders ? { extraHeaders } : {}),
     });
   };
 

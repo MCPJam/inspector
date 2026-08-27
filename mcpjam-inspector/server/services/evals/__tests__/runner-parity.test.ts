@@ -317,6 +317,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     modelApiKeys?: Record<string, string>;
     /** Extra top-level test fields (e.g. `isNegativeTest`, `matchOptions`). */
     extra?: Record<string, unknown>;
+    /** Run-level headers stamped on every per-step backend request. */
+    extraHeaders?: Record<string, string>;
   }) {
     return runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
@@ -345,6 +347,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       convexAuthToken: "token",
       mcpClientManager: mcpClientManager as any,
       testCaseId: "case-1",
+      ...(args.extraHeaders ? { extraHeaders: args.extraHeaders } : {}),
     } as any);
   }
 
@@ -439,6 +442,35 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
       "convex"
     );
+  });
+
+  it("hosted-batch: run-level extraHeaders reach the backend request", async () => {
+    // The bench worker's `x-mcpjam-benchmark-grant` carrier, asserted at the
+    // far end of the chain it travels: run options → iteration params → step
+    // handlers → the engine → this fetch. Every hop is optional and silently
+    // droppable, and a grant that does not arrive means `/stream` bills the
+    // caller's own wallet instead of the benchmark's budget.
+    fetchMock.mockResolvedValue(backendStreamResponse());
+    await batchSuite({
+      model: HOSTED_MODEL,
+      promptTurns: PROMPT_ONLY,
+      extraHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+    });
+
+    const init = fetchMock.mock.calls[0][1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-mcpjam-benchmark-grant"]).toBe("grant-token");
+  });
+
+  it("hosted-batch: a run with no extraHeaders sends none", async () => {
+    fetchMock.mockResolvedValue(backendStreamResponse());
+    await batchSuite({ model: HOSTED_MODEL, promptTurns: PROMPT_ONLY });
+
+    const init = fetchMock.mock.calls[0][1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-mcpjam-benchmark-grant"]).toBeUndefined();
   });
 
   it("local-batch model-free pinned (setup failure: server not connected): convex payload + status", async () => {
