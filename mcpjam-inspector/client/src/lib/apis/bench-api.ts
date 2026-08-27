@@ -130,14 +130,87 @@ export interface BenchPreflight {
   toolSnapshotTruncated: boolean;
 }
 
-/** What one case may write, as the definition's pinned manifest declares it. */
+/**
+ * One case's declared side effects, exactly as the pinned manifest resolves
+ * them. `read_only` carries nothing else — the absence of the other fields IS
+ * the statement.
+ */
+export type BenchCaseSideEffects =
+  | { mode: "read_only" }
+  | {
+      mode: "test_write";
+      /** "creates a page, then deletes it" — the manifest's own words. */
+      summary: string;
+      allowedTools: string[];
+      createRules: Array<{
+        tool: string;
+        artifactNamePath: string;
+        /** Every artifact this case creates is named under this prefix. */
+        requiredPrefix: string;
+        createdIdResultPaths: string[];
+      }>;
+      mutationTargetPaths: string[];
+      cleanupSteps: Array<Record<string, unknown>>;
+    };
+
+/**
+ * The definition's pinned per-case metadata.
+ *
+ * The backend OMITS this rather than sending `{}` when a definition authors no
+ * per-case metadata, because "declares no side effects" and "declares an empty
+ * set of them" are different statements about what a run may do. Treat absence
+ * as unknown, never as read-only — see `benchWriteOperations`.
+ */
+export interface BenchWriteManifest {
+  suiteHash: string;
+  cases: Array<{
+    caseId: string;
+    icpSlugs?: string[];
+    goalSlugs?: string[];
+    sideEffects: BenchCaseSideEffects;
+  }>;
+}
+
+/** One write case, flattened for display on the consent screen. */
 export interface BenchWriteOperation {
-  caseId?: string;
-  toolName?: string;
-  /** "creates a page", "deletes the row it made" — the manifest's own words. */
-  summary?: string;
-  /** The prefix every artifact this case creates is named under. */
-  artifactNamePrefix?: string;
+  caseId: string;
+  summary: string;
+  allowedTools: string[];
+  /** The prefixes every artifact this case creates is named under. */
+  requiredPrefixes: string[];
+}
+
+/**
+ * The write cases a quote covers, for the consent screen.
+ *
+ * Returns `null` — NOT an empty list — when the quote says it writes but the
+ * manifest cannot be read. The caller must fail closed on that: an empty list
+ * renders as "this exam only reads", which is precisely the false reassurance
+ * that must never be shown about a run that writes into someone's tenant.
+ */
+export function benchWriteOperations(
+  quote: BenchQuote | null | undefined,
+): BenchWriteOperation[] | null {
+  if (!quote?.writesToTarget) return [];
+  const cases = quote.writeManifest?.cases;
+  if (!Array.isArray(cases)) return null;
+  const operations = cases.flatMap((entry) =>
+    entry?.sideEffects?.mode === "test_write"
+      ? [
+          {
+            caseId: entry.caseId,
+            summary: entry.sideEffects.summary,
+            allowedTools: entry.sideEffects.allowedTools ?? [],
+            requiredPrefixes: (entry.sideEffects.createRules ?? []).map(
+              (rule) => rule.requiredPrefix,
+            ),
+          },
+        ]
+      : [],
+  );
+  // A quote that writes but names no write case is a manifest we failed to
+  // understand, not a read-only exam.
+  return operations.length > 0 ? operations : null;
 }
 
 /**
@@ -156,11 +229,21 @@ export interface BenchEstimateBreakdown {
 
 /** The exam a quote priced, by the identity a rerun has to match. */
 export interface BenchDefinitionIdentity {
+  definitionId?: string;
   profileId?: string;
   version?: string;
+  kind?: string;
   definitionHash?: string;
   categorySlug?: string;
   taxonomyVersion?: string;
+  /**
+   * The hash of the write manifest being consented to. Nested HERE, inside
+   * `definition`, which is where the backend puts it — a top-level read finds
+   * nothing. Carried back with the run so a definition that gained a write
+   * case between quote and start cannot be admitted against consent given for
+   * a read-only exam.
+   */
+  consentManifestHash?: string;
 }
 
 /** How big the run is, in the units a visitor waits through. */
@@ -190,21 +273,28 @@ export interface BenchGuestTerms {
 export interface BenchQuote {
   quoteId?: string;
   definition?: BenchDefinitionIdentity;
-  estimate?: BenchEstimateBreakdown;
+  /** `estimateBreakdown` is the backend's name; there is no `estimate`. */
+  estimateBreakdown?: BenchEstimateBreakdown;
   /** The ceiling admission holds. Never the expected cost — the worst case. */
   quotedMaxMicros?: number;
   /** What the payer has to spend it from. `null` when the backend won't say. */
   availableMicros?: number | null;
   payerKind?: "org_credits" | "guest_subsidy";
   plan?: BenchRunPlan;
-  /** Absent or empty ⇒ this exam writes nothing. */
-  writeOperations?: BenchWriteOperation[];
   /**
-   * The hash of the write manifest being consented to. Sent back with the run
-   * so a definition that GAINED a write case between quote and start cannot be
-   * admitted against consent given for a read-only exam.
+   * Whether this exam writes to the target at all. THE authority on that
+   * question — derived by the backend from the definition's own cases, not
+   * inferred from whether a manifest happens to be present.
    */
-  consentManifestHash?: string;
+  writesToTarget?: boolean;
+  /**
+   * The pinned per-case manifest describing those writes. Omitted rather than
+   * emptied when the definition authors none, so its absence next to
+   * `writesToTarget: true` means "we could not read the manifest", not
+   * "nothing is written". Use `benchWriteOperations` rather than reading this
+   * directly.
+   */
+  writeManifest?: BenchWriteManifest;
   /** Epoch ms. Quotes are short-lived; past this one, re-quote. */
   expiresAt?: number;
   guest?: BenchGuestTerms;

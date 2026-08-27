@@ -24,9 +24,10 @@
 import { useMemo } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { AlertTriangle, Loader2, PencilLine } from "lucide-react";
-import type {
-  BenchEstimateBreakdown,
-  BenchQuote,
+import {
+  benchWriteOperations,
+  type BenchEstimateBreakdown,
+  type BenchQuote,
 } from "@/lib/apis/bench-api";
 
 /** Integer USD micros → the dollars a person reads. */
@@ -107,8 +108,14 @@ export function BenchQuoteScreen({
   onRequote?: () => void;
   error?: string | null;
 }) {
-  const writes = quote?.writeOperations ?? [];
-  const needsWriteConsent = writes.length > 0;
+  // `benchWriteOperations` returns null when the quote says it WRITES but the
+  // manifest could not be read. That is not the same as an empty list, and the
+  // difference is the whole safety property here: an empty list renders as
+  // "this exam only reads", which about a run that writes into someone's
+  // tenant is a false reassurance, not a missing detail.
+  const writes = benchWriteOperations(quote);
+  const writesUnreadable = writes === null;
+  const needsWriteConsent = Boolean(quote?.writesToTarget);
   const guest = quote?.guest;
   const isGuest = quote?.payerKind === "guest_subsidy";
 
@@ -132,7 +139,7 @@ export function BenchQuoteScreen({
     typeof guest?.runsRemainingToday === "number" &&
     guest.runsRemainingToday <= 0;
 
-  const blocked = definitionChanged || outOfGuestRuns;
+  const blocked = definitionChanged || outOfGuestRuns || writesUnreadable;
   const canStart =
     Boolean(quote) &&
     !loading &&
@@ -200,7 +207,9 @@ export function BenchQuoteScreen({
               <span className="text-sm font-semibold tabular-nums">{total}</span>
             ) : null}
           </div>
-          {quote?.estimate ? <EstimateRows estimate={quote.estimate} /> : null}
+          {quote?.estimateBreakdown ? (
+            <EstimateRows estimate={quote.estimateBreakdown} />
+          ) : null}
           <p className="text-[11px] text-muted-foreground">
             {/* The number held is the worst case, not the expected cost. */}
             A ceiling, not a bill — we hold this much and charge what the run
@@ -216,27 +225,27 @@ export function BenchQuoteScreen({
         </div>
       </div>
 
-      {needsWriteConsent ? (
+      {needsWriteConsent && !writesUnreadable ? (
         <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-[11px] font-medium">
             <PencilLine className="h-3.5 w-3.5" />
             This exam writes to your connector
           </div>
           <ul className="space-y-1">
-            {writes.map((operation, index) => (
+            {(writes ?? []).map((operation) => (
               <li
-                key={`${operation.caseId ?? operation.toolName ?? index}`}
+                key={operation.caseId}
                 className="text-[11px] text-muted-foreground"
               >
                 <span className="font-medium text-foreground">
-                  {operation.toolName ?? operation.caseId ?? "A case"}
+                  {operation.caseId}
                 </span>
                 {operation.summary ? ` — ${operation.summary}` : ""}
-                {operation.artifactNamePrefix ? (
-                  <span className="ml-1 font-mono text-[10px]">
-                    {operation.artifactNamePrefix}…
+                {operation.requiredPrefixes.map((prefix) => (
+                  <span key={prefix} className="ml-1 font-mono text-[10px]">
+                    {prefix}…
                   </span>
-                ) : null}
+                ))}
               </li>
             ))}
           </ul>
@@ -256,6 +265,12 @@ export function BenchQuoteScreen({
               I agree to these write operations against this connector.
             </span>
           </label>
+        </div>
+      ) : writesUnreadable ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-[11px] text-amber-500">
+          This exam writes to your connector, but we could not read the
+          manifest describing what it writes. Starting is blocked: consent to
+          operations we cannot show you would not be consent.
         </div>
       ) : (
         <p className="text-[11px] text-muted-foreground">
