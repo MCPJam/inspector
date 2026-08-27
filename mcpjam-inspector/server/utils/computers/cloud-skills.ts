@@ -69,6 +69,17 @@ const CODE_STATUS: Record<string, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  // The backend's beta gate (`convex/lib/featureGates.ts`) refuses every skill
+  // AUTHORING write — create/update/adopt/upload/attach/promote — when the
+  // `skills-enabled` flag is off; reads and deletes stay ungated. Without this
+  // entry the code fell through to the regex fallback below, which does not
+  // match "… is not currently available for your organization", so a clean
+  // actionable refusal rendered as an opaque 500 `Server Error`.
+  //
+  // 403 to match `routes/v1/convex-errors.ts`, which documents why FORBIDDEN
+  // and not FEATURE_NOT_SUPPORTED: the latter maps to 422 (malformed request),
+  // and this is a well-formed request the server declines to authorize.
+  FEATURE_UNAVAILABLE: 403,
 };
 
 /** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */

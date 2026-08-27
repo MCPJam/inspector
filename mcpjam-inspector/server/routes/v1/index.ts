@@ -28,6 +28,7 @@ import clients from "./clients.js";
 import harness from "./harness.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
+import skills from "./skills.js";
 import journeys from "./journeys.js";
 import personas from "./personas.js";
 import swarms from "./swarms.js";
@@ -125,6 +126,12 @@ v1.route("/", environments);
 // (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are member-gated
 // anyway, and there is no share-link flow that needs plugin inventory.
 v1.route("/", plugins);
+// Cloud Skills — READ-ONLY (list + detail). Authoring stays on `/api/web` and
+// stays behind the backend's `skills-enabled` gate; these reads are ungated,
+// matching the backend where reads and deletes are never gated. Guest-DENIED
+// by default (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are
+// member-gated, and a share-link visitor has no business enumerating skills.
+v1.route("/", skills);
 // Journeys + journey runs — the public API for Swarms. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.

@@ -347,6 +347,7 @@ export {
   SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
+  declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,

@@ -5,6 +5,10 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import { McpServer } from "@modelcontextprotocol/server";
+import {
+  SKILLS_EXTENSION_CAPABILITY,
+  registerSkillsSurface,
+} from "./skills-surface.js";
 import { z } from "zod";
 import { normalizeCliError, usageError } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
@@ -320,10 +324,21 @@ export function createMcpJamMcpServer(
       version: options.version,
     },
     {
-      capabilities: { tools: {} },
+      // `extensions` rides alongside `tools` rather than replacing it: the SDK
+      // merges declared capabilities with the ones `registerTool` /
+      // `registerResource` add.
+      capabilities: {
+        tools: {},
+        extensions: SKILLS_EXTENSION_CAPABILITY,
+      },
       instructions: SERVER_INSTRUCTIONS,
     },
   );
+
+  // Serve the skills that teach THIS surface — `mcp-inspector` interprets the
+  // probe/doctor/OAuth output of the tools registered below, so an agent gets
+  // the interpretation rules in the same connection as the tools.
+  registerSkillsSurface(server);
 
   server.registerTool(
     "connect_server",

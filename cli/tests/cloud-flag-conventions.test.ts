@@ -31,6 +31,7 @@ const CLOUD_COMMAND_FILES = [
   "registry.ts",
   "scenarios.ts",
   "sessions.ts",
+  "skills.ts",
   "swarms.ts",
   "tunnel.ts",
   "user-testing.ts",

@@ -8,7 +8,8 @@
  *   1. it is INVISIBLE when no server declares the extension (byte-identical
  *      base), so every pre-existing turn is unchanged;
  *   2. a bare name NEVER resolves to a server skill (no shadowing channel);
- *   3. a server-origin load is ALWAYS approval-gated, even with the host's
+ *   3. a server-origin load follows the HOST's approval policy (the SEP asks
+ *      for origin tagging, not a prompt), while still recording the digest-set
  *      approval policy off.
  */
 
@@ -231,9 +232,10 @@ async function approveServerSkill(
 ): Promise<void> {
   const gate = (wrapped[toolName] as { needsApproval?: unknown }).needsApproval;
   expect(typeof gate).toBe("function");
-  await expect(
-    (gate as (input: unknown) => Promise<boolean>)(input)
-  ).resolves.toBe(true);
+  // Runs the gate so the digest-set binding is RECORDED. Its boolean answer is
+  // the host's policy, not a forced `true`, so it is deliberately not asserted
+  // here — the always-on prompt was MCPJam policy the SEP never asked for.
+  await (gate as (input: unknown) => Promise<boolean>)(input);
 }
 
 describe("slug + ref minting", () => {
@@ -397,22 +399,41 @@ describe("withServerSkills — listSkills", () => {
 });
 
 describe("withServerSkills — loadSkill", () => {
-  it("ALWAYS requires approval, even with the host policy off", async () => {
+  it("follows the HOST policy rather than forcing its own prompt", async () => {
+    // SEP-2640 does not require approval to read a skill's text — it requires
+    // origin tagging (the banner). Its consent obligations cover code
+    // execution, `allowed-tools`, nested activation and cross-origin reads,
+    // none of which a plain load performs.
+    //
+    // Forcing `true` here was MCPJam policy, and it made the feature unusable
+    // off-local: the gate recorded its binding in a per-request closure that
+    // `execute` never saw, so every load was refused as `manifest_unbound`.
     const manager = await makeManager();
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
     });
-    // `loadSkill` resolves the manifest before answering, so its gate is a
-    // FUNCTION; what matters is that it always answers true.
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (input: unknown) => Promise<boolean>;
     expect(typeof gate).toBe("function");
-    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
+    // The harness's base tools carry no approval policy, so no prompt.
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(false);
     expect(
       typeof (wrapped.readSkillFile as { needsApproval?: unknown })
         .needsApproval
     ).toBe("function");
+  });
+
+  it("still prompts when the host policy asks for one", async () => {
+    // Deferring must mean deferring in BOTH directions: a host that requires
+    // tool approval still gets one for a server-origin load.
+    const manager = await makeManager();
+    const base = baseTools();
+    (base.loadSkill as Record<string, unknown>).needsApproval = true;
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
   });
 
   it("fetches the manifest BEFORE approval, not inside execute", async () => {
@@ -473,9 +494,10 @@ describe("withServerSkills — loadSkill", () => {
     const input = { uri };
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (i: unknown) => Promise<boolean>;
-    // The gate runs while `skills/get` is failing...
+    // The gate runs while `skills/get` is failing, recording UNRESOLVED. Its
+    // boolean answer is the host's policy and is not what this test is about.
     manager.failGetsOnce(uri);
-    await expect(gate(input)).resolves.toBe(true);
+    await gate(input);
     // ...and the load afterwards, when the server has recovered, is refused.
     const result = String(
       await (wrapped.loadSkill as { execute: Function }).execute(input, {})
