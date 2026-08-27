@@ -19,6 +19,8 @@ function frozen(matrix: McpAppsCapabilities): McpAppsCapabilities {
   if (Array.isArray(matrix.availableDisplayModes)) {
     Object.freeze(matrix.availableDisplayModes);
   }
+  if (matrix.cspConnectDomains) Object.freeze(matrix.cspConnectDomains);
+  if (matrix.cspResourceDomains) Object.freeze(matrix.cspResourceDomains);
   return Object.freeze(matrix);
 }
 
@@ -45,10 +47,51 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** ChatGPT — full surface minus downloadFile. */
+/** Claude web — full bridge surface with probe-captured CSP behavior. */
+export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
+  ...MCP_APPS_FULL,
+  availableDisplayModes: ["inline", "fullscreen"],
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
+  requestTeardown: false,
+});
+
+/**
+ * ChatGPT — full bridge surface with probe-captured CSP behavior.
+ *
+ * `connect-src` is ONE directive, so its three subtypes cannot diverge. The
+ * 2026-08-19 probe declared `wss://ws.postman-echo.com` and it connected while
+ * the undeclared `wss://echo.websocket.org` took a real connect-src violation
+ * — no host baseline carries a Postman echo endpoint, so ChatGPT honors the
+ * declared connect list. The fetch/xhr canary that passed (`unpkg.com`) is in
+ * ChatGPT's own baseline allowlist, which the catalog row carries as
+ * `cspDirectives`; it is not evidence the declaration was ignored.
+ *
+ * The 2026-08-23 paired probe (captured 2026-08-24Z) declared
+ * `fastly.jsdelivr.net`, outside that baseline, and every declared resource
+ * subtype loaded in the treatment fixture, so the resource declaration is
+ * honored.
+ */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
   downloadFile: false,
+  requestTeardown: false,
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -65,11 +108,24 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   requestTeardown: false,
 });
 
-/** Cursor 3.4.17 probe — full minus updateModelContext + message. */
+/** Cursor 3.14.27 probe — full minus updateModelContext + message. */
 export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
+  availableDisplayModes: ["inline"],
   updateModelContext: false,
   message: false,
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
+  // Both explicit false per the catalog row this matrix mirrors. downloadFile
+  // was flipped 2026-08-26: it is absent from Cursor's hostCapabilities.
+  downloadFile: false,
+  requestTeardown: false,
 });
 
 /** Goose Desktop 1.38.0 capture — only openLinks (+ toolInfo) advertised. */
@@ -89,7 +145,15 @@ export const MCP_APPS_GOOSE: McpAppsCapabilities = frozen({
   sandboxPermissions: false,
   cspFrameDomains: false,
   cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
+  cspConnectDomains: { fetch: false, xhr: false, websocket: false },
+  cspResourceDomains: {
+    script: false,
+    stylesheet: false,
+    image: false,
+    font: false,
+    media: false,
+  },
+  resourcePrefersBorder: true,
   downloadFile: false,
   requestTeardown: false,
   widgetDisplayModeRequests: "accept",

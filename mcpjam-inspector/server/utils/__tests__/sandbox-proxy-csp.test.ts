@@ -51,14 +51,22 @@ function extract(name: string): string {
 const proxyBuildCSP = new Function(
   "csp",
   "cspDirectives",
+  "cspSubtypePolicy",
   `${extract("sanitizeDomain")}\n${extract(
     "buildCSP"
-  )}\nreturn buildCSP(csp, cspDirectives);`
-) as (csp: unknown, cspDirectives?: Record<string, string[]>) => string;
+  )}\nreturn buildCSP(csp, cspDirectives, cspSubtypePolicy);`
+) as (
+  csp: unknown,
+  cspDirectives?: Record<string, string[]>,
+  cspSubtypePolicy?: Record<string, unknown>
+) => string;
 
 // The proxy's widget-declared branch reads camelCase domain arrays; map the
 // SDK's snake_case WidgetCspMeta onto it (no base-uri in WidgetCspMeta).
-function proxyWidgetCsp(meta: WidgetCspMeta): string {
+function proxyWidgetCsp(
+  meta: WidgetCspMeta,
+  cspSubtypePolicy?: Parameters<typeof buildSandboxProxyWidgetCsp>[1]
+): string {
   return proxyBuildCSP(
     {
       connectDomains: meta.connect_domains ?? [],
@@ -66,7 +74,8 @@ function proxyWidgetCsp(meta: WidgetCspMeta): string {
       frameDomains: meta.frame_domains ?? [],
       baseUriDomains: [],
     },
-    undefined
+    undefined,
+    cspSubtypePolicy
   );
 }
 
@@ -148,5 +157,25 @@ describe("buildSandboxProxyWidgetCsp — parity with sandbox-proxy.html", () => 
     // data:/blob: — but nothing external loads.
     expect(csp).toContain("script-src 'unsafe-inline' data: blob:");
     expect(csp).toContain("img-src data: blob:");
+  });
+
+  it("matches subtype policy byte-for-byte", () => {
+    const meta = {
+      connect_domains: ["https://api.example.com"],
+      resource_domains: ["https://cdn.example.com"],
+    };
+    const policy = {
+      cspConnectDomains: { fetch: false, xhr: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: true,
+        image: false,
+        font: true,
+        media: false,
+      },
+    };
+    expect(buildSandboxProxyWidgetCsp(meta, policy)).toBe(
+      proxyWidgetCsp(meta, policy)
+    );
   });
 });

@@ -26,6 +26,284 @@ export {
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
+/**
+ * Model-backed observations — the RENDERING and STATUS surface only.
+ *
+ * A browser needs to render an observation, badge its confidence, and branch
+ * on `billing_limit_reached` to offer a top-up. It has no business VALIDATING
+ * provider output or MAPPING an envelope into findings: both happen where the
+ * run is graded, and a second implementation in the client would eventually
+ * disagree with the first about what a model was allowed to say.
+ *
+ * So the constants, the reason union and the result types cross; the parser
+ * and the mappers do not.
+ */
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationReason,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+/**
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
+ * ("that apps result graded a different server") without holding the adapters
+ * themselves — those read raw tool `_meta` a browser has no business seeing.
+ */
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
+export {
+  CLAUDE_OBSERVATION_IDS,
+  CLAUDE_OBSERVATION_KINDS,
+  CLAUDE_OBSERVATION_SCHEMA_VERSION,
+} from "./claude-readiness/observations.js";
+export type {
+  ClaudeExperienceObservations,
+  ClaudeObservationId,
+  ClaudeObservationKind,
+  ClaudeObservationState,
+} from "./claude-readiness/observations.js";
+
+export {
+  OPENAI_OBSERVATION_IDS,
+  OPENAI_OBSERVATION_KINDS,
+  OPENAI_OBSERVATION_SCHEMA_VERSION,
+} from "./openai-readiness/observations.js";
+export type {
+  OpenAIExperienceObservations,
+  OpenAIObservationId,
+  OpenAIObservationKind,
+  OpenAIObservationState,
+} from "./openai-readiness/observations.js";
+
+/**
+ * Claude directory readiness — the RENDERING surface only.
+ *
+ * Named rather than `export *`, and narrower than the readiness barrel, for
+ * two reasons. A wildcard would make any symbol added to
+ * `claude-readiness/index.ts` public browser API with no change to this file
+ * and no reviewer looking at it. And a client renders lanes, coverage and
+ * badges; it does not RUN checks, so the check runners and their evidence
+ * types have no business in a browser bundle even though they are pure enough
+ * to survive one.
+ */
+export {
+  CLAUDE_EVIDENCE_PROVENANCE,
+  CLAUDE_FINDING_CLASSES,
+  CLAUDE_INTRUSIVENESS_LEVELS,
+  CLAUDE_READINESS_ENGINE_VERSION,
+  CLAUDE_READINESS_LANES,
+  CLAUDE_REQUIRED_LANES,
+  CLAUDE_RUNNER_CAPABILITIES,
+  decideLaneStatus,
+  isDispositiveClaudeFinding,
+  rollUpLaneStatus,
+  summarizeLaneCoverage,
+} from "./claude-readiness/types.js";
+export type {
+  ClaudeCapabilityBadge,
+  ClaudeEvidenceProvenance,
+  ClaudeFindingClass,
+  ClaudeFindingStatus,
+  ClaudeIntrusiveness,
+  ClaudeLaneCoverage,
+  ClaudeLaneStatus,
+  ClaudeReadinessAuthMode,
+  ClaudeReadinessFinding,
+  ClaudeReadinessLane,
+  ClaudeReadinessLaneResult,
+  ClaudeReadinessResult,
+  ClaudeReadinessRunContext,
+  ClaudeRunnerCapability,
+} from "./claude-readiness/types.js";
+
+// The policy corpus, so a surface can say WHICH revision a grade was made
+// against — and whether the corpus was ever snapshotted at all.
+export {
+  CLAUDE_DOCS_BASE_URL,
+  CLAUDE_POLICY_MANIFEST,
+  CLAUDE_POLICY_PAGES,
+  CLAUDE_POLICY_SNAPSHOT_DATE,
+  claudePolicySource,
+  isPolicyCorpusVerified,
+} from "./claude-readiness/manifest.js";
+export type {
+  ClaudePolicyPage,
+  ClaudePolicySourceEntry,
+  ClaudePolicySourceRef,
+} from "./claude-readiness/manifest.js";
+
+// Claude's own constants, and the submission form's shape — a client
+// validating that form before it is submitted needs both.
+export {
+  CLAUDE_APP_CONTENT_DOMAIN_SUFFIX,
+  CLAUDE_APP_DESIGN_BUDGETS,
+  CLAUDE_APP_HTML_MIME,
+  CLAUDE_CALLBACK_URLS,
+  CLAUDE_HOST_PROFILE,
+  CLAUDE_LATENCY_BUDGETS,
+  CLAUDE_SUBMISSION_LIMITS,
+} from "./claude-readiness/profile.js";
+export {
+  CLAUDE_ATTESTATIONS,
+  CLAUDE_DATA_HANDLING_MODES,
+  CLAUDE_DECLARED_AUTH_MODES,
+  claudeSubmissionProfileSchema,
+  parseClaudeSubmissionProfile,
+} from "./claude-readiness/submission-profile.js";
+export type {
+  ClaudeAttestation,
+  ClaudeDataHandlingMode,
+  ClaudeDeclaredAuthMode,
+  ClaudeSubmissionProfile,
+  ClaudeSubmissionProfileParse,
+} from "./claude-readiness/submission-profile.js";
+
+/**
+ * OpenAI plugin-directory readiness — the RENDERING surface only.
+ *
+ * Named rather than `export *`, and narrower than the readiness barrel, for the
+ * same two reasons as the Claude block above. A wildcard would make any symbol
+ * added to `openai-readiness/index.ts` public browser API with no change to
+ * this file and no reviewer looking at it. And a client renders lanes, stages
+ * and coverage; it does not RUN checks, so the check runners and the evidence
+ * gatherer have no business in a browser bundle.
+ *
+ * The package PRIMITIVES are the exception, and deliberately so: the inspector
+ * validates a dropped package in the page, before anything is uploaded, and
+ * every one of them is pure computation over bytes.
+ */
+export {
+  OPENAI_HEADLINE_STAGE,
+  OPENAI_READINESS_ENGINE_VERSION,
+  OPENAI_READINESS_INPUTS,
+  OPENAI_READINESS_LANES,
+  OPENAI_READINESS_STAGES,
+  OPENAI_RUNNER_CAPABILITIES,
+  OPENAI_STAGE_LANES,
+  OPENAI_SUBMISSION_MODES,
+  OPENAI_SUBMISSION_MODE_SHAPES,
+  isLaneApplicableInMode,
+  isOpenAIReadinessResult,
+  stageLanesFor,
+} from "./openai-readiness/types.js";
+export type {
+  OpenAICapabilityBadge,
+  OpenAILaneCoverage,
+  OpenAILaneStatus,
+  OpenAIReadinessFinding,
+  OpenAIReadinessLane,
+  OpenAIReadinessLaneResult,
+  OpenAIReadinessResult,
+  OpenAIReadinessRunContext,
+  OpenAIReadinessStage,
+  OpenAIReadinessStageResult,
+  OpenAIRunnerCapability,
+  OpenAISubmissionMode,
+} from "./openai-readiness/types.js";
+
+export {
+  OPENAI_POLICY_MANIFEST,
+  OPENAI_POLICY_PAGES,
+  OPENAI_POLICY_SNAPSHOT_DATE,
+  isOpenAIPolicyCorpusVerified,
+  openaiPolicySource,
+} from "./openai-readiness/manifest.js";
+export type {
+  OpenAIPolicyPage,
+  OpenAIPolicySourceEntry,
+  OpenAIPolicySourceRef,
+} from "./openai-readiness/manifest.js";
+
+export {
+  OPENAI_ARCHIVE_LIMITS,
+  OPENAI_BRAND_COLOR_CONTRAST,
+  OPENAI_FIELD_LIMITS,
+  OPENAI_HOST_PROFILE,
+  OPENAI_IMAGE_CONSTRAINTS,
+  OPENAI_LISTING_CATEGORIES,
+  OPENAI_MCP_SKILL_LIMITS,
+} from "./openai-readiness/profile.js";
+export type { OpenAIListingCategory } from "./openai-readiness/profile.js";
+
+export {
+  OPENAI_PORTAL_ERRORS,
+  OPENAI_PORTAL_ERRORS_BY_ID,
+  OPENAI_PORTAL_ERROR_CATEGORIES,
+  groupPortalIssues,
+  hasBlockingPortalIssue,
+} from "./openai-readiness/portal-errors.js";
+export type {
+  OpenAIPortalErrorCategory,
+  OpenAIPortalErrorDefinition,
+  OpenAIPortalIssue,
+} from "./openai-readiness/portal-errors.js";
+
+export {
+  OPENAI_ATTESTATIONS,
+  OPENAI_DATA_TYPES,
+  openaiSubmissionProfileSchema,
+  parseOpenAISubmissionProfile,
+  summarizeTestCases,
+} from "./openai-readiness/submission-profile.js";
+export type {
+  OpenAIAttestation,
+  OpenAIDataType,
+  OpenAISubmissionProfile,
+  OpenAISubmissionProfileParse,
+} from "./openai-readiness/submission-profile.js";
+
+export {
+  checkBrandColor,
+  parseHexColor,
+} from "./openai-readiness/package/color.js";
+export type { BrandColorCheck } from "./openai-readiness/package/color.js";
+export {
+  readImageDimensions,
+  sniffImageMimeType,
+} from "./openai-readiness/package/image-dimensions.js";
+export type {
+  ImageDimensions,
+  ImageDimensionsResult,
+} from "./openai-readiness/package/image-dimensions.js";
+export {
+  findUnsupportedCharacters,
+  hasSurroundingWhitespace,
+  isSupportedText,
+} from "./openai-readiness/package/supported-text.js";
+export type { UnsupportedCharacter } from "./openai-readiness/package/supported-text.js";
+export { parseOpenAIAgentMetadata } from "./openai-readiness/package/openai-agent-metadata.js";
+export type {
+  OpenAIAgentMetadata,
+  OpenAIAgentMetadataIssue,
+  OpenAIAgentMetadataParse,
+} from "./openai-readiness/package/openai-agent-metadata.js";
+export { readOpenAIPluginPackage } from "./openai-readiness/package/reader.js";
+export type {
+  OpenAIArchiveObservations,
+  OpenAIPluginPackageEvidence,
+} from "./openai-readiness/package/reader.js";
+
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
  * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
@@ -112,6 +390,13 @@ export {
   registerClient,
   selectResourceURL,
   startAuthorization,
+  // The `refresh_token` grant, already used internally by `auth()`. Exported so
+  // a caller doing a non-interactive refresh reuses it — same client-
+  // authentication selection, same resource handling, and it already preserves
+  // the caller's refresh token when the authorization server omits one — rather
+  // than hand-rolling a provider and a second `fetchToken` call that have to
+  // re-derive all of it.
+  refreshAuthorization,
 } from "./oauth/browser-auth.js";
 export {
   canonicalizeResourceUrl,
@@ -241,6 +526,17 @@ export {
   type InsufficientScopeChallenge,
   type StepUpAuthMode,
   type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
+// The unauthenticated probe's acceptance gate. Exported so the debugger UI
+// decides "is this exchange an expected challenge?" from the same rule the flow
+// advances on, rather than re-testing `status === 401` and painting an accepted
+// 403 as a failure.
+export {
+  classifyUnauthenticatedProbe,
+  hasBearerChallenge,
+  isUnauthenticatedProbeChallenge,
+  UNAUTHENTICATED_PROBE_STEP,
+  type UnauthenticatedProbeOutcome,
 } from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -450,11 +746,37 @@ export {
   scoreFromProtocolResult,
   scoreFromTasksResult,
 } from "./conformance-score.js";
+export { toConformanceReport } from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportGroup,
+} from "./conformance-reporting.js";
 export type {
   ConformanceAdvisoryTier,
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from. Pure data, so it
+// ships from the browser entry alongside the score itself.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -473,6 +795,18 @@ export {
   TASKS_CHECK_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
 
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
@@ -687,3 +1021,4 @@ export type {
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
+export { modelRejectsTemperature } from "./model-sampling-support.js";

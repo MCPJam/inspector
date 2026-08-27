@@ -10,6 +10,7 @@ import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
+import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -144,8 +145,15 @@ import {
   applyHostedPartition,
   mountHostedOpenRoutes,
 } from "./middleware/hosted-partition";
+import {
+  applySandboxHostPartition,
+  assertSandboxIsolation,
+} from "./middleware/sandbox-host-partition";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
+import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
+import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
 import surfaceLinkRoutes from "./routes/surface-link/index";
@@ -283,6 +291,9 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+// One line, after the env is loaded: which grading-engine mode this process
+// could reach. Mirror of the call in server/app.ts.
+logGradingEngineModeOnce();
 
 // Immediately after the env load and before anything that can throw: the init
 // reads DO_NOT_TRACK / ENVIRONMENT / VITE_MCPJAM_HOSTED_MODE, which only exist
@@ -401,7 +412,8 @@ app.use("*", async (c, next) => {
 });
 
 // ===== SECURITY MIDDLEWARE STACK =====
-// Order matters: headers -> origin validation -> strict partition -> session auth
+// Order matters: headers -> origin validation -> host partition -> strict
+// partition -> session auth
 
 // 1. Security headers (always applied)
 app.use("*", securityHeadersMiddleware);
@@ -409,14 +421,24 @@ app.use("*", securityHeadersMiddleware);
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
-// 3. Hosted mode partition blocks legacy API families (health + public
+// 3. Sandbox-host partition: a DNS name that exists to hold untrusted widget
+// content serves the sandbox proxy and /health, and 404s the rest — no app
+// shell, no assets, no API. Mounted here rather than in the production static
+// block below because the API routers mount before that block.
+applySandboxHostPartition(app);
+
+// 4. Hosted mode partition blocks legacy API families (health + public
 // catalog exempt). Shared with server/app.ts via applyHostedPartition — keep
 // the allowlist in middleware/hosted-partition.ts, not inline here.
 if (HOSTED_MODE) {
   applyHostedPartition(app);
+  // Whether widget content actually has an origin of its own is a fact about
+  // the DEPLOY, not about any page: only this process knows which hostnames it
+  // was supposed to answer as. Loud, and deliberately not fatal.
+  assertSandboxIsolation();
 }
 
-// 4. Session authentication (blocks unauthorized API requests)
+// 5. Session authentication (blocks unauthorized API requests)
 app.use("*", sessionAuthMiddleware);
 
 // ===== END SECURITY MIDDLEWARE =====
@@ -469,6 +491,16 @@ app.route("/api/web/xaa", createXaaWebRouter());
 // /api/web so it never inherits that family's bearer middleware.
 // Mirror of the mount in server/app.ts.
 app.route("/api/internal/server-connections", internalServerConnections);
+// Backend → inspector doorbell for a finished judge. Same shape and the same
+// service-token gate; the route resolves the grading-engine mode itself and
+// no-ops at `off`/`shadow`, because the backend rings this on every judge save
+// without consulting the flag. Mirror of the mount in server/app.ts.
+app.route("/api/internal/evals", internalEvalJudgeCompletions);
+// Backend → inspector doorbell for a chat session whose chain inputs moved.
+// Same service-token gate and the same body-carries-no-authority rule as the
+// judge doorbell above — the ring is a wake-up, and the pass claims from the
+// backend's own queue rather than from anything the caller named.
+app.route("/api/internal/chat-stage", internalChatStageDerivations);
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
@@ -533,7 +565,7 @@ if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerSelfFetch((request) => app.fetch(request));
 
-// CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+// CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
 // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
 // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
 // set. Mirror of the mount in server/app.ts::createHonoApp — both
@@ -826,6 +858,7 @@ const server = serve({
 // class the 08-11 Cloudflare 502 fell into. Must be attached before traffic
 // arrives; it also owns the `clientError` response (see the module).
 attachSocketDiagnostics(server);
+startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 

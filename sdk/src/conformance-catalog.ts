@@ -136,6 +136,21 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Cacheable Result Hints",
     description: "Cacheable modern results carry ttlMs and cacheScope.",
   },
+  "modern-cache-hint-coverage": {
+    title: "Cache Hints On Every Cacheable Operation",
+    description:
+      "All six operations the caching utility names — server/discover, tools/list, prompts/list, resources/list, resources/templates/list, resources/read — carry ttlMs and cacheScope on a complete result.",
+  },
+  "modern-cache-hint-values-valid": {
+    title: "Cache Hint Values Valid",
+    description:
+      'ttlMs is an integer >= 0 and cacheScope is exactly "public" or "private".',
+  },
+  "modern-cache-scope-stable-across-pages": {
+    title: "Cache Scope Stable Across Pages",
+    description:
+      "Every page of a paginated list response carries the same cacheScope as the first.",
+  },
   "modern-protocol-version-header-mismatch": {
     title: "Protocol Version Header Mismatch",
     description:
@@ -156,6 +171,16 @@ export const PROTOCOL_CHECK_CATALOG = {
     description:
       "An unsupported envelope protocol version is rejected with JSON-RPC -32022 naming the supported versions.",
   },
+  "modern-missing-method-header-rejected": {
+    title: "Missing Mcp-Method Header Rejected",
+    description:
+      "A request that omits the required Mcp-Method header is rejected with HTTP 400 and JSON-RPC -32020.",
+  },
+  "modern-header-names-case-insensitive": {
+    title: "Header Names Are Case-Insensitive",
+    description:
+      "The SEP-2243 standard headers are accepted under any case, as RFC 9110 field names require.",
+  },
   "modern-undeclared-capability-error": {
     title: "Undeclared Client Capability",
     description:
@@ -174,6 +199,16 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Resource Not Found",
     description:
       "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+  },
+  "modern-resource-read-no-empty-contents": {
+    title: "No Empty Contents For A Missing Resource",
+    description:
+      "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
+  },
+  "modern-tool-output-schema-conformant": {
+    title: "Tool Output Schema Honored",
+    description:
+      "For every operator-supplied fixture call whose tool declares an outputSchema, the result's structuredContent validates against that schema.",
   },
   "modern-logs-require-log-level": {
     title: "Logs Require A Log Level",
@@ -194,6 +229,11 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Subscription Graceful Close",
     description:
       "Closing a subscription gracefully returns the subscriptions/listen completion result.",
+  },
+  "wire-schema-valid": {
+    title: "Wire Schema Valid",
+    description:
+      "Every JSON-RPC message the run observed validates against the protocol revision's published JSON Schema, with responses graded against their method's result definition.",
   },
 } as const satisfies Record<MCPCheckId, ConformanceCheckInfo>;
 
@@ -256,12 +296,12 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-undeclared-creation-refused": {
     title: "Undeclared Task Creation Refused",
     description:
-      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32003.",
+      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32021.",
   },
   "tasks-undeclared-capability-rejected": {
     title: "Undeclared Capability Rejected",
     description:
-      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32003 (Missing Required Client Capability).",
+      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32021 (Missing Required Client Capability).",
   },
   "tasks-ttl-shape": {
     title: "TTL And Poll Interval Shapes",
@@ -277,5 +317,35 @@ export const TASKS_CHECK_CATALOG = {
     title: "Mcp-Name Task Routing",
     description:
       "Over HTTP, tasks/get is sent with Mcp-Name set to the task id (captured off the fetch seam) and accepted by the server.",
+  },
+  "tasks-invalid-task-id-rejected": {
+    title: "Invalid Task Id Rejected",
+    description:
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+  },
+  "tasks-status-payload-shape": {
+    title: "Status Payload Shape",
+    description:
+      "Each observed task status carries the payload its status requires: `result` on completed, `error` on failed, `inputRequests` on input_required.",
+  },
+  "tasks-cancel-ack-shape": {
+    title: "Cancel Acknowledged With An Empty Result",
+    description:
+      "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
+  },
+  "tasks-input-required-update-completes": {
+    title: "Input Required Round Trip Completes",
+    description:
+      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+  },
+  "tasks-ttl-integer-shape": {
+    title: "TTL And Poll Interval Are Integers",
+    description:
+      "ttlMs and pollIntervalMs are integer milliseconds, as the extension's Task interface states.",
+  },
+  "tasks-undeclared-capability-names-requirements": {
+    title: "Undeclared Capability Error Names What Is Missing",
+    description:
+      "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
   },
 } as const satisfies Record<MCPTasksCheckId, ConformanceCheckInfo>;

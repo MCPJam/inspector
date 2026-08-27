@@ -20,9 +20,81 @@ import { isComputersDataPlaneConfigured } from "../computers/control-plane-clien
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
-import { getHarnessAdapter, type HarnessId } from "./registry.js";
+import {
+  getHarnessAdapter,
+  type HarnessId,
+  type HarnessRuntimeAdapter,
+} from "./registry.js";
 
-export type HarnessAvailability = { ok: true } | { ok: false; reason: string };
+/**
+ * The approval half of this pre-flight, as a value both gate sites share.
+ *
+ * `runHarnessTurn` has to re-assert exactly these rules, because the eval,
+ * synthetic and unified paths never call {@link checkHarnessRuntimeAvailable} —
+ * and an approval rule that holds on the chat route but not on an eval run is
+ * the silent bypass. Two hand-copied conditions would drift on the next
+ * capability added, so the conditions live HERE and the turn calls this.
+ *
+ * Returns the refusal copy, or `undefined` when the combination is sound.
+ *
+ * Note the MCP arm is gated on the surface the adapter's MCP tools ACTUALLY run
+ * on: `native` delivery runs them in-sandbox (`supportsMcpToolApproval`),
+ * `host-executed` runs them on MCPJam's server as ordinary host tools
+ * (`supportsHostExecutedToolApproval`). Reading the wrong one is the bypass this
+ * function exists to make unrepresentable — Codex's MCP tools are host-executed,
+ * so `supportsMcpToolApproval` says nothing about them.
+ */
+export function harnessToolApprovalRefusalReason(args: {
+  adapter: HarnessRuntimeAdapter;
+  requireToolApproval: boolean;
+  /** Whether the host has any selected MCP servers. Selects whether the
+   *  MCP-surface arm applies; the native-surface arm applies regardless. */
+  hasSelectedMcpServers: boolean;
+}): string | undefined {
+  if (!args.requireToolApproval) return undefined;
+  const name = args.adapter.displayName;
+  // The runtime runs its own native tools in-sandbox. If it can't pause on
+  // those, approval is unsound for the whole turn — servers or no servers.
+  if (!args.adapter.supportsNativeToolApproval) {
+    return (
+      `the ${name} harness doesn't support interactive tool approval yet — ` +
+      "turn off requireToolApproval on this host"
+    );
+  }
+  const mcpToolApproval =
+    args.adapter.mcpDelivery === "native"
+      ? args.adapter.supportsMcpToolApproval
+      : args.adapter.supportsHostExecutedToolApproval;
+  if (args.hasSelectedMcpServers && !mcpToolApproval) {
+    return (
+      `the ${name} harness can't pause for approval of MCP-server tools — ` +
+      "turn off requireToolApproval on this host"
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Why a harness was refused, as a value rather than a sentence.
+ *
+ * `reason` is the human copy and changes freely with the wording; `kind` is
+ * what code branches on. Callers need the distinction: eval admission runs
+ * this gate twice — once from the host config alone, before the run's per-case
+ * models are known — and has to tell a MODEL refusal (re-decide it later, with
+ * the real models) from a host-level one (final either way). Matching that on
+ * the message text made a copy edit silently change admission behaviour.
+ */
+export type HarnessUnavailableKind =
+  | "broker-disabled"
+  | "enterprise-policy"
+  | "computers-unconfigured"
+  | "tool-approval"
+  | "model-not-hosted"
+  | "model-unsupported";
+
+export type HarnessAvailability =
+  | { ok: true }
+  | { ok: false; kind: HarnessUnavailableKind; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
   /** The harness this host runs — selects the capability set. */
@@ -30,8 +102,9 @@ export function checkHarnessRuntimeAvailable(args: {
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
-  /** Whether the host has any selected MCP servers. Rejected for a harness that
-   *  can't deliver them (Codex v1). */
+  /** Whether the host has any selected MCP servers. No longer a refusal on its
+   *  own — every harness delivers them — but it still selects which approval
+   *  capability has to hold. */
   hasSelectedMcpServers: boolean;
   /**
    * The host's RESOLVED model — id plus provider, exactly as the turn resolved
@@ -71,6 +144,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!harnessBrokerDeliveryEnabled()) {
     return {
       ok: false,
+      kind: "broker-disabled",
       reason:
         `the ${name} harness delivers model credentials via the broker, ` +
         "and broker delivery is disabled on this server " +
@@ -82,6 +156,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (args.xaaEnterprisePolicyOn) {
     return {
       ok: false,
+      kind: "enterprise-policy",
       reason:
         `the ${name} harness can't run on an enterprise-managed host yet — ` +
         "the harness reaches MCP servers through a signed proxy that can't " +
@@ -94,6 +169,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (adapter.requiresComputer && !isComputersDataPlaneConfigured()) {
     return {
       ok: false,
+      kind: "computers-unconfigured",
       reason:
         `the ${name} harness needs a computer, but this server is not a ` +
         "computers data plane (deployed servers bootstrap credentials from " +
@@ -101,40 +177,24 @@ export function checkHarnessRuntimeAvailable(args: {
     };
   }
 
-  // Approval is gated against the surfaces the host actually uses. The runtime
-  // runs its native tools (and any MCP tools) itself in-sandbox, so it can't
-  // pause for approval on them. Both adapters set these false for v1.
-  if (args.requireToolApproval && !adapter.supportsNativeToolApproval) {
-    return {
-      ok: false,
-      reason:
-        `the ${name} harness doesn't support interactive tool approval yet — ` +
-        "turn off requireToolApproval on this host",
-    };
-  }
-  if (
-    args.requireToolApproval &&
-    args.hasSelectedMcpServers &&
-    !adapter.supportsMcpToolApproval
-  ) {
-    return {
-      ok: false,
-      reason:
-        `the ${name} harness can't pause for approval of MCP-server tools — ` +
-        "turn off requireToolApproval on this host",
-    };
+  // Approval is gated against the surfaces the host actually uses, by the same
+  // helper `runHarnessTurn`'s backstop calls — so the pre-flight and the turn
+  // can never disagree about which combinations are sound.
+  const approvalRefusal = harnessToolApprovalRefusalReason({
+    adapter,
+    requireToolApproval: args.requireToolApproval,
+    hasSelectedMcpServers: args.hasSelectedMcpServers,
+  });
+  if (approvalRefusal) {
+    return { ok: false, kind: "tool-approval", reason: approvalRefusal };
   }
 
-  // MCP gate: a harness that can't deliver the host's selected servers (Codex
-  // v1) must not silently run without them.
-  if (args.hasSelectedMcpServers && !adapter.supportsSelectedMcpServers) {
-    return {
-      ok: false,
-      reason:
-        `the ${name} harness doesn't support MCP servers yet — remove the ` +
-        "selected servers from this host to run it",
-    };
-  }
+  // There is no MCP gate. Every adapter delivers the host's selected servers
+  // one way or the other (`HarnessMcpDelivery`: `native` config in the sandbox,
+  // or `host-executed` tools MCPJam runs itself), so "this harness can't do MCP
+  // at all" is no longer a representable state — the refusal it produced (kind
+  // `mcp-servers`, which blocked every Codex host with a server attached, and
+  // therefore every Codex eval) is gone with it.
 
   // Model eligibility: harness runtimes authenticate via the MCPJam gateway
   // credential, not org BYOK. A non-eligible model can't run the real runtime,
@@ -149,6 +209,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,
+      kind: "model-not-hosted",
       reason:
         `the ${name} harness only runs MCPJam-provided models — pick one on ` +
         "this host to run the real runtime",
@@ -161,6 +222,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!adapter.supportsModel(canonicalModelId)) {
     return {
       ok: false,
+      kind: "model-unsupported",
       reason:
         `the ${name} harness can't run this host's model — pick a ` +
         `${name}-compatible model to run the real runtime`,

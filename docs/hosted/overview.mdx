@@ -102,9 +102,9 @@ When you connect to such a server, the app shows a warning toast. You can contin
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
 
-### No tasks
+### No tracing
 
-Tasks are not yet available in the hosted app.
+The Tracing tab is not available in the hosted app. Tracing requires a local OTLP collector, which a hosted deployment cannot reach. Use the [local inspector](/installation) to capture and inspect traces.
 
 ## Billing
 
@@ -122,3 +122,12 @@ The **Payment history** card on the org billing page lists your recent credit to
 If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
 
 To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+### Seat payment failures
+
+When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:
+
+- Click **Retry payment** to reopen the charge and complete payment (including any 3DS challenge).
+- Click **Remove invite** to remove the invite entirely if you no longer want to add that person.
+
+The invited member's organization appears greyed out in their sidebar until the seat is paid.

@@ -128,6 +128,38 @@ describe("bundledHostCompatCatalog", () => {
     expect(template).not.toHaveProperty("compatibilityEvidence");
   });
 
+  // Catalog metadata and the creation config share one object, and callers
+  // save that config straight back through `hosts:updateHost` — whose Convex
+  // validator rejects unknown fields. `styleVariablesByTheme` shipped without
+  // being stripped and every host update failed at the server, so assert the
+  // whole metadata set is gone rather than one key at a time.
+  it("keeps every catalog-metadata key out of the creation templates", () => {
+    const catalog = bundledHostCompatCatalog();
+    const metadataOnlyKeys = [
+      "id",
+      "label",
+      "provenance",
+      "rendersMcpApps",
+      "supportedProtocolVersions",
+      "verifiedAt",
+      "imageSupport",
+      "compatibilityEvidence",
+      "styleVariablesByTheme",
+    ] as const;
+
+    for (const host of getCatalogHosts(catalog)) {
+      const template = getCatalogTemplate(catalog, host.id);
+      expect(template).toBeDefined();
+      for (const key of metadataOnlyKeys) {
+        expect({ host: host.id, key, leaked: key in template! }).toEqual({
+          host: host.id,
+          key,
+          leaked: false,
+        });
+      }
+    }
+  });
+
   it("uses template image fields as source and derives imageSupport for profiles", () => {
     const catalog = bundledHostCompatCatalog();
     const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;
@@ -372,6 +404,29 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     if (parsed.success) {
       expect(parsed.data.version).toBe(7);
       expect(parsed.data.source).toBe("live");
+    }
+  });
+
+  it("preserves partial CSP findings from live catalogs", () => {
+    // Every catalog host now publishes a complete connect triple, so build the
+    // partial case rather than leaning on one staying unprobed.
+    const partial = bundled();
+    (
+      partial.hostsById.goose.mcpProfile as {
+        apps: { mcpAppsOverrides: Record<string, unknown> };
+      }
+    ).apps.mcpAppsOverrides.cspConnectDomains = { fetch: false, xhr: false };
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
+      envelopeFor(partial, { source: "live" })
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const parsedCapabilities =
+        parsed.data.catalog.hostsById.goose.mcpProfile?.apps?.mcpAppsOverrides;
+      expect(parsedCapabilities?.cspConnectDomains).toEqual({
+        fetch: false,
+        xhr: false,
+      });
     }
   });
 

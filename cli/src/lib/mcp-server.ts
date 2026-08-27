@@ -5,6 +5,10 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import { McpServer } from "@modelcontextprotocol/server";
+import {
+  SKILLS_EXTENSION_CAPABILITY,
+  registerSkillsSurface,
+} from "./skills-surface.js";
 import { z } from "zod";
 import { normalizeCliError, usageError } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
@@ -44,11 +48,14 @@ const WATCHED_NOTIFICATION_METHODS = [
   "notifications/prompts/list_changed",
 ] as const;
 
-const SERVER_INSTRUCTIONS = `MCPJam is a debugger and test harness for other MCP servers.
+export const LOCAL_MCP_SERVER_NAME = "mcpjam";
+export const LOCAL_MCP_SERVER_TITLE = "MCPJam CLI";
+
+const SERVER_INSTRUCTIONS = `This is the MCPJam CLI running locally as an MCP server. It is a debugger and test harness for other MCP servers — not the hosted MCPJam Cloud MCP at mcp.mcpjam.com.
 
 Typical flow: connect_server (stdio command or HTTP url) -> list_tools / call_tool / list_resources / read_resource / list_prompts / get_prompt -> get_notifications to see what the target emitted -> disconnect_server. Connections stay open between calls, so notifications, list_changed events, and session state are observable across calls.
 
-For one-shot triage without managing a connection, use server_doctor (full diagnostic sweep, stdio or HTTP) or probe_server (HTTP-only reachability/auth probe). Tool results are JSON payloads about the target server; call_tool returns the target's raw CallToolResult, so check its "isError" field to detect tool-level failures.`;
+For one-shot triage without managing a connection, use server_doctor (full diagnostic sweep, stdio or HTTP) or probe_server (HTTP-only reachability/auth probe). Tool results are JSON payloads about the target server; call_tool returns the target's raw CallToolResult, so check its "isError" field to detect tool-level failures. No MCPJam account is required.`;
 
 const targetConfigFields = {
   url: z
@@ -312,15 +319,26 @@ export function createMcpJamMcpServer(
 
   const server = new McpServer(
     {
-      name: "mcpjam",
-      title: "MCPJam MCP Server",
+      name: LOCAL_MCP_SERVER_NAME,
+      title: LOCAL_MCP_SERVER_TITLE,
       version: options.version,
     },
     {
-      capabilities: { tools: {} },
+      // `extensions` rides alongside `tools` rather than replacing it: the SDK
+      // merges declared capabilities with the ones `registerTool` /
+      // `registerResource` add.
+      capabilities: {
+        tools: {},
+        extensions: SKILLS_EXTENSION_CAPABILITY,
+      },
       instructions: SERVER_INSTRUCTIONS,
     },
   );
+
+  // Serve the skills that teach THIS surface — `mcp-inspector` interprets the
+  // probe/doctor/OAuth output of the tools registered below, so an agent gets
+  // the interpretation rules in the same connection as the tools.
+  registerSkillsSurface(server);
 
   server.registerTool(
     "connect_server",

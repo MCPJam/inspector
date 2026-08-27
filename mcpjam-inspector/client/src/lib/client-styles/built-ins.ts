@@ -91,7 +91,10 @@ import type {
 // local — the SDK catalog doesn't carry them.
 import {
   MCP_APPS_FULL,
+  MCP_APPS_CLAUDE,
+  MCP_APPS_CHATGPT,
   MCP_APPS_COPILOT,
+  MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_NO_CLAIMS,
   MCP_APPS_VSCODE,
@@ -165,6 +168,15 @@ export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
  */
 export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities =
   MCP_APPS_FULL as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CLAUDE_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CLAUDE as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CHATGPT_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CHATGPT as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CURSOR_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CURSOR as ResolvedMcpAppsCapabilities;
 
 /**
  * Spec-default "no claims" surface — every advertise key off, no
@@ -265,7 +277,7 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
     // controlled and all on. listChanged sub-fields stay omitted because
     // the renderer doesn't forward those notifications yet — apps that
     // gate on `listChanged: true` would otherwise hit dead paths.
-    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
     resolveStyleVariables: getClaudeDesktopStyleVariables,
   },
   chatUi: {
@@ -314,16 +326,7 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    // ChatGPT differs from Claude on the SDK surface: ChatGPT's Apps SDK
-    // historically focuses on tool calls rather than proxying server
-    // resources/logging, so those rows are off here. `updateModelContext`
-    // and `message` stay on. Adjust once verified against the current
-    // OpenAI Apps SDK documentation.
-    mcpAppsCapabilities: {
-      ...MCP_APPS_FULL_SURFACE,
-      serverResources: false,
-      logging: false,
-    },
+    mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
     // to widget HTML; emulating it here keeps existing Apps SDK widgets
@@ -466,11 +469,7 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     // they're carried as a preset-only `hostCapabilitiesAugment` below.
     // Don't widen without evidence — apps that gate on `listChanged: true`
     // need to know real Cursor doesn't send them.
-    mcpAppsCapabilities: {
-      ...MCP_APPS_FULL_SURFACE,
-      updateModelContext: false,
-      message: false,
-    },
+    mcpAppsCapabilities: MCP_APPS_CURSOR_SURFACE,
     hostCapabilitiesAugment: {
       serverTools: { listChanged: false },
       serverResources: { listChanged: false },
@@ -567,6 +566,13 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       ...MCP_APPS_FULL_SURFACE,
       serverResources: false,
       logging: false,
+      // Same CSP answers as ChatGPT (2026-08-19 probe), same app runtime.
+      // `connect-src` is one directive, so the three subtypes cannot diverge:
+      // the declared wss endpoint connected while an undeclared one took a
+      // real violation, so the declared list IS honored. Resource subtypes
+      // stay unknown — the probe's declared origin sits in ChatGPT's own
+      // baseline allowlist, so it proves nothing either way.
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`

@@ -9,9 +9,21 @@
  */
 import {
   callServerToolOperation,
+  renderServerWidgetOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   createEvalSuiteOperation,
   createProjectServerOperation,
   deleteEvalCaseOperation,
@@ -24,14 +36,20 @@ import {
   updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getScenarioOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
+  getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
+  getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
@@ -40,12 +58,19 @@ import {
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listImagesOperation,
+  getImageOperation,
   listEnvironmentsOperation,
   listProjectPluginsOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
@@ -114,8 +139,26 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  listClientsOperation,
+  getClientOperation,
+  createClientOperation,
+  updateClientOperation,
+  setClientServersOperation,
+  duplicateClientOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   ALL_OPERATIONS,
+  formatPermalinkLines,
+  runOperationWithPermalinks,
+  withPermalinkEnvelope,
   type PlatformOperation,
+  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
@@ -161,17 +204,34 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
+  renderServerWidgetOperation,
   listServerPromptsOperation,
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   createEvalSuiteOperation,
   getEvalSuiteOperation,
+  // What a suite run would disclose (models called and where they route,
+  // which analyzers/judges can fire, retention/region) — a planning read for
+  // an unattended agent to check, or show a human, BEFORE it launches.
+  // `run_eval_suite` already fetches and returns this itself; this tool is
+  // for asking ahead of that decision, same rationale as `get_capabilities`.
+  getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
@@ -179,27 +239,65 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEvalCasesOperation,
   getEvalCaseOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  // The waiver READ, beside the run read it explains. `get_eval_run` already
+  // carries `gateWaiver`, so withholding the dedicated read would hide nothing
+  // while making the surface incoherent — and a waiver an unattended reader
+  // cannot see is not the visible waiver the workflow exists to produce.
+  getEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Compose-to-run. Already tier-"direct" in-app; the catalog withheld it
+  // because `run_eval_suite`'s `compose` mints the same row. Exposing it
+  // lets a caller pin a cell (then `name_environment`, or hand the id to
+  // `set_eval_suite_environments`) without launching.
+  ensureAdhocEnvironmentOperation,
+  // Sandbox image READS. They are the picker behind `update_eval_suite`'s
+  // `environment.computerEnvironment`: without them an agent can set a
+  // suite's computer image but never enumerate the choices.
+  listImagesOperation,
+  getImageOperation,
   // Agent Plugins: the READ half only. Every plugin write (import, activate,
   // enable/disable, uninstall) stays off this unattended surface by policy —
   // there is no excluded write operation to list because the SDK ships none.
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  // Cloud Skills: the READ half only, same policy as plugins — authoring is an
+  // app flow behind a beta gate and the SDK ships no skill write. These are
+  // here because skill IDs are load-bearing on this very catalog
+  // (set_eval_suite_environments, run_eval_suite's composed stacks), and an
+  // agent that cannot list them cannot use the tools that demand them.
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  // Agent Playground: drive a conversation against a project's MCP servers
+  // and read the telemetry it produced. `send_chat_message` SPENDS, and is
+  // advertised anyway — this is the one surface where a model debugging its
+  // own server can close the loop (send, read the trace, fix, resend), and an
+  // MCP client already gates a non-read tool through its own approval.
+  //
+  // The two reads are here while `list_chat_sessions`/`search_sessions`
+  // remain deliberately narrow elsewhere, because taking an id the caller
+  // produced is not the same claim as enumerating an org's conversations.
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //
@@ -270,6 +368,23 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  // Clients — the product's own primary noun, and until now the one thing an
+  // MCP agent could read nowhere and write nowhere. The two reads plus the
+  // four bounded writes; `delete_client` stays out (see the exclusion map).
+  listClientsOperation,
+  getClientOperation,
+  createClientOperation,
+  updateClientOperation,
+  setClientServersOperation,
+  duplicateClientOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -289,36 +404,43 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Server validation is available through the dedicated server diagnostics surface.",
   export_server:
     "Server export is available through the dedicated server diagnostics surface.",
-  list_hosts:
-    "Host administration is intentionally outside the generic MCP catalog.",
-  get_host:
-    "Host administration is intentionally outside the generic MCP catalog.",
-  set_host_servers:
-    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
-  duplicate_host:
-    "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
-  list_sandbox_images:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
-  get_sandbox_image:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  // The two READS moved INTO the catalog. The "lifecycle" rationale below is
+  // about builds and promotions — it never fit a listing and a detail read,
+  // and while it covered them an MCP agent could pin a suite's computer image
+  // (`update_eval_suite`) with no way to see which images exist. The
+  // exclusions that remain say "lifecycle WRITES", so the distinction survives
+  // the next person reading this map.
   validate_sandbox_image_blueprint:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface; blueprint linting belongs with the authoring flow that produces one.",
   list_sandbox_image_builds:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface, and a build log is only useful next to the build that produced it.",
   create_tunnel:
     "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
   close_tunnel:
     "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
-  create_host:
-    "Project infrastructure writes are not offered on the unattended catalog surface.",
-  update_host:
-    "Project infrastructure writes are not offered on the unattended catalog surface.",
-  delete_host:
-    "Project infrastructure writes are not offered on the unattended catalog surface.",
+  // The six other client operations moved INTO the catalog. The line that used
+  // to run through this whole group — "infrastructure writes are not offered
+  // here" — did not survive the question it was asked: editing a client is the
+  // product's own primary noun, and the surfaces an agent lives on were the
+  // only ones that could not touch it. The line that replaced it is bounded,
+  // preconditioned OVERWRITE versus RESOURCE REMOVAL. An overwrite names
+  // exactly what it replaces, is refused outright if the client changed since
+  // the caller read it, and leaves the client itself standing. Deletion does
+  // none of that: it removes the identity every environment, journey and suite
+  // points at, and nothing on this surface can put it back.
+  //
+  // Honest annotations are what make that line hold: `update_client` and
+  // `set_client_servers` are `risk: "destructive"` and advertise
+  // `destructiveHint: true`, because they replace settings that are currently
+  // in force. They are visible anyway, behind compare-and-set.
+  delete_client:
+    "Deleting a client removes the identity environments, journeys and eval suites point at, and nothing on this surface can restore it. The edit operations are here because a preconditioned overwrite names what it replaces and leaves the client standing; a removal does neither. Available on REST and the CLI for humans who mean it.",
   get_project_environment_capabilities:
     "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  name_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface. Promotion turns a throwaway into a permanent entry in the project's environment list, which is exactly the kind of durable edit an unattended caller should not make on its own.",
   update_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   archive_project_environment:
@@ -326,19 +448,42 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   restore_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   create_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   update_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   build_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   promote_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   use_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   reset_computer:
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
+  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // resource types and belong with the Share dialog / agent-op registry until
+  // this catalog grows a dedicated share group — same decision as CLI
+  // `op-bindings.ts`.
+  // The gate-waiver WRITES. Not excluded for being writes — this catalog
+  // carries cancel_eval_run, request_eval_run_judge and the case writes — but
+  // for being GOVERNANCE. Waiving overrides a human release decision, and the
+  // platform makes it manage-tier with no creator hatch precisely so whoever
+  // ran the failing evals cannot wave their own run through. An unattended
+  // caller granting itself that override is the same hole with a longer path
+  // to it, and the charter's "authorized actor" clause is what it defeats. It
+  // also publishes unredacted free text that outlives the waiver.
+  waive_eval_gate:
+    "Overriding a release gate is a governance act reserved to the manage tier, with no creator hatch, so an unattended caller must not be able to grant itself one. The waiver READ (get_eval_gate_waiver) is in the catalog.",
+  revoke_eval_gate_waiver:
+    "The other half of the same decision: revoking re-blocks a release somebody else deliberately unblocked. Offered on the attended agent surface behind an approval, not here.",
+  get_share_settings:
+    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+  set_share_mode:
+    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+  rotate_share_link:
+    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
 };
 
 const catalogOperationNames = new Set(
@@ -372,10 +517,21 @@ if (
 }
 
 /**
- * Operations that PERMANENTLY destroy a known resource, DERIVED from the
- * catalog's own `risk` metadata rather than listed here. They advertise an
- * explicit `destructiveHint: true`, unlike `mayBeDestructive` operations,
- * whose effects are merely unknowable to us.
+ * Operations that REMOVE OR INVALIDATE something that already existed, DERIVED
+ * from the catalog's own `risk` metadata rather than listed here. They
+ * advertise an explicit `destructiveHint: true`, unlike `mayBeDestructive`
+ * operations, whose effects are merely unknowable to us.
+ *
+ * Not only permanent deletion — that was the whole membership when this
+ * comment was written, and it stopped being true when `update_client` and
+ * `set_client_servers` joined. The taxonomy in the SDK's `risk` field says
+ * "removes or invalidates something that existed", and a deterministic
+ * OVERWRITE qualifies: replacing a live setting invalidates the one that was
+ * in force, and a replacement server list detaches every server it omits.
+ * Those two are idempotent (unlike a soft delete, applying the same edit twice
+ * does not compound) and they remain in the catalog behind compare-and-set;
+ * what stays OUT is resource removal, which no precondition makes
+ * recoverable.
  *
  * Deriving is the whole point of that field: it exists so five surfaces make
  * one decision from one place instead of each re-deriving it, and a hand-kept
@@ -415,6 +571,13 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
  * just handed back.
  */
 const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
+  // A widget render EXECUTES the caller's tool first, and nobody can promise
+  // that running a third party's tool twice is safe. It reaches this list
+  // rather than `call_server_tool`'s absent-hints branch because its
+  // `risk: "destructive"` classification takes precedence above — which lands
+  // it STRICTER than the bare tool call (explicitly destructive, explicitly
+  // not retryable), never looser.
+  renderServerWidgetOperation.name,
   deletePersonaOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,
@@ -452,7 +615,7 @@ export function registerPlatformCatalogTools(
       operation.name,
       {
         title: operation.title,
-        description: operation.description,
+        description: operationDescription(operation),
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
@@ -520,6 +683,27 @@ export function operationAnnotations(
   return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 
+/**
+ * The spend cue a client shows next to a tool that costs money.
+ *
+ * Read off the operation's own `risk` facet rather than a hand-kept name list:
+ * the catalog already knows which operations spend, and a second list here
+ * would go stale the first time an operation is re-classified — silently, and
+ * in the direction that omits the warning.
+ *
+ * MCP has no "this costs money" annotation, so the honest place for it is the
+ * DESCRIPTION, which every client renders. `run_eval_suite` can start several
+ * paid runs at once, and a user approving a tool call deserves to know that
+ * before the call, not from the invoice.
+ */
+export function operationDescription(
+  operation: PlatformOperation<unknown, unknown>,
+): string {
+  return operation.risk === "spend"
+    ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
+    : operation.description;
+}
+
 export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
@@ -541,8 +725,33 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   });
 
   try {
-    const payload = await operation.execute(input, { client });
-    return toolSuccess(transformPayload ? transformPayload(payload) : payload);
+    // Permalinks are derived from the RAW result, before any widget transform
+    // reshapes it: a policy reading a tagged widget payload would be reading a
+    // shape it was never written against.
+    const { result, permalinks } = await runOperationWithPermalinks(
+      operation,
+      input,
+      { client },
+      {
+        appOrigin: context.runtimeEnv.MCPJAM_APP_ORIGIN,
+        // A dropped link is otherwise invisible: derivation never fails the
+        // operation, so without this a broken policy or a malformed origin
+        // silently removes every permalink and nothing anywhere says so.
+        onError: (error, operationName) => {
+          console.error(
+            `[platform-tools] could not build a permalink for ${operationName}:`,
+            error instanceof Error ? error.message : String(error)
+          );
+        },
+      }
+    );
+    return toolSuccess(
+      withPermalinkEnvelope(
+        transformPayload ? transformPayload(result) : result,
+        permalinks
+      ),
+      permalinks
+    );
   } catch (error) {
     return toolError(
       describeOperationError(error),
@@ -698,9 +907,23 @@ export function compactInsightsForModel<T extends object>(payload: T): T {
   return changed ? (out as T) : payload;
 }
 
-function toolSuccess(payload: object) {
+/**
+ * @param permalinks Rendered as ONE concise line each, above the JSON.
+ *
+ * Duplicated deliberately, and only here: hosts vary in whether they render
+ * `structuredContent` at all, so a permalink that existed only there would be
+ * invisible in some clients — and the model is meant to see it and hand it to
+ * the user verbatim. The lines lead so they survive the truncation below,
+ * which is exactly what a large list result would otherwise cut. The JSON
+ * itself is NOT re-scanned for permalinks: the array inside it is the same
+ * data, and printing both twice would spend the model's budget on URLs.
+ */
+function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
   payload = compactInsightsForModel(payload);
-  let text = JSON.stringify(payload, null, 2);
+  const header = permalinks.length
+    ? `${formatPermalinkLines(permalinks)}\n\n`
+    : "";
+  let text = `${header}${JSON.stringify(payload, null, 2)}`;
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
       text.length - MODEL_TEXT_CAP

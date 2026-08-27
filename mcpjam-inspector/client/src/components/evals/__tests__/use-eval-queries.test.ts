@@ -19,8 +19,8 @@ import { useEvalQueries } from "../use-eval-queries";
 describe("useEvalQueries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.useQuery.mockReturnValue(undefined);
     mocks.isUserReady = true;
+    mocks.useQuery.mockReturnValue(undefined);
   });
 
   it("does not report overview loading when the overview query is skipped", () => {
@@ -37,6 +37,18 @@ describe("useEvalQueries", () => {
     expect(result.current.enableOverviewQuery).toBe(false);
     expect(result.current.isOverviewLoading).toBe(false);
     expect(result.current.sortedSuites).toEqual([]);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      "skip"
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      "skip"
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRuns",
+      "skip"
+    );
   });
 
   it("reports overview loading when the overview query is enabled but unresolved", () => {
@@ -52,6 +64,48 @@ describe("useEvalQueries", () => {
 
     expect(result.current.enableOverviewQuery).toBe(true);
     expect(result.current.isOverviewLoading).toBe(true);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      { projectId: "ws-1" }
+    );
+  });
+
+  it("queries details and runs when a selected suite is ready", () => {
+    renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: "suite-1",
+        deletingSuiteId: null,
+        projectId: "ws-1",
+        organizationId: null,
+      }),
+    );
+
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      { suiteId: "suite-1" }
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRuns",
+      { suiteId: "suite-1", limit: 100 }
+    );
+  });
+
+  it("uses empty overview args when ready with no project or organization", () => {
+    renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: null,
+        deletingSuiteId: null,
+        projectId: null,
+        organizationId: null,
+      }),
+    );
+
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      {}
+    );
   });
 
   it("enables the overview query for hosted guests (Convex-authenticated, no WorkOS user)", () => {
@@ -67,111 +121,114 @@ describe("useEvalQueries", () => {
     );
 
     expect(result.current.enableOverviewQuery).toBe(true);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      { projectId: "guest-project" }
+    );
   });
 
-  // Regression: INSPECTOR-CLIENT-23M. Convex reports `isAuthenticated` as soon
-  // as the guest JWT validates, before `users:ensureUser` has created the row
-  // the backend resolves the actor against. Querying in that window made
-  // `requireActor()` throw, which Convex returns as "Server Error" and
-  // `useQuery` rethrows during render, collapsing the Testing tab into its
-  // error boundary.
-  describe("db user bootstrap window", () => {
-    beforeEach(() => {
-      mocks.isUserReady = false;
-    });
+  it("skips overview, details, and runs while the user row is still bootstrapping", () => {
+    mocks.isUserReady = false;
 
-    it("skips every actor-scoped query while the db user is bootstrapping", () => {
-      const { result } = renderHook(() =>
-        useEvalQueries({
-          isAuthenticated: true,
-          selectedSuiteId: "suite-1",
-          deletingSuiteId: null,
-          projectId: "ws-1",
-          organizationId: null,
-        }),
-      );
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: "suite-1",
+        deletingSuiteId: null,
+        projectId: "ws-1",
+        organizationId: null,
+      }),
+    );
 
-      expect(result.current.enableOverviewQuery).toBe(false);
-      expect(result.current.enableSuiteDetailsQuery).toBe(false);
-      for (const call of mocks.useQuery.mock.calls) {
-        expect(call[1]).toBe("skip");
-      }
-    });
+    expect(result.current.enableOverviewQuery).toBe(false);
+    expect(result.current.enableSuiteDetailsQuery).toBe(false);
+    // Skipped, but still LOADING: an answer is coming once the row lands, and
+    // EvalsTab reads "not loading + no matching suite" as a deleted suite and
+    // bounces the deep link.
+    expect(result.current.isOverviewLoading).toBe(true);
+    expect(result.current.isSuiteDetailsLoading).toBe(true);
+    expect(result.current.isSuiteRunsLoading).toBe(true);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      "skip"
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      "skip"
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRuns",
+      "skip"
+    );
+  });
 
-    it("keeps the bootstrap window pending instead of settling as empty", () => {
-      const { result } = renderHook(() =>
-        useEvalQueries({
-          isAuthenticated: true,
-          selectedSuiteId: "suite-1",
-          deletingSuiteId: null,
-          projectId: "ws-1",
-          organizationId: null,
-        }),
-      );
+  it("preserves direct-guest overview access while the user row is not ready", () => {
+    mocks.isUserReady = false;
 
-      expect(result.current.isOverviewLoading).toBe(true);
-      expect(result.current.isSuiteDetailsLoading).toBe(true);
-      expect(result.current.isSuiteRunsLoading).toBe(true);
-    });
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: false,
+        selectedSuiteId: null,
+        deletingSuiteId: null,
+        projectId: "guest-project",
+        organizationId: null,
+        isDirectGuest: true,
+      }),
+    );
 
-    it("does not report suite details pending when no suite is selected", () => {
-      const { result } = renderHook(() =>
-        useEvalQueries({
-          isAuthenticated: true,
-          selectedSuiteId: null,
-          deletingSuiteId: null,
-          projectId: "ws-1",
-          organizationId: null,
-        }),
-      );
+    expect(result.current.enableOverviewQuery).toBe(true);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      { projectId: "guest-project" }
+    );
+  });
 
-      expect(result.current.isSuiteDetailsLoading).toBe(false);
-      expect(result.current.isSuiteRunsLoading).toBe(false);
-    });
+  // The suite-detail gate is a separate expression from the overview one, so
+  // the bootstrap cases above cannot catch it drifting. Two edges it owns:
+  // with no suite selected the bootstrap window must not report details as
+  // pending, and a direct guest — which has no db user to wait on — must keep
+  // its detail and run queries live.
+  it("does not report suite details pending when no suite is selected", () => {
+    mocks.isUserReady = false;
 
-    it("still queries for direct guests, who never materialize a db user", () => {
-      const { result } = renderHook(() =>
-        useEvalQueries({
-          isAuthenticated: false,
-          selectedSuiteId: null,
-          deletingSuiteId: null,
-          projectId: null,
-          organizationId: null,
-          isDirectGuest: true,
-        }),
-      );
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: true,
+        selectedSuiteId: null,
+        deletingSuiteId: null,
+        projectId: "ws-1",
+        organizationId: null,
+      }),
+    );
 
-      expect(result.current.enableOverviewQuery).toBe(true);
-      expect(result.current.isOverviewLoading).toBe(true);
-    });
+    expect(result.current.isSuiteDetailsLoading).toBe(false);
+    expect(result.current.isSuiteRunsLoading).toBe(false);
+  });
 
-    // The suite-detail gate is a separate expression from the overview one, so
-    // the case above cannot catch a direct guest losing its detail and run
-    // queries. Both must stay live, and neither may be held pending by the
-    // bootstrap term — a direct guest has no bootstrap to wait on.
-    it("still queries suite details and runs for direct guests", () => {
-      const { result } = renderHook(() =>
-        useEvalQueries({
-          isAuthenticated: false,
-          selectedSuiteId: "suite-1",
-          deletingSuiteId: null,
-          projectId: null,
-          organizationId: null,
-          isDirectGuest: true,
-        }),
-      );
+  it("preserves direct-guest suite details and runs while the user row is not ready", () => {
+    mocks.isUserReady = false;
 
-      expect(result.current.enableSuiteDetailsQuery).toBe(true);
-      expect(mocks.useQuery).toHaveBeenCalledWith(
-        "testSuites:getAllTestCasesAndIterationsBySuite",
-        { suiteId: "suite-1" },
-      );
-      expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestSuiteRuns", {
-        suiteId: "suite-1",
-        limit: 100,
-      });
-      expect(result.current.isSuiteDetailsLoading).toBe(true);
-      expect(result.current.isSuiteRunsLoading).toBe(true);
-    });
+    const { result } = renderHook(() =>
+      useEvalQueries({
+        isAuthenticated: false,
+        selectedSuiteId: "suite-1",
+        deletingSuiteId: null,
+        projectId: "guest-project",
+        organizationId: null,
+        isDirectGuest: true,
+      }),
+    );
+
+    expect(result.current.enableSuiteDetailsQuery).toBe(true);
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getAllTestCasesAndIterationsBySuite",
+      { suiteId: "suite-1" }
+    );
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:listTestSuiteRuns",
+      { suiteId: "suite-1", limit: 100 }
+    );
+    expect(result.current.isSuiteDetailsLoading).toBe(true);
+    expect(result.current.isSuiteRunsLoading).toBe(true);
   });
 });

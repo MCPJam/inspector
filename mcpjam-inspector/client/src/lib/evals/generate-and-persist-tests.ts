@@ -8,9 +8,20 @@ import {
 import { HOSTED_MODE } from "@/lib/config";
 import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
 import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 
 export type CreateEvalTestCaseInput = {
   suiteId: string;
+  /**
+   * The case's DECLARED identity, minted by the caller (`mintCaseId` from
+   * `@mcpjam/sdk/contract`). The platform validates the charset and enforces
+   * suite-scoped uniqueness; it never derives one, because deriving an id from
+   * content or position is the content-hash identity declared ids replace.
+   *
+   * Stored as `declaredCaseId`. NEVER the row's `caseKey`, which stays the
+   * platform's own random `ui_*` storage key.
+   */
+  caseId?: string;
   title: string;
   query: string;
   models: Array<{ model: string; provider: string }>;
@@ -74,6 +85,7 @@ function toCreateTestCaseInput(
 
   return {
     suiteId,
+    caseId: mintCaseId(),
     title: test.title || "Generated test",
     query: test.query || test.promptTurns?.[0]?.prompt || "",
     models,
@@ -85,12 +97,21 @@ function toCreateTestCaseInput(
     isNegativeTest,
     scenario: test.scenario,
     expectedOutput: test.expectedOutput,
-    steps: buildStepsForCaseInput({
-      query: test.query,
-      expectedToolCalls: test.expectedToolCalls,
-      expectedOutput: test.expectedOutput,
-      promptTurns: test.promptTurns,
-    }),
+    // Authored steps win when the generator produced them. Rebuilding from
+    // `query` / `expectedToolCalls` / `promptTurns` can only express a prompt
+    // case: a `toolCall`, an `interact`, or a widget assertion has no legacy
+    // spelling, so a Wave-0 case would silently lose exactly the steps the new
+    // shape exists to carry. The rebuild stays for the legacy shape, which has
+    // no steps of its own.
+    steps:
+      Array.isArray(test.steps) && test.steps.length > 0
+        ? (test.steps as TestStep[])
+        : buildStepsForCaseInput({
+            query: test.query,
+            expectedToolCalls: test.expectedToolCalls,
+            expectedOutput: test.expectedOutput,
+            promptTurns: test.promptTurns,
+          }),
   };
 }
 

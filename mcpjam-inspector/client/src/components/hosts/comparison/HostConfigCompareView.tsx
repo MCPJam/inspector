@@ -51,6 +51,7 @@ import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { FLAG_GATED_HOST_IDS } from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
@@ -237,12 +238,31 @@ export function HostConfigCompareView({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  // The flags gate the New Host template picker, not this matrix — so they
+  // apply only to the signed-in surface, where a preset column sits next to
+  // hosts you can actually create. In public (caniuse) mode the matrix is
+  // reference data about third-party hosts and shows every catalog row;
+  // gating it there hid Claude Code and Codex from every anonymous visitor,
+  // since the hooks read an unresolved flag as off and the flags are scoped
+  // to @mcpjam.com users.
   const excludedPresetTemplateIds = useMemo(() => {
     const excluded = new Set<string>();
+    if (presetOnly) return excluded;
     if (!claudeCodeEnabled) excluded.add("claude-code");
     if (!codexEnabled) excluded.add("codex");
     return excluded;
-  }, [claudeCodeEnabled, codexEnabled]);
+  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
+  // Public caniuse still displays flag-gated hosts as reference data, but must
+  // not offer their verify links because those links auto-create a host, and
+  // the app refuses to create one until the rollout flag is on. The flags
+  // cannot govern this decision: as the comment above says, they are scoped to
+  // @mcpjam.com users and read as off for every anonymous visitor. So the hide
+  // is unconditional here — drop an id from `FLAG_GATED_HOST_IDS` when it ships
+  // and its verify link comes back with it. Verify links exist only in this
+  // mode (`verifyBaseUrl` is undefined otherwise), so no set is needed there.
+  const disabledVerifyTemplateIds = presetOnly
+    ? FLAG_GATED_HOST_IDS
+    : undefined;
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
@@ -574,11 +594,15 @@ export function HostConfigCompareView({
         );
       })}
 
+      {/* Flex column: the matrix card below sizes itself with `flex-1` to
+          whatever height is actually left below the search + selector rows,
+          rather than guessing at a fixed viewport fraction. Still scrolls, so
+          a short viewport (or list view) just overflows this div instead. */}
       <div
         className={cn(
           presetOnly
-            ? "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
-            : "min-h-0 flex-1 overflow-auto p-4 md:p-8"
+            ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
+            : "flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-8"
         )}
       >
         {listLoading ? (
@@ -657,20 +681,29 @@ export function HostConfigCompareView({
                   </div>
                 )}
                 {viewMode === "table" ? (
-                  <HostConfigComparisonMatrix
-                    subjects={orderedSubjects}
-                    fields={compareFields}
-                    divergingOnly={divergingOnly}
-                    supportFilter={effectiveSupportFilter}
-                    searchQuery={fieldSearchQuery}
-                    showDescriptions={showDescriptions}
-                    themeMode={themeMode}
-                    mobileOptimized={presetOnly}
-                    onRemoveHost={
-                      selectedHostIdSet.size > 1 ? handleToggleHost : undefined
-                    }
-                    verifyBaseUrl={verifyBaseUrl}
-                  />
+                  // Table only: this div (not the matrix) claims the height
+                  // left below the search/selector rows via flex-1, and the
+                  // matrix caps itself at it with max-h-full instead of
+                  // force-filling it. Wrapping list view too would give the
+                  // grid a definite height it overflows, and the container's
+                  // bottom padding stops clearing the last card.
+                  <div className="min-h-0 flex-1">
+                    <HostConfigComparisonMatrix
+                      subjects={orderedSubjects}
+                      fields={compareFields}
+                      divergingOnly={divergingOnly}
+                      supportFilter={effectiveSupportFilter}
+                      searchQuery={fieldSearchQuery}
+                      showDescriptions={showDescriptions}
+                      themeMode={themeMode}
+                      mobileOptimized={presetOnly}
+                      onRemoveHost={
+                        selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                      }
+                      verifyBaseUrl={verifyBaseUrl}
+                      disabledVerifyTemplateIds={disabledVerifyTemplateIds}
+                    />
+                  </div>
                 ) : (
                   <HostCapabilityListView
                     subjects={orderedSubjects}

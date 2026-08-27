@@ -18,6 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
+import { mcpToolOptionsFor } from "./mcp-tool-options.js";
 import {
   MCPClientManager,
   describeError,
@@ -40,6 +41,7 @@ import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import {
   getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
+  type SkillsFetchFailure,
 } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import {
@@ -49,7 +51,10 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
+import {
+  modelDefinitionSupportsTemperature,
+  type ModelDefinition,
+} from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -68,8 +73,6 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
-
-const DEFAULT_TEMPERATURE = 0.7;
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here
@@ -944,6 +947,12 @@ export interface PrepareChatV2Result {
    * not inherit MCPJam UI approval semantics from a discarded client entry.
    */
   effectiveUiTools: UiToolEntry[];
+  /**
+   * Set when the live-cloud catalog fetch threw or timed out. Distinguishes
+   * that skip from a genuine empty project (no marker). Session-sim can
+   * forward this as a `session_notice`.
+   */
+  skillsFetchFailed?: SkillsFetchFailure;
 }
 
 /**
@@ -982,24 +991,14 @@ export async function prepareChatV2(
     mcpClientManager.hasServer(id)
   );
 
-  const toolOptions =
-    requireToolApproval ||
-    respectToolVisibility === false ||
-    modelVisibleMcpToolResults !== undefined ||
-    tasks !== undefined
-      ? {
-          ...(requireToolApproval
-            ? { needsApproval: requireToolApproval }
-            : {}),
-          ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
-          ...(modelVisibleMcpToolResults !== undefined
-            ? { modelVisibleMcpToolResults }
-            : {}),
-          // Absent for every default turn, which is what keeps those turns on
-          // the pre-existing no-options overload.
-          ...(tasks !== undefined ? { tasks } : {}),
-        }
-      : undefined;
+  // `undefined` for every default turn, which is what keeps those turns on the
+  // pre-existing no-options overload. See `mcpToolOptionsFor`.
+  const toolOptions = mcpToolOptionsFor({
+    needsApproval: requireToolApproval,
+    includeAppOnly: respectToolVisibility === false,
+    modelVisibleMcpToolResults,
+    tasks,
+  });
 
   // 1. Get MCP + skill tools
   let mcpTools;
@@ -1068,48 +1067,75 @@ export async function prepareChatV2(
   //      `resolved` for a Project-Environment turn) or none. Above everything;
   //      legacy chat callers never set it, so the chain below is byte-identical
   //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
-  //      is an interactive turn and keeps the host's approval rule.
-  //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
-  //      with a provisioned computer. Lazy discovery (no upfront wake).
+  //      is an interactive turn and keeps the host's approval rule. All three
+  //      static surfaces inline the catalog in the prompt (no `listSkills`).
+  //   1. cloudSkills set ⇒ Convex-backed project skills. Catalog is fetched
+  //      at prompt-build time (timeout + latency log); failure skips skills
+  //      for the turn and sets `skillsFetchFailed`.
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
   const skillsArePinned =
     skillsSource?.kind === "pinned" ||
     skillsSource?.kind === "pinned-effective";
-  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
-  // falsify the snapshot claim. Harness is stripped from suite configs already;
-  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  // The two skill-delivery channels are deliberately DISJOINT, and this is the
+  // single point both funnel through. A harness turn materializes SKILL.md on
+  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // an emulated turn gets in-memory `loadSkill` tools from `skillsSource`.
+  // Delivering both would hand the model the same skill twice, by two mechanisms.
+  //
+  // So this is a CALLER contract, not a statement about what a harness can do:
+  // harness callers pass `{ kind: "none" }` here and put their pins on
+  // `pinnedHarnessSkills`. (Historical note: this once read "harness runs
+  // live-fetch skills" — that stopped being true when on-box pinned delivery
+  // landed, and the stale wording cost real debugging time. `run-harness-turn`
+  // does not call `fetchRuntimeSkills` at all in pinned mode.)
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills)."
+      "Harness turns receive pinned skills on box via `pinnedHarnessSkills`, " +
+        "not via `skillsSource`. Pass `skillsSource: { kind: 'none' }` for a " +
+        "harness turn — the two delivery channels are deliberately disjoint."
     );
   }
-  const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    skillsSource
-      ? skillsSource.kind === "pinned"
-        ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
-        : skillsSource.kind === "resolved" ||
-          skillsSource.kind === "pinned-effective"
-        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-            ...(skillsSource.abortSignal
-              ? { signal: skillsSource.abortSignal }
-              : {}),
-            // The discovery listing is budgeted against THIS model's context
-            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-            // model definition; the budget helper falls back to 8,000 chars.
-            ...(modelDefinition.contextLength !== undefined
-              ? { modelContextTokens: modelDefinition.contextLength }
-              : {}),
-          })
-        : { tools: {}, systemPromptSection: "" }
-      : cloudSkills
-      ? getCloudSkillToolsAndPrompt({
+  const modelContextTokens =
+    modelDefinition.contextLength !== undefined
+      ? { modelContextTokens: modelDefinition.contextLength }
+      : {};
+  type SkillPrep = {
+    tools: Record<string, unknown>;
+    systemPromptSection: string;
+    skillsFetchFailed?: SkillsFetchFailure;
+  };
+  const skillPrep: SkillPrep = skillsSource
+    ? skillsSource.kind === "pinned"
+      ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
+      : skillsSource.kind === "resolved" ||
+        skillsSource.kind === "pinned-effective"
+      ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+          ...(skillsSource.abortSignal
+            ? { signal: skillsSource.abortSignal }
+            : {}),
+          // The discovery listing is budgeted against THIS model's context
+          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+          // model definition; the budget helper falls back to 8,000 chars.
+          ...modelContextTokens,
+        })
+      : { tools: {}, systemPromptSection: "" }
+    : cloudSkills
+    ? await getCloudSkillToolsAndPrompt(
+        {
           authHeader: cloudSkills.authHeader,
           projectId: cloudSkills.projectId,
-        })
-      : HOSTED_MODE
-      ? { tools: {}, systemPromptSection: "" }
-      : await getSkillToolsAndPrompt();
+        },
+        modelContextTokens
+      )
+    : HOSTED_MODE
+    ? { tools: {}, systemPromptSection: "" }
+    : await getSkillToolsAndPrompt();
+  const {
+    tools: skillTools,
+    systemPromptSection: skillsPromptSection,
+    skillsFetchFailed,
+  } = skillPrep;
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
@@ -1340,8 +1366,19 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = modelSupportsTemperature(modelDefinition.id)
-    ? temperature ?? DEFAULT_TEMPERATURE
+  //
+  // An omitted temperature stays omitted rather than becoming 0.7, so a caller
+  // that expressed no preference gets the provider's own default instead of one
+  // this file invented. The chat UI always sends its slider value (0.7 until
+  // moved), so this only changes programmatic callers — the SDK, the API and the
+  // eval runner — which previously could not request default sampling at all.
+  //
+  // The persisted `hostConfig.temperature` is unaffected and stays numeric:
+  // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
+  const resolvedTemperature = modelDefinitionSupportsTemperature(
+    modelDefinition
+  )
+    ? temperature
     : undefined;
 
   // 5. Message scrubber
@@ -1364,5 +1401,6 @@ export async function prepareChatV2(
     progressivePlan,
     discoveryState,
     effectiveUiTools,
+    ...(skillsFetchFailed ? { skillsFetchFailed } : {}),
   };
 }

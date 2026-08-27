@@ -158,7 +158,8 @@ describe("ActiveHostCapsResolverScope (resolver)", () => {
   it("synthesizes host caps from the template seed when activeHost is null (hosted scenario case)", () => {
     // Hosted scenario bootstrap payload doesn't carry clientCapabilities
     // yet (follow-up). Until then, the scope synthesizes them from the
-    // host style. Codex seed → no UI extension.
+    // host style. Codex now advertises MCP Apps, including the legacy
+    // ChatGPT MIME type alongside the spec one.
     const { getByTestId } = mountWithState({
       activeHost: null,
       hostStyle: "codex",
@@ -166,6 +167,9 @@ describe("ActiveHostCapsResolverScope (resolver)", () => {
       serverId: "srv",
     });
     const caps = JSON.parse(getByTestId("caps").textContent ?? "{}");
-    expect(caps.extensions).toBeUndefined();
+    expect(caps.extensions?.[MCP_UI_EXTENSION_ID]?.mimeTypes).toEqual([
+      MCP_UI_RESOURCE_MIME_TYPE,
+      "text/html+skybridge",
+    ]);
   });
 });

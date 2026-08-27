@@ -7,6 +7,7 @@ import {
 } from "../src/host-config/templates/index.js";
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -88,6 +89,37 @@ describe("seedHostTemplate", () => {
     expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
   });
 
+  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("claude", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    expect(profile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      mrtrModes: { requestState: false, elicitation: false },
+      initialize: {
+        supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+        clientInfo: { name: "claude-ai", version: "0.1.0" },
+      },
+    });
+    expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      requestTeardown: false,
+      resourceCacheTtl: true,
+    });
+    expect(profile).not.toHaveProperty("toolCallCancellation");
+    expect(profile?.apps?.mcpAppsOverrides).not.toHaveProperty("toolCancelled");
+  });
+
   it("seeds the real Claude Code harness + a personal computer", () => {
     const config = seedHostTemplate("claude-code", { theme: "dark" });
     expect(config.hostStyle).toBe("claude-code");
@@ -97,6 +129,7 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.237");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -106,6 +139,21 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // Codex (like Claude Code) can't pause for interactive approval.
     expect(config.requireToolApproval).toBe(false);
+    expect(config.clientCapabilities).toMatchObject({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
+        },
+      },
+      elicitation: { form: {}, url: {} },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
@@ -149,15 +197,70 @@ describe("seedHostTemplate", () => {
       logging: {},
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.mcpProfile?.mcpProtocolVersion).toBe("auto");
+    expect(config.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25",
+    ]);
+    // `connect-src` is one directive, so its subtypes cannot diverge: the
+    // declared wss endpoint connected while an undeclared one took a real
+    // violation, so the declared list is honored for fetch and XHR too.
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
+      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "frame-src": ["'self'", "data:", "blob:"],
+    });
+  });
+
+  it("keeps Cursor CSP subtype findings in the SDK seed", () => {
+    const config = seedHostTemplate("cursor", { theme: "dark" });
+    expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
+      "3.14.27"
+    );
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
   });
 
   it("labels and persists the Copilot documented runtime surface", () => {
     const config = seedHostTemplate("copilot", { theme: "dark" });
     const profile = config.mcpProfile;
 
+    // Probed 2026-08-26: the real handshake sends `mcs` 1.0.0 plus Copilot's
+    // routing fields. hostInfo below stays at the vendor-doc profile — no
+    // ui/initialize was ever observed, so nothing measured contradicts it.
     expect(profile?.initialize?.clientInfo).toEqual({
-      name: "ms-copilot",
-      version: "1.0.1",
+      name: "mcs",
+      version: "1.0.0",
+      channelId: "pva-studio",
+      lcat: "M365_COPILOT_USER",
+      agentAuthenticationMode: "Integrated",
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Copilot",
@@ -197,10 +300,21 @@ describe("seedHostTemplate", () => {
       sandboxPermissions: false,
       cspFrameDomains: false,
       cspBaseUriDomains: false,
-      resourcePrefersBorder: false,
+      cspConnectDomains: { fetch: false, xhr: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      resourcePrefersBorder: true,
       downloadFile: false,
       requestTeardown: false,
     });
+    expect(apps?.mcpAppsOverrides.cspConnectDomains).not.toHaveProperty(
+      "websocket"
+    );
   });
 
   it("keeps Slack HostContext and capabilities faithful to the raw probe", () => {
@@ -209,6 +323,9 @@ describe("seedHostTemplate", () => {
 
     expect(config.clientCapabilities).toEqual({
       extensions: {
+        "io.slack/block-kit": {
+          mimeTypes: ["application/vnd.slack.blocks+json"],
+        },
         "io.modelcontextprotocol/ui": {
           mimeTypes: ["text/html;profile=mcp-app"],
         },
@@ -219,6 +336,7 @@ describe("seedHostTemplate", () => {
       serverTools: {},
       serverResources: {},
       logging: {},
+      message: { text: {} },
     });
     expect((config.hostContext as any).theme).toBe("dark");
     expect((config.hostContext as any).containerDimensions).toEqual({
@@ -247,12 +365,12 @@ describe("seedHostTemplate", () => {
       serverResources: true,
       logging: true,
       updateModelContext: false,
-      message: false,
+      message: true,
       sandboxPermissions: false,
     });
   });
 
-  it("keeps VS Code 1.130 handshake facts and deliberate emulator defaults", () => {
+  it("keeps VS Code 1.134 handshake facts and deliberate emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {
@@ -303,11 +421,11 @@ describe("seedHostTemplate", () => {
     ).toBe("#ffffff");
     expect(profile?.initialize).toEqual({
       supportedProtocolVersions: ["2025-11-25"],
-      clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
+      clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
       name: "Visual Studio Code",
-      version: "1.130.0",
+      version: "1.134.0",
     });
     expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(profile?.apps?.mcpAppsOverrides).toMatchObject({

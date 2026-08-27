@@ -59,7 +59,11 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import {
   PlatformApiClient,
   createEvalSuiteOperation,
+  derivePermalinksFor,
   runEvalSuiteOperation,
+  withPermalinkEnvelope,
+  type PlatformPermalink,
+  type PlatformResourceType,
 } from "@mcpjam/sdk/platform";
 import type { ProposedAction as PublicProposedAction } from "@mcpjam/sdk/public-api";
 import {
@@ -113,7 +117,18 @@ export {
 } from "./agent-op-registry.js";
 
 export type CreatedResource = {
-  type: "eval_suite";
+  /**
+   * The permalink registry's resource type.
+   *
+   * Widened from the literal `"eval_suite"` when created resources started
+   * coming from the shared permalink policies: a launch produces an
+   * `eval_run`, an install a `project_server`, and a host that only knew one
+   * type would have dropped them. `PlatformResourceType` rather than `string`
+   * so the value is still one the app can route — hosts render an unknown
+   * type through their generic link block, which is the point of carrying the
+   * type at all.
+   */
+  type: PlatformResourceType;
   id: string;
   name?: string;
   url: string;
@@ -127,13 +142,147 @@ export function isValidAgentActionId(actionId: string): boolean {
   return typeof actionId === "string" && actionId.length > 0 && actionId.length <= MAX_AGENT_ACTION_ID_LENGTH;
 }
 
-function suiteUrl(suiteId: string, projectId: string): string {
-  // `?project=` makes the link self-describing: eval routes carry no project
-  // segment, so without it the app renders whatever project the viewer's
-  // picker was parked on (an empty state for everyone but the author).
-  return `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
-    suiteId
-  )}?project=${encodeURIComponent(projectId)}`;
+/**
+ * How many linkable resources ONE tool call may contribute to the turn's
+ * `createdResources`.
+ *
+ * A batch create (`create_eval_cases` accepts many at once) would otherwise
+ * put dozens of link blocks in a Slack reply. Ten is the same ceiling the
+ * MCP worker's text fallback uses, so the two surfaces truncate alike.
+ */
+const MAX_CREATED_RESOURCES_PER_CALL = 10;
+
+/**
+ * How many permalinks may ride alongside ONE tool result to the model.
+ *
+ * The links sit OUTSIDE `capForModel`'s budget (see the call site), so they
+ * need a bound of their own or a listing at its page limit would spend
+ * kilobytes on URLs the model will not use. Generous next to
+ * `MAX_CREATED_RESOURCES_PER_CALL` because these are read results, where
+ * "which of these rows do I open" is the actual question, and ~25 links is a
+ * small fraction of the 24k payload cap they sit beside.
+ */
+const MAX_MODEL_PERMALINKS = 25;
+
+/**
+ * Operation-name prefixes that BRING SOMETHING INTO EXISTENCE.
+ *
+ * A prefix list rather than an explicit set: the catalog gains operations
+ * regularly, and a set would silently stop reporting each new create until
+ * someone remembered this file. The naming convention is already load-bearing
+ * across the catalog (`create_*`, `run_*`, `launch_*`, `start_*`,
+ * `generate_*`, `install_*`), so keying on it is reading a rule the catalog
+ * already follows rather than inventing a second one.
+ */
+const CREATE_OPERATION_PREFIXES = [
+  "create_",
+  "run_",
+  "launch_",
+  "start_",
+  "generate_",
+  "install_",
+  "publish_",
+] as const;
+
+/**
+ * Where one operation's result can be opened, for EVERY operation.
+ *
+ * Read off the operation's own permalink policy rather than a name check and a
+ * hand-built URL. Two things follow: an operation added later contributes its
+ * links without touching this file, and the URL agrees with the one the MCP
+ * worker, the CLI and the approval path hand out, because all four ask the
+ * same builder.
+ */
+function permalinksFor(
+  operation: AnyPlatformOperation,
+  result: unknown,
+  input: unknown,
+  projectId: string
+): PlatformPermalink[] {
+  return derivePermalinksFor(
+    operation,
+    result,
+    input,
+    {
+      appOrigin: MCPJAM_HOSTED_ORIGIN,
+      resolvedScope: { projectId },
+    },
+    (error, operationName) => {
+      logger.warn("[v1/agent] could not build a permalink", {
+        operation: operationName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  );
+}
+
+/**
+ * True when the result SAYS this resource already existed.
+ *
+ * `publish_scenario` is idempotent: republishing an already-published
+ * environment succeeds and returns the existing scenario with
+ * `created: false`. The `publish_` prefix would otherwise report it as
+ * something this turn brought into existence — contradicting both the
+ * response the model just read and the `createdResources` contract the host
+ * renders under a "created" heading.
+ *
+ * Keyed on the resource id rather than a per-operation name check, so any
+ * other idempotent create that adopts the same `created` flag on its payload
+ * is covered on arrival. Absent flag means "created", which is what every
+ * non-idempotent create returns.
+ */
+function alreadyExisted(result: unknown, resourceId: string): boolean {
+  if (!result || typeof result !== "object") return false;
+  for (const value of Object.values(result as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const row = value as { id?: unknown; created?: unknown };
+    if (row.id === resourceId && row.created === false) return true;
+  }
+  return false;
+}
+
+/**
+ * The subset of those links that names a resource the turn BROUGHT INTO EXISTENCE.
+ *
+ * CREATES only, not every write. A read's rows are not "created" — a
+ * `list_project_servers` turn reporting twenty created resources would be
+ * describing the project rather than what it did — and neither is an EDIT:
+ * `update_eval_suite` and `name_environment` change a row that already
+ * existed, and the public contract (`AgentTurnResponse.createdResources`) and
+ * the Slack renderer both say "created". Saying it of an edit is a lie the
+ * host then renders as one.
+ *
+ * The MODEL still sees every permalink through the tool-result envelope; this
+ * narrower list is what the HOST renders as created-resource blocks.
+ */
+function createdResourcesFrom(
+  operation: AnyPlatformOperation,
+  permalinks: readonly PlatformPermalink[],
+  result: unknown
+): CreatedResource[] {
+  if (
+    operation.readOnly ||
+    !CREATE_OPERATION_PREFIXES.some((prefix) =>
+      operation.name.startsWith(prefix)
+    )
+  ) {
+    return [];
+  }
+  // The NAME matters beyond display: `offerRunsForCreatedSuites` matches a
+  // model-authored `suite` argument against it, and a model names a suite it
+  // just created by name as often as by id.
+  const suiteName = (result as { suite?: { name?: string } })?.suite?.name;
+  return permalinks
+    .filter((permalink) => !alreadyExisted(result, permalink.resource.id))
+    .slice(0, MAX_CREATED_RESOURCES_PER_CALL)
+    .map((permalink) => ({
+      type: permalink.resource.type,
+      id: permalink.resource.id,
+      ...(permalink.resource.type === "eval_suite" && suiteName
+        ? { name: suiteName }
+        : {}),
+      url: permalink.url,
+    }));
 }
 
 const PROJECT_SCOPE_ERROR =
@@ -152,7 +301,25 @@ function relaxProjectRequirement(schema: unknown): unknown {
   if (!asObject?.shape?.project || typeof asObject.extend !== "function") {
     return schema;
   }
-  return asObject.extend({
+  // Zod 4 keeps `superRefine` checks on the ZodObject itself. Calling
+  // `.extend()` on such an object throws because it could invalidate those
+  // checks; use `.safeExtend()` when available so the gated tool surface can
+  // advertise the same schema without turning the whole agent request into a
+  // 500. The operation's original schema is still used for execution-time
+  // validation, so its cross-field checks remain intact.
+  const extend =
+    typeof (
+      asObject as z.ZodObject<z.ZodRawShape> & {
+        safeExtend?: typeof asObject.extend;
+      }
+    ).safeExtend === "function"
+      ? (
+          asObject as z.ZodObject<z.ZodRawShape> & {
+            safeExtend: typeof asObject.extend;
+          }
+        ).safeExtend
+      : asObject.extend;
+  return extend.call(asObject, {
     project: z
       .string()
       .trim()
@@ -216,7 +383,9 @@ function toWireProposal(proposal: ProposedAction): PublicProposedAction {
  * response-level dedupe, same registry-supplied copy. A second path that minted
  * proposals its own way would be a second set of rules for what a click can do.
  *
- * @returns the action id, or undefined when persistence failed
+ * @returns the minted action id (with the human-readable description), or a
+ * model-facing `error` when nothing was persisted — either a retryable
+ * persistence failure or a fail-closed freeze refusal
  */
 async function persistProposal(opts: {
   operation: AnyPlatformOperation;
@@ -225,8 +394,65 @@ async function persistProposal(opts: {
   proposed: ProposedAction[];
   surface: ProposalSurface;
   turnIdempotencyKey?: string;
-}): Promise<string | undefined> {
-  const { operation, input, projectId, proposed, surface } = opts;
+  /** Used to FREEZE argument meanings at mint time. See `normalizeArgs`. */
+  client?: PlatformApiClient;
+}): Promise<{ actionId: string; description: string } | { error: string }> {
+  const { operation, projectId, proposed, surface } = opts;
+  const meta = proposalMetaFor(operation.name);
+  const retryableError = {
+    error: `Could not propose ${operation.title} right now. Try again in a moment.`,
+  };
+  const unpinnableError = {
+    error:
+      `Could not pin ${operation.title} to the current registry entry, so ` +
+      "nothing was proposed. Re-read the entry and try again.",
+  };
+  // FROZEN BEFORE ANYTHING ELSE, because everything downstream — the derived
+  // action id, the stored row, the description a human reads, the arguments
+  // approval executes — has to describe the same set. `allAttached: true`
+  // would otherwise be re-expanded at click time against whatever is attached
+  // THEN, silently widening an approved spend.
+  //
+  // FAIL-CLOSED for entries that declare `requiredFrozenKeys` (the installs):
+  // there the mint-time pin IS what the human approves, so a freeze that
+  // failed — or a caller with no client to freeze with — REFUSES the mint
+  // rather than persisting a proposal whose click would install whatever the
+  // registry row resolves to an hour later.
+  if (meta.requiredFrozenKeys.length > 0 && !opts.client) {
+    logger.warn("[v1/agent] no client to freeze a pin-required proposal", {
+      operation: operation.name,
+    });
+    return unpinnableError;
+  }
+  let input: Record<string, unknown>;
+  try {
+    input = opts.client
+      ? await meta.normalizeArgs(opts.input, {
+          projectId,
+          client: opts.client,
+        })
+      : opts.input;
+  } catch (error) {
+    // Only a `requiredFrozenKeys` entry lets a normalizer throw reach here;
+    // the generic tier degrades inside `normalizeArgs` instead.
+    logger.warn("[v1/agent] refusing to mint an unpinned proposal", {
+      operation: operation.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return unpinnableError;
+  }
+  const missingPins = meta.requiredFrozenKeys.filter(
+    (key) => input[key] === undefined
+  );
+  if (missingPins.length > 0) {
+    // Belt to the throw's braces: a normalizer that RETURNED without its pins
+    // is the same unpinned proposal as one that threw.
+    logger.warn("[v1/agent] frozen proposal input is missing required pins", {
+      operation: operation.name,
+      missing: missingPins,
+    });
+    return unpinnableError;
+  }
   // Derived where possible: same turn + same operation + same arguments must
   // yield the SAME proposal, so a redelivery re-offers the existing control
   // rather than minting a second one. `randomUUID` only for callers with no
@@ -236,7 +462,7 @@ async function persistProposal(opts: {
     ? deriveOperationIdempotencyKey(
         opts.turnIdempotencyKey,
         `proposal:${operation.name}`,
-        input
+        meta.hashInput(input)
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
@@ -244,7 +470,7 @@ async function persistProposal(opts: {
       operation: operation.name,
       length: actionId.length,
     });
-    return undefined;
+    return retryableError;
   }
   try {
     await createProposedAction({
@@ -263,10 +489,9 @@ async function persistProposal(opts: {
       operation: operation.name,
       error: error instanceof Error ? error.message : String(error),
     });
-    return undefined;
+    return retryableError;
   }
 
-  const meta = proposalMetaFor(operation.name);
   // The derived id already collapses repeats in the BACKEND row; this collapses
   // them in the RESPONSE. A model that invokes the same gated tool twice with
   // the same arguments has proposed one action, and a caller rendering one
@@ -294,7 +519,7 @@ async function persistProposal(opts: {
       ...(meta.targetFor(input) ? { target: meta.targetFor(input) } : {}),
     });
   }
-  return actionId;
+  return { actionId, description: meta.description(input) };
 }
 
 /**
@@ -316,6 +541,8 @@ async function offerRunsForCreatedSuites(opts: {
   proposed: ProposedAction[];
   projectId: string;
   surface: ProposalSurface;
+  /** See `buildGatedProposalTools`. */
+  client?: PlatformApiClient;
   turnIdempotencyKey?: string;
   /** The org's disabled operations. See `buildGatedProposalTools`. */
   disabledOperations?: ReadonlySet<string>;
@@ -353,6 +580,7 @@ async function offerRunsForCreatedSuites(opts: {
       projectId: opts.projectId,
       proposed: opts.proposed,
       surface: opts.surface,
+      ...(opts.client ? { client: opts.client } : {}),
       ...(opts.turnIdempotencyKey
         ? { turnIdempotencyKey: opts.turnIdempotencyKey }
         : {}),
@@ -376,6 +604,16 @@ async function offerRunsForCreatedSuites(opts: {
 function buildGatedProposalTools(opts: {
   projectId: string;
   proposed: ProposedAction[];
+  /**
+   * The platform client a proposal normalizer uses to resolve selectors at
+   * mint time. Optional so a caller that cannot supply one still gets
+   * proposals — with the arguments unfrozen, which is the pre-existing
+   * behaviour and never worse than no proposal at all. The exception is an
+   * operation whose entry declares `requiredFrozenKeys` (the registry
+   * installs): those cannot mint unpinned, so without a client
+   * `persistProposal` refuses them instead.
+   */
+  client?: PlatformApiClient;
   /**
    * The turn's stable identity. When present, the action id is DERIVED from it
    * rather than random, so a redelivered Slack event that re-proposes the same
@@ -404,7 +642,6 @@ function buildGatedProposalTools(opts: {
   const tools: ToolSet = {};
   for (const operation of AGENT_API_GATED_OPERATIONS) {
     if (opts.disabledOperations?.has(operation.name)) continue;
-    const meta = proposalMetaFor(operation.name);
     tools[operation.name] = tool({
       description:
         `${operation.description} ` +
@@ -458,25 +695,28 @@ function buildGatedProposalTools(opts: {
           return { error: `${operation.title} was cancelled.` };
         }
 
-        const actionId = await persistProposal({
+        const minted = await persistProposal({
           operation,
           input: parsed.data,
           projectId: opts.projectId,
           proposed: opts.proposed,
           surface: opts.surface,
+          ...(opts.client ? { client: opts.client } : {}),
           ...(opts.turnIdempotencyKey
             ? { turnIdempotencyKey: opts.turnIdempotencyKey }
             : {}),
         });
-        if (!actionId) {
-          return {
-            error: `Could not propose ${operation.title} right now. Try again in a moment.`,
-          };
+        if ("error" in minted) {
+          // Not "proposed": the model must not tell the user a button exists,
+          // whether persistence failed or the freeze refused the mint.
+          return { error: minted.error };
         }
         return {
           proposed: true,
-          actionId,
-          description: meta.description(parsed.data),
+          actionId: minted.actionId,
+          // The FROZEN description — the same text the approval control shows,
+          // which for an install includes the resolved endpoint host.
+          description: minted.description,
           note: "Awaiting human approval. Do not claim this has started.",
         };
       },
@@ -582,19 +822,35 @@ export function buildAgentApiToolSet(opts: {
             client,
             signal: abortSignal,
           });
-          if (operation.name === createEvalSuiteOperation.name) {
-            const suite = (result as { suite?: { id?: string; name?: string } })
-              ?.suite;
-            if (suite?.id) {
-              opts.created.push({
-                type: "eval_suite",
-                id: suite.id,
-                ...(suite.name ? { name: suite.name } : {}),
-                url: suiteUrl(suite.id, opts.projectId),
-              });
-            }
-          }
-          return capForModel(stripProjectSwitchingMetadata(result));
+          // Derived from the RAW result, before either transform below
+          // reshapes it.
+          const permalinks = permalinksFor(
+            operation,
+            result,
+            parsed.data,
+            opts.projectId
+          );
+          opts.created.push(
+            ...createdResourcesFrom(operation, permalinks, result)
+          );
+          // The MODEL sees them too, which is what the system prompt's
+          // "hand the user that url" rule refers to. Without this the rule
+          // named a field this surface never emitted, and a read like
+          // `list_project_servers` gave the model nothing but ids — the exact
+          // situation that had it inventing app URLs.
+          // Cap the PAYLOAD, then attach the links OUTSIDE the cap.
+          //
+          // `capForModel` replaces an over-cap value wholesale with
+          // `{truncated, preview}`, so enveloping first and capping after
+          // discarded the permalinks on exactly the results that need them
+          // most: a long listing, where the model is handed a truncated blob
+          // and the link is the only thing it can still act on.
+          const capped = capForModel(stripProjectSwitchingMetadata(result));
+          if (permalinks.length === 0) return capped;
+          return withPermalinkEnvelope(
+            capped,
+            permalinks.slice(0, MAX_MODEL_PERMALINKS)
+          );
         } catch (error) {
           if (abortSignal?.aborted) {
             return { error: `${operation.title} was cancelled.` };
@@ -652,6 +908,7 @@ const AGENT_API_BASE_PROMPT_LINES: readonly string[] = [
   "- Some actions SPEND the user's quota or credits (running a suite or a case, generating cases, cancelling a run). Calling those tools does NOT perform them: it PROPOSES the action and returns an approval id, and a person must click to confirm. Say that you've proposed it and what it will do. NEVER say it has started, is running, or has been cancelled.",
   "- If a proposal tool is not available to you, you cannot run anything at all. Say so plainly and report the ids the user needs — do not imply you started something.",
   "- Always report the ids of anything you created.",
+  "- When a tool result carries a `permalinks` array, hand the user that `url` EXACTLY as written. NEVER invent, shorten, or rewrite an MCPJam app URL, and never build one from an id: a hand-made link opens whichever project the reader last selected, which is usually not the one you are talking about. If a result has no permalink, give the id and say where to find it.",
   "- Tool input schemas are AUTHORITATIVE. Never consult docs to learn a tool's argument shape — the schema you were given is the truth. If a tool returns a validation error naming fields, correct exactly those fields and retry the same call.",
   "- Consult the MCPJam docs tools (when available) for product questions instead of answering from memory.",
   "- Keep replies concise and concrete. If the request is ambiguous, ask instead of inventing.",
@@ -964,6 +1221,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         ? buildGatedProposalTools({
             projectId,
             proposed,
+            client,
             ...(body.idempotencyKey
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
@@ -1106,6 +1364,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         proposed,
         projectId,
         surface: proposalSurface,
+        client,
         ...(body.idempotencyKey
           ? { turnIdempotencyKey: body.idempotencyKey }
           : {}),

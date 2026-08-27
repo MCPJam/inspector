@@ -135,6 +135,20 @@ function HostColumnHeader({
         layout="stack"
         size="sm"
       />
+      {col.modelLabel ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          {col.modelLabel}
+        </span>
+      ) : col.modelKey && col.modelKey !== "client-default" ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          {col.modelKey}
+        </span>
+      ) : null}
+      {col.splitLabel ? (
+        <span className="max-w-full truncate font-mono text-[9px] text-muted-foreground">
+          · {col.splitLabel}
+        </span>
+      ) : null}
       {col.isHistorical ? (
         <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
           historical
@@ -207,7 +221,7 @@ export function CrossHostMatrix({
         <colgroup>
           <col style={{ width: CASE_COLUMN_WIDTH_PX }} />
           {hostColumns.map((col) => (
-            <col key={col.hostId} />
+            <col key={col.columnKey ?? col.hostId} />
           ))}
         </colgroup>
         <thead>
@@ -236,7 +250,7 @@ export function CrossHostMatrix({
             </th>
             {hostColumns.map((col) => (
               <th
-                key={col.hostId}
+                key={col.columnKey ?? col.hostId}
                 className={cn(
                   "border-b border-r border-border/60 text-center align-bottom",
                   evalSurfaceHeaderClass,
@@ -267,7 +281,7 @@ export function CrossHostMatrix({
             // still running mid-"Run all" carry no verdict yet, so excluding
             // them keeps the row from flashing red before any iteration lands.
             const settledOutcomes = hostColumns
-              .map((col) => byHost?.get(col.hostId))
+              .map((col) => byHost?.get(col.columnKey ?? col.hostId))
               .filter(
                 (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
               )
@@ -363,7 +377,7 @@ export function CrossHostMatrix({
                   </div>
                 </td>
                 {hostColumns.map((col) => {
-                  const cell = byHost?.get(col.hostId);
+                  const cell = byHost?.get(col.columnKey ?? col.hostId);
                   const cellInteractive = !!(
                     onCellOpen &&
                     cell &&
@@ -394,7 +408,7 @@ export function CrossHostMatrix({
                   };
                   return (
                     <td
-                      key={col.hostId}
+                      key={col.columnKey ?? col.hostId}
                       className={cn(
                         "border-r border-border/50 align-top",
                         evalSurfaceCellClass,

@@ -26,6 +26,8 @@ import serverConnectionsWeb from "./server-connections.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
+import conformanceShared from "./conformance-shared.js";
+import sharedResources from "./shared-resources.js";
 import score from "./score.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
@@ -34,6 +36,7 @@ import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
+import registryWeb from "./registry.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -62,6 +65,7 @@ web.use(
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/shared/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Conformance runs dial a caller-named third party, so they carry a per-IP
 // ceiling on top of the per-guest one — guest identities are free to mint, and
 // only the IP bounds how much of our egress a single actor can spend.
@@ -79,6 +83,10 @@ for (const startsWork of [
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Org-registry derivation carries a per-IP ceiling on top of the per-guest
+// one. The route consumes that bucket only after it asks the backend whether
+// this caller may add to the project's organization and before any egress.
+web.use("/registry/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
 // guest rate limit like every MCP-operation route; the resume path re-drives a
 // tool/prompt/resource leg against a freshly-authorized manager.
@@ -136,6 +144,7 @@ web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
 web.route("/mrtr", mrtrContinuation);
+web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
@@ -151,6 +160,11 @@ web.route("/caniuse", caniuse);
 // secret token in the URL is the credential. Submission is per-IP rate
 // limited inside the router.
 web.route("/score", score);
+// Shared conformance run (HMAC token in the path). Same no-session contract
+// as `/score`: the token is the credential, and the backend only returns the
+// redacted public artifact.
+web.route("/conformance-shared", conformanceShared);
+web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are

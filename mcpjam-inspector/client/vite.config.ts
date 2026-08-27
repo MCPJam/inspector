@@ -5,9 +5,20 @@ import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+const clientOutDir = path.resolve(rootDir, "dist/client");
+// `sentryVitePlugin` globs its sourcemap paths with no `cwd`, so they resolve
+// against `process.cwd()` — `mcpjam-inspector/` under `npm run build:client -w
+// @mcpjam/inspector` — and not against the Vite root. The relative globs that
+// used to live here (`../dist/client/assets/**`) therefore resolved to the
+// REPO root, one level above the real output, and matched nothing. The plugin
+// reports that as a warning, not an error, so the build stayed green while
+// uploading no maps and deleting none. Absolute, and POSIX-separated because
+// glob does not accept Windows separators in a pattern.
+const clientOutGlobBase = clientOutDir.replace(/\\/g, "/");
 const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
@@ -87,13 +98,48 @@ const packageJson = JSON.parse(
 );
 const appVersion = packageJson.version;
 
+// The SDK's own `define` (see `sdk/tsup.config.ts`), MIRRORED here because
+// `@mcpjam/sdk/browser` is aliased to `src/browser.ts` above — this build
+// compiles the SDK from source, so nothing else replaces the token. The SDK
+// reads it defensively and falls back to "unknown", so a missing define is no
+// longer fatal; supplying it is what makes the value truthful rather than a
+// placeholder. `sdk/vitest.config.ts` mirrors it for the same reason.
+const sdkPackageJson = JSON.parse(
+  readFileSync(path.resolve(rootDir, "../sdk/package.json"), "utf-8"),
+);
+const sdkVersion = sdkPackageJson.version;
+// Fail the build rather than ship a placeholder. The token exists so a
+// conformance report can name the build that produced it; a define of
+// `undefined` would silently land the SDK on its "unknown" fallback, and
+// "unknown" in a stamp is worse than a build that stopped and said why.
+if (typeof sdkVersion !== "string" || sdkVersion.trim() === "") {
+  throw new Error(
+    "sdk/package.json has no usable `version`, so __MCPJAM_SDK_VERSION__ cannot be defined",
+  );
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, rootDir, "");
 
+  // Sentry `dist`. Set by whichever pipeline runs this build; a checkout that
+  // names no surface is `local`, and an unrecognised one throws — same
+  // reasoning as the `sdkVersion` guard above. Only the surfaces that build
+  // `dist/client` are accepted; the Electron renderer has its own config.
+  const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
+
   return {
     root: clientDir,
     envDir: rootDir,
+    // Vite would derive this from the nearest package.json, so every dev server
+    // started from this package shares one dep cache. The OAuth debugger e2e
+    // runs two at once, and the second one's re-optimization answers the first
+    // one's in-flight chunk request with `504 (Outdated Optimize Dep)` — the
+    // page never mounts. `CLIENT_CACHE_DIR` gives each server its own.
+    cacheDir: path.resolve(
+      rootDir,
+      env.CLIENT_CACHE_DIR || "node_modules/.vite",
+    ),
     plugins: [
       react(),
       tailwindcss(),
@@ -105,10 +151,10 @@ export default defineConfig(({ mode }) => {
         // Must match the `release` the SDK inits with (`__APP_VERSION__`).
         // Without this the plugin invents its own release name from git and
         // the uploaded source maps never resolve against runtime events.
-        release: { name: appVersion },
+        release: { name: appVersion, dist: buildSurface },
         sourcemaps: {
-          assets: ["../dist/client/assets/**"],
-          filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"],
+          assets: [`${clientOutGlobBase}/assets/**`],
+          filesToDeleteAfterUpload: [`${clientOutGlobBase}/assets/**/*.map`],
         },
       }),
     ],
@@ -227,12 +273,14 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: path.resolve(rootDir, "dist/client"),
+      outDir: clientOutDir,
       sourcemap: true,
       emptyOutDir: true,
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SURFACE__: JSON.stringify(buildSurface),
+      __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },
   };
 });

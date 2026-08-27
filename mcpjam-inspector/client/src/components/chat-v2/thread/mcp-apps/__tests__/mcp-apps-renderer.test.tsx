@@ -931,7 +931,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual({});
   });
 
-  it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
+  it("uses ChatGPT's current advertised hostCapabilities", async () => {
     render(
       <ScenarioHostStyleProvider value="chatgpt">
         <ScenarioHostThemeProvider value="dark">
@@ -947,13 +947,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
       expect.objectContaining(getHostCapabilitiesForStyle("chatgpt"))
     );
-    // Sanity: profiles differ — switching is observable. Use a
-    // distinguishing key (Claude advertises serverResources / logging;
-    // ChatGPT doesn't) rather than full-blob inequality, which would
-    // false-positive on shared keys.
     const advertised = appBridgeArgsRef.current?.hostCapabilities;
-    expect(advertised).not.toHaveProperty("serverResources");
-    expect(advertised).not.toHaveProperty("logging");
+    expect(advertised).toHaveProperty("serverResources");
+    expect(advertised).toHaveProperty("logging");
   });
 
   it("passes the same effectiveHostCapabilities to the modal as the inline AppBridge advertises", async () => {
@@ -1069,7 +1065,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ]);
   });
 
-  it("advertises all three modes on Claude (full surface matrix)", async () => {
+  it("advertises Claude's probed inline and fullscreen modes", async () => {
     render(
       <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
@@ -1084,7 +1080,6 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext?.availableDisplayModes).toEqual([
       "inline",
       "fullscreen",
-      "pip",
     ]);
   });
 
@@ -1201,8 +1196,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(csp?.resourceDomains).toEqual(["https://cdn.example.com"]);
   });
 
-  it("preserves frameDomains and baseUriDomains on Claude (full surface matrix)", async () => {
-    // Counter-test: same CSP, but Claude's matrix honors both sub-
+  it("preserves frameDomains and baseUriDomains on Cursor", async () => {
+    // Counter-test: same CSP, but Cursor's matrix honors both sub-
     // fields, so they round-trip into the iframe CSP. Guards
     // against the gate over-stripping.
     vi.mocked(authFetch).mockResolvedValueOnce({
@@ -1225,7 +1220,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ScenarioHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="cursor">
         <HostedRenderer {...baseProps} />
       </ScenarioHostStyleProvider>
     );
@@ -1237,6 +1232,142 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | undefined;
     expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
     expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
+  });
+
+  it("forwards one resolved subtype policy to inline and modal sandboxes", async () => {
+    mcpAppsModalPropsRef.current = null;
+    render(
+      <ScenarioHostStyleProvider value="chatgpt">
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.cspSubtypePolicy).toBeDefined();
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // ChatGPT honors the declared connect list (one directive, proven by the
+    // declared wss endpoint connecting while an undeclared one was blocked).
+    // Its resource subtypes were unknown until the 2026-08-23 paired probe
+    // declared `fastly.jsdelivr.net` — outside ChatGPT's baseline allowlist —
+    // and every subtype loaded, so they are now measured-true rather than
+    // absent.
+    const expected = {
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    };
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy).toEqual(
+      expected
+    );
+  });
+
+  it("forwards browserStorage to inline and modal sandboxes, unchanged", async () => {
+    mcpAppsModalPropsRef.current = null;
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { browserStorage: { localStorage: false } } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>
+    );
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // Passed through verbatim: the proxy, not the renderer, decides what a
+    // `false` leaf means. Both surfaces must agree — a widget moved to the
+    // modal cannot regain an API the inline frame denied it.
+    const expected = { localStorage: false };
+    expect(sandboxedIframePropsRef.current.browserStorage).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetBrowserStorage).toEqual(
+      expected
+    );
+  });
+
+  it("leaves browserStorage undefined when the profile never mentions it", async () => {
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    // Absent must stay absent all the way to the proxy — an empty object
+    // would arm the guard machinery for a host nobody probed.
+    expect(sandboxedIframePropsRef.current.browserStorage).toBeUndefined();
+  });
+
+  it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
+    // Claude and Cursor ship all-true subtype matrices. Those restrict
+    // nothing, so treating the policy's mere presence as a host restriction
+    // flipped `permissive` off and handed the proxy an undefined CSP — which
+    // falls back to the locked-down policy (`connect-src 'none'`,
+    // `img-src data:`) and breaks the replayed widget.
+    render(
+      <ScenarioHostStyleProvider value="claude">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current.csp).toBeUndefined();
+  });
+
+  it("locks a permissive replay down when the host actually blocks a subtype", async () => {
+    // Counter-test: Goose blocks every connect subtype, so the emulation MUST
+    // win over the widget's permissive flag. Guards against the fix above
+    // disabling the feature outright.
+    render(
+      <ScenarioHostStyleProvider value="goose">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("bypasses subtype emulation for the explicit Playground permissive toggle", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive",
+    });
+    render(
+      <WidgetSurfaceProvider value="playground">
+        <ScenarioHostStyleProvider value="chatgpt">
+          <HostedRenderer {...baseProps} />
+        </ScenarioHostStyleProvider>
+      </WidgetSurfaceProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toBeUndefined();
+    expect(
+      mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy
+    ).toBeUndefined();
   });
 
   it("ignores widget-declared permissions on Copilot (sandboxPermissions: false)", async () => {
@@ -1830,6 +1961,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       displayMode: "pip",
       deviceType: "desktop",
     });
+    mockPreferencesState.hostStyle = "mcpjam";
 
     render(
       <HostedRenderer
@@ -3488,7 +3620,7 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
     mockHostContextStoreState.draftHostContext = {};
     Object.assign(mockPreferencesState, {
       themeMode: "light",
-      hostStyle: "claude",
+      hostStyle: "mcpjam",
     });
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,
@@ -3610,7 +3742,7 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
   ) {
     render(
       <ActiveMcpProfileProvider value={profileWith(policy)}>
-        <ScenarioHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="mcpjam">
           <ControlledHost />
         </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>

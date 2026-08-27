@@ -8,6 +8,8 @@ import {
 } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
+import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 import {
   Circle,
   Code2,
@@ -41,7 +43,14 @@ import {
   type RecorderReadyEvent,
   type RecorderStepEvent,
 } from "@/components/chat-v2/thread/recorder-types";
-import type { ScriptedStep, StepAssertion } from "@/shared/scripted-steps";
+import {
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+  trimmedField,
+  type ElementLocator,
+  type ScriptedStep,
+  type StepAssertion,
+} from "@/shared/scripted-steps";
 import { AssertPickChooser, type AssertPick } from "./assert-pick-chooser";
 import { CaseRunsHistory } from "./runs/case-runs-history";
 import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
@@ -72,6 +81,7 @@ import {
   deriveExpectedToolCalls,
   deriveQuery,
   isAssertStep,
+  isInteractStep,
   isModelFree,
   isPromptStep,
   isToolCallStep,
@@ -82,9 +92,12 @@ import {
   stepAssertionToWidgetAssertion,
   stepsToPromptTurns,
   stepTurnIndices,
+  WIDGET_ASSERTION_LABELS,
   type InteractAction,
+  type InteractStep,
   type TestStep,
   type ToolCallStep,
+  type WidgetAssertion,
 } from "@/shared/steps";
 import { appendScenarioPredicatesAsAssertSteps } from "@/shared/predicate-migration";
 
@@ -127,6 +140,7 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { ImportClaimDetails } from "./import-claim-badge";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
@@ -451,18 +465,157 @@ function isToolCallStepIncomplete(step: ToolCallStep): boolean {
   );
 }
 
+/**
+ * The authoring gap in a widget step (`interact`, or an `assert` carrying a
+ * `WidgetAssertion`), or null when it is complete — phrased for the blocked
+ * Save/Run tooltip.
+ *
+ * These mirror the backend `assertValidSteps` rules (mcpjam-backend
+ * `convex/lib/steps.ts`). The editor seeds every widget step with placeholder
+ * fields it cannot fill for the user — `toolName: ""`, `target: { testId: "" }`
+ * — so without this gate an untouched step reaches `createTestCase` and the
+ * mutation rejects the whole save with a raw `ConvexError` (Sentry CONVEX-1PD,
+ * CONVEX-1P2). Keep in lockstep with `assertValidInteractStep` /
+ * `assertValidWidgetAssertion`.
+ */
+function getWidgetStepGap(step: TestStep): string | null {
+  if (isInteractStep(step)) return getInteractStepGap(step);
+  if (
+    isAssertStep(step) &&
+    typeof step.assertion === "object" &&
+    step.assertion !== null &&
+    isWidgetAssertion(step.assertion)
+  ) {
+    return getWidgetAssertionGap(step.assertion);
+  }
+  return null;
+}
+
+const tooLong = (value: unknown): boolean =>
+  typeof value === "string" && value.length > MAX_SCRIPTED_STEP_TEXT_CHARS;
+
+/**
+ * Mirrors the discriminants of `interactActionSchema` (`@mcpjam/sdk/contract`).
+ */
+const INTERACT_ACTION_KINDS: readonly InteractAction["kind"][] = [
+  "click",
+  "type",
+  "key",
+  "scroll",
+  "wait",
+];
+
+function getInteractStepGap(step: InteractStep): string | null {
+  // Stored blobs reach the editor cast, never parsed, so `action` can arrive
+  // missing or carrying a kind this editor has no fields for. Settle that
+  // before the label reads `action.kind`.
+  const a = step.action as InteractAction | undefined;
+  if (!a || typeof a !== "object" || !INTERACT_ACTION_KINDS.includes(a.kind)) {
+    return "Pick an action for the interact step.";
+  }
+  const label = `${a.kind} step`;
+  if (!trimmedField(step.toolName)) {
+    return `Pick a view (tool) for the ${label}.`;
+  }
+  switch (a.kind) {
+    case "click":
+      return getLocatorGap(a.target, label);
+    case "type":
+      return (
+        getLocatorGap(a.target, label) ??
+        (tooLong(a.text)
+          ? `Shorten the typed text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+          : null)
+      );
+    case "key":
+      return trimmedField(a.key) ? null : "Enter a key for the key step.";
+    case "scroll":
+      return a.amount === undefined ||
+        (Number.isInteger(a.amount) && a.amount >= 1)
+        ? null
+        : "Scroll amount must be a whole number of 1 or more.";
+    case "wait":
+      return Number.isInteger(a.ms) && a.ms >= 1 && a.ms <= MAX_SCRIPTED_WAIT_MS
+        ? null
+        : `Wait must be a whole number of milliseconds between 1 and ${MAX_SCRIPTED_WAIT_MS}.`;
+  }
+}
+
+function getWidgetAssertionGap(a: WidgetAssertion): string | null {
+  // `isWidgetAssertion` only asserts that `kind` is a string, so an unknown one
+  // has no label — and would otherwise fall past the switch as "complete".
+  const name = WIDGET_ASSERTION_LABELS[a.kind];
+  if (!name) return "Pick a check type for the widget check.";
+  const label = name.toLowerCase();
+  if (!trimmedField(a.toolName)) {
+    return `Pick a view (tool) for the ${label} check.`;
+  }
+  switch (a.kind) {
+    case "textVisible":
+      if (!trimmedField(a.text)) return "Enter the text the check looks for.";
+      return tooLong(a.text)
+        ? `Shorten the expected text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+        : null;
+    case "elementVisible":
+    case "elementHidden":
+      return getLocatorGap(a.target, `${label} check`);
+    case "inputValue":
+      return (
+        getLocatorGap(a.target, `${label} check`) ??
+        (tooLong(a.equals)
+          ? `Shorten the expected value to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+          : null)
+      );
+    case "widgetToolCalled":
+      return trimmedField(a.calledToolName)
+        ? null
+        : "Enter the tool name the view is expected to call.";
+  }
+}
+
+/**
+ * A locator needs at least one reference point, and every field it does carry
+ * must be non-empty. Both halves matter: `{}` fails the backend's
+ * "at least one of" check, while `{ testId: "" }` (the editor's placeholder) and
+ * `{ role: { role: "" } }` clear that check and fail its per-field non-empty
+ * ones — a truthy `role` object satisfies the bundle but an empty ARIA role
+ * string does not.
+ */
+function getLocatorGap(
+  loc: ElementLocator | undefined,
+  label: string,
+): string | null {
+  const gap = `Pick an element target for the ${label}.`;
+  if (!loc || typeof loc !== "object") return gap;
+  for (const value of [loc.text, loc.css, loc.testId]) {
+    if (value !== undefined && !trimmedField(value)) return gap;
+  }
+  if (loc.role !== undefined) {
+    if (typeof loc.role !== "object" || loc.role === null) return gap;
+    if (!trimmedField(loc.role.role)) return gap;
+  }
+  // Past those checks a present field is a usable one, so "carries at least
+  // one" is just "at least one is set".
+  const hasReferencePoint = [loc.role, loc.text, loc.css, loc.testId].some(
+    (value) => value !== undefined,
+  );
+  return hasReferencePoint ? null : gap;
+}
+
 const validateSteps = (steps: TestStep[]): boolean => {
   if (!Array.isArray(steps) || steps.length === 0) {
     return false;
   }
 
-  // Each primary step must be complete: prompts need text, tool calls need a
-  // server + real tool.
+  // Each step must be complete: prompts need text, tool calls need a server +
+  // real tool, widget steps need a view and a resolvable element target.
   for (const step of steps) {
     if (isPromptStep(step)) {
       if (!step.prompt.trim()) return false;
     } else if (isToolCallStep(step)) {
       if (isToolCallStepIncomplete(step)) return false;
+    } else if (getWidgetStepGap(step)) {
+      return false;
     }
   }
 
@@ -527,6 +680,18 @@ export function getStepsBlockReason(steps: TestStep[]): string | null {
       return "Enter a user prompt before run or save.";
     }
     return `Enter a user prompt for step(s) ${emptySteps.join(", ")}.`;
+  }
+
+  // Widget steps report the FIRST gap rather than a joined list: each carries a
+  // different message, so one specific instruction beats a merged one. Turn
+  // numbers come from the runner's grouping (`stepTurnIndices`) — the same one
+  // the step cards number themselves by, so the message points at the card the
+  // user is looking at.
+  const turnIndices = stepTurnIndices(steps);
+  for (const [i, step] of steps.entries()) {
+    const gap = getWidgetStepGap(step);
+    if (!gap) continue;
+    return turns.length === 1 ? gap : `${gap} (turn ${turnIndices[i] + 1})`;
   }
 
   if (validateSteps(steps)) {
@@ -831,9 +996,17 @@ export function TestTemplateEditor({
   const draftKind = parseDraftTestCaseId(selectedTestCaseId);
   const isDraft = draftKind !== null;
 
-  const testCases = useQuery("testSuites:listTestCases" as any, {
-    suiteId,
-  }) as any[] | undefined;
+  // Same readiness gate the suite list upstream uses: a signed-in actor must
+  // wait for its `users` row, while an actor that will never have one (a
+  // direct guest) keeps reading. Covers every suite-scoped read below —
+  // the editor stays mounted across an identity change, so any ungated one
+  // re-fires on its own schedule in exactly the window the gate exists for.
+  const canQuerySuite = useActorCanQuery();
+
+  const testCases = useQuery(
+    "testSuites:listTestCases" as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
+  ) as any[] | undefined;
 
   const currentTestCase = useMemo(() => {
     if (draftKind) {
@@ -845,14 +1018,14 @@ export function TestTemplateEditor({
 
   const routeCompareAnchorIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    routeCompareAnchorIterationId
+    canQuerySuite && routeCompareAnchorIterationId
       ? { iterationId: routeCompareAnchorIterationId }
       : "skip",
   ) as EvalIteration | null | undefined;
 
   const lastSavedIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    currentTestCase?.lastMessageRun
+    canQuerySuite && currentTestCase?.lastMessageRun
       ? { iterationId: currentTestCase.lastMessageRun }
       : "skip",
   ) as EvalIteration | undefined;
@@ -868,7 +1041,10 @@ export function TestTemplateEditor({
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
-  const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
+  const suite = useQuery(
+    "testSuites:getTestSuite" as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
+  ) as any;
 
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
@@ -877,7 +1053,7 @@ export function TestTemplateEditor({
    */
   const suiteHostConfigDto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    { suiteId } as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
   ) as HostConfigDtoV2 | null | undefined;
 
   /**
@@ -1657,6 +1833,10 @@ export function TestTemplateEditor({
       const newTestCaseId = await createTestCaseMutation({
         suiteId,
         models: currentTestCase?.models ?? [],
+        // Mint the case's DECLARED identity here — callers mint, the platform
+        // validates. It lands in `declaredCaseId`; the row's storage `caseKey`
+        // stays the platform's own random `ui_*` value and is untouched.
+        caseId: mintCaseId(),
         ...savePayload,
       });
       track("eval_test_case_created", {
@@ -2767,6 +2947,24 @@ export function TestTemplateEditor({
                     edits.
                   </p>
                 ) : null}
+                {/*
+                  The converter's claim and mapping note, READ-ONLY.
+
+                  A record of what a converter did, not a field a reviewer
+                  edits: making it editable here would let somebody rewrite the
+                  justification for a claim without changing the claim, which is
+                  the one edit that makes the record actively misleading.
+                */}
+                <ImportClaimDetails
+                  claim={
+                    (
+                      currentTestCase as {
+                        import?: import("./types").EvalCaseImportClaim;
+                      }
+                    )?.import
+                  }
+                  className="mt-2"
+                />
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft ? (

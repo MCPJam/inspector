@@ -278,6 +278,82 @@ describe("claim", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 
+  it.each([
+    ["REQUEST_NOT_FOUND", 404, "Connection request not found"],
+    ["REQUEST_EXPIRED", 410, "That authorization link has expired."],
+  ])(
+    "passes the backend's gone reason through to the page",
+    async (code, status, message) => {
+      backendCalls.claimHandoff.mockRejectedValue(
+        new ServerConnectionBackendError(message, status, code)
+      );
+
+      const res = await post("/claim", { handoffToken: "handoff-1" });
+      const body = (await res.json()) as { details?: { reason?: string } };
+
+      expect(res.status).toBe(404);
+      expect(body.details?.reason).toBe(code);
+    }
+  );
+
+  it("passes the refusal reason and masked owner through to the page", async () => {
+    // The page renders a different call to action per reason, so the reason has
+    // to survive the hop. It travels in `details` rather than as the envelope
+    // code, matching how the XAA routes carry theirs.
+    backendCalls.claimHandoff.mockRejectedValue(
+      new ServerConnectionBackendError(
+        "This authorization link was created by a different MCPJam account.",
+        403,
+        "ACCOUNT_MISMATCH",
+        { ownerHint: "m•••@mcpjam.com" }
+      )
+    );
+
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+    const body = (await res.json()) as {
+      details?: { reason?: string; ownerHint?: string };
+    };
+
+    expect(res.status).toBe(403);
+    expect(body.details?.reason).toBe("account-mismatch");
+    expect(body.details?.ownerHint).toBe("m•••@mcpjam.com");
+  });
+
+  it("distinguishes a signed-out claim from a wrong-account one", async () => {
+    // The bug this whole change exists for: these two were one refusal, and
+    // the signed-out visitor — the common case — was told the link belonged to
+    // someone else.
+    backendCalls.claimHandoff.mockRejectedValue(
+      new ServerConnectionBackendError(
+        "Sign in to finish connecting this server.",
+        403,
+        "SIGN_IN_REQUIRED"
+      )
+    );
+
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+    const body = (await res.json()) as { details?: { reason?: string } };
+
+    expect(res.status).toBe(403);
+    expect(body.details?.reason).toBe("sign-in-required");
+  });
+
+  it("carries no reason when the backend predates the split", async () => {
+    // A backend that has not deployed the split still answers `FORBIDDEN`.
+    // Guessing a reason from the status would show a signed-out visitor the
+    // switch-accounts flow, so the page must fall back to plain prose.
+    backendCalls.claimHandoff.mockRejectedValue(
+      new ServerConnectionBackendError("Refused.", 403, "FORBIDDEN")
+    );
+
+    const res = await post("/claim", { handoffToken: "handoff-1" });
+    const body = (await res.json()) as { details?: unknown; message?: string };
+
+    expect(res.status).toBe(403);
+    expect(body.details).toBeUndefined();
+    expect(body.message).toBe("Refused.");
+  });
+
   it("rejects a cross-origin POST", async () => {
     const res = await post(
       "/claim",

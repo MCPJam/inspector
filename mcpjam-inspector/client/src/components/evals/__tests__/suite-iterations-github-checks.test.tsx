@@ -30,8 +30,6 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
 }));

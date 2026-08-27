@@ -74,6 +74,15 @@ export interface ResolvedEnvironmentForLaunch {
    */
   servers?: Array<{ serverId: string; name: string }>;
   serverAttachmentId?: string | null;
+  /**
+   * The environment's pinned computer image, when it pins one. The backend
+   * returns it; DECLARED here because a harness run requires a pinned image
+   * and the admission gate has to distinguish "this environment pins none"
+   * from "nobody looked". An undeclared field survives the cast this module
+   * does today, but only by accident — the next reader adding a projection
+   * would drop it silently.
+   */
+  computerEnvironmentId?: string;
 }
 
 /**
@@ -225,6 +234,88 @@ function environmentConflictKind(error: unknown): "drift" | "revision" {
  * null rather than throwing so call sites read as one line next to the other
  * translations.
  */
+/**
+ * Every OTHER structured refusal `startTestSuiteRun` can raise before it
+ * creates anything: a bad `ephemeralEnvironment` request, an environment that
+ * is not a suite member, an ambiguous multi-environment launch, and the
+ * resolver's own cross-project / archived / missing verdicts.
+ *
+ * Without this they reach the caller as `500 "Server Error"`. The backend
+ * deliberately raises `ConvexError` for these so the reason SURVIVES
+ * production redaction — Convex redacts a plain `Error`'s message and keeps a
+ * `ConvexError`'s data — and then the launch path threw the whole thing away
+ * by rethrowing it raw into the generic handler. Converting the throw and not
+ * translating it buys nothing: the caller still cannot tell "you named an
+ * environment this suite does not have" from "the server broke".
+ *
+ * Codes, not prose: the message is the backend's and is forwarded verbatim,
+ * but the branch is on `code`, so rewording a backend message cannot silently
+ * change which status a caller sees.
+ *
+ * Returns null for anything unrecognized, so a genuinely unknown failure stays
+ * a logged 500 rather than being relabelled as the caller's mistake.
+ */
+const LAUNCH_REJECTION_STATUS: Record<string, 400 | 404> = {
+  // Malformed request: the argument combination cannot mean anything.
+  VALIDATION: 400,
+  // Named an environment the suite does not have, or named none when the
+  // suite has several. Both are fixable by the caller, and naming the id back
+  // reveals nothing they did not already send.
+  ENV_NOT_A_MEMBER: 400,
+  ENV_AMBIGUOUS: 400,
+  // Archived is a state the caller can see and undo; cross-project and
+  // not-found both answer 404, so a probe cannot use this route to learn
+  // whether an id exists in someone else's project.
+  ENV_ARCHIVED: 400,
+  ENV_CROSS_PROJECT: 404,
+  ENV_NOT_FOUND: 404,
+};
+
+export function environmentLaunchRejectionError(
+  error: unknown
+): WebRouteError | null {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+  const code = typeof record.code === "string" ? record.code : undefined;
+  if (!code) return null;
+  const status = LAUNCH_REJECTION_STATUS[code];
+  if (!status) return null;
+  // The 404s collapse ENTIRELY — one message, one code, one reason, no backend
+  // details — because collapsing only the STATUS does not collapse anything a
+  // caller reads. Forwarding "Environment belongs to a different project"
+  // under `ENV_CROSS_PROJECT` next to "Environment not found" under
+  // `ENV_NOT_FOUND` lets someone submit an arbitrary id and learn which
+  // project it lives in, which is the enumeration answering 404 was meant to
+  // prevent, reintroduced one field lower. Matches how the shared Convex
+  // translator answers every 404: the resource noun, and nothing else.
+  if (status === 404) {
+    return new WebRouteError(404, ErrorCode.NOT_FOUND, "Environment not found", {
+      code: "ENV_NOT_FOUND",
+      reason: "env_not_found",
+    });
+  }
+  const message =
+    typeof record.message === "string" && record.message.trim()
+      ? record.message
+      : "This eval run could not be started as requested.";
+  const details =
+    record.details &&
+    typeof record.details === "object" &&
+    !Array.isArray(record.details)
+      ? (record.details as Record<string, unknown>)
+      : {};
+  return new WebRouteError(status, ErrorCode.VALIDATION_ERROR, message, {
+    code,
+    ...details,
+    reason: code.toLowerCase(),
+  });
+}
+
 export function environmentModelRequiredError(
   error: unknown
 ): WebRouteError | null {

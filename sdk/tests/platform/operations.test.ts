@@ -5,6 +5,8 @@ import {
   createEvalSuiteOperation,
   createHostOperation,
   cancelEvalRunOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
@@ -13,7 +15,11 @@ import {
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getPluginVersionOperation,
+  getRegistryDirectoryServerOperation,
   getServerPromptOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  searchRegistryDirectoryOperation,
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -327,6 +333,34 @@ type FixtureOverrides = {
    * and answered without the echo marker.
    */
   sessionsEnvelope?: Record<string, unknown>;
+  /**
+   * The suite DETAIL the run ops read to compute their targets. Default: a
+   * suite with NOTHING attached, which is the bare-rerun shape most of these
+   * tests are about. Override it to model an attached-environment or
+   * attached-host suite.
+   */
+  suiteDetail?: Record<string, unknown>;
+  /** Per-target failure injection for the grouped-launch endpoint, keyed by
+   *  target id. A present entry makes that target's entry a failure. */
+  groupTargetFailures?: Record<string, { code: string; message: string }>;
+  /** Model an API deployment with no grouped-launch endpoint at all. */
+  noRunGroupEndpoint?: boolean;
+};
+
+/** A suite with nothing attached — the shape a bare rerun expects. */
+const BARE_SUITE_DETAIL: Record<string, unknown> = {
+  id: "suite-1",
+  name: "Smoke",
+  description: null,
+  projectId: "project-new",
+  environment: { servers: [] },
+  executionConfig: null,
+  hosts: [],
+  environmentIds: [],
+  settings: {},
+  schedule: {},
+  createdAt: 1,
+  updatedAt: 1,
 };
 
 function makeClient(overrides: FixtureOverrides = {}): {
@@ -373,6 +407,68 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-run-groups$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      if (overrides.noRunGroupEndpoint) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "No route" },
+          { status: 404 }
+        );
+      }
+      const requestBody = JSON.parse(String(init?.body)) as {
+        suiteId: string;
+        targets: Array<{ environmentId?: string; namedHostId?: string }>;
+      };
+      let started = 0;
+      let failed = 0;
+      const entries = requestBody.targets.map((target, index) => {
+        const id = target.environmentId ?? target.namedHostId ?? "";
+        const failure = overrides.groupTargetFailures?.[id];
+        if (failure) {
+          failed += 1;
+          return { target, status: "failed", error: failure };
+        }
+        started += 1;
+        return {
+          target,
+          status: "started",
+          runId: `run-group-${index + 1}`,
+          runStatus: "running",
+          servers: [{ id: "server-saved", name: "Saved" }],
+          environment: target.environmentId
+            ? { id: target.environmentId, name: "Staging", revision: 7 }
+            : null,
+          caseUpsert: { committed: [], failed: [] },
+        };
+      });
+      const firstStarted = entries.find((entry) => entry.status === "started");
+      return Response.json(
+        {
+          runGroupId: "group-1",
+          suiteId: requestBody.suiteId,
+          outcome:
+            started === 0 ? "failed" : failed > 0 ? "partial" : "started",
+          startedCount: started,
+          failedCount: failed,
+          targets: entries,
+          ...(firstStarted
+            ? {
+                runId: (firstStarted as { runId: string }).runId,
+                status: "running",
+              }
+            : {}),
+        },
+        { status: 202 }
+      );
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      return Response.json(overrides.suiteDetail ?? BARE_SUITE_DETAIL);
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/.test(path)) {
       return Response.json({ items: [RUN] });
@@ -628,6 +724,79 @@ describe("listProjectServersOperation", () => {
   });
 });
 
+describe("GitHub Checks operations", () => {
+  /**
+   * A client whose only project belongs to NO organization — the personal-
+   * project case. `PlatformProject.organizationId` is nullable, and GitHub
+   * Checks is configured per organization, so this is the one branch in these
+   * two operations that throws before any request.
+   */
+  function personalProjectClient(): {
+    client: PlatformApiClient;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-personal",
+              name: "Personal",
+              description: null,
+              icon: null,
+              organizationId: null,
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 100,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("refuses to list for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await listEvalCheckReposOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // The reason, not just a refusal: GitHub Checks is per organization.
+    expect((error as PlatformApiError).message).toContain("organization");
+    // An empty organizationId would have built `/organizations//eval-check-repos`
+    // and come back as a flat not-found. Nothing is sent at all.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+
+  it("refuses to connect for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await connectEvalCheckRepoOperation
+      .execute(
+        { suite: "s", repo: "acme/widgets", outagePolicy: "fail_open" },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // It reaches a shared repository — the refusal must land before the write,
+    // and before the suite lookup that would otherwise run first.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+});
+
 describe("showServersOperation", () => {
   it("assembles a payload without doctor calls for skip-only projects", async () => {
     const { client, fetchMock } = makeClient();
@@ -769,7 +938,13 @@ describe("runEvalSuiteOperation", () => {
   });
 
   it("resolves an environment name and echoes the pinned triple", async () => {
-    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    // ATTACHED, because the op now checks attachment client-side: a fan-out
+    // issues one request per target, so an unattached one has to fail before
+    // its siblings start spending rather than after.
+    const { client, fetchMock } = makeClient({
+      servers: HTTP_SERVERS,
+      suiteDetail: { ...BARE_SUITE_DETAIL, environmentIds: ["env-stg"] },
+    });
 
     const result = await runEvalSuiteOperation.execute(
       { suite: "Smoke", environment: "staging" },
@@ -1060,6 +1235,23 @@ describe("createEvalSuiteOperation", () => {
         ],
       }).success
     ).toBe(true);
+  });
+
+  it("rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.safeParse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+      hostz: [],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
+      true
+    );
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1663,6 +1855,16 @@ describe("operation catalog consistency", () => {
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
     check_host_compatibility: { server: "s" },
+    start_claude_readiness_run: { server: "s" },
+    start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    get_readiness_run: { run: "r" },
+    list_readiness_runs: {},
+    cancel_readiness_run: { run: "r" },
+    get_readiness_report: { run: "r" },
+    start_conformance_run: { server: "s" },
+    get_conformance_run: { run: "r" },
+    list_conformance_runs: {},
+    get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     run_eval_suite: { suite: "s" },
@@ -1676,6 +1878,7 @@ describe("operation catalog consistency", () => {
       ],
     },
     get_eval_suite: { suite: "s" },
+    get_eval_run_disclosure: { suite: "s" },
     update_eval_suite: { suite: "s", name: "renamed" },
     delete_eval_suite: { suite: "s" },
     set_eval_suite_schedule: { suite: "s", enabled: false },
@@ -1687,6 +1890,12 @@ describe("operation catalog consistency", () => {
       title: "c",
       steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
     },
+    create_eval_cases: {
+      suite: "s",
+      cases: [
+        { title: "c", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+    },
     update_eval_case: { suite: "s", case: "c", title: "renamed" },
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
@@ -1697,6 +1906,23 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    waive_eval_gate: {
+      project: "p",
+      runId: "r",
+      reason: "shipping the hotfix; tracked in ENG-1",
+      expiresAt: 1_700_000_000_000,
+    },
+    get_eval_gate_waiver: { project: "p", runId: "r" },
+    revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
+    request_eval_run_judge: { project: "p", runId: "r" },
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      // No default: the policy decides what other people's pull requests
+      // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
@@ -1767,23 +1993,45 @@ describe("operation catalog consistency", () => {
       maxConcurrentComputers: 0,
     },
     rotate_user_testing_link: { scenario: "cb" },
+    get_share_settings: { resourceType: "scenario", resourceId: "cb" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "cb",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
     upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
     remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
     rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
-    list_hosts: {},
-    get_host: { host: "h" },
-    set_host_servers: { host: "h", serverIds: [] },
-    duplicate_host: { host: "h" },
-    create_host: { name: "h", template: "claude" },
-    update_host: { host: "h", name: "renamed" },
-    delete_host: { host: "h" },
+    get_share_settings: { resourceType: "scenario", resourceId: "s1" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "s1",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
+    list_clients: {},
+    get_client: { client: "c" },
+    set_client_servers: {
+      client: "c",
+      serverIds: [],
+      expectedConfigId: "hc_1",
+    },
+    duplicate_client: { client: "c" },
+    create_client: { name: "c", template: "claude" },
+    update_client: { client: "c", name: "renamed", expectedName: "c" },
+    delete_client: { client: "c" },
     list_project_environments: {},
     get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
+    ensure_adhoc_environment: { host: "h" },
+    name_environment: { environment: "e", expectedRevision: 0, name: "n" },
     update_project_environment: {
       environment: "e",
       expectedRevision: 0,
@@ -1802,7 +2050,25 @@ describe("operation catalog consistency", () => {
     use_sandbox_image: { image: "i" },
     reset_computer: {},
     search_sessions: { query: "q" },
+    send_chat_message: {
+      idempotencyKey: "k",
+      message: "hi",
+      project: "p",
+      modelId: "anthropic/claude-sonnet-5",
+      serverIds: ["srv"],
+    },
+    get_chat_session: { sessionId: "cs_1" },
+    get_chat_session_trace: { sessionId: "cs_1" },
+    render_server_widget: { server: "srv", toolName: "show_map" },
     delete_sandbox_image: { image: "i" },
+    search_registry_directory: {},
+    get_registry_directory_server: { catalogServerId: "cs" },
+    list_registry_directory_sources: {},
+    list_registry_servers: {},
+    list_registry_connections: {},
+    install_registry_directory_server: { catalogServerId: "cs" },
+    install_registry_server: { registryServerId: "rs" },
+    uninstall_registry_server: { registryServerId: "rs" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -1831,11 +2097,47 @@ describe("operation catalog consistency", () => {
     ).toBe(false);
   });
 
+  it("declares the frozen card-install shape, so a strict re-validation keeps it", () => {
+    // The inspector's proposal freeze injects a display-only `endpointUrl`
+    // (resolved from the card) next to the `expectedUpdatedAt` pin. Both must
+    // be schema-declared: a future strict re-validation at the execute seam
+    // would otherwise reject every approved card install.
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "https://mcp.example.com/mcp",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(true);
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "file:///etc/passwd",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(false);
+    expect(
+      installRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        endpointUrl: "javascript:alert(1)",
+      }).success
+    ).toBe(false);
+  });
+
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
+      // Creates a durable run that dials a third party's server, and — with
+      // the opt-in — spends the organization's credits.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "start_conformance_run",
+      // Stops one. A write because it changes the row, spending nothing.
+      "cancel_readiness_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      "request_eval_run_judge",
+      "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
       "call_server_tool",
@@ -1854,15 +2156,18 @@ describe("operation catalog consistency", () => {
       "delete_eval_suite",
       "set_eval_suite_schedule",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
-      "create_host",
-      "update_host",
-      "delete_host",
-      "set_host_servers",
-      "duplicate_host",
+      "create_client",
+      "update_client",
+      "delete_client",
+      "set_client_servers",
+      "duplicate_client",
       "create_project_environment",
+      "ensure_adhoc_environment",
+      "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
       "launch_journey_run",
@@ -1915,9 +2220,30 @@ describe("operation catalog consistency", () => {
       "undismiss_user_testing_finding",
       "set_user_testing_guest_execution",
       "rotate_user_testing_link",
+      "set_share_mode",
+      "rotate_share_link",
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
+      "rotate_share_link",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
+      // Executes the tool, then renders its widget. A write for the same
+      // reason `call_server_tool` is: the tool runs.
+      "render_server_widget",
+      // One agent Playground turn. A write because it appends to a durable
+      // transcript, and `risk: "spend"` because it runs a model — the two
+      // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
+      "send_chat_message",
+      // Gate waivers. Both are writes because both persist an audited record
+      // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
+      // deliberately NOT here — reading whether a gate is waived is available
+      // to anyone who can view the run, and a waiver its readers cannot see
+      // is not a visible waiver.
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -1933,6 +2259,14 @@ describe("operation catalog consistency", () => {
     const destructive = new Set([
       "call_server_tool",
       "archive_project_environment",
+      // It IS a tool call — the render is what happens afterwards — so it
+      // inherits `call_server_tool`'s unknowability exactly.
+      "render_server_widget",
+      // Under `toolMode: "auto"` this executes arbitrary third-party tools,
+      // which is `call_server_tool`'s unknowability with a model choosing the
+      // arguments. Softening the destructive default would claim a safety the
+      // host cannot verify, since `readOnlyHint` is server-asserted.
+      "send_chat_message",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.mayBeDestructive === true).toBe(
@@ -2072,6 +2406,173 @@ describe("createHostOperation input", () => {
       createHostOperation.inputSchema.safeParse({
         name: "h",
         template: "claude",
+      }).success
+    ).toBe(true);
+  });
+});
+
+describe("registry operations", () => {
+  /**
+   * A client for the install flow: install → getProjectServer → mint link.
+   * `connectionResponse` overrides the POST /server-connections answer;
+   * `outcome` is what the install route reports.
+   */
+  function registryClient(options?: {
+    outcome?: "created" | "reconnected";
+    connectionResponse?: () => Response | Promise<Response>;
+  }): { client: PlatformApiClient; fetchMock: ReturnType<typeof vi.fn> } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({ items: PROJECTS });
+      }
+      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+        return Response.json({
+          serverId: "server-installed",
+          serverName: "Installed",
+          outcome: options?.outcome ?? "created",
+        });
+      }
+      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+        return Response.json({
+          id: "server-installed",
+          projectId: "project-new",
+          name: "Installed",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.example.com/mcp",
+          useOAuth: true,
+          hasClientSecret: false,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+      if (path === "/api/v1/server-connections") {
+        if (options?.connectionResponse) return options.connectionResponse();
+        return Response.json({
+          connectionRequestId: "conn-1",
+          status: "pending",
+          handoffUrl: "https://app.example.com/connect/tok",
+        });
+      }
+      if (path === "/api/v1/registry/directory-servers") {
+        return Response.json({ items: [] });
+      }
+      return Response.json(
+        { code: "NOT_FOUND", message: `No route for ${path}` },
+        { status: 404 }
+      );
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("mints a connect link for a first-time OAuth install", async () => {
+    const { client, fetchMock } = registryClient();
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(result.nextSteps.connectLinkUrl).toBe(
+      "https://app.example.com/connect/tok"
+    );
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(1);
+  });
+
+  it("does NOT mint a connect link on a repeat install (reconnected)", async () => {
+    // The server row — and possibly a completed OAuth grant — already
+    // existed. Minting here would orphan a single-use handoff token on every
+    // repeat install; the status op tells the caller whether a new link is
+    // even needed.
+    const { client, fetchMock } = registryClient({ outcome: "reconnected" });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("reconnected");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(0);
+  });
+
+  it("reports a failed link mint instead of silently omitting the link", async () => {
+    const { client } = registryClient({
+      connectionResponse: () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Too many connection requests" },
+          { status: 429 }
+        ),
+    });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    // The install itself succeeded and stays a success…
+    expect(result.serverId).toBe("server-installed");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    // …but the degradation is visible, not silent.
+    expect(result.nextSteps.connectLinkError).toContain(
+      "Too many connection requests"
+    );
+  });
+
+  it("propagates the caller's abort instead of reporting success", async () => {
+    const controller = new AbortController();
+    const { client } = registryClient({
+      connectionResponse: () => {
+        controller.abort();
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        throw error;
+      },
+    });
+
+    const error = await installRegistryDirectoryServerOperation
+      .execute(
+        { project: "new", catalogServerId: "cs" },
+        { client, signal: controller.signal }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
+  it("forwards verifiedTier to the directory search", async () => {
+    const { client, fetchMock } = registryClient();
+    const input = searchRegistryDirectoryOperation.inputSchema.parse({
+      verifiedTier: "verified",
+    });
+
+    await searchRegistryDirectoryOperation.execute(input, { client });
+
+    const call = callsTo(fetchMock, "/registry/directory-servers")[0]!;
+    expect(call.searchParams.get("verifiedTier")).toBe("verified");
+  });
+
+  it("refuses catalogServerId + source together rather than ignoring source", () => {
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        source: "claude",
+      }).success
+    ).toBe(false);
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        name: "linear",
+        source: "claude",
       }).success
     ).toBe(true);
   });

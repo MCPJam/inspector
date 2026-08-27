@@ -152,6 +152,15 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -165,6 +174,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -388,10 +399,19 @@ jobs:
       DEFAULT_BACKEND_CONVEX_HTTP_URL: ${{ vars.PREVIEW_BACKEND_CONVEX_HTTP_URL || vars.STAGING_CONVEX_HTTP_URL }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
+      # `client_payload.branch` is the *backend* PR's head ref, and for
+      # `backend_pr_preview_requested` it is the only ref the dispatch sends
+      # (mcpjam-backend/.github/workflows/backend-pr-inspector-preview.yml).
+      # Handing it to actions/checkout asked *this* repo for a branch that
+      # only exists in mcpjam-backend, so the fetch hard-failed and the
+      # `|| 'main'` fallback was never reached -- this job failed on every
+      # run from the day it was added. A backend-only PR wants the inspector
+      # at its default branch anyway; the co-developed inspector-PR case
+      # arrives as `backend_preview_ready` carrying a real inspector ref.
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
       - name: Resolve deployed commit metadata
         id: preview_commit
@@ -420,6 +440,15 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -433,6 +462,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -775,10 +806,15 @@ jobs:
       PREVIEW_BACKEND_CONFIGURED: ${{ vars.PREVIEW_BACKEND_VITE_CONVEX_URL != '' }}
       STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
+      # Never fall back to `client_payload.branch` here either: it names a
+      # branch in mcpjam-backend, not in this repo. See the same checkout in
+      # `upsert-backend-pr-preview` above. `backend_preview_ready` and
+      # `backend_preview_failed` normally carry `inspector_git_ref`, so this
+      # only bites when that resolves empty -- but then it bites the same way.
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || github.event.client_payload.branch || 'main' }}
+          ref: ${{ github.event.client_payload.inspector_sha || github.event.client_payload.inspector_git_ref || 'main' }}
 
       - name: Resolve deployed commit metadata
         id: preview_commit
@@ -806,6 +842,15 @@ jobs:
             fi
           fi
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Update preview environment variables
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -819,6 +864,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \
             CONVEX_HTTP_URL="${{ steps.backend_target.outputs.convex_http_url }}"
 

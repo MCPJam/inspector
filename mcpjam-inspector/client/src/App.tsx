@@ -1,7 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   useCallback,
-  createContext,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -26,6 +26,7 @@ import { TasksTab } from "./components/TasksTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
+import { EvaluateTab } from "./components/EvaluateTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
@@ -33,6 +34,7 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  shouldQueryProjectId,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -41,6 +43,7 @@ import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
@@ -48,6 +51,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceHistory,
+  ConformanceRunDetailPage,
+  ConformanceSharedPage,
+} from "./components/conformance/ConformanceHistory";
+import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -78,6 +87,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
   Alert,
   AlertDescription,
@@ -178,13 +188,20 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
+import { hasProjectDeepLinkParam } from "./lib/project-deep-link";
 import {
-  clearProjectDeepLinkFromUrl,
-  hasProjectDeepLinkParam,
-  readProjectDeepLinkParam,
-  resolveProjectDeepLinkAction,
-} from "./lib/project-deep-link";
-import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
+  buildProjectPath,
+  isProjectIdShape,
+  readProjectPathSegment,
+  stripProjectFromPath,
+} from "./lib/project-route";
+import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
+import {
+  captureAppSignInReturnPath,
+  consumeAppSignInReturnPath,
+} from "./lib/app-signin-return-path";
+import { trackSignInReturnRestored } from "./lib/project-route-telemetry";
+import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -252,11 +269,15 @@ import {
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
+import { useEvaluateEnabledState } from "@/hooks/useEvaluateEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@mcpjam/sdk/host-config/templates";
+import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
   HOST_VERIFY_TEMPLATE_PARAM,
@@ -267,26 +288,33 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
+  buildProjectSettingsTarget,
+  buildProjectSwitchTarget,
   getInvalidOrganizationRouteNavigationTarget,
-  getProjectSwitchNavigationTarget,
   isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
   pathnameToActiveTab,
   routePaths,
-  shouldSnapToServersOnActiveProjectChange,
+  scopeNavigationTarget,
   type OrganizationRouteSection,
+  useCurrentLocationParts,
+  useCurrentSearchParam,
   useActiveTab,
   useAppNavigate,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
+import { ScopedNavigate } from "./components/routing/scoped-navigate";
+import {
+  AppRouteReactContext,
+  useAppRouteContext,
+  type AppRouteContext,
+} from "./lib/app-route-context";
 import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
   UNSAFE_LocationContext,
-  useLocation,
-  useOutletContext,
   useParams,
 } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
@@ -506,14 +534,7 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
 import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
 
-type AppRouteContext = Record<string, any>;
 
-const AppRouteReactContext = createContext<AppRouteContext | null>(null);
-
-function useAppRouteContext() {
-  const context = useContext(AppRouteReactContext);
-  return context ?? useOutletContext<AppRouteContext>();
-}
 
 /**
  * The no-router render path.
@@ -592,6 +613,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <OrganizationsRoute />;
     case "evals":
       return <EvalsRoute />;
+    case "evaluate":
+      return <EvaluateRoute />;
     case "home":
       return <HomeRoute />;
     case "servers":
@@ -630,6 +653,12 @@ export function ServersRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
+  // `/servers/:serverId` and `/servers/plugins/:pluginId` — the exact
+  // permalink targets on Connect. Both render THIS screen (see `router.tsx`),
+  // so the param is the whole difference, and it is threaded down rather than
+  // read inside `ServersTab` so the local-mode and unauthenticated branches
+  // below keep passing it too.
+  const routeParams = useParams<{ serverId?: string; pluginId?: string }>();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
   // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
@@ -670,14 +699,22 @@ export function ServersRoute() {
           }}
         />
         <div className="min-h-0 flex-1">
-          <ServersTabBody />
+          <ServersTabBody
+            routeServerId={routeParams.serverId ?? null}
+            routePluginId={routeParams.pluginId ?? null}
+          />
         </div>
       </motion.div>
     );
   }
 
   if (!isAuthenticated) {
-    return <ServersTabBody />;
+    return (
+      <ServersTabBody
+        routeServerId={routeParams.serverId ?? null}
+        routePluginId={routeParams.pluginId ?? null}
+      />
+    );
   }
 
   return (
@@ -686,12 +723,23 @@ export function ServersRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
       onSelectHost={handleSelectHost}
-      serversTabElement={<ServersTabBody />}
+      serversTabElement={
+        <ServersTabBody
+          routeServerId={routeParams.serverId ?? null}
+          routePluginId={routeParams.pluginId ?? null}
+        />
+      }
     />
   );
 }
 
-function ServersTabBody() {
+function ServersTabBody({
+  routeServerId = null,
+  routePluginId = null,
+}: {
+  routeServerId?: string | null;
+  routePluginId?: string | null;
+} = {}) {
   const {
     projectServers,
     handleConnect,
@@ -734,6 +782,8 @@ function ServersTabBody() {
       areServersHydrated={areServersHydrated}
       onProjectShared={handleProjectShared}
       onLeaveProject={() => handleLeaveProject(activeProjectId)}
+      routeServerId={routeServerId}
+      routePluginId={routePluginId}
       isRegistryEnabled={registryEnabled === true}
       onNavigateToRegistry={
         registryEnabled === true ? () => handleNavigate("registry") : undefined
@@ -753,13 +803,17 @@ export function HostsRoute() {
     usePreviewedHostId(convexProjectId);
   const params = useParams<{ hostId?: string }>();
   const navigate = useAppNavigate();
+  // The pathname fallback (no-Router renders) reads the LOGICAL path: under
+  // the router the live one is `/p/<projectId>/hosts/<id>`, and matching that
+  // against `/hosts/` would drop the deep-linked host.
+  const fallbackHostPathname =
+    typeof window === "undefined"
+      ? ""
+      : stripProjectFromPath(window.location.pathname);
   const routeHostId =
     params.hostId ??
-    (typeof window !== "undefined" &&
-    window.location.pathname.startsWith(`${routePaths.hosts}/`)
-      ? window.location.pathname
-          .slice(`${routePaths.hosts}/`.length)
-          .split("/")[0]
+    (fallbackHostPathname.startsWith(`${routePaths.hosts}/`)
+      ? fallbackHostPathname.slice(`${routePaths.hosts}/`.length).split("/")[0]
       : null);
   const urlHostId = useMemo(() => {
     if (!routeHostId) return null;
@@ -926,6 +980,14 @@ export function HostsRoute() {
 }
 
 /**
+ * How long the verify deep-link waits for a gated template's rollout flag
+ * before treating it as off. PostHog seeds no bootstrap flag values, so a
+ * blocked or unreachable relay leaves the flag `undefined` for the life of the
+ * mount — without a deadline the link would silently do nothing at all.
+ */
+export const HOST_TEMPLATE_FLAG_WAIT_MS = 5_000;
+
+/**
  * "Verify against your server" deep-link from the public caniuse surface.
  * `/hosts?template=claude` opens that client's host, creating it from the
  * template (matched by name) when the account doesn't already have one — then
@@ -947,6 +1009,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const claudeCodeEnabled = useClaudeCodeHostEnabledState();
+  const codexEnabled = useCodexHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -962,24 +1026,75 @@ function useTemplateVerifyDeepLink({
     return parseHostVerifyTabParam(window.location.search);
   }, []);
   const handledRef = useRef(false);
+  // Bounded wait for a gated template's rollout flag — see
+  // `HOST_TEMPLATE_FLAG_WAIT_MS`. Once it expires an unresolved flag is read as
+  // off, so the link fails visibly (bounce + toast) instead of silently.
+  const [flagWaitExpired, setFlagWaitExpired] = useState(false);
+
+  useEffect(() => {
+    if (!requestedTemplateId) return;
+    const timer = setTimeout(
+      () => setFlagWaitExpired(true),
+      HOST_TEMPLATE_FLAG_WAIT_MS
+    );
+    return () => clearTimeout(timer);
+  }, [requestedTemplateId]);
 
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
-    // Wait for the host list before deciding create-vs-open. `useHostList`
-    // stays loading while `projectId` is still a placeholder, so this also
-    // guards `createHost` from firing with a not-yet-real project id.
-    if (hostsLoading) return;
+    // The template id is captured at mount, but this component stays mounted
+    // across `/hosts` ↔ `/hosts/:hostId`. If the URL no longer asks for the
+    // captured template — gone, emptied, or now naming a different one — the
+    // link is stale: acting on it would create a host or bounce the user out of
+    // the one they opened, and `replace: true` would eat the history entry that
+    // leads back to it. Compared against the captured id rather than merely
+    // tested for presence, so a template swapped mid-load can never resolve to
+    // the host the user is no longer asking for.
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get(
+        HOST_VERIFY_TEMPLATE_PARAM
+      ) !== requestedTemplateId
+    ) {
+      handledRef.current = true;
+      return;
+    }
+    // Wait for the host list before deciding create-vs-open, and never mint a
+    // host against an id `createHost` would reject. The projectId check is
+    // stated here rather than left to `useHostList`'s loading flag: the two
+    // are separate hooks, and a change to that flag's skip semantics must not
+    // be able to let `createHost` fire with a not-yet-real project id.
+    if (hostsLoading || !shouldQueryProjectId(projectId)) return;
     const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
     if (!template) return;
-    handledRef.current = true;
 
     const existing = hosts.find((h) => h.name === template.label);
     if (existing) {
+      handledRef.current = true;
       navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
         replace: true,
       });
       return;
     }
+
+    const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+    });
+    // Gated templates remain visible on caniuse.dev as reference profiles, but
+    // they are not available for new-host creation until their rollout flags
+    // are enabled. Wait for PostHog before deciding so flagged users do not get
+    // bounced during a cold load — but only until the deadline, so a relay that
+    // never answers ends in the disabled path instead of a silent no-op.
+    if (templateEnabled === undefined && !flagWaitExpired) return;
+    if (!templateEnabled) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(`${template.label} is not available yet.`);
+      return;
+    }
+
+    handledRef.current = true;
 
     void (async () => {
       try {
@@ -996,8 +1111,11 @@ function useTemplateVerifyDeepLink({
           replace: true,
         });
       } catch (err) {
-        // Let the user retry (e.g. via the same link) after a transient failure.
-        handledRef.current = false;
+        // Leave the latch set. This effect also re-runs when the rollout flags
+        // resolve, so releasing it here let a failed create fire again with no
+        // user gesture — duplicating a host the first attempt may have
+        // committed before it timed out. Retrying means opening the link again,
+        // which remounts this hook and clears the latch.
         toast.error(
           err instanceof Error ? err.message : "Couldn't open that client"
         );
@@ -1010,97 +1128,12 @@ function useTemplateVerifyDeepLink({
     hosts,
     projectId,
     requestedFocusTab,
+    claudeCodeEnabled,
+    codexEnabled,
+    flagWaitExpired,
     themeMode,
     createHost,
     navigate,
-  ]);
-}
-
-/**
- * `?project=<id>` deep-link: shared eval/suite/run URLs carry no project
- * segment, so a link renders whatever project the viewer's picker is on.
- * Surfaces that mass-produce links (the Slack bot, CLI run URLs) append the
- * param; this switches the active project (and organization, when the link
- * crosses orgs) to match, then strips the param. Runs once per mount.
- */
-function useProjectDeepLinkSwitch({
-  isAuthenticated,
-  isLoadingRemoteProjects,
-  projects,
-  activeProjectId,
-  activeOrganizationId,
-  setActiveOrganizationId,
-  handleSwitchProject,
-}: {
-  isAuthenticated: boolean;
-  isLoadingRemoteProjects: boolean;
-  projects: Record<string, unknown>;
-  activeProjectId: string | null;
-  activeOrganizationId: string | undefined;
-  setActiveOrganizationId: (organizationId: string | undefined) => void;
-  handleSwitchProject: (projectId: string) => Promise<void>;
-}) {
-  const requestedProjectId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return readProjectDeepLinkParam(window.location.search);
-  }, []);
-  // Unfiltered membership list (same Convex query the org-filtered project
-  // list derives from, so this dedupes) — needed to resolve cross-org links.
-  const { allProjects } = useProjectQueries({ isAuthenticated });
-  const handledRef = useRef(false);
-
-  useEffect(() => {
-    if (!requestedProjectId || handledRef.current) return;
-    if (!isAuthenticated || isLoadingRemoteProjects) return;
-
-    const action = resolveProjectDeepLinkAction({
-      requestedProjectId,
-      activeProjectId,
-      activeOrgProjectIds: new Set(Object.keys(projects)),
-      allProjects,
-      activeOrganizationId,
-    });
-    switch (action.kind) {
-      case "wait":
-        return;
-      case "clear":
-        handledRef.current = true;
-        clearProjectDeepLinkFromUrl();
-        return;
-      case "switch-organization":
-        // The org-filtered project list re-derives; a later run of this
-        // effect lands on switch-project. handledRef stays unset on purpose.
-        setActiveOrganizationId(action.organizationId);
-        return;
-      case "switch-project":
-        handledRef.current = true;
-        // .catch BEFORE .finally: finally re-throws rejections, so a bare
-        // .finally chain would turn a failed switch into an unhandled
-        // rejection with the user silently left on the wrong project.
-        void handleSwitchProject(requestedProjectId)
-          .catch(() => {
-            toast.error(
-              "Couldn't switch to the linked project — use the project picker."
-            );
-          })
-          .finally(clearProjectDeepLinkFromUrl);
-        return;
-      case "not-found":
-        handledRef.current = true;
-        clearProjectDeepLinkFromUrl();
-        toast.error("This link points to a project you don't have access to.");
-        return;
-    }
-  }, [
-    requestedProjectId,
-    isAuthenticated,
-    isLoadingRemoteProjects,
-    projects,
-    activeProjectId,
-    activeOrganizationId,
-    allProjects,
-    setActiveOrganizationId,
-    handleSwitchProject,
   ]);
 }
 
@@ -1220,7 +1253,7 @@ export function ComputerRoute() {
   // /computer directly (the redirect fires before the flag resolves). Render
   // nothing until it settles — disabled users get the bounce a beat later.
   if (computersEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (computersEnabled === undefined) {
     return null;
@@ -1363,9 +1396,123 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
   );
 }
 
+/**
+ * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
+ *
+ * A separate route rather than a branch inside `EvalsRoute` so the shipped tab
+ * has no new conditional in it at all. Same `evals` billing feature: it is the
+ * same product, only redrawn. No Runs lens — the commit-keyed CI review stays
+ * on `/evals/runs`.
+ */
+export function EvaluateRoute() {
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    ensureServersReady,
+    handleContinueEvalInChat,
+    handleConnect,
+  } = useAppRouteContext();
+  const evaluateEnabled = useEvaluateEnabledState();
+
+  // The sidebar hides the nav item, but a nav filter is not a gate: `/evaluate`
+  // is a plain route, and its `navSegments` entry feeds `KNOWN_APP_TAB_SEGMENTS`
+  // so `ui_navigate` reaches it too. Bounce to the shipped tab — same product,
+  // and the flagged-out user loses nothing by landing there.
+  //
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /evaluate directly. (Same tradeoff as SessionsRoute.)
+  if (evaluateEnabled === false) {
+    return <ScopedNavigate to={routePaths.evals} replace />;
+  }
+  if (evaluateEnabled === undefined) {
+    return null;
+  }
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <EvaluateTab
+      projectId={convexProjectId}
+      ensureServersReady={ensureServersReady}
+      onContinueInChat={handleContinueEvalInChat}
+      handleConnect={handleConnect}
+    />
+  );
+}
+
 export function ConformanceRoute() {
-  const { selectedServerEntry } = useAppRouteContext();
-  return <ConformanceTab server={selectedServerEntry ?? null} />;
+  const { selectedServerEntry, convexProjectId, isAuthenticated } =
+    useAppRouteContext();
+  const { serversByName } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const savedServerId = selectedServerEntry?.name
+    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    : null;
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {convexProjectId ? (
+        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+          <ConformanceHistory
+            projectId={convexProjectId}
+            serverId={savedServerId}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ConformanceTab
+          server={selectedServerEntry ?? null}
+          persist={
+            convexProjectId
+              ? { projectId: convexProjectId, serverId: savedServerId }
+              : undefined
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ConformanceRunDetailRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  const params = useParams<{ runId?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.runId ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return (
+    <ConformanceRunDetailPage
+      runId={decodeParam(raw) ?? raw}
+      projectId={convexProjectId}
+    />
+  );
+}
+
+export function ConformanceSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
+}
+
+export function EvalRunSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
 export function CompatibilityRoute() {
@@ -1409,7 +1556,7 @@ export function ScenariosRoute() {
   // `undefined`, and bouncing then would strand a flagged-in user who cold-
   // loads the URL. (Same tradeoff SwarmsRoute makes.)
   if (sandboxesEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
     return null;
@@ -1454,8 +1601,17 @@ function isUserTestingEditPath(pathname: string): boolean {
   return /^\/user-testing\/[^/]+\/edit$/.test(pathname.replace(/\/+$/, ""));
 }
 
+/**
+ * The logical pathname for the no-Router fallbacks below.
+ *
+ * Project-relative: the User Testing matchers here are written against
+ * `/user-testing/...`, and the live path carries `/p/<projectId>` in front of
+ * it.
+ */
 function getRouteFallbackPathname(): string {
-  return typeof window === "undefined" ? "" : window.location.pathname;
+  return typeof window === "undefined"
+    ? ""
+    : stripProjectFromPath(window.location.pathname);
 }
 
 /**
@@ -1533,7 +1689,7 @@ export function SwarmsRoute() {
   // /swarms directly. Render nothing until it settles. (Same tradeoff the
   // Environments route already makes.)
   if (sandboxesEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (sandboxesEnabled === undefined) {
     return null;
@@ -1575,11 +1731,14 @@ export function SwarmsRoute() {
     }
   }
 
+  const fallbackSwarmPathname =
+    typeof window === "undefined"
+      ? ""
+      : stripProjectFromPath(window.location.pathname);
   const rawRouteSwarmId =
     params.swarmId ??
-    (typeof window !== "undefined" &&
-    window.location.pathname.startsWith(`${routePaths.swarms}/`)
-      ? window.location.pathname
+    (fallbackSwarmPathname.startsWith(`${routePaths.swarms}/`)
+      ? fallbackSwarmPathname
           .slice(`${routePaths.swarms}/`.length)
           .split("/")[0]
       : null);
@@ -1616,6 +1775,11 @@ export function EnvironmentsRoute() {
   // (`canManageHosts` mirrors the backend's admin gate); everyone else
   // browses read-only.
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  // `/environments/:environmentId` — the exact permalink target. Same element
+  // as `/environments`, so the param is what selects the detail.
+  const { environmentId: routeEnvironmentId } = useParams<{
+    environmentId?: string;
+  }>();
   const { user, isLoading: isWorkOsLoading } = useAuth();
   const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
@@ -1639,6 +1803,7 @@ export function EnvironmentsRoute() {
       projectId={convexProjectId ?? null}
       canManage={canManage}
       isAuthenticated={isAuthenticated}
+      routeEnvironmentId={routeEnvironmentId ?? null}
     />
   );
 }
@@ -1651,11 +1816,29 @@ export function SessionsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
 
+  /**
+   * A permalink names ONE exact session, and this feed is the only screen that
+   * opens one: every `/v1/sessions` item carries `/sessions?session=<id>` as
+   * its link, which the backend mints as the universal target for sessions
+   * whose surface-native page does not exist (an eval Quick Run, a session
+   * whose parent run was deleted). Nothing else in the app can render it.
+   *
+   * So the ROLLOUT flag must not swallow that link. It gates who DISCOVERS the
+   * feed — the sidebar item, an unaddressed `/sessions` visit — not who may
+   * read a session they were handed the id of, and bouncing a permalink to
+   * Connect drops the id on the floor and lands the recipient on a screen they
+   * never asked for, with nothing to say what happened. Row-level visibility
+   * is entirely server-side (`canViewSessionInProject`), so honouring the link
+   * exposes nothing the flag was protecting, and the dark-ship ErrorBoundary
+   * below still covers a deployment whose feed queries are not live yet.
+   */
+  const permalinkSessionId = useCurrentSearchParam("session");
+
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /sessions directly. (Same tradeoff as SwarmsRoute.)
-  if (unifiedSessionsEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+  if (unifiedSessionsEnabled === false && !permalinkSessionId) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (unifiedSessionsEnabled === undefined) {
     return null;
@@ -1780,7 +1963,7 @@ export function SkillsRoute() {
     // `undefined`; bouncing then would strand a flagged-in user who cold-loads
     // /skills directly. Render nothing until it settles.
     if (skillsEnabled === false) {
-      return <Navigate to={routePaths.servers} replace />;
+      return <ScopedNavigate to={routePaths.servers} replace />;
     }
     if (skillsEnabled === undefined) {
       return null;
@@ -2105,6 +2288,37 @@ export function GithubChecksSettingsRoute() {
   );
 }
 
+/**
+ * `/settings/integrations/github/callback` — GitHub's return path, both legs.
+ *
+ * Same `ErrorBoundary` doctrine as the settings page: this page's actions THROW
+ * when the backend cannot answer (not deployed yet, or the caller is not a
+ * member), and without a boundary that unmounts the whole app. It redirects to
+ * `/settings` for the same reason too — a gated surface that cannot confirm it
+ * is available is not available.
+ *
+ * No `activeOrganizationId` is passed, and none is needed: the browser arrives
+ * back from GitHub carrying only query parameters, and which organization the
+ * binding belongs to is recovered server-side from the link session. A page
+ * that read it from app state could disagree with the session and would then be
+ * asserting an organization nobody proved anything about.
+ */
+export function GithubInstallCallbackSettingsRoute() {
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error(
+          "[settings/integrations/github/callback] unavailable:",
+          error
+        )
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubInstallCallbackRoute />
+    </ErrorBoundary>
+  );
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -2139,17 +2353,22 @@ export function ChatAliasRoute() {
   // Forward the query string: `/chat?conversation=<id>` is what an OAuth return
   // marker or an old bookmark can still carry, and dropping the search here
   // would land the user on an empty Playground with the id already gone.
-  const location = useLocation();
+  //
+  // Scoped to the project the alias was reached IN: `<Navigate to="/playground">`
+  // would leave the project sub-tree, land on the unscoped legacy route, and
+  // re-resolve the project from persisted state — an extra redirect that can
+  // arrive at a DIFFERENT project than the link named.
+  const { pathname, search } = useCurrentLocationParts();
   return (
     <Navigate
-      to={{ pathname: routePaths.playground, search: location.search }}
+      to={scopeNavigationTarget(`${routePaths.playground}${search}`, pathname)}
       replace
     />
   );
 }
 
 export function ServersRedirectRoute() {
-  return <Navigate to={routePaths.servers} replace />;
+  return <ScopedNavigate to={routePaths.servers} replace />;
 }
 
 export function HomeRoute() {
@@ -2280,7 +2499,18 @@ export default function App() {
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
+  // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
+  // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
+  // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
+  // `servers` fallback — which is a first-run-eligible route, and a hosted
+  // guest session is Convex-authenticated. Without this the onboarding redirect
+  // below can fire on the very commit that mounts the route and navigate the
+  // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
+  // point this route exists to fix.
+  const isLoginInitiationRoute = barePathname === routePaths.login;
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -2317,8 +2547,18 @@ export default function App() {
       ),
     [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
+  // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
+  // whose membership hasn't linked yet, so every org-scoped query for it is
+  // denied server-side — making it active crashed the route
+  // (Sentry INSPECTOR-CLIENT-24C). It stays in `effectiveOrganizations` so the
+  // switcher can list it as unavailable, but it must never become the
+  // active org, by route or by fallback.
+  const selectableOrganizations = useMemo(
+    () => effectiveOrganizations.filter((org) => !org.seatPending),
+    [effectiveOrganizations]
+  );
   const hasRouteOrganization = !!routeOrganizationId
-    ? effectiveOrganizations.some((org) => org._id === routeOrganizationId)
+    ? selectableOrganizations.some((org) => org._id === routeOrganizationId)
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
@@ -2567,19 +2807,37 @@ export default function App() {
         : null;
       const cliReturnPath = readCliSignInReturnPath();
       const apiKeysReturnPath = readApiKeysSignInReturnPath();
+      // Consumed (read AND cleared) whether or not it wins: a path left in
+      // storage would outlive this sign-in and hijack the next one.
+      const appReturnPath = consumeAppSignInReturnPath();
       clearScenarioSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
       clearApiKeysSignInReturnPath();
-      window.history.replaceState(
-        {},
-        "",
+      // LAST in precedence, deliberately. The scenario, billing, CLI and
+      // API-key flows encode an intent, not just a location, and each has its
+      // own documented ordering; the generic path only says "put me back", so
+      // it fills in for the ordinary case those four do not cover.
+      const restoredPath =
         scenarioReturnPath ??
-          billingReturnPath ??
-          cliReturnPath ??
-          apiKeysReturnPath ??
-          "/"
+        billingReturnPath ??
+        cliReturnPath ??
+        apiKeysReturnPath ??
+        appReturnPath ??
+        "/";
+      trackSignInReturnRestored(
+        !appReturnPath
+          ? "absent"
+          : restoredPath === appReturnPath
+            ? "restored"
+            : "superseded"
       );
+      // `navigateApp`, not `history.replaceState`: a raw history write leaves
+      // the ROUTER matched on `/callback` while the address bar says
+      // `/p/<id>/evals/...`, so the project boundary never mounts and the URL
+      // that was just restored decides nothing. This is what makes the
+      // complete canonical URL survive the round trip.
+      navigateApp(restoredPath, { replace: true });
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
       return;
@@ -2668,11 +2926,15 @@ export default function App() {
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
-    hasOrganizations: effectiveOrganizations.length > 0,
+    hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
-    validOrganizations: effectiveOrganizations,
+    validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     requestSignIn: () => {
+      // Ordinary app sign-in: remember the whole current URL — project
+      // segment, query and hash included — so the round trip through WorkOS
+      // returns to the exact page, not to the app's front door.
+      captureAppSignInReturnPath();
       void signIn();
     },
   });
@@ -2877,17 +3139,29 @@ export default function App() {
       const raw = new URLSearchParams(window.location.search).get("template");
       return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
     })();
-  // Same clobber hazard for `?project=` deep links: the onboarding redirect
-  // would drop the path + param before the switch handler consumes it. Unlike
-  // `?template`, membership can't be checked synchronously — but the handler
-  // always strips the param once project data settles (including the
-  // no-access case), so the suppression is transient by construction.
+  // Same clobber hazard for a project-bearing entry — either shape. The
+  // onboarding redirect would drop the path before it is normalized onto
+  // `/p/<projectId>/...`, taking the destination the link named with it.
+  //
+  // The path test asks whether the URL CLAIMS a project, not whether that
+  // claim is usable: `/p/<malformed>/servers` matches the `p/:projectId`
+  // route, and the boundary answers it with the generic inaccessible state.
+  // Testing for a well-formed id instead would let the onboarding redirect
+  // fire on exactly those URLs and replace the error with Playground — the
+  // requested URL gone, and no way to tell the user what was wrong with it.
+  //
+  // A legacy `?project=` still counts only when it is USABLE: that one is
+  // stripped rather than reported, so a malformed value must not suppress
+  // onboarding. Either way the suppression is transient — the normalizer
+  // resolves or gives up on the first render after project data settles.
   const hasProjectSwitchDeepLinkParam =
     typeof window !== "undefined" &&
-    hasProjectDeepLinkParam(window.location.search);
+    (hasProjectDeepLinkParam(window.location.search) ||
+      readProjectPathSegment(window.location.pathname) !== null);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
@@ -3018,10 +3292,15 @@ export default function App() {
     activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+    canQueryProjectServerConfig
+      ? ({ projectId: convexProjectId } as never)
+      : "skip"
   ) as ProjectServerConfigDto | null | undefined;
+  // A skipped query reads as `undefined`, so this already covers the window
+  // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
     Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
@@ -3046,7 +3325,7 @@ export default function App() {
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
   const activeProjectBillingOrganizationId =
@@ -3288,6 +3567,14 @@ export default function App() {
         : undefined;
     const supportsMrtr =
       activeMcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+    const suppressListenChannel =
+      activeMcpProfile?.toolListChanged?.listens === false
+        ? (true as const)
+        : undefined;
+    const dropToolListChanged =
+      activeMcpProfile?.toolListChanged?.refetches === false
+        ? (true as const)
+        : undefined;
 
     return {
       clientInfo,
@@ -3299,6 +3586,8 @@ export default function App() {
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      suppressListenChannel,
+      dropToolListChanged,
       xaaPolicy,
     };
   }, [
@@ -3347,7 +3636,11 @@ export default function App() {
   );
   const navigateToServers = useCallback(
     (options?: { replace?: boolean }) => {
-      if (window.location.pathname === routePaths.servers) {
+      // Compared on the LOGICAL path: `/p/<id>/servers` is already Servers,
+      // and re-navigating would push a duplicate history entry that Back has
+      // to be pressed through twice.
+      const logicalPathname = stripProjectFromPath(window.location.pathname);
+      if (logicalPathname === routePaths.servers) {
         return;
       }
       navigateToTarget(routePaths.servers, options);
@@ -3370,7 +3663,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+    if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
     toast.error(`${activeTab} is not available in hosted mode.`);
@@ -3737,41 +4030,12 @@ export default function App() {
     }
   }, [shouldRouteToFirstRunOnboarding]);
 
-  // When the active project changes (org switch, project delete, manual switch),
-  // snap to Servers — staying on App Builder/Chat would leave the user pointed
-  // at a project that no longer exists. Start tracking only after auth/project
-  // loading settles so the initial local-default → Convex-project hydration
-  // doesn't yank deep-links away on first load.
-  const previousActiveProjectIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading) {
-      return;
-    }
-
-    // Advance the ref regardless so this project change is consumed and can't
-    // trigger a stale snap on a later render (e.g. once the user leaves the
-    // org route). The snap decision itself lives in a pure, unit-tested helper.
-    const previousActiveProjectId = previousActiveProjectIdRef.current;
-    previousActiveProjectIdRef.current = activeProjectId;
-    if (
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId,
-        nextActiveProjectId: activeProjectId,
-        // Deliberately not the `activeTab` hook value: the router commits in a
-        // transition, so that still names the page being left while the project
-        // change is already live. `navigateToServers` reads the same source.
-        activeTab: pathnameToActiveTab(window.location.pathname),
-      })
-    ) {
-      navigateToServers();
-    }
-  }, [
-    activeProjectId,
-    isAuthLoading,
-    isLoadingRemoteProjects,
-    isWorkOsLoading,
-    navigateToServers,
-  ]);
+  // The snap-to-Servers effect that used to live here is gone with the URL
+  // migration. It existed because a project switch changed hidden state and
+  // left the URL naming a resource in the project being left; now the URL is
+  // the switch, so there is nothing to repair afterwards — and an effect that
+  // navigates on every observed project change would race the coordinator
+  // that just performed one.
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -3865,7 +4129,7 @@ export default function App() {
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      effectiveOrganizations,
+      selectableOrganizations,
       activeOrganizationId,
       projectOrgId
     );
@@ -3903,7 +4167,7 @@ export default function App() {
     routeOrganizationId,
     routeOrganizationSection,
     signIn,
-    effectiveOrganizations,
+    selectableOrganizations,
     workOsUser?.id,
   ]);
 
@@ -4054,7 +4318,7 @@ export default function App() {
           : [...currentIds, deletedOrganizationId]
       );
 
-      const remainingOrganizations = effectiveOrganizations.filter(
+      const remainingOrganizations = selectableOrganizations.filter(
         (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
@@ -4090,42 +4354,101 @@ export default function App() {
       activeProject?.organizationId,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      effectiveOrganizations,
+      selectableOrganizations,
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
     ]
   );
 
-  useProjectDeepLinkSwitch({
+  // The URL owns which project this tab is on. This reconciles the two
+  // continuously — on cold open, on Back/Forward, and on every in-app
+  // navigation — switching organization first when the link crosses one.
+  const { allProjects: allMembershipProjects } = useProjectQueries({
     isAuthenticated,
+  });
+  // Silent: the URL already told the user which project they are in, so a
+  // toast on every cold open of a shared link would be narrating the address
+  // bar back at them.
+  const switchProjectForRoute = useCallback(
+    (projectId: string) => handleSwitchProject(projectId, { silent: true }),
+    [handleSwitchProject]
+  );
+  const projectRouteState = useProjectRouteCoordinator({
+    isAuthenticated,
+    isAuthLoading,
     isLoadingRemoteProjects,
     projects,
+    allProjects: allMembershipProjects,
     activeProjectId,
     activeOrganizationId,
     setActiveOrganizationId,
-    handleSwitchProject,
+    switchProject: switchProjectForRoute,
   });
 
+  /**
+   * Picking another project in the switcher NAVIGATES. It does not switch
+   * state and then repair the URL: that ordering is what let a stale effect
+   * bounce the user off the page they had just opened, and it left the
+   * address bar naming project A while the app rendered project B.
+   */
   const handleSidebarSwitchProject = useCallback(
-    async (projectId: string) => {
-      const nextProject = projects[projectId];
-      await handleSwitchProject(projectId);
-
-      const navigationTarget = getProjectSwitchNavigationTarget({
-        // Read the tab from the live pathname, not the `activeTab` hook value:
-        // the switcher's per-row gear navigates while this switch is still in
-        // flight, and a closure-captured tab would send the user back to
-        // Servers on top of the settings page they just opened.
-        activeTab: pathnameToActiveTab(window.location.pathname),
-        activeOrganizationId,
-        nextProjectOrganizationId: nextProject?.organizationId,
-      });
-      if (navigationTarget) {
-        navigateToTarget(navigationTarget);
-      }
+    (projectId: string) => {
+      navigateToTarget(buildProjectSwitchTarget(projectId));
     },
-    [activeOrganizationId, handleSwitchProject, navigateToTarget, projects]
+    [navigateToTarget]
+  );
+
+  /** The switcher's per-row gear — one gesture, one URL, no pre-switch. */
+  const handleSidebarOpenProjectSettings = useCallback(
+    (projectId: string) => {
+      navigateToTarget(buildProjectSettingsTarget(projectId));
+    },
+    [navigateToTarget]
+  );
+
+  /**
+   * Deleting the project you are looking at has to move the URL, because the
+   * URL is what names it. Left alone, the address bar would keep pointing at
+   * a project that no longer exists and the route boundary would render the
+   * inaccessible state on a deletion the user performed deliberately.
+   *
+   * The fallback is VALIDATED — a project still visible in this organization,
+   * preferring the default one — and when there is none the viewer goes to
+   * the unscoped root, which is the onboarding/no-project surface. A guessed
+   * or stale id here would put someone in a project they did not choose.
+   */
+  const handleDeleteProjectAndLeave = useCallback(
+    async (projectId: string) => {
+      const remainingIds = Object.keys(projects).filter(
+        (id) => id !== projectId
+      );
+      const fallbackProjectId =
+        remainingIds.find((id) => (projects[id] as any)?.isDefault) ??
+        remainingIds[0] ??
+        null;
+
+      const deleted = await handleDeleteProject(projectId);
+      if (!deleted) return deleted;
+      // Only the tab whose URL named the deleted project moves. A deletion
+      // performed from Project settings while parked on a global route (say
+      // Organizations) should not yank the user off it.
+      if (readProjectPathSegment(window.location.pathname) !== projectId) {
+        return deleted;
+      }
+      if (fallbackProjectId && isProjectIdShape(fallbackProjectId)) {
+        navigateApp(buildProjectPath(fallbackProjectId, routePaths.servers), {
+          replace: true,
+        });
+      } else {
+        // `unscoped`: the current URL still names the project that was just
+        // deleted, and the ordinary scope inheritance would carry that id
+        // straight back into the root target.
+        navigateApp(routePaths.root, { replace: true, unscoped: true });
+      }
+      return deleted;
+    },
+    [handleDeleteProject, projects]
   );
 
   const isBillingEntryHandoff =
@@ -4379,7 +4702,7 @@ export default function App() {
         }
       : undefined;
 
-  const isEvalsTab = activeTab === "evals";
+  const isEvalsTab = activeTab === "evals" || activeTab === "evaluate";
   const globalHostBarProps =
     isAuthenticated &&
     convexProjectId &&
@@ -4440,11 +4763,15 @@ export default function App() {
   const homeOrganizationId =
     !isLoadingOrganizations &&
     rawHomeOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawHomeOrganizationId)
       ? rawHomeOrganizationId
       : null;
 
   const routeContext: AppRouteContext = {
+    // What the URL's project segment resolved to. `ProjectRouteBoundary`
+    // renders on it, and the legacy normalizer reads the rest of this bag to
+    // decide which project an old link should adopt.
+    projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
@@ -4473,7 +4800,7 @@ export default function App() {
     handleConnect,
     handleConnectWithTokensFromOAuthFlow,
     handleContinueEvalInChat,
-    handleDeleteProject,
+    handleDeleteProject: handleDeleteProjectAndLeave,
     handleDisconnect,
     handleLeaveProject,
     handleNavigate,
@@ -4526,6 +4853,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4535,8 +4867,9 @@ export default function App() {
         projects={projects}
         activeProjectId={activeProjectId}
         onSwitchProject={handleSidebarSwitchProject}
+        onOpenProjectSettings={handleSidebarOpenProjectSettings}
         onCreateProject={handleCreateProject}
-        onDeleteProject={handleDeleteProject}
+        onDeleteProject={handleDeleteProjectAndLeave}
         isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
@@ -4550,19 +4883,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4582,7 +4916,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}
@@ -4717,9 +5051,24 @@ export default function App() {
                 }
                 onSignIn={() => {
                   if (scenarioPathToken) {
+                    // The scenario gate owns its own return path; leaving the
+                    // permalink nonce out keeps exactly one mechanism live on
+                    // that route rather than two racing to redirect.
                     writeScenarioSignInReturnPath(window.location.pathname);
+                    signIn();
+                    return;
                   }
-                  signIn();
+                  // THE primary signed-out path for a permalink. This gate
+                  // intercepts a hosted cold load before any screen renders,
+                  // so a bare `signIn()` here loses the resource path and its
+                  // `?project=` scope no matter what the header button does —
+                  // the visitor authenticates and lands on the app shell.
+                  //
+                  // The generic path is stored alongside the scenario one, not
+                  // instead of it: the scenario flow keeps its precedence on
+                  // `/callback`, and this only fills in for everything else.
+                  captureAppSignInReturnPath();
+                  signIn(permalinkSignInOptions());
                 }}
                 onSignOut={() => {
                   void (async () => {

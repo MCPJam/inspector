@@ -9,6 +9,7 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   useRef,
   useState,
@@ -61,6 +62,7 @@ import { useWidgetHost } from "./widget-host-context";
 import {
   type UiProtocol,
   type CspMode,
+  type CspSubtypePolicy,
   type DisplayMode,
   type OpenAiAppsCapabilities,
   type ResolvedMcpAppsCapabilities,
@@ -1326,10 +1328,9 @@ export function MCPAppsRendererSurface({
     if (!widgetCsp) return widgetCsp;
     const m = earlyEffectiveMcpAppsCapabilities;
     if (m.cspFrameDomains && m.cspBaseUriDomains) return widgetCsp;
-    // Spread + selectively strip the gated sub-fields. Connect /
-    // resource domains are NOT matrix-gated today (no host's
-    // published table tracks them at this granularity); only frame
-    // and baseUri are.
+    // Connect/resource domains remain in the declaration here. Their
+    // per-API interpretation happens in the sandbox proxy so a host can
+    // ignore one subtype without losing the same domain for another.
     const next: McpUiResourceCsp = { ...widgetCsp };
     if (!m.cspFrameDomains) delete next.frameDomains;
     if (!m.cspBaseUriDomains) delete next.baseUriDomains;
@@ -2557,6 +2558,13 @@ export function MCPAppsRendererSurface({
     () => profileSandbox?.csp?.cspDirectives,
     [activeMcpProfileKey]
   );
+  // Browser storage availability, straight from the profile like the knobs
+  // above. Deliberately NOT folded into `cspSubtypePolicy`: storage is not a
+  // CSP concern, and its guard applies in permissive mode too.
+  const browserStoragePolicy = useMemo(
+    () => profileSandbox?.browserStorage,
+    [activeMcpProfileKey]
+  );
   // Hosted-mode clamp for cspDirectives. The resolver's
   // `hostedClampExtraDeny` strips MCPJam app/API origins from the
   // widget-declared CSP (`restrictTo` + resource declaration), but
@@ -2628,7 +2636,32 @@ export function MCPAppsRendererSurface({
     sandboxAttrs: string[] | undefined;
     allowFeatures: Record<string, string> | undefined;
     cspDirectives: Record<string, string[]> | undefined;
+    cspSubtypePolicy: CspSubtypePolicy | undefined;
+    browserStorage: BrowserStoragePolicy | undefined;
   }>(() => {
+    const cspSubtypePolicy: CspSubtypePolicy | undefined =
+      earlyEffectiveMcpAppsCapabilities.cspConnectDomains ||
+      earlyEffectiveMcpAppsCapabilities.cspResourceDomains
+        ? {
+            cspConnectDomains:
+              earlyEffectiveMcpAppsCapabilities.cspConnectDomains,
+            cspResourceDomains:
+              earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
+          }
+        : undefined;
+    // Only an explicit `false` leaf narrows what the proxy emits or arms the
+    // connect guard; `true` and absent leaves are both no-ops. Claude and
+    // Cursor ship all-true matrices, so treating the mere PRESENCE of a
+    // policy as a host restriction would force `permissive: false` on a
+    // widget the host does not restrict at all — and a permissive widget
+    // with no declared CSP (cached replay) would then get the proxy's
+    // locked-down fallback (`connect-src 'none'`, `img-src data:`).
+    const cspSubtypePolicyRestricts =
+      !!cspSubtypePolicy &&
+      [
+        ...Object.values(cspSubtypePolicy.cspConnectDomains ?? {}),
+        ...Object.values(cspSubtypePolicy.cspResourceDomains ?? {}),
+      ].some((allowed) => allowed === false);
     // Detect whether the host explicitly configured CSP hardening signals.
     // Hoisted above the permissive short-circuit so the permissive branch
     // can honor host-explicit `restrictTo` instead of silently dropping it;
@@ -2743,6 +2776,11 @@ export function MCPAppsRendererSurface({
         sandboxAttrs: sandboxAttrsPolicy,
         allowFeatures: allowFeaturesPolicy,
         cspDirectives: cspDirectivesEffective,
+        cspSubtypePolicy: undefined,
+        // Unlike `cspSubtypePolicy` above, storage is NOT dropped in
+        // permissive mode: a host that serves no CSP can still deny storage,
+        // and the proxy arms the guard on both branches.
+        browserStorage: browserStoragePolicy,
       };
     }
 
@@ -2854,8 +2892,19 @@ export function MCPAppsRendererSurface({
       }
       resolvedPermissions = out as McpUiResourcePermissions;
     }
+    const effectiveCspSubtypePolicy = isPureRelaxedCsp
+      ? undefined
+      : cspSubtypePolicy;
+    // The policy still travels to the proxy and the debug store when it is a
+    // no-op — the CSP workbench reads it to explain guard-blocked calls — but
+    // only a real restriction counts as a host policy being applied.
+    const cspSubtypeRestrictionApplies =
+      !isPureRelaxedCsp && cspSubtypePolicyRestricts;
     const hostPolicyApplied =
-      !!resolvedCsp || !!resolvedPermissions || isPureRelaxedCsp;
+      !!resolvedCsp ||
+      !!resolvedPermissions ||
+      isPureRelaxedCsp ||
+      cspSubtypeRestrictionApplies;
     return {
       // Pure relaxed → no CSP at all (caller's `permissive: true` below
       // tells SandboxedIframe to skip CSP injection). Otherwise pass
@@ -2867,7 +2916,10 @@ export function MCPAppsRendererSurface({
       // `?? widgetCsp` branch.
       csp: isPureRelaxedCsp
         ? undefined
-        : resolvedCsp ?? (widgetPermissive ? undefined : matrixGatedWidgetCsp),
+        : resolvedCsp ??
+          (widgetPermissive && !cspSubtypeRestrictionApplies
+            ? undefined
+            : matrixGatedWidgetCsp),
       permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
       // A host-applied CSP MUST be honored at the browser layer. When
       // a restrictive host policy is in force, force `permissive: false`
@@ -2887,13 +2939,15 @@ export function MCPAppsRendererSurface({
       // one must not reshape the other.
       permissive: isPureRelaxedCsp
         ? true
-        : resolvedCsp
+        : resolvedCsp || cspSubtypeRestrictionApplies
         ? false
         : widgetPermissive,
       hostPolicyApplied,
       sandboxAttrs: sandboxAttrsPolicy,
       allowFeatures: allowFeaturesPolicy,
       cspDirectives: cspDirectivesEffective,
+      cspSubtypePolicy: effectiveCspSubtypePolicy,
+      browserStorage: browserStoragePolicy,
     };
   }, [
     cspMode,
@@ -2908,6 +2962,9 @@ export function MCPAppsRendererSurface({
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
     cspDirectivesEffective,
+    browserStoragePolicy,
+    earlyEffectiveMcpAppsCapabilities.cspConnectDomains,
+    earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
   ]);
   const effectiveSandboxKey = useMemo(
     () => stableStringifyJson(effectiveSandbox),
@@ -2984,6 +3041,7 @@ export function MCPAppsRendererSurface({
         sandboxAttrs: effectiveSandbox.sandboxAttrs,
         allowFeatures: effectiveSandbox.allowFeatures,
         cspDirectives: effectiveSandbox.cspDirectives,
+        cspSubtypePolicy: effectiveSandbox.cspSubtypePolicy,
         permissive: effectiveSandbox.permissive,
         hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
         restrictTo: sandboxCspPolicy?.restrictTo,
@@ -3691,6 +3749,7 @@ export function MCPAppsRendererSurface({
         columnNumber,
         effectiveDirective,
         timestamp,
+        subtype,
       } = data;
 
       logUiEvent({
@@ -3710,6 +3769,7 @@ export function MCPAppsRendererSurface({
         lineNumber,
         columnNumber,
         timestamp: timestamp || Date.now(),
+        subtype,
       });
 
       // Remember the first block so the render path can explain a View
@@ -4118,6 +4178,8 @@ export function MCPAppsRendererSurface({
       sandboxAttrs={effectiveSandbox.sandboxAttrs}
       allowFeatures={effectiveSandbox.allowFeatures}
       cspDirectives={effectiveSandbox.cspDirectives}
+      cspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+      browserStorage={effectiveSandbox.browserStorage}
       colorScheme={resolvedTheme}
       recordMode={recordMode}
       onProxyReady={() => {
@@ -4307,6 +4369,9 @@ export function MCPAppsRendererSurface({
         widgetSandboxAttrs={effectiveSandbox.sandboxAttrs}
         widgetAllowFeatures={effectiveSandbox.allowFeatures}
         widgetCspDirectives={effectiveSandbox.cspDirectives}
+        widgetCspSubtypePolicy={effectiveSandbox.cspSubtypePolicy}
+        widgetBrowserStorage={effectiveSandbox.browserStorage}
+        widgetToolResult={earlyEffectiveMcpAppsCapabilities.toolResult}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}

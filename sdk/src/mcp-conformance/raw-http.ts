@@ -180,6 +180,26 @@ export interface RawHttpRequestOptions {
    *     the payload would parse. Use when the check asserts the exact body.
    */
   decode?: "auto" | "text";
+  /**
+   * Whether this exchange enters the run-wide wire record. Default `true`.
+   *
+   * Set `false` for a request that is NOT JSON-RPC. Discovery fetches the
+   * OAuth metadata documents over plain HTTP through this same helper, and
+   * recording them fed two ordinary JSON bodies to `wire-schema-valid`, which
+   * graded them against `JSONRPCMessage` and reported every server as missing
+   * `id` and `jsonrpc` — a false violation on 100% of targets, including
+   * servers with no other finding.
+   *
+   * DELIBERATELY AN OPT-OUT AT THE CALL SITE, not a shape test on the body.
+   * "Recorded unless it says otherwise" is what makes the seam below cover
+   * every raw check by construction, including ones written later. And a
+   * filter on "did the request parse as JSON-RPC" would be actively wrong:
+   * several checks send malformed frames ON PURPOSE, and the recorder tracks
+   * `requestIdDeterminable` precisely so those responses can be graded — such
+   * a filter would silently drop the traffic that machinery exists for. Only
+   * the caller that knows it is not speaking JSON-RPC can say so.
+   */
+  record?: boolean;
 }
 
 export interface RawHttpResult {
@@ -363,6 +383,15 @@ export async function rawRequest(
   const exchange = capture.exchanges[0];
   if (!exchange) {
     throw new Error("Raw HTTP capture recorded no exchange");
+  }
+
+  // THE one seam where raw traffic enters the run-wide record. Every raw check
+  // in every family builds its requests here, so recording once here covers
+  // all of them — and a check added later is covered without touching it.
+  // `record: false` is the narrow opt-out for traffic that is not JSON-RPC at
+  // all; see the option's docblock for why it is not a body-shape test.
+  if (options.record !== false) {
+    ctx.recorder?.recordExchange(exchange);
   }
 
   const { response } = exchange;

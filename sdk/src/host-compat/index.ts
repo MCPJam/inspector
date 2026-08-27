@@ -54,6 +54,7 @@ export {
 } from "./catalog-fetch.js";
 export {
   MCP_APPS_FULL,
+  MCP_APPS_CLAUDE,
   MCP_APPS_CHATGPT,
   MCP_APPS_MISTRAL,
   MCP_APPS_CURSOR,

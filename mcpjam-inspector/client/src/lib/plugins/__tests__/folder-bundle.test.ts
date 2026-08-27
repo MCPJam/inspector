@@ -7,6 +7,7 @@ import {
 } from "@mcpjam/sdk/plugin-bundle";
 import {
   buildPluginZip,
+  collectFolderArchiveObservations,
   createFolderPluginFileSource,
   createMemoryPluginFileSource,
   createZipPluginFileSource,
@@ -287,6 +288,64 @@ describe("createFolderPluginFileSource selection mapping", () => {
     const { parsed, zipBytes } = await folderSelectionToPluginZip(selection);
     const roundTripped = await parsePluginBundleFromZip(zipBytes);
     expect(roundTripped.bundleHash).toBe(parsed.bundleHash);
+  });
+});
+
+/**
+ * What a FOLDER selection can and cannot tell the OpenAI readiness reader.
+ *
+ * A picked folder is not an archive, and the honest report of that is absence
+ * rather than zero. There is no compressed size, no encryption flag, and the
+ * extractor that put the tree on disk already applied the platform's own path
+ * normalization — so the one archive fact a folder still carries is the raw
+ * `webkitRelativePath`, read BEFORE the source maps separators, because a
+ * backslash separator is one of the things the portal rejects.
+ */
+describe("collectFolderArchiveObservations", () => {
+  function pickedFile(relativePath: string): File {
+    const file = new File(["x"], relativePath.split("/").pop() ?? "");
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: relativePath,
+    });
+    return file;
+  }
+
+  it("reports the picked paths untouched", () => {
+    const observed = collectFolderArchiveObservations([
+      pickedFile("my-plugin/plugin.json"),
+      pickedFile("my-plugin/skills//weather/SKILL.md"),
+    ]);
+    // Not normalized, and NOT root-stripped: the reader checks the portal's
+    // path rules against what the picker reported.
+    expect(observed.rawEntryNames).toEqual([
+      "my-plugin/plugin.json",
+      "my-plugin/skills//weather/SKILL.md",
+    ]);
+  });
+
+  it("falls back to the file name when the browser reports no relative path", () => {
+    const bare = new File(["x"], "plugin.json");
+    expect(collectFolderArchiveObservations([bare]).rawEntryNames).toEqual([
+      "plugin.json",
+    ]);
+  });
+
+  it("reports an empty selection as an empty list, not as absence", () => {
+    // `[]` says the selection was read and held nothing; absence would say
+    // nobody looked. The reader turns those into different report lines.
+    expect(collectFolderArchiveObservations([]).rawEntryNames).toEqual([]);
+  });
+
+  it("leaves every archive-only fact ABSENT rather than zero", () => {
+    // An extracted tree genuinely has no compressed size and no encryption
+    // flags. Reporting `0` and `[]` would tell the reader those were measured
+    // and found clean, when the truth is there was nothing to measure — and
+    // `0` in particular would read as passing the compressed-size limit.
+    const observed = collectFolderArchiveObservations([
+      pickedFile("my-plugin/plugin.json"),
+    ]);
+    expect(observed.compressedBytes).toBeUndefined();
+    expect(observed.encryptedEntryPaths).toBeUndefined();
   });
 });
 

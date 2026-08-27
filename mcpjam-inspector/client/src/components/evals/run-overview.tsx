@@ -63,6 +63,7 @@ type RunResultBadgeKind =
   | "running"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending";
 
 function runResultBadge(result: RunResultBadgeKind) {
@@ -71,6 +72,12 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, never red: the backend refused to call this run either way.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
@@ -106,8 +113,14 @@ interface RunOverviewProps {
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  /** When false, hides run selection and batch delete (project members without admin). */
+  /** When false, hides run selection and batch delete entirely. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW: deleting a run takes the project manage tier OR authorship of
+   * that run, so the answer differs across the list. Omitted means every run
+   * may be deleted — the local/playground case, with no membership to rank.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** Show suite delete using the same toolbar pattern as run batch delete. */
   canDeleteSuite?: boolean;
   onDeleteSuite?: () => void;
@@ -248,6 +261,7 @@ export function RunOverview({
   onViewModeChange,
   userMap,
   canDeleteRuns = true,
+  canDeleteRun,
   canDeleteSuite = false,
   onDeleteSuite,
   deletingSuiteId = null,
@@ -413,6 +427,22 @@ export function RunOverview({
     [runs, selectedRunIds]
   );
 
+  /**
+   * Runs in the selection the caller may not delete. The batch action is
+   * disabled while this is non-empty rather than quietly deleting the subset
+   * it can: a Delete button that removes four of the six rows you ticked is a
+   * worse outcome than one that tells you why it will not run.
+   */
+  const undeletableSelectedRuns = useMemo(
+    () =>
+      canDeleteRun
+        ? runs.filter(
+            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run)
+          )
+        : [],
+    [canDeleteRun, runs, selectedRunIds]
+  );
+
   const canCompareSelected =
     selectedRunsForCompare.length === 2 &&
     selectedRunsForCompare.every((run) => run.status === "completed");
@@ -502,7 +532,14 @@ export function RunOverview({
                   size="sm"
                   className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                   onClick={() => setShowBatchDeleteModal(true)}
-                  disabled={deletingRunId !== null}
+                  disabled={
+                    deletingRunId !== null || undeletableSelectedRuns.length > 0
+                  }
+                  title={
+                    undeletableSelectedRuns.length > 0
+                      ? `${undeletableSelectedRuns.length} selected run(s) were started by someone else — only a project admin can delete those`
+                      : undefined
+                  }
                 >
                   Delete
                 </Button>

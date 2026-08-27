@@ -9,6 +9,7 @@ import {
   buildCapEntriesFromPersistedCases,
   buildUpsertCaseKey,
   probeIdentityKey,
+  shouldSkipExecution,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
@@ -84,6 +85,17 @@ describe("RunEvalsRequestSchema environmentId boundary", () => {
     });
     expect(result.success).toBe(true);
     expect(result.success && result.data.runGroupId).toBe("group-1");
+  });
+
+  it("accepts AND preserves ephemeralEnvironment", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+      ephemeralEnvironment: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.ephemeralEnvironment).toBe(true);
   });
 });
 
@@ -190,6 +202,34 @@ describe("RunEvalsRequestSchema runs cap", () => {
     expect(result.success).toBe(true);
     const steps = result.success ? result.data.tests[0].steps : [];
     expect(steps).toEqual([{ id: "t0-s0", kind: "prompt", prompt: "q" }]);
+  });
+});
+
+describe("RunEvalsRequestSchema sourceHash", () => {
+  it("accepts a lowercase 64-char SHA-256 hex digest", () => {
+    const result = RunEvalsRequestSchema.safeParse({
+      ...buildSuiteRequest(),
+      sourceHash: "a".repeat(64),
+    });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.sourceHash : undefined).toBe(
+      "a".repeat(64)
+    );
+  });
+
+  it("refuses uppercase or the wrong length", () => {
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "A".repeat(64),
+      }).success
+    ).toBe(false);
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "a".repeat(63),
+      }).success
+    ).toBe(false);
   });
 });
 
@@ -904,5 +944,46 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
       fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep)
     ).rejects.toThrow(/pinned skills after 3 attempts/);
     expect(calls).toBe(3);
+  });
+});
+
+describe("shouldSkipExecution", () => {
+  it("skips ONLY a replay of a run that already finished", () => {
+    // The one case with a single right answer: the run is done, its results
+    // are recorded, and executing again would repeat every case and bill for
+    // it — the double-spend the caller sent a key to prevent.
+    for (const status of ["completed", "failed", "cancelled", "timed_out"]) {
+      expect(shouldSkipExecution({ deduped: true, status })).toBe(true);
+    }
+  });
+
+  it("executes a replay of a run still in flight", () => {
+    // In-flight and abandoned-mid-flight are indistinguishable here and want
+    // opposite treatments, so this keeps the behaviour that predates the
+    // check: a crashed run can still be driven to completion by a retry.
+    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
+      false
+    );
+    expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
+      false
+    );
+  });
+
+  it("executes a fresh start, whatever its status says", () => {
+    expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
+      false
+    );
+    // A fresh start reporting a terminal status is nonsense, but it must not
+    // be read as licence to skip: `deduped` is the field that decides.
+    expect(shouldSkipExecution({ deduped: false, status: "completed" })).toBe(
+      false
+    );
+  });
+
+  it("executes when the backend does not report a replay at all", () => {
+    // Deploy skew. An older backend's silence is UNKNOWN, not "fresh" and not
+    // "replayed" — and unknown must never start refusing to run work.
+    expect(shouldSkipExecution({})).toBe(false);
+    expect(shouldSkipExecution({ status: "completed" })).toBe(false);
   });
 });

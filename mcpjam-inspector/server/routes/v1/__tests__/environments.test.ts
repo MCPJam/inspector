@@ -915,4 +915,148 @@ describe("v1 project environment routes", () => {
       expect(dto).not.toHaveProperty("computerEnvironmentId");
     });
   });
+
+  describe("POST /environments/ensure-adhoc", () => {
+    const ADHOC_ROW = {
+      environmentId: "env-adhoc",
+      projectId: "p1",
+      origin: "adhoc" as const,
+      hostId: "h1",
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    it("forwards the stack, renames sandboxImageId, and marks the row unnamed", async () => {
+      convexMutationMock.mockResolvedValue({
+        environment: ADHOC_ROW,
+        created: true,
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        {
+          body: {
+            hostId: "h1",
+            sandboxImageId: "img1",
+            modelId: "anthropic/claude-haiku-4.5",
+          },
+        }
+      );
+
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "projectEnvironments:ensureAdhocEnvironment",
+        {
+          projectId: "p1",
+          hostId: "h1",
+          modelId: "anthropic/claude-haiku-4.5",
+          // The public name is renamed at the boundary; the internal one must
+          // not leak and the public one must not be forwarded.
+          computerEnvironmentId: "img1",
+        }
+      );
+      const body = (await res.json()) as any;
+      // EXPLICIT, so a reader can tell "unnamed by construction" from "the
+      // platform forgot to send a name".
+      expect(body.environment.name).toBeNull();
+      expect(body.environment.adhoc).toBe(true);
+      expect(body.environment.sandboxImageId).toBeUndefined();
+      expect(body.created).toBe(true);
+    });
+
+    it("answers 200 with created:false on the dedupe path, not 201", async () => {
+      // Get-or-create cannot honestly answer 201 when nothing was minted.
+      convexMutationMock.mockResolvedValue({
+        environment: ADHOC_ROW,
+        created: false,
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        { body: { hostId: "h1" } }
+      );
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).created).toBe(false);
+    });
+
+    it("translates a deployment without ad-hoc environments into an instruction", async () => {
+      convexMutationMock.mockRejectedValue(
+        new Error("Could not find public function for 'projectEnvironments'")
+      );
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        { body: { hostId: "h1" } }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details.reason).toBe("ADHOC_UNAVAILABLE");
+      expect(body.message).toContain("named environment");
+    });
+
+    it("rejects unknown keys rather than silently dropping them", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        { body: { hostId: "h1", computerEnvironmentId: "img1" } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /environments/:environmentId/name", () => {
+    it("promotes in place, keeping the id every existing run points at", async () => {
+      convexMutationMock.mockResolvedValue({
+        ...ENV_ROW,
+        environmentId: "env-adhoc",
+        name: "Promoted",
+        revision: 2,
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/env-adhoc/name",
+        { body: { expectedRevision: 1, name: "Promoted" } }
+      );
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "projectEnvironments:nameEnvironment",
+        {
+          projectId: "p1",
+          environmentId: "env-adhoc",
+          expectedRevision: 1,
+          name: "Promoted",
+        }
+      );
+      const body = (await res.json()) as any;
+      expect(body.id).toBe("env-adhoc");
+      expect(body.name).toBe("Promoted");
+    });
+
+    it("requires the revision precondition, like every other mutation", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/env-adhoc/name",
+        { body: { name: "Promoted" } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("passes the backend's refusal through for an already-named row", async () => {
+      convexMutationMock.mockRejectedValue(
+        convexError(
+          "CONFLICT",
+          "This environment already has a name. Rename it from the Environments list."
+        )
+      );
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/env1/name",
+        { body: { expectedRevision: 3, name: "Nope" } }
+      );
+      expect(res.status).toBe(409);
+    });
+  });
 });

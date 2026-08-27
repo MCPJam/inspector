@@ -48,6 +48,7 @@ import {
   SESSIONS_FEED_PAGE_SIZE,
   SESSIONS_FEED_QUERIES,
   SESSION_SOURCE_TYPE_LABELS,
+  sessionOriginChipLabel,
   sessionParentChipLabel,
   type SessionFeedItem,
   type SessionFeedSourceType,
@@ -138,11 +139,11 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
   /**
    * Move the selection into the URL, stamping the panel's own `projectId`.
    *
-   * NOT the URL's `?project=`: arriving at a bare `/sessions` leaves that
-   * param absent, and copying the absence forward would produce a link that
-   * resolves against whatever project the reader happens to be parked on. The
-   * panel knows which project these rows came from, so it says so — that is
-   * the same reason the shareable link below uses `projectId` too.
+   * The panel's own `projectId`, not one read back out of the URL: it knows
+   * which project these rows came from, so the link it mints says so in its
+   * path. That is the same reason the shareable link below passes `projectId`
+   * — a link that names no project resolves against whatever project the
+   * reader happens to be parked on.
    *
    * Not `replace`: each session a reader opens is a place they can go Back from.
    */
@@ -158,9 +159,9 @@ export function SessionsPanel({ projectId }: { projectId: string }) {
    *
    * Selection lives in the URL, so in principle it could outlive a project
    * switch and leave this pane loading a thread absent from the list beside it.
-   * It cannot in practice: a real project switch snaps the app to `/servers`
-   * (`shouldSnapToServersOnActiveProjectChange` — `/sessions` is not one of the
-   * exempt tabs), which unmounts this panel and replaces the URL outright.
+   * It cannot in practice: a project switch IS a navigation now — the picker
+   * goes to `/p/<nextProjectId>/servers` — so this panel unmounts and the URL
+   * carrying the selection is gone with it.
    *
    * An effect here could not close that gap anyway: App renders this panel as
    * `key={projectId}`, so a project change REMOUNTS it, and any "previous
@@ -353,6 +354,7 @@ function SessionFeedRow({
   onSelect: () => void;
 }) {
   const parentChip = sessionParentChipLabel(row.parentRef);
+  const originChip = sessionOriginChipLabel(row.origin);
   const title = row.title?.trim() || row.firstMessagePreview || "Untitled";
 
   return (
@@ -379,6 +381,14 @@ function SessionFeedRow({
         <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {SESSION_SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType}
         </span>
+        {originChip ? (
+          <span
+            data-testid="session-origin-chip"
+            className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            {originChip}
+          </span>
+        ) : null}
         {row.ownedByViewer ? (
           <span className="rounded-full border border-border/60 px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
             Yours

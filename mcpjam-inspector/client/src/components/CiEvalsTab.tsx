@@ -118,7 +118,7 @@ export function CiEvalsTab({
     organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -820,7 +820,7 @@ export function CiEvalsTab({
                     onDeleteRun={handleDeleteRun}
                     onDirectDeleteRun={handlers.directDeleteRun}
                     connectedServerNames={connectedServerNames}
-                    canDeleteSuite={canDeleteSuite}
+                    canDeleteSuite={canDeleteArtifact(selectedSuite?.createdBy)}
                     rerunningSuiteId={handlers.rerunningSuiteId}
                     replayingRunId={handlers.replayingRunId}
                     cancellingRunId={handlers.cancellingRunId}
@@ -831,6 +831,7 @@ export function CiEvalsTab({
                     userMap={userMap}
                     navigation={ciNavigation}
                     canDeleteRuns={canDeleteRuns}
+                    canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
                     readOnlyConfig
                     omitSuiteHeader
                     onRunTestCase={

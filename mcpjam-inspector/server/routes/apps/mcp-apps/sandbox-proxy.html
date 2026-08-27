@@ -109,7 +109,7 @@
        *   values are token arrays.
        * @returns {string} CSP policy string
        */
-      function buildCSP(csp, cspDirectives) {
+      function buildCSP(csp, cspDirectives, cspSubtypePolicy) {
         // Merge a single directive's domain-derived tokens with any extra
         // tokens supplied by cspDirectives. See merge rule above the function.
         function mergeDirective(name, baseTokens) {
@@ -273,14 +273,30 @@
             .map(sanitizeDomain)
             .filter(Boolean);
 
-          // connect-src: Only allow declared domains, or 'none' if empty
+          const connectSubtypePolicy =
+            cspSubtypePolicy && cspSubtypePolicy.cspConnectDomains;
+          const keepDeclaredConnectDomains =
+            !connectSubtypePolicy ||
+            ["fetch", "xhr", "websocket"].some(
+              (subtype) => connectSubtypePolicy[subtype] !== false
+            );
+
+          // Keep the shared connect-src declaration whenever at least one API
+          // is supported or unknown. API-specific false values are enforced by
+          // the early guards below because CSP cannot split these APIs.
           const connectTokens =
-            connectDomains.length > 0 ? connectDomains.slice() : ["'none'"];
+            keepDeclaredConnectDomains && connectDomains.length > 0
+              ? connectDomains.slice()
+              : ["'none'"];
 
           // Resource sources: data: and blob: are always allowed for inline content
           // Only add declared resourceDomains - no forced CDNs per SEP-1865
-          const resourceTokens =
-            resourceDomains.length > 0
+          const resourceTokens = (subtype) =>
+            cspSubtypePolicy &&
+            cspSubtypePolicy.cspResourceDomains &&
+            cspSubtypePolicy.cspResourceDomains[subtype] === false
+              ? ["data:", "blob:"]
+              : resourceDomains.length > 0
               ? ["data:", "blob:", ...resourceDomains]
               : ["data:", "blob:"];
 
@@ -296,12 +312,15 @@
             mergeDirective("default-src", ["'none'"]),
             mergeDirective("script-src", [
               "'unsafe-inline'",
-              ...resourceTokens,
+              ...resourceTokens("script"),
             ]),
-            mergeDirective("style-src", ["'unsafe-inline'", ...resourceTokens]),
-            mergeDirective("img-src", resourceTokens),
-            mergeDirective("font-src", resourceTokens),
-            mergeDirective("media-src", resourceTokens),
+            mergeDirective("style-src", [
+              "'unsafe-inline'",
+              ...resourceTokens("stylesheet"),
+            ]),
+            mergeDirective("img-src", resourceTokens("image")),
+            mergeDirective("font-src", resourceTokens("font")),
+            mergeDirective("media-src", resourceTokens("media")),
             mergeDirective("connect-src", connectTokens),
             mergeDirective("frame-src", frameTokens),
             mergeDirective("object-src", ["'none'"]),
@@ -376,6 +395,295 @@ document.addEventListener('securitypolicyviolation', function(e) {
 <\/script>`;
       }
 
+      /** Build early per-API connect guards for host subtype emulation. */
+      function buildConnectGuardScript(cspSubtypePolicy, cspDirectives) {
+        const connectPolicy =
+          cspSubtypePolicy && cspSubtypePolicy.cspConnectDomains;
+        if (!connectPolicy || typeof connectPolicy !== "object") return "";
+        const blocked = ["fetch", "xhr", "websocket"].filter(
+          (subtype) => connectPolicy[subtype] === false
+        );
+        if (blocked.length === 0) return "";
+
+        const hostConnectSources =
+          cspDirectives && Array.isArray(cspDirectives["connect-src"])
+            ? cspDirectives["connect-src"]
+                .filter((source) => {
+                  if (typeof source !== "string") return false;
+                  const trimmed = source.trim();
+                  return trimmed.length > 0 && !/[;,\n\r"<>]/.test(trimmed);
+                })
+                .map((source) => source.trim())
+            : [];
+        const configJson = JSON.stringify({
+          blocked,
+          hostConnectSources,
+        }).replace(/</g, "\\u003c");
+
+        return `<script>
+(function() {
+  var config = ${configJson};
+  var protectedBaseUrl = (function() {
+    try { return new URL(document.baseURI); }
+    catch (_) {
+      try { return new URL(window.location.href); }
+      catch (_) { return null; }
+    }
+  })();
+  function absoluteUrl(value) {
+    try {
+      return new URL(
+        String(value),
+        protectedBaseUrl ? protectedBaseUrl.href : window.location.href
+      );
+    }
+    catch (_) { return null; }
+  }
+  // Scheme/origin of the document the emulated policy protects. A srcdoc frame's
+  // location is about:srcdoc, but its baseURI inherits the embedding proxy
+  // document; that is the origin CSP would evaluate against. Falling back to
+  // "" makes schemeless expressions match nothing, which fails closed.
+  var protectedScheme = protectedBaseUrl
+    ? protectedBaseUrl.protocol.slice(0, -1).toLowerCase()
+    : "";
+  var protectedOrigin = protectedBaseUrl ? protectedBaseUrl.origin : "";
+  function schemeOf(url) {
+    return url.protocol.slice(0, -1).toLowerCase();
+  }
+  function defaultPortFor(scheme) {
+    if (scheme === "http" || scheme === "ws") return 80;
+    if (scheme === "https" || scheme === "wss") return 443;
+    return null;
+  }
+  // CSP3 6.7.2.9. Deliberately asymmetric: an insecure expression is upgraded
+  // to its secure variant, never the reverse ("https:" does NOT cover "wss:").
+  function schemeMatches(a, b) {
+    if (a === b) return true;
+    if (a === "http") return b === "https";
+    if (a === "ws") return b === "wss" || b === "http" || b === "https";
+    if (a === "wss") return b === "https";
+    return false;
+  }
+  // CSP3 6.7.2.11. A URL on its scheme's default port reports an empty port,
+  // so "https://h:443" and "https://h" describe the same endpoint — and an
+  // expression with NO port matches only the default port.
+  function portMatches(expected, url) {
+    if (expected === "*") return true;
+    var wanted = expected === null ? null : parseInt(expected, 10);
+    var actual = url.port === "" ? null : parseInt(url.port, 10);
+    if (wanted === actual) return true;
+    if (actual === null) return wanted === defaultPortFor(schemeOf(url));
+    return false;
+  }
+  function decodePiece(piece) {
+    try { return decodeURIComponent(piece); } catch (_) { return piece; }
+  }
+  // CSP3 6.7.2.12. A trailing "/" makes the expression a directory prefix
+  // ("/a/" covers "/a/b"); without one it must match the path exactly.
+  function pathMatches(expected, actual) {
+    if (expected === "") return true;
+    if (expected === "/" && actual === "") return true;
+    var exact = expected.charAt(expected.length - 1) !== "/";
+    var a = expected.split("/");
+    var b = actual.split("/");
+    if (a.length > b.length) return false;
+    if (exact && a.length !== b.length) return false;
+    if (!exact) a.pop();
+    for (var i = 0; i < a.length; i++) {
+      if (decodePiece(a[i]) !== decodePiece(b[i])) return false;
+    }
+    return true;
+  }
+  function hostMatches(expected, actual) {
+    if (expected === "*") return true;
+    if (expected.indexOf("*.") === 0) {
+      var suffix = expected.slice(1);
+      return suffix.length > 1 && actual.length > suffix.length &&
+        actual.slice(-suffix.length) === suffix;
+    }
+    return actual === expected;
+  }
+  // CSP3 6.7.2.7, restricted to what a connect-src allowlist can hold. This
+  // decides whether a call the host would ALLOW escapes the guard, so every
+  // ambiguity resolves to "no match" rather than waving the request through.
+  function sourceMatches(source, url) {
+    if (!url) return false;
+    var expr = String(source).trim();
+    if (!expr || expr === "'none'") return false;
+    if (expr === "*") return true;
+    // Keywords never name an origin except 'self'.
+    if (expr.charAt(0) === "'") {
+      return expr === "'self'" && url.origin === protectedOrigin;
+    }
+    var urlScheme = schemeOf(url);
+    // scheme-source, e.g. "https:" — nothing after the colon.
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(expr)) {
+      return schemeMatches(expr.slice(0, -1).toLowerCase(), urlScheme);
+    }
+    var rest = expr;
+    var exprScheme = null;
+    var sep = rest.indexOf("://");
+    if (sep > 0) {
+      exprScheme = rest.slice(0, sep).toLowerCase();
+      rest = rest.slice(sep + 3);
+    }
+    if (exprScheme !== null) {
+      if (!schemeMatches(exprScheme, urlScheme)) return false;
+    } else if (!schemeMatches(protectedScheme, urlScheme)) {
+      return false;
+    }
+    var pathIdx = rest.indexOf("/");
+    var exprPath = "";
+    if (pathIdx >= 0) {
+      exprPath = rest.slice(pathIdx);
+      rest = rest.slice(0, pathIdx);
+    }
+    var exprPort = null;
+    var portIdx = rest.lastIndexOf(":");
+    if (portIdx > 0) {
+      exprPort = rest.slice(portIdx + 1);
+      rest = rest.slice(0, portIdx);
+    }
+    if (!rest) return false;
+    if (exprPort !== null && exprPort !== "*" && !/^[0-9]+$/.test(exprPort)) {
+      return false;
+    }
+    if (!hostMatches(rest.toLowerCase(), url.hostname.toLowerCase())) return false;
+    if (!portMatches(exprPort, url)) return false;
+    if (!pathMatches(exprPath, url.pathname)) return false;
+    return true;
+  }
+  function allowedByHost(url) {
+    for (var i = 0; i < config.hostConnectSources.length; i++) {
+      if (sourceMatches(config.hostConnectSources[i], url)) return true;
+    }
+    return false;
+  }
+  function report(subtype, url, fallback) {
+    window.parent.postMessage({
+      type: "mcp-apps:csp-violation",
+      directive: "connect-src",
+      effectiveDirective: "connect-src",
+      blockedUri: url ? url.href : String(fallback),
+      sourceFile: window.location.href,
+      lineNumber: null,
+      columnNumber: null,
+      originalPolicy: "host CSP subtype policy",
+      disposition: "enforce",
+      subtype: subtype,
+      timestamp: Date.now()
+    }, "*");
+  }
+  function shouldBlock(subtype, value) {
+    if (config.blocked.indexOf(subtype) === -1) return false;
+    var url = absoluteUrl(value);
+    if (allowedByHost(url)) return false;
+    report(subtype, url, value);
+    return true;
+  }
+  if (config.blocked.indexOf("fetch") !== -1 && typeof window.fetch === "function") {
+    var nativeFetch = window.fetch;
+    window.fetch = function(input, init) {
+      var value = input && typeof input === "object" && "url" in input ? input.url : input;
+      if (shouldBlock("fetch", value)) return Promise.reject(new TypeError("Failed to fetch"));
+      return nativeFetch.call(this, input, init);
+    };
+  }
+  if (config.blocked.indexOf("xhr") !== -1 && window.XMLHttpRequest) {
+    var nativeOpen = window.XMLHttpRequest.prototype.open;
+    var nativeSend = window.XMLHttpRequest.prototype.send;
+    window.XMLHttpRequest.prototype.open = function(method, url) {
+      this.__mcpjamSubtypeUrl = url;
+      return nativeOpen.apply(this, arguments);
+    };
+    window.XMLHttpRequest.prototype.send = function() {
+      if (shouldBlock("xhr", this.__mcpjamSubtypeUrl)) {
+        throw new DOMException("Blocked by host CSP subtype policy", "SecurityError");
+      }
+      return nativeSend.apply(this, arguments);
+    };
+  }
+  if (config.blocked.indexOf("websocket") !== -1 && window.WebSocket) {
+    var NativeWebSocket = window.WebSocket;
+    var GuardedWebSocket = function(url, protocols) {
+      if (shouldBlock("websocket", url)) {
+        throw new DOMException("Blocked by host CSP subtype policy", "SecurityError");
+      }
+      return protocols === undefined
+        ? new NativeWebSocket(url)
+        : new NativeWebSocket(url, protocols);
+    };
+    GuardedWebSocket.prototype = NativeWebSocket.prototype;
+    Object.setPrototypeOf(GuardedWebSocket, NativeWebSocket);
+    window.WebSocket = GuardedWebSocket;
+  }
+})();
+<\/script>`;
+      }
+
+      /**
+       * Block browser storage APIs the host profile turned off.
+       *
+       * `mcpProfile.apps.sandbox.browserStorage` is a probe-measured fact: a
+       * host either lets a widget reach these APIs or it does not. Absent (or
+       * true) means available, so only explicit `false` blocks — matching the
+       * omit-when-absent discipline every other profile knob uses.
+       *
+       * Access throws rather than returning null/undefined because that is
+       * what a real iframe without `allow-same-origin` does: the getter
+       * itself raises SecurityError. A widget's `try { localStorage } catch`
+       * feature-detect must take the same branch here as in production.
+       *
+       * NOT a CSP concern, so unlike the connect guard above this posts no
+       * synthetic violation — nothing is watching for one, and storage never
+       * produces a securitypolicyviolation event.
+       *
+       * @param {object|undefined} browserStorage - per-API policy
+       * @returns {string} script tag, or "" when nothing is blocked
+       */
+      function buildBrowserStorageGuardScript(browserStorage) {
+        if (!browserStorage || typeof browserStorage !== "object") return "";
+        const blocked = ["localStorage", "sessionStorage", "indexedDB"].filter(
+          (api) => browserStorage[api] === false
+        );
+        if (blocked.length === 0) return "";
+
+        const configJson = JSON.stringify({ blocked }).replace(
+          /</g,
+          "\\u003c"
+        );
+
+        return `<script>
+(function() {
+  var config = ${configJson};
+  for (var i = 0; i < config.blocked.length; i++) {
+    (function(api) {
+      try {
+        Object.defineProperty(window, api, {
+          configurable: false,
+          get: function() {
+            throw new DOMException(
+              "Blocked by host browser-storage policy",
+              "SecurityError"
+            );
+          }
+        });
+      } catch (error) {
+        // A non-configurable own property (or a runtime that refuses the
+        // redefine) leaves the API reachable. Fail loud in the console
+        // rather than silently reporting an unenforced policy as enforced.
+        try {
+          console.error(
+            "[mcpjam] could not block " + api + " in this sandbox", error
+          );
+        } catch (_) {}
+      }
+    })(config.blocked[i]);
+  }
+})();
+<\/script>`;
+      }
+
       /**
        * Inject CSP meta tag and violation listener into HTML
        * @param {string} html - Original HTML content
@@ -412,7 +720,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         return "<scr" + "ipt>" + RECORDER_SHIM + "</scr" + "ipt>";
       }
 
-      function injectCSP(html, cspValue, extraScript) {
+      function injectCSP(html, cspValue, extraScript, guardScript) {
         // Tier 2 recorder: the capture shim is an INLINE <script>. A widget that
         // ships its own `<meta http-equiv="Content-Security-Policy">` adds a
         // second policy, and browsers enforce the INTERSECTION of all policies —
@@ -437,7 +745,11 @@ document.addEventListener('securitypolicyviolation', function(e) {
         // first also avoids browser ordering edge cases where the injected CSP
         // could block the very inline script that is supposed to announce
         // `recorder:ready`.
-        const injection = (extraScript || "") + cspMeta + violationListener;
+        const injection =
+          (extraScript || "") +
+          (guardScript || "") +
+          cspMeta +
+          violationListener;
 
         if (html.includes("<head>")) {
           return html.replace("<head>", "<head>" + injection);
@@ -512,6 +824,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
               permissions,
               sandboxAttrs,
               cspDirectives,
+              cspSubtypePolicy,
+              browserStorage,
               permissive,
               colorScheme,
               recordMode,
@@ -530,6 +844,16 @@ document.addEventListener('securitypolicyviolation', function(e) {
             inner.style.colorScheme = applyColorScheme(colorScheme);
             // Tier 2: inject the recorder shim into the guest when recording.
             const recorderScript = buildRecorderScript(recordMode);
+            const connectGuardScript = buildConnectGuardScript(
+              cspSubtypePolicy,
+              cspDirectives
+            );
+            // Storage is independent of CSP mode: a host that serves a
+            // permissive CSP can still deny storage, so this guard rides
+            // BOTH branches below while the connect guard rides only the
+            // CSP one.
+            const browserStorageGuardScript =
+              buildBrowserStorageGuardScript(browserStorage);
             recorderDebug("resource ready", {
               recordMode: !!recordMode,
               recorderScript: !!recorderScript,
@@ -612,15 +936,21 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 const processedHtml = injectCSP(
                   html,
                   permissiveCsp,
-                  recorderScript
+                  recorderScript,
+                  browserStorageGuardScript
                 );
                 inner.srcdoc = processedHtml;
               } else {
                 // Build CSP and inject into HTML (SEP-1865). cspDirectives
                 // is the inspector-only per-directive source-expression
                 // override map (e.g. `script-src` adds `'unsafe-eval'`).
-                const cspValue = buildCSP(csp, cspDirectives);
-                const processedHtml = injectCSP(html, cspValue, recorderScript);
+                const cspValue = buildCSP(csp, cspDirectives, cspSubtypePolicy);
+                const processedHtml = injectCSP(
+                  html,
+                  cspValue,
+                  recorderScript,
+                  connectGuardScript + browserStorageGuardScript
+                );
                 inner.srcdoc = processedHtml;
               }
             }

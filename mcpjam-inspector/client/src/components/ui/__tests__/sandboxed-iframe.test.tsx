@@ -320,6 +320,100 @@ describe("SandboxedIframe — resource-ready delivery", () => {
       expect(postMessageSpy).toHaveBeenCalledTimes(2);
     });
   });
+
+  it("forwards subtype policy and resends when its semantic value changes", async () => {
+    const renderIframe = (fetch: boolean) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        cspSubtypePolicy={{
+          cspConnectDomains: { fetch, xhr: false },
+        }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(renderIframe(false));
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      });
+    });
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(1));
+    expect(postMessageSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          cspSubtypePolicy: {
+            cspConnectDomains: { fetch: false, xhr: false },
+          },
+        }),
+      }),
+      expect.any(String)
+    );
+
+    rerender(renderIframe(false));
+    await act(async () => Promise.resolve());
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+
+    rerender(renderIframe(true));
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("SandboxedIframe — browser storage policy delivery", () => {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
+    const proxyOrigin = new URL(iframe.src).origin;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow!,
+        origin: proxyOrigin,
+      })
+    );
+  }
+
+  it("forwards browserStorage in the payload and resends when it changes", async () => {
+    const renderIframe = (localStorageAllowed: boolean) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        browserStorage={{ localStorage: localStorageAllowed }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(renderIframe(false));
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      });
+    });
+
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(1));
+    expect(postMessageSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          browserStorage: { localStorage: false },
+        }),
+      }),
+      expect.any(String)
+    );
+
+    // Semantically unchanged — no resend.
+    rerender(renderIframe(false));
+    await act(async () => Promise.resolve());
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+
+    // Flipping the toggle MUST re-post, or the guard would keep running
+    // against a policy the user already changed. This is what including
+    // browserStorage in `resourceReadyKey` buys.
+    rerender(renderIframe(true));
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(2));
+  });
 });
 
 describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {

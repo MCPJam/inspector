@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Github, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -10,11 +10,23 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
+  findRepoByPickerValue,
+  pickerLabelFor,
+  pickerValueFor,
+  shouldShowAccountLabels,
+  verifiedConnectArgs,
+} from "@/lib/github-repo-picker";
+import {
   useGithubChecksSettings,
+  type GithubCheckOutagePolicy,
   type InstallationRepo,
 } from "@/hooks/useGithubChecksSettings";
+import {
+  OutagePolicyExplainer,
+  OutagePolicySelectItems,
+} from "@/components/settings/github-checks-outage-policy";
 
 /**
  * "Run this suite on every pull request", on the suite itself.
@@ -30,6 +42,11 @@ import {
  * visible at once — offering them here would let you retarget a repo away from
  * the suite you are standing on, which reads as a mistake even when it is not.
  *
+ * The outage policy is the ONE thing this narrow surface still has to ask for.
+ * It is set at connect time and it is not editable here, so skipping it would
+ * make this the path that quietly produces rows nobody chose a policy for —
+ * exactly the legacy state the settings page has to warn about.
+ *
  * Renders nothing at all when GitHub Checks is unavailable for the org.
  */
 export function SuiteGithubChecksSection({
@@ -42,14 +59,33 @@ export function SuiteGithubChecksSection({
   organizationId?: string | null;
 }) {
   const appNavigate = useAppNavigate();
-  const { availability, repos, connectRepo, listInstallationRepos } =
+  const { availability, repos, connectVerifiedRepo, listInstallationRepos } =
     useGithubChecksSettings(organizationId);
 
   const [installationRepos, setInstallationRepos] = useState<
     InstallationRepo[] | null
   >(null);
   const [pickerRepo, setPickerRepo] = useState("");
+  // Unset until chosen. A default here would be a decision made for someone.
+  const [pickerPolicy, setPickerPolicy] = useState<
+    GithubCheckOutagePolicy | ""
+  >("");
   const [connecting, setConnecting] = useState(false);
+
+  // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
+  // section in `suite-iterations-view` is KEYED BY organizationId, so switching
+  // organizations remounts the component with a connect still in flight. That
+  // completion belongs to the organization that is gone — and while React drops
+  // the state writes for an unmounted tree, `toast` is global and would happily
+  // announce a repository connected to an organization the user has left. An
+  // org-id ref cannot see this: the remounted instance starts with a fresh one.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const isEnabled = availability?.state === "enabled";
 
@@ -57,6 +93,7 @@ export function SuiteGithubChecksSection({
     let cancelled = false;
     setInstallationRepos(null);
     setPickerRepo("");
+    setPickerPolicy("");
     if (!isEnabled) {
       return () => {
         cancelled = true;
@@ -97,24 +134,35 @@ export function SuiteGithubChecksSection({
           (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
         );
 
+  // Selection, labelling and the connect payload are shared with the settings
+  // page through `@/lib/github-repo-picker` — the same contract, stated once.
+  const pickedRepo = findRepoByPickerValue(connectableRepos, pickerRepo);
+  const showAccountLabels = shouldShowAccountLabels(connectableRepos);
+
   const handleConnect = async () => {
-    if (!pickerRepo || !projectId) return;
+    if (!pickedRepo || !projectId || !pickerPolicy) return;
     setConnecting(true);
     try {
-      await connectRepo({
-        repoFullName: pickerRepo,
-        projectId,
-        suiteId,
-      });
+      // The server-VERIFIED connect: it proves the selected installation can
+      // actually reach this repository before any row is written, and the
+      // reference and repository id say WHICH installation and WHICH repository
+      // — both re-verified server-side.
+      await connectVerifiedRepo(
+        verifiedConnectArgs(pickedRepo, {
+          projectId,
+          suiteId,
+          outagePolicy: pickerPolicy,
+        })
+      );
+      if (!mountedRef.current) return;
       setPickerRepo("");
+      setPickerPolicy("");
       toast.success("Repository connected.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(
-        message.includes("not currently available")
-          ? GITHUB_CHECKS_UNAVAILABLE_MESSAGE
-          : message
-      );
+      // Same rule for the failure: an error about an organization the user has
+      // already left is noise they cannot act on.
+      if (!mountedRef.current) return;
+      toast.error(githubChecksWriteErrorMessage(error));
     } finally {
       setConnecting(false);
     }
@@ -145,26 +193,43 @@ export function SuiteGithubChecksSection({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        {/* Valued by REPOSITORY ID, not name: two connected accounts can each
+            have a `widgets`, and the id is what the connect is keyed on. */}
         <Select value={pickerRepo} onValueChange={setPickerRepo}>
-          <SelectTrigger className="w-64" aria-label="Repository">
+          <SelectTrigger className="w-72" aria-label="Repository">
             <SelectValue placeholder="Select a repository" />
           </SelectTrigger>
           <SelectContent>
             {connectableRepos.map((repo) => (
-              <SelectItem key={repo.fullName} value={repo.fullName}>
-                {repo.fullName}
+              <SelectItem key={repo.repositoryId} value={pickerValueFor(repo)}>
+                {pickerLabelFor(repo, showAccountLabels)}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={pickerPolicy}
+          onValueChange={(value) =>
+            setPickerPolicy(value as GithubCheckOutagePolicy)
+          }
+        >
+          <SelectTrigger className="w-52" aria-label="Outage policy">
+            <SelectValue placeholder="Select an outage policy" />
+          </SelectTrigger>
+          <SelectContent>
+            <OutagePolicySelectItems />
           </SelectContent>
         </Select>
         <Button
           size="sm"
           onClick={() => void handleConnect()}
-          disabled={connecting || !pickerRepo || !projectId}
+          disabled={connecting || !pickedRepo || !projectId || !pickerPolicy}
         >
           <Plus className="mr-2 size-3.5" aria-hidden /> Connect
         </Button>
       </div>
+
+      <OutagePolicyExplainer className="space-y-1 text-xs text-muted-foreground" />
 
       {installationRepos !== null && connectableRepos.length === 0 ? (
         <p className="text-xs text-muted-foreground">

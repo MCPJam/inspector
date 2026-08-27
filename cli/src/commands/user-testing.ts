@@ -1,8 +1,8 @@
 /**
- * `mcpjam user-testing` — what a published scenario produced, and who may
+ * `mcpjam cloud user-testing` — what a published scenario produced, and who may
  * reach it.
  *
- * `mcpjam scenarios` publishes an environment and takes it down again, keyed by
+ * `mcpjam cloud scenarios` publishes an environment and takes it down again, keyed by
  * environment because the scenario does not exist yet. This group is keyed by
  * the SCENARIO and covers everything after that: reading the sessions real
  * visitors had, the metrics and findings over them, and the controls that

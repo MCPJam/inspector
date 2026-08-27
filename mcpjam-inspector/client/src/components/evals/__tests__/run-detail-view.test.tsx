@@ -17,6 +17,17 @@ vi.mock("../use-run-insights", () => ({
   useRunInsights: vi.fn(),
 }));
 
+// The CANONICAL selected-run fetch. Mocked rather than driven through the
+// `convex/react` stub below (which answers `undefined` to everything) so a
+// test can hand the view a real frozen projection — the whole point of this
+// hook is that the data does NOT come from the run object the view is passed.
+vi.mock("../use-run-import-eligibility", () => ({
+  useRunImportEligibility: vi.fn(() => ({
+    eligibility: undefined,
+    isLoading: false,
+  })),
+}));
+
 vi.mock("../use-server-quality", () => ({
   useServerQuality: vi.fn(() => ({
     result: null,
@@ -62,6 +73,7 @@ vi.mock("../use-goal-completion", () => ({
 }));
 
 import { useRunInsights } from "../use-run-insights";
+import { useRunImportEligibility } from "../use-run-import-eligibility";
 import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
 vi.mock("convex/react", () => ({
@@ -170,6 +182,140 @@ describe("RunDetailView", () => {
     }));
   });
 
+  /**
+   * Frozen import evidence on a finished run.
+   *
+   * Two things are asserted that a screenshot would not catch: the data comes
+   * from the CANONICAL single-run query (not from the list row the view is
+   * handed), and incomplete evidence is described as NOT GATEABLE rather than
+   * as a failure. A screen that blamed the server under test for a conversion
+   * nobody finished reviewing would send people to debug the wrong thing.
+   */
+  describe("import evidence", () => {
+    function renderRun() {
+      return render(
+        <RunDetailView
+          selectedRunDetails={makeRun()}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          omitIterationList
+        />
+      );
+    }
+
+    it("fetches the canonical eligibility for the run it is displaying", () => {
+      renderRun();
+      // The run object this view receives comes from the run LIST projection,
+      // which carries no eligibility. Reading it off that object would render
+      // every converted run as though it had no imported cases.
+      expect(useRunImportEligibility).toHaveBeenCalledWith("run-1");
+    });
+
+    it("renders frozen approval receipts: who, when, why, and which case", () => {
+      vi.mocked(useRunImportEligibility).mockReturnValue({
+        eligibility: {
+          status: "eligible",
+          gateable: true,
+          importedCaseCount: 2,
+          claimedExactCaseIds: ["case_1"],
+          approvedApproximationCaseIds: ["case_2"],
+          approvedApproximationReceipts: [
+            {
+              testCaseId: "case_2",
+              caseKey: "ui_refund_partial",
+              sourceCaseKey: "upstream/refunds/partial",
+              approvedBy: "user_9",
+              approvedAt: 1_756_100_000_000,
+              reason: "Reviewed against the upstream rubric; ENG-4821.",
+            },
+          ],
+          issues: [],
+        },
+        isLoading: false,
+      });
+
+      renderRun();
+      const card = screen.getByTestId("import-evidence-card");
+      expect(within(card).getByText("ui_refund_partial")).toBeInTheDocument();
+      // WHO and WHEN come from the RUN, never from the current session.
+      expect(within(card).getByText(/user_9/)).toBeInTheDocument();
+      expect(
+        within(card).getByText(/Reviewed against the upstream rubric/),
+      ).toBeInTheDocument();
+      expect(
+        within(card).getByText(/upstream\/refunds\/partial/),
+      ).toBeInTheDocument();
+      // The claimed-exact half says what an exact claim actually rests on.
+      expect(
+        within(card).getByText(/did not verify semantic equivalence/),
+      ).toBeInTheDocument();
+    });
+
+    it('describes incomplete evidence as "not gateable", not as a failure', () => {
+      vi.mocked(useRunImportEligibility).mockReturnValue({
+        eligibility: {
+          status: "incomplete",
+          gateable: false,
+          importedCaseCount: 1,
+          claimedExactCaseIds: [],
+          approvedApproximationCaseIds: [],
+          approvedApproximationReceipts: [],
+          issues: [
+            {
+              code: "APPROXIMATION_NOT_APPROVED",
+              caseKey: "ui_refund_partial",
+            },
+          ],
+        },
+        isLoading: false,
+      });
+
+      renderRun();
+      const card = screen.getByTestId("import-evidence-card");
+      expect(within(card).getByText(/not gateable/i)).toBeInTheDocument();
+      expect(
+        within(card).getByText(/not a test failure/i),
+      ).toBeInTheDocument();
+      expect(
+        within(card).getByText(/APPROXIMATION_NOT_APPROVED/),
+      ).toBeInTheDocument();
+      // Never the language of a verdict: the run has not said the server
+      // regressed.
+      expect(within(card).queryByText(/\bfailed\b/i)).not.toBeInTheDocument();
+    });
+
+    it("renders nothing for a native run, and nothing while loading", () => {
+      vi.mocked(useRunImportEligibility).mockReturnValue({
+        eligibility: {
+          status: "legacy",
+          gateable: true,
+          importedCaseCount: 0,
+          claimedExactCaseIds: [],
+          approvedApproximationCaseIds: [],
+          approvedApproximationReceipts: [],
+          issues: [],
+        },
+        isLoading: false,
+      });
+      const { unmount } = renderRun();
+      expect(screen.queryByTestId("import-evidence-card")).toBeNull();
+      unmount();
+
+      vi.mocked(useRunImportEligibility).mockReturnValue({
+        eligibility: undefined,
+        isLoading: true,
+      });
+      renderRun();
+      // A "no imported cases" placeholder during the fetch would be a claim,
+      // and this state supports none.
+      expect(screen.queryByTestId("import-evidence-card")).toBeNull();
+    });
+  });
+
   it("uses a vertically scrollable root so expanded triage can exceed the viewport", () => {
     const { container } = render(
       <RunDetailView
@@ -187,6 +333,55 @@ describe("RunDetailView", () => {
     const root = container.firstElementChild;
     expect(root).toHaveClass("overflow-y-auto");
     expect(root).not.toHaveClass("overflow-hidden");
+  });
+
+  /**
+   * The decision-summary card is opt-in through a SLOT, and the default is
+   * what keeps `/evals` and the CI surfaces exactly as they were: they pass
+   * no slot, so they render no card and — because the fetch lives inside the
+   * slotted component, not here — issue no decision-summary request either.
+   */
+  it("renders no decision summary when no slot is passed", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+      />
+    );
+
+    expect(screen.queryByTestId("run-decision-summary")).toBeNull();
+  });
+
+  it("renders a passed decision-summary slot above the run metadata", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        omitIterationList
+        decisionSummarySlot={<div data-testid="decision-slot">decided</div>}
+      />
+    );
+
+    // ORDER, not just presence: "the run's own answer comes before the
+    // browser's derived metrics" is the claim this slot makes, and a layout
+    // change that moved it below the metadata would otherwise keep this green.
+    const slot = screen.getByTestId("decision-slot");
+    const metadata = screen.getByTestId("run-detail-metadata");
+    expect(
+      slot.compareDocumentPosition(metadata) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders the Export action even when the accuracy hero is hidden (folded run detail)", async () => {
@@ -211,6 +406,27 @@ describe("RunDetailView", () => {
     expect(exportButton).toBeInTheDocument();
     await userEvent.click(exportButton);
     expect(onExportTraces).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Share on a plugin-free run when onShare is provided", async () => {
+    const onShare = vi.fn();
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideAccuracyHero
+        onShare={onShare}
+      />
+    );
+    const shareButton = screen.getByTestId("run-detail-share");
+    expect(shareButton).toBeInTheDocument();
+    await userEvent.click(shareButton);
+    expect(onShare).toHaveBeenCalledTimes(1);
   });
 
   it("omits the Export action when no handler is provided", () => {

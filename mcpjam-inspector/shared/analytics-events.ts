@@ -46,6 +46,43 @@ export const ANALYTICS_EVENTS = {
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**
+   * One agent Playground turn finished (`POST /v1/chat-sessions/messages`).
+   * Outcome/count/duration only — the messages and tool payloads on that
+   * route are customer conversation content and never ride an event.
+   */
+  api_chat_session_turn_completed: { source: "server" },
+
+  // --- Directory readiness (server-authoritative; no client twin) ---
+  /**
+   * A hosted readiness run was accepted. Fired from the v1 start route, which
+   * is the only way a hosted run is created, so it covers every surface that
+   * ever starts one (REST, MCP worker, agent approval, chat, CLI) without
+   * instrumenting each.
+   *
+   * `deduped` is why this fires on a replay too: a retried start that returned
+   * an existing run is a real request the caller made, and counting only fresh
+   * runs would understate demand while hiding a client that retries badly.
+   *
+   * The SERVER URL IS NEVER SENT — it names somebody's private endpoint, and
+   * no launch question needs it.
+   */
+  directory_readiness_run_started_server: { source: "server" },
+  /**
+   * A hosted readiness run reached a terminal state. Fired from the detached
+   * worker, so it is attributed through `captureServerEventForActor` to the
+   * identity resolved back when the request still existed.
+   *
+   * Carries the THREE AXES separately, because collapsing them is the exact
+   * misreading the product exists to prevent: `status` is whether the run
+   * completed, `overall_status` is the grade, and `llm_observation_status` /
+   * `llm_observation_reason` are whether the optional paid pass ran. A run can
+   * be `completed` + `not-ready` + `billing-blocked` and all three matter.
+   *
+   * NO REPORT CONTENTS. Findings carry the raw observation behind a verdict;
+   * an analytics pipeline is the last place that belongs.
+   */
+  directory_readiness_run_finished_server: { source: "server" },
+  /**
    * One `GET /projects/{p}/sessions` search, emitted from the proxy route —
    * the chokepoint every surface (in-app chat, MCP worker, REST, CLI) funnels
    * through, so one event covers all four instead of four instrumentations
@@ -231,6 +268,13 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   /**
+   * A connected server was offered to the organization's registry from the
+   * server card's menu. Fires on the CLICK, before the eligibility refusal —
+   * how often people reach for it and are told a header-authed server cannot
+   * be shared is the thing worth knowing.
+   */
+  share_server_to_org_registry_clicked: { source: "client" },
+  /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
    *
@@ -358,6 +402,39 @@ export const ANALYTICS_EVENTS = {
   ui_navigation_rejected: { source: "client" },
   ui_tool_call_completed: { source: "client" },
   ui_tool_call_started: { source: "client" },
+
+  // --- Home: shared Slack Connect channel card ---
+  // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
+  // state (none | provisioning | invite_sent | pending_admin_approval |
+  // active | invite_declined | invite_expired | error).
+  home_shared_slack_card_viewed: { source: "client" },
+  home_shared_slack_provision_clicked: { source: "client" },
+  home_shared_slack_invite_opened: { source: "client" },
+  home_shared_slack_retry_clicked: { source: "client" },
+  home_shared_slack_channel_opened: { source: "client" },
+
+  // --- Canonical project-scoped URLs (`/p/<projectId>/...`) ---
+  // Every prop here is LOW CARDINALITY on purpose: a project id would make
+  // these unusable as aggregates and would put customer identifiers on a
+  // navigation event. Ids never ride these — only what happened.
+  //
+  // `project_route_legacy_normalized`  props: source (unscoped | query),
+  //   resolved (true | false). One old link rewritten onto its canonical path.
+  //   Its volume is what says whether legacy compatibility can be retired.
+  // `project_route_resolved`           props: outcome (ready), duration_bucket
+  //   (instant | fast | slow) — how long a scoped URL took to become the
+  //   active project.
+  // `project_route_inaccessible`       props: reason (malformed | not-a-member
+  //   | timed-out). Never says whether the project exists.
+  // `project_route_scope_mismatch`     props: guard (redirect-loop |
+  //   repeated-switch). Redirect-loop protection tripped.
+  // `app_signin_return_restored`       props: outcome (restored | absent |
+  //   superseded).
+  project_route_legacy_normalized: { source: "client" },
+  project_route_resolved: { source: "client" },
+  project_route_inaccessible: { source: "client" },
+  project_route_scope_mismatch: { source: "client" },
+  app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

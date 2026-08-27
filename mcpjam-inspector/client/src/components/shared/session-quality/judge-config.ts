@@ -9,6 +9,8 @@
  * compatible with additional judges (refusal judge, etc.) without a second
  * pass on the type surface.
  */
+import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
+
 export type GoalJudgeConfig = {
   goalCompletion?: {
     enabled?: boolean;
@@ -41,6 +43,10 @@ export type GoalJudgeRunOverride = {
  * Defaults mirror the backend `GOAL_COMPLETION_DEFAULTS`. The backend is the
  * authority; these exist so the UI can render the managed default without a
  * round-trip and select it explicitly.
+ *
+ * Re-exported from `@/shared/judge-defaults` rather than re-typed here: the v1
+ * suite DTO resolves `settings.judge` through the same mirror, so the API and
+ * the UI cannot disagree about what "unset" means.
  */
-export const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
-export const DEFAULT_JUDGE_THRESHOLD = 0.7;
+export const MANAGED_DEFAULT_JUDGE_MODEL = GOAL_COMPLETION_DEFAULTS.judgeModel;
+export const DEFAULT_JUDGE_THRESHOLD = GOAL_COMPLETION_DEFAULTS.threshold;

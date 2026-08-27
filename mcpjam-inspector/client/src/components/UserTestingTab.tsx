@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -29,6 +29,7 @@ import {
   buildUserTestingScenarioPath,
   parseUserTestingDetailTab,
   routePaths,
+  useAppNavigate,
   userTestingCreatePath,
 } from "@/lib/app-navigation";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -87,7 +88,7 @@ export function UserTestingTab({
   createOpen = false,
   editOpen = false,
 }: UserTestingTabProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [searchParams] = useSearchParams();
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
@@ -219,7 +220,7 @@ export function UserTestingTab({
   // hydration) would advertise the tools before any query can run, so the
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
-  const { deleteScenario } = useScenarioMutations();
+  const { deleteScenario, updateScenario } = useScenarioMutations();
   const { publishEnvironmentScenario } = useEnvironmentScenarioMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
@@ -517,6 +518,16 @@ export function UserTestingTab({
           });
           return { scenarioId: result.scenarioId, created: result.created };
         }}
+        onSetPerTurnFeedback={async (scenarioId, settings) => {
+          // A second write, because `publishEnvironmentScenario` takes no
+          // `chatUi`. Both fields go together: this is the study's first and
+          // only statement about its rating widget, so there is no stored
+          // value for a partial patch to preserve.
+          await updateScenario({
+            scenarioId,
+            chatUi: { surfaces: { perTurnFeedback: settings } },
+          } as any);
+        }}
       />
     );
   }
@@ -615,12 +626,12 @@ export function UserTestingTab({
           </h1>
           <Button size="sm" onClick={goCreate}>
             <Plus className="mr-1.5 size-4" />
-            New scenario
+            Create new study
           </Button>
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Share a scenario with real people, then read what happened in their
-          sessions.
+          Create a study with real users or internal testers, then read what
+          happened in their sessions.
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
@@ -631,7 +642,7 @@ export function UserTestingTab({
           isLoading={listLoading}
           onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}
-          createLabel="New scenario"
+          createLabel="Create new study"
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 /**
  * The gate engine: one implementation shared by the SDK (`assertGate` in a
- * code-first run) and the CLI (`mcpjam eval gate` against a hosted run).
+ * code-first run) and the CLI (`mcpjam cloud eval gate` against a hosted run).
  *
  * Everything upstream is normalized into {@link GateInput} first. Two surfaces
  * evaluating "did this run pass?" with two subtly different implementations is
@@ -26,6 +26,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import type { StructuredRunVerdict } from "./structured-reporting.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -116,7 +117,18 @@ export type GateStatus =
    */
   | "non_gateable"
   /** The policy itself is wrong (unknown scorer, unstable id, bad range). */
-  | "usage_error";
+  | "usage_error"
+  /**
+   * A real failure that an authorized human overrode, on the record.
+   *
+   * `evaluateGates` NEVER produces this — it is stamped afterwards by
+   * {@link applyGateWaiver}, which is the only writer. Kept distinct from
+   * `passed` for the reason the backend kept its own `waived` verdict
+   * distinct: collapsing the two makes the difference unrecoverable one line
+   * later, and "this gate was overridden" is the single fact the charter
+   * requires every artifact to carry.
+   */
+  | "waived";
 
 export type GateVerdict = {
   /** e.g. `"minimumPassRate"`, `"minimumScorerPassRate:tone"`. */
@@ -128,11 +140,161 @@ export type GateVerdict = {
 };
 
 export type GateReport = {
-  outcome: "passed" | "failed" | "incomplete" | "usage_error";
+  outcome: "passed" | "failed" | "incomplete" | "usage_error" | "waived";
   verdicts: GateVerdict[];
   /** `"unknown"` renders the `undefined` tri-state honestly for a human. */
   scoreIntegrity: ScoreIntegrity | "unknown";
+  /**
+   * The waiver in force over this run, when there is one.
+   *
+   * Present whenever the platform reported an active waiver — INCLUDING on a
+   * report that passed on its own merits, where it changed nothing. A waiver
+   * that exists but is invisible because it happened not to be load-bearing is
+   * still an override somebody granted, and the charter's word is "visible".
+   * Only `outcome` says whether it actually decided anything.
+   */
+  waiver?: GateWaiver;
 };
+
+/**
+ * A gate waiver as every reader of a {@link GateReport} renders it.
+ *
+ * MIRRORS `GateWaiverDto` in mcpjam-backend `convex/lib/gateWaivers.ts`, minus
+ * the fields no report needs. Hand-mirrored, like every other cross-repo type
+ * here: the boundary is stringly-typed, so this is a copy that must be kept
+ * honest by review rather than by the compiler.
+ *
+ * `createdByEmail` is `null` rather than absent when it cannot be resolved — a
+ * deleted user must not make a waiver look authorless.
+ */
+export type GateWaiver = {
+  id: string;
+  /** Unredacted free text the granter wrote. See {@link GATE_WAIVER_REASON_NOTICE}. */
+  reason: string;
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  createdByEmail: string | null;
+  /**
+   * WHAT was overridden, captured at waive time. `null` on a run decided by
+   * the v2 verdict policy, whose identity the backend records on the audit
+   * event instead — the row's shape cannot hold it, and filling it with a
+   * plausible `minimumPassRate` would be a false record rather than an
+   * incomplete one.
+   */
+  policySnapshot: { minimumPassRate: number } | null;
+};
+
+/**
+ * Said to a human BEFORE their waiver reason is accepted, on every surface
+ * that takes one.
+ *
+ * VERBATIM from `GATE_WAIVER_REASON_NOTICE` in mcpjam-backend
+ * `convex/lib/gateWaivers.ts`. Duplicated rather than imported because the two
+ * repos share no code; if the backend's copy changes, this one is a review
+ * item, not a compile error.
+ */
+export const GATE_WAIVER_REASON_NOTICE =
+  "Stored unredacted and readable by anyone who can see this suite, for as long as the suite exists. Do not paste secrets, tokens, or customer data.";
+
+/**
+ * The platform's caps, mirrored for HELP TEXT ONLY.
+ *
+ * Deliberately not enforced by any client schema here. Every one of the five
+ * `gate_waiver_*` refusals carries copy the platform wrote for the caller, and
+ * a client-side check that fired first would replace that copy with a generic
+ * validation error — reachable on exactly the boundary cases (a 501-character
+ * reason, a 31-day expiry) where the specific message is the useful part.
+ * Documenting the limit and letting the platform enforce it keeps one answer
+ * to each refusal instead of two that drift.
+ *
+ * Mirrors `GATE_WAIVER_MAX_REASON_LENGTH` and `GATE_WAIVER_MAX_DURATION_MS` in
+ * mcpjam-backend `convex/lib/gateWaivers.ts`.
+ */
+export const GATE_WAIVER_MAX_REASON_LENGTH = 500;
+export const GATE_WAIVER_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a waiver is still in force, computed HERE rather than trusted.
+ *
+ * The platform already filters to active waivers, so this should always agree
+ * with it. It is computed anyway because of a known, measured weakness on the
+ * other side: a Convex query is cached against the DOCUMENTS it read, and the
+ * passage of time is not a document — so a waiver that lapses between two
+ * reads can keep being served as active until something writes to its row.
+ * The backend schedules a write at exactly `expiresAt` to force that, and its
+ * own tests cannot observe whether the invalidation works (a mutant deleting
+ * the write still passes).
+ *
+ * `eval gate` computes its verdict independently of the backend by design.
+ * Re-deciding the waiver's own validity here keeps that independence intact at
+ * the one place where trusting the server would silently convert a time-boxed
+ * waiver into a permanent one — the exact property this workflow exists to
+ * hold.
+ */
+export function isGateWaiverInForce(
+  waiver: GateWaiver,
+  now: number = Date.now()
+): boolean {
+  return waiver.expiresAt > now;
+}
+
+/**
+ * Fold an active waiver into a finished gate report.
+ *
+ * PURE, and deliberately separate from `evaluateGates`: the evaluator answers
+ * "what did the evidence say", and no waiver may ever change that answer. This
+ * answers the different question of whether a human overrode it, and records
+ * the override beside the untouched verdicts rather than in place of them.
+ *
+ * WHAT IS WAIVABLE, AND WHAT IS NOT. Only `failed` — a real, measured verdict
+ * — becomes `waived`:
+ *
+ *   - `incomplete` is NOT waived. Nothing was established, so there is nothing
+ *     to override; flipping exit 3 to 0 would turn a network flake or a
+ *     cancelled run into a green release on the strength of a waiver granted
+ *     for something else entirely. That is fail-open, which is the one thing
+ *     this whole surface is built to refuse.
+ *   - `usage_error` is NOT waived. The policy itself is broken, and a waiver
+ *     overrides an eval verdict, not a typo in the flags that would have
+ *     decided one.
+ *   - `passed` stays `passed`. There was no gate to waive.
+ *
+ * In all four cases the waiver is still ATTACHED, so every artifact names it
+ * even when it changed nothing.
+ */
+export function applyGateWaiver(
+  report: GateReport,
+  waiver: GateWaiver | null | undefined,
+  now: number = Date.now()
+): GateReport {
+  if (!waiver || !isGateWaiverInForce(waiver, now)) return report;
+  if (report.outcome !== "failed") return { ...report, waiver };
+  return {
+    ...report,
+    outcome: "waived",
+    waiver,
+    // PREPENDED, not substituted. The failing verdicts stay exactly as the
+    // evaluator wrote them — a waived report must still say what failed, or
+    // the override becomes the only thing anybody reads.
+    verdicts: [
+      {
+        gate: "waiver",
+        status: "waived",
+        message: formatGateWaiverLine(waiver),
+      },
+      ...report.verdicts,
+    ],
+  };
+}
+
+/** `who`, `why` and `until` on one line — the charter's three facts. */
+export function formatGateWaiverLine(waiver: GateWaiver): string {
+  const who = waiver.createdByEmail ?? waiver.createdBy;
+  return `waived by ${who} until ${new Date(
+    waiver.expiresAt
+  ).toISOString()} — ${waiver.reason}`;
+}
 
 /**
  * Whether score-derived gates may be evaluated at all.
@@ -435,7 +597,7 @@ export function evaluateGates(
       status: "usage_error",
       message:
         `"${field}" is a comparative gate and requires a baseline run — ` +
-        `use evaluateCompareGates() or \`mcpjam eval compare\`. ` +
+        `use evaluateCompareGates() or \`mcpjam cloud eval compare\`. ` +
         `evaluateGates() sees one run and cannot decide it.`,
     });
   }
@@ -697,12 +859,59 @@ const STATUS_LABEL: Record<GateStatus, string> = {
   failed: "FAIL",
   non_gateable: "N/A ",
   usage_error: "ERR ",
+  // Same width as the others so the verdict table stays aligned, and visibly
+  // NOT "PASS" — a reader scanning the column must be able to see at a glance
+  // that this row is an override rather than a result.
+  waived: "WAIV",
 };
+
+/**
+ * Map a gate's own outcome onto the `StructuredRunReport` verdict vocabulary.
+ *
+ * `incomplete` — a `--wait` timeout, a cancelled run, non-gateable score
+ * integrity, an inconclusive backend result — is the gate's own version of
+ * "not enough was measured", the exact claim `inconclusive` makes for an eval
+ * run. It must map there, never to `failed`: a gate report is `passed: false`
+ * whenever it isn't `passed`, so a renderer that infers the verdict from
+ * `passed` alone (the way `renderStructuredRunHtml` falls back when no
+ * verdict is given) paints an unmeasured gate red — a measured regression
+ * the run never established. `usage_error` is a genuine gate-config defect,
+ * so it reads as a failure like `failed` does.
+ */
+export function gateOutcomeVerdict(
+  outcome: GateReport["outcome"]
+): StructuredRunVerdict {
+  switch (outcome) {
+    case "passed":
+      return "passed";
+    case "incomplete":
+      return "inconclusive";
+    case "failed":
+    case "usage_error":
+      return "failed";
+    // NOT folded into `passed`, even though both exit 0. A renderer that saw
+    // `passed` here would paint an overridden failure green and identical to a
+    // clean run, which is precisely the silent waiver the charter forbids.
+    case "waived":
+      return "waived";
+  }
+}
 
 export function formatGateReport(report: GateReport): string {
   const lines = [
     `Gate: ${report.outcome.toUpperCase()} (score integrity: ${report.scoreIntegrity})`,
   ];
+  // The three required facts, on their own line above the table rather than
+  // only inside a verdict row. Human output is skimmed, and "who, why, until
+  // when" must survive a reader who stops at the header.
+  if (report.waiver) {
+    lines.push(`  Waiver: ${formatGateWaiverLine(report.waiver)}`);
+    lines.push(
+      report.outcome === "waived"
+        ? "  This gate FAILED and was overridden. It is not a clean pass."
+        : "  A waiver is on record for this run; it did not change this outcome."
+    );
+  }
   for (const verdict of report.verdicts) {
     const threshold =
       verdict.threshold === undefined ? "" : ` [threshold ${verdict.threshold}]`;

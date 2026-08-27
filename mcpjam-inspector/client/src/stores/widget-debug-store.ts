@@ -7,7 +7,11 @@
 
 import { create } from "zustand";
 import type { CspMode } from "./ui-playground-store";
-import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
+import type {
+  McpAppsCspConnectDomains,
+  McpAppsCspResourceDomains,
+  OpenAiAppsCapabilities,
+} from "@/lib/client-styles";
 
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
@@ -24,6 +28,16 @@ export interface CspViolation {
   columnNumber?: number | null;
   /** Timestamp of the violation */
   timestamp: number;
+  /** API/resource subtype when host emulation blocked the request. */
+  subtype?:
+    | "fetch"
+    | "xhr"
+    | "websocket"
+    | "script"
+    | "stylesheet"
+    | "image"
+    | "font"
+    | "media";
 }
 
 /**
@@ -53,6 +67,10 @@ export interface WidgetSandboxApplied {
    * allowlist directives.
    */
   cspDirectives?: Record<string, string[]>;
+  cspSubtypePolicy?: {
+    cspConnectDomains?: McpAppsCspConnectDomains;
+    cspResourceDomains?: McpAppsCspResourceDomains;
+  };
   /**
    * `true` when the surface bypassed the host CSP resolver entirely
    * (permissive surface with no hardening signals). Drives the
@@ -272,7 +290,7 @@ interface WidgetDebugStore {
   // Update widget debug info
   setWidgetDebugInfo: (
     toolCallId: string,
-    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
+    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>
   ) => void;
 
   // Update just the widget state
@@ -281,7 +299,7 @@ interface WidgetDebugStore {
   // Update just the globals
   setWidgetGlobals: (
     toolCallId: string,
-    globals: Partial<WidgetGlobals>,
+    globals: Partial<WidgetGlobals>
   ) => void;
 
   // Get debug info for a specific widget
@@ -296,7 +314,7 @@ interface WidgetDebugStore {
   // Set CSP info for a widget
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetSandboxInfo, "violations">,
+    csp: Omit<WidgetSandboxInfo, "violations">
   ) => void;
 
   // Add a CSP violation for a widget
@@ -311,7 +329,7 @@ interface WidgetDebugStore {
     context: {
       content?: unknown[];
       structuredContent?: Record<string, unknown>;
-    } | null,
+    } | null
   ) => void;
 
   // Set widget HTML for offline rendering cache. Optional
@@ -324,7 +342,7 @@ interface WidgetDebugStore {
     toolCallId: string,
     html: string,
     injectedOpenAiCompat?: boolean,
-    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
+    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities
   ) => void;
 
   /**
@@ -338,7 +356,7 @@ interface WidgetDebugStore {
     toolCallId: string,
     applied: WidgetSandboxApplied,
     hostProfileId?: string,
-    hostInfo?: { name: string; version: string } | null,
+    hostInfo?: { name: string; version: string } | null
   ) => void;
 
   /**
@@ -349,10 +367,7 @@ interface WidgetDebugStore {
    * setSandboxApplied (the renderer's first widget-content-requested event
    * fires before the init effect).
    */
-  appendLifecycle: (
-    toolCallId: string,
-    event: WidgetLifecycleEvent,
-  ) => void;
+  appendLifecycle: (toolCallId: string, event: WidgetLifecycleEvent) => void;
 
   /**
    * Append one mount entry. Create-if-missing for the same reason as
@@ -376,7 +391,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState:
           info.widgetState !== undefined
             ? info.widgetState
-            : (existing?.widgetState ?? null),
+            : existing?.widgetState ?? null,
         globals: info.globals ??
           existing?.globals ?? {
             theme: "dark",
@@ -541,7 +556,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     toolCallId,
     html,
     injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities,
+    injectedOpenAiCompatCapabilities
   ) => {
     set((state) => {
       const widgets = new Map(state.widgets);
@@ -576,8 +591,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         injectedOpenAiCompatCapabilities:
           injectedOpenAiCompat === false
             ? undefined
-            : (injectedOpenAiCompatCapabilities ??
-              existing?.injectedOpenAiCompatCapabilities),
+            : injectedOpenAiCompatCapabilities ??
+              existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };

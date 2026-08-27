@@ -10,7 +10,7 @@ import {
 } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
-export const CANIUSE_LAST_VERIFIED_DATE = "2026-07-07";
+export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   "preset:claude",
@@ -26,9 +26,7 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "temperature",
   "systemPrompt",
   "mcpProtocolVersion",
-  "supportedProtocolVersions",
   "clientInfo.name",
-  "clientInfo.version",
   "connectionDefaults.requestTimeout",
   "connectionDefaults.headers",
   "uiInitialize.hostInfo",
@@ -42,6 +40,9 @@ export interface CaniuseCapability {
   slug: string;
   field: HostConfigFieldDef;
 }
+
+/** A public capability page can say "not yet measured" without treating it as a failure. */
+export type CaniuseSupportLevel = SupportLevel | "unknown";
 
 function toKebab(input: string): string {
   return input
@@ -64,14 +65,41 @@ function slugForField(field: HostConfigFieldDef): string {
   if (field.id.startsWith("sandboxPerm.")) {
     return `sandbox-permission-${toKebab(field.label)}`;
   }
+  // Labels are the raw custom-property names, so kebab-casing alone would
+  // yield bare slugs like `color-text-primary` that could collide with a
+  // future capability label. Namespace them.
+  if (field.id.startsWith("styles.")) {
+    return `style-${toKebab(field.label)}`;
+  }
   return toKebab(field.label);
 }
+
+// Fields that are not support-shaped but still answer a compatibility
+// question. They render as plain values (the matrix already knows how), so
+// keep this list tiny — a chip says "can I use this", a value does not.
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set([
+  "supportedProtocolVersions",
+  // Which build of the client the rest of the protocol rows were captured
+  // from. A value, not a support claim — hence plain rather than a chip.
+  "clientInfo.version",
+]);
+
+/**
+ * Style variables are plain-value rows too, but there are 76 of them and they
+ * arrive as a generated block, so they match by prefix rather than bloating the
+ * id set above. Each shows the actual value the host sends — the point of the
+ * subsection — which is why they are not support-shaped.
+ */
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES = ["styles."];
 
 export function isPublicCaniuseCapabilityField(
   field: HostConfigFieldDef,
 ): boolean {
-  return (
-    isSupportField(field) && !PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)
+  if (PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)) return false;
+  if (isSupportField(field)) return true;
+  if (PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id)) return true;
+  return PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES.some((prefix) =>
+    field.id.startsWith(prefix),
   );
 }
 
@@ -130,11 +158,27 @@ export function sortCaniusePresetHosts<T extends Pick<HostListItem, "hostId">>(
 export function getCaniuseSupportLevel(
   field: HostConfigFieldDef,
   config: HostConfigDtoV2,
-): SupportLevel {
-  return getSupportLevel(field, config) ?? "neutral";
+): CaniuseSupportLevel {
+  // These probe families were added after the catalog had shipped. An absent
+  // value means we have not run that probe for this host yet — not that its
+  // browser iframe, widget relay, or notification channel failed. Other
+  // boolean rows retain their established absent = not supported semantics.
+  if (
+    (field.id.startsWith("toolResult.") ||
+      field.id.startsWith("sandbox.browserStorage.") ||
+      field.id.startsWith("toolListChanged.") ||
+      // Enum rather than boolean, so it resolves to "neutral" rather than
+      // undefined when unset — and "neutral" renders as "Not supported".
+      // Without this an unprobed host publicly claims it cannot paginate.
+      field.id === "paginationTraversal") &&
+    field.read(config) === undefined
+  ) {
+    return "unknown";
+  }
+  return getSupportLevel(field, config) ?? "unknown";
 }
 
-export function getCaniuseSupportLabel(level: SupportLevel): string {
+export function getCaniuseSupportLabel(level: CaniuseSupportLevel): string {
   switch (level) {
     case "supported":
       return "Supported";
@@ -143,5 +187,7 @@ export function getCaniuseSupportLabel(level: SupportLevel): string {
     case "neutral":
     case "unsupported":
       return "Not supported";
+    case "unknown":
+      return "Not yet tested";
   }
 }

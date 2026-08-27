@@ -102,6 +102,10 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "sandboxPermissions",
   "cspFrameDomains",
   "cspBaseUriDomains",
+  "cspConnectDomains",
+  "cspResourceDomains",
+  "resourceCacheTtl",
+  "toolResult",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -521,6 +525,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+function canonicalBooleanCapabilityRecord(
+  path: string,
+  value: unknown,
+  allowedKeys: readonly string[]
+): Record<string, boolean> {
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${path} must be a plain object`);
+  }
+  const out: Record<string, boolean> = {};
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) {
+      throw new Error(`hostConfigV2: ${path} has unknown key "${key}"`);
+    }
+    if (typeof value[key] !== "boolean") {
+      throw new Error(`hostConfigV2: ${path}.${key} must be a boolean`);
+    }
+  }
+  for (const key of allowedKeys) {
+    if (value[key] !== undefined) out[key] = value[key] as boolean;
+  }
+  return out;
+}
+
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
 // Order has no meaning for CSP allowlists (contrast supportedProtocolVersions,
 // where order IS semantic).
@@ -694,12 +721,15 @@ function canonicalizeMcpProfile(
 
   const out: HostConfigMcpProfileV1 = { profileVersion: 1 };
 
-  // Host-default pinned MCP protocol version. Absent → SDK chooses at resolve
-  // time; we drop the field when absent so pre-feature rows hash identically.
+  // Host-default protocol selection. `auto` is a storage-only policy; concrete
+  // values are wire pins. Absent stays accepted for legacy rows.
   if (input.mcpProtocolVersion !== undefined) {
-    if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
+    if (
+      input.mcpProtocolVersion !== "auto" &&
+      !isKnownProtocolVersion(input.mcpProtocolVersion)
+    ) {
       throw new Error(
-        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
+        `hostConfigV2: mcpProfile.mcpProtocolVersion must be "auto" or one of ${MCP_PROTOCOL_VERSIONS.join(
           ", "
         )} (got "${String(input.mcpProtocolVersion)}")`
       );
@@ -817,13 +847,27 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // Cross-field rule (Option A): when `mcpProtocolVersion` pins a stateful
-  // (pre-2026) version, the legacy `initialize` handshake runs and must
-  // advertise that exact version. Derive when caller didn't set one; throw if
-  // they set both AND the pin isn't in the list. Stateless versions skip
-  // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // Sibling to the enum-typed conformance knobs above, but a nested boolean
+  // record (two independently-measured facts) rather than a mode string.
+  // Same omit-when-absent discipline: absent -> spec-conforming, hashes
+  // stable.
+  if (input.toolListChanged !== undefined) {
+    const listChanged = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolListChanged",
+      input.toolListChanged,
+      ["listens", "refetches"]
+    );
+    if (Object.keys(listChanged).length > 0) {
+      out.toolListChanged = listChanged;
+    }
+  }
+
+  // A legacy pin must be one of the versions accepted by initialize. Derive a
+  // missing list because initialize needs one. Modern pins use server/discover
+  // and are deliberately separate from the legacy initialize accept-list.
   if (
     out.mcpProtocolVersion !== undefined &&
+    out.mcpProtocolVersion !== "auto" &&
     !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
@@ -980,6 +1024,21 @@ function canonicalizeMcpProfile(
           )[k];
         }
         sandboxOut.permissions = sortedPerms;
+      }
+
+      if (
+        (sandboxIn as { browserStorage?: unknown }).browserStorage !== undefined
+      ) {
+        const browserStorage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.browserStorage",
+          (sandboxIn as { browserStorage?: unknown }).browserStorage,
+          ["localStorage", "sessionStorage", "indexedDB"]
+        );
+        if (Object.keys(browserStorage).length > 0) {
+          (
+            sandboxOut as { browserStorage?: Record<string, boolean> }
+          ).browserStorage = browserStorage;
+        }
       }
 
       if (
@@ -1190,6 +1249,70 @@ function canonicalizeMcpProfile(
             MCP_APPS_DISPLAY_MODE_VALUES.filter((m) =>
               seen.has(m)
             ) as McpAppsCapabilities["availableDisplayModes"];
+        } else if (key === "cspConnectDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspConnectDomains",
+            value,
+            ["fetch", "xhr", "websocket"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspConnectDomains = domains;
+          }
+        } else if (key === "cspResourceDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspResourceDomains",
+            value,
+            ["script", "stylesheet", "image", "font", "media"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
+        } else if (key === "toolResult") {
+          // Two levels: a flat `structuredContent` boolean and a nested
+          // `content` record of ContentBlock kinds. Both collapse to absent
+          // when empty so a probe that measured nothing hashes identically
+          // to a config that never mentioned the field.
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult must be a plain object"
+            );
+          }
+          for (const k of Object.keys(value)) {
+            if (k !== "structuredContent" && k !== "content") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult has unknown key "${k}"`
+              );
+            }
+          }
+          const toolResultOut: NonNullable<McpAppsCapabilities["toolResult"]> =
+            {};
+          if (value.structuredContent !== undefined) {
+            if (typeof value.structuredContent !== "boolean") {
+              throw new Error(
+                "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent must be a boolean"
+              );
+            }
+            toolResultOut.structuredContent = value.structuredContent;
+          }
+          if (value.content !== undefined) {
+            const content = canonicalBooleanCapabilityRecord(
+              "mcpProfile.apps.mcpAppsOverrides.toolResult.content",
+              value.content,
+              ["text", "image", "audio", "resource", "resourceLink"]
+            );
+            if (Object.keys(content).length > 0) {
+              toolResultOut.content = content;
+            }
+          }
+          if (Object.keys(toolResultOut).length > 0) {
+            const sortedToolResult = {} as typeof toolResultOut;
+            for (const k of Object.keys(toolResultOut).sort()) {
+              (sortedToolResult as Record<string, unknown>)[k] = (
+                toolResultOut as Record<string, unknown>
+              )[k];
+            }
+            mcpAppsOverridesOut.toolResult = sortedToolResult;
+          }
         } else if (key === "widgetDisplayModeRequests") {
           if (
             typeof value !== "string" ||
@@ -1542,7 +1665,9 @@ function readOAuthAuthModelValue(
   for (const [i, entry] of raw.entries()) {
     if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
       throw new Error(
-        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(
+          ", "
+        )}`
       );
     }
     // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
@@ -1745,10 +1870,7 @@ function readOAuthScopeRequestValue(
     );
   }
   const mode = raw.mode;
-  if (
-    typeof mode !== "string" ||
-    !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)
-  ) {
+  if (typeof mode !== "string" || !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)) {
     throw new Error(
       `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
         ", "
@@ -1790,7 +1912,11 @@ function readOAuthScopeRequestValue(
           `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
         );
       }
-      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
+      assertOnlyKnownKeys(
+        raw,
+        OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET,
+        fieldName
+      );
       return { mode: mode as "omit" | "challenge" | "all-supported" };
     }
     default: {
@@ -2113,8 +2239,30 @@ const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
  * Canonicalize the optional `computer` field. `null` collapses to undefined
  * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
  * empty-after-trim collapsing to absent; legacy `toolset` input is dropped
- * (so `{ kind, toolset: "bash" }` and `{ kind }` hash identically). Output
- * keys are built in sorted order (kind, workdir) for hash stability.
+ * for EVERY kind (so `{ kind, toolset: "bash" }` and `{ kind }` hash
+ * identically). Output keys are built in sorted order (kind, workdir) for
+ * hash stability.
+ *
+ * `kind` is a closed union of two values:
+ *   - `"personal"`  — the per-(project, user) cloud workstation. The only
+ *                     kind an author can ever write; every public authoring
+ *                     input (`HostComputerInput`, `HostInit.computer`) is
+ *                     narrowed to it.
+ *   - `"ephemeral"` — a per-run box minted by the platform at a snapshot
+ *                     boundary (eval runs pin one box per iteration and boot
+ *                     it from the run's frozen environment image). RUNTIME-
+ *                     MINTED ONLY: it appears on canonical/persisted rows,
+ *                     never on authored input. The image is NOT carried here
+ *                     — it comes from the run's frozen environment pin.
+ *
+ * `workdir` is handled identically for both kinds, deliberately. A per-run box
+ * takes its working directory from provisioning, so the platform's minting site
+ * emits no `workdir` — but that is a rule about what gets WRITTEN, enforced
+ * there, and this function does not re-check it. Canonicalization is pure
+ * content-addressing: making one field's treatment depend on another's value
+ * would mean the same input hashing differently for a reason no caller can see.
+ * Nothing can author an ephemeral computer (every input type is personal-only),
+ * so there is no shape here for such a rule to catch.
  */
 function canonicalizeComputer(
   computer: HostConfigInputV2["computer"]
@@ -2128,8 +2276,10 @@ function canonicalizeComputer(
       throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
     }
   }
-  if (computer.kind !== "personal") {
-    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  if (computer.kind !== "personal" && computer.kind !== "ephemeral") {
+    throw new Error(
+      'hostConfigV2: computer.kind must be "personal" or "ephemeral"'
+    );
   }
   // Legacy input only: when present it must be the one value that ever
   // existed, then it's dropped from the canonical form.
@@ -2145,7 +2295,7 @@ function canonicalizeComputer(
     workdir = trimmed === "" ? undefined : trimmed;
   }
   return {
-    kind: "personal",
+    kind: computer.kind,
     ...(workdir !== undefined ? { workdir } : {}),
   };
 }
@@ -2187,7 +2337,9 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map(
+        (h) => `"${h}"`
+      ).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);

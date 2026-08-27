@@ -386,8 +386,8 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
-    // which writes skills into the sandbox itself; the emulated listSkills/
-    // loadSkill tools must NOT also be advertised.
+    // which writes skills into the sandbox itself; the emulated prompt catalog
+    // + loadSkill tools must NOT also be advertised.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { harness: "claude-code" } }) as never
     );
@@ -401,14 +401,45 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so the always-present listSkills/loadSkill
-    // meta-tools must not be injected when requireToolApproval is on.
+    // on any non-empty tool set, so emulated skill tools must not be injected
+    // when requireToolApproval is on (the skip stays correct even though
+    // empty projects no longer advertise phantom tools).
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
+  it("forwards a skills catalog fetch failure as a session_notice", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: { search: { description: "noop" } },
+      enhancedSystemPrompt: "enhanced system",
+      resolvedTemperature: undefined,
+      progressivePlan: undefined,
+      discoveryState: undefined,
+      skillsFetchFailed: {
+        errorClass: "CloudSkillsError",
+        status: 500,
+        message: "CONVEX_URL is not configured",
+        latencyMs: 12,
+      },
+    });
+    const emitted: any[] = [];
+
+    await runSyntheticHostSession(
+      baseAdapter({ emit: (payload) => emitted.push(payload) }) as never
+    );
+
+    const notice = emitted.find((p) => p.type === "session_notice");
+    expect(notice).toMatchObject({
+      kind: "tool_suppressed",
+      toolId: "skills",
+      message: "CONVEX_URL is not configured",
+    });
   });
 
   it("disposes the context when the turn throws, and reports failed", async () => {

@@ -48,7 +48,20 @@ export type CspField =
   | "connectDomains"
   | "resourceDomains"
   | "frameDomains"
-  | "baseUriDomains";
+  | "baseUriDomains"
+  | "fetch"
+  | "xhr"
+  | "websocket"
+  | "script"
+  | "stylesheet"
+  | "image"
+  | "font"
+  | "media";
+
+export type CspSubtype = Exclude<
+  CspField,
+  "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains"
+>;
 
 export interface EvidenceEntry {
   /** The signal that produced this evidence row. */
@@ -83,6 +96,8 @@ export interface Diagnosis {
   url: string;
   /** The browser's `effectiveDirective` (e.g. "connect-src"). */
   directive: string;
+  /** Per-API identity when host subtype evidence shaped the diagnosis. */
+  subtype?: CspSubtype;
   /** Plain-English summary of the failure (one line). */
   why: string;
   /** Verbatim browser message, as close as we can reconstruct. */
@@ -117,6 +132,21 @@ export interface ClassifierInput {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /** Host-specific evidence for APIs sharing connect/resource directives. */
+  subtypePolicy?: {
+    cspConnectDomains?: {
+      fetch?: boolean;
+      xhr?: boolean;
+      websocket?: boolean;
+    };
+    cspResourceDomains?: {
+      script?: boolean;
+      stylesheet?: boolean;
+      image?: boolean;
+      font?: boolean;
+      media?: boolean;
+    };
+  };
   /** Observed violations from the live store. */
   violations: CspViolation[];
 }

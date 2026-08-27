@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  reserveHarnessBox,
+  renewHarnessBoxReservation,
 } from "../harness-model-broker";
 import { buildBrokerDummyAuth } from "../registry";
 
@@ -221,5 +223,54 @@ describe("revokeHarnessModelBroker", () => {
     mockFetch(() => Response.json({ ok: false }, { status: 500 }));
     const result = await revokeHarnessModelBroker({ runId: "r", bearer: "t" });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("harness box reservation", () => {
+  const box = { kind: "sandbox" as const, sandboxRowId: "sbxrow_1" };
+
+  it("fails closed when the reservation endpoint is missing", async () => {
+    mockFetch(() => Response.json({ ok: false }, { status: 404 }));
+    await expect(
+      reserveHarnessBox({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toEqual({
+      ok: false,
+      status: 404,
+      error: "Couldn't reserve the computer (404)",
+    });
+  });
+
+  it("renews the same box claim and returns the new expiry", async () => {
+    let seenUrl = "";
+    let seenBody: any = {};
+    mockFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({ ok: true, expiresAt: 999 });
+    });
+    await expect(
+      renewHarnessBoxReservation({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toEqual({ ok: true, expiresAt: 999 });
+    expect(seenUrl).toBe(
+      "https://convex.example.com/web/harness/model-broker/reserve/renew"
+    );
+    expect(seenBody).toEqual({
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+    });
   });
 });

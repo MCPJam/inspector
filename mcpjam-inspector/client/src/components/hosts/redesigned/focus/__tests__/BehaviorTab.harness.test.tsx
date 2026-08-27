@@ -71,6 +71,50 @@ describe("BehaviorTab harness gray-out", () => {
     expect(screen.getByLabelText("Off")).toHaveAttribute("data-state", "on");
   });
 
+  it("leaves tool visibility EDITABLE for a codex host, with no stale warning", () => {
+    // Codex delivers the host's MCP servers as host-executed tools that MCPJam
+    // builds itself, under the host's own options — so `respectToolVisibility`
+    // reaches them (COMP-39). The switch stayed disabled after that landed,
+    // blocking the user from a setting that works and explaining it with a
+    // reason that was no longer true.
+    renderBehaviorTab({ harness: "codex" });
+
+    expect(
+      screen.getByRole("switch", { name: /respect tool visibility/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/can't filter its tool list/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/not enforced for the codex harness/i),
+    ).not.toBeInTheDocument();
+
+    // The controls Codex genuinely can't honor are still gated — this is not a
+    // blanket un-graying. Their note says the turn is REFUSED, which is what
+    // actually happens; "not enforced" described an outcome (run anyway,
+    // unapproved) the pre-flight never produces.
+    expect(
+      screen.getByRole("switch", { name: /require tool approval/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/refused rather than run unapproved/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/codex does its own tool discovery/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps tool visibility gated for claude-code, which lists tools in-sandbox", () => {
+    renderBehaviorTab({ harness: "claude-code" });
+
+    expect(
+      screen.getByRole("switch", { name: /respect tool visibility/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/connects to MCP servers itself/i),
+    ).toBeInTheDocument();
+  });
+
   it("leaves every control enabled for an emulated (no-harness) host", () => {
     const { container } = renderBehaviorTab();
 

@@ -26,26 +26,17 @@ export function useEvalQueries({
   organizationId: string | null;
   isDirectGuest?: boolean;
 }) {
+  const isUserReady = useDbUserReady();
   // Convex's `isAuthenticated` already covers hosted guests — they hold a
   // guest token via the unified auth provider — so a separate WorkOS `user`
   // check would wrongly skip queries for guests with a project.
-  //
-  // It is not sufficient on its own, though: Convex flips `isAuthenticated`
-  // the moment the JWT validates, which is *before* `users:ensureUser` has
-  // materialized the `users` row that every query below resolves the caller
-  // against. Firing in that window makes the backend `requireActor()` throw
-  // ("Guest user not found; call users:ensureUser first"), Convex sanitizes
-  // the plain Error to "Server Error", and `useQuery` rethrows it during
-  // render — collapsing the whole Testing tab into its error boundary.
-  // Same gate every other actor-scoped hook uses, including
-  // `use-project-environment-consumers`, which runs this very query.
-  //
-  // Direct guests are deliberately exempt: they have no Convex identity at
-  // all, so `isUserReady` never turns true for them and requiring it would
-  // skip these queries forever.
-  const isUserReady = useDbUserReady();
-  const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
   const hasActorAccess = isDirectGuest || (isAuthenticated && isUserReady);
+  // Authenticated, but the `users` row is still bootstrapping: the queries are
+  // skipped and an answer IS coming, so this window must report as loading.
+  // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
+  // deep-linked suite as deleted and bounce it, and flashes the "no suites"
+  // hero over a project that has suites.
+  const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {
@@ -63,9 +54,9 @@ export function useEvalQueries({
     enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;
 
-  const wantsSuiteDetails =
+  const hasSelectedSuiteInPlay =
     !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
-  const enableSuiteDetailsQuery = hasActorAccess && wantsSuiteDetails;
+  const enableSuiteDetailsQuery = hasActorAccess && hasSelectedSuiteInPlay;
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
@@ -82,16 +73,13 @@ export function useEvalQueries({
       : "skip"
   ) as EvalSuiteRun[] | undefined;
 
-  // The bootstrap window counts as loading rather than settled-empty. Letting
-  // it read as "loaded, no suites" would bounce a suite deep link back to the
-  // list view and flash the empty panel in place of the spinner.
   const isOverviewLoading =
     isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);
   const isSuiteDetailsLoading =
-    (isActorBootstrapping && wantsSuiteDetails) ||
+    (isActorBootstrapping && hasSelectedSuiteInPlay) ||
     (enableSuiteDetailsQuery && suiteDetails === undefined);
   const isSuiteRunsLoading =
-    (isActorBootstrapping && wantsSuiteDetails) ||
+    (isActorBootstrapping && hasSelectedSuiteInPlay) ||
     (enableSuiteDetailsQuery && suiteRuns === undefined);
 
   const selectedSuiteEntry = useMemo(() => {

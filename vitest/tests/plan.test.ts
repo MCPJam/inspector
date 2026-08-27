@@ -25,8 +25,11 @@ let mintedCaseIds = 0;
 
 function evalTest(name: string, externalCaseId?: string): EvalTest {
   mintedCaseIds += 1;
+  // A corpus case declares its hosted id in BOTH fields — `id` and
+  // `externalCaseId` are two claims about the same case, and `EvalTest`
+  // rejects a differing pair. Only a local test mints an id of its own.
   return new EvalTest({
-    id: `c_plan_${mintedCaseIds}`,
+    id: externalCaseId ?? `c_plan_${mintedCaseIds}`,
     name,
     ...(externalCaseId ? { externalCaseId } : {}),
     test: async () => true,
@@ -51,7 +54,7 @@ describe("planEvalSuite", () => {
       title: "Refund flow [case_123]",
       testName: "Refund flow",
       scenarioId: "case_123",
-      caseId: expect.stringMatching(/^c_plan_\d+$/),
+      caseId: "case_123",
     });
   });
 

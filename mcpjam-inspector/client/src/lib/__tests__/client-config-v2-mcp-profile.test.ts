@@ -73,14 +73,12 @@ describe("resolveClientInfo", () => {
   });
 
   test("returns undefined when initialize.clientInfo is unset (even with profile present)", () => {
-    expect(
-      resolveClientInfo({ profileVersion: 1 }),
-    ).toBeUndefined();
+    expect(resolveClientInfo({ profileVersion: 1 })).toBeUndefined();
     expect(
       resolveClientInfo({
         profileVersion: 1,
         initialize: { supportedProtocolVersions: ["2025-11-25"] },
-      }),
+      })
     ).toBeUndefined();
   });
 
@@ -152,14 +150,13 @@ describe("emptyHostConfigInputV2 mcpProfile handling", () => {
     // (Hit this exact bug during initial test writing — shared mutable
     // fixtures + an aliasing assertion is a foot-gun.)
     const source = JSON.parse(
-      JSON.stringify(SAMPLE_PROFILE),
+      JSON.stringify(SAMPLE_PROFILE)
     ) as HostConfigMcpProfileV1;
     const partial: Partial<HostConfigInputV2> = { mcpProfile: source };
     const input = emptyHostConfigInputV2(partial);
     expect(input.mcpProfile).toEqual(SAMPLE_PROFILE);
     // Mutate the source — input must be unaffected.
-    (source.initialize!.clientInfo as Record<string, unknown>).name =
-      "mutated";
+    (source.initialize!.clientInfo as Record<string, unknown>).name = "mutated";
     expect(input.mcpProfile?.initialize?.clientInfo?.name).toBe("chatgpt");
   });
 });
@@ -173,7 +170,7 @@ describe("hostConfigDtoToInput mcpProfile round-trip", () => {
   test("DTO with mcpProfile → input with cloned mcpProfile", () => {
     // Same aliasing-test trap — deep-clone the fixture before mutation.
     const sourceProfile = JSON.parse(
-      JSON.stringify(SAMPLE_PROFILE),
+      JSON.stringify(SAMPLE_PROFILE)
     ) as HostConfigMcpProfileV1;
     const dto = { ...BASE_DTO, mcpProfile: sourceProfile };
     const input = hostConfigDtoToInput(dto);
@@ -282,7 +279,7 @@ describe("hostConfigInputsEqual mcpProfile semantics", () => {
 });
 
 describe("resolveEffectiveCompatRuntime — per-method capability matrix", () => {
-  test('host style with `compatRuntime.openaiApps: false` resolves to `{ injected: false }` regardless of overrides', () => {
+  test("host style with `compatRuntime.openaiApps: false` resolves to `{ injected: false }` regardless of overrides", () => {
     // Claude doesn't inject the shim. Per-method overrides without
     // injection are meaningless — the resolver must short-circuit.
     const result = resolveEffectiveCompatRuntime({
@@ -391,20 +388,20 @@ describe("resolveEffectiveCompatRuntime — per-method capability matrix", () =>
 // but the runtime always uses the host default).
 describe("resolveEffectiveMcpProtocolVersion — per-server override precedence", () => {
   test("server override wins over host default", () => {
-    expect(
-      resolveEffectiveMcpProtocolVersion("2026-07-28", "2025-11-25"),
-    ).toBe("2026-07-28");
+    expect(resolveEffectiveMcpProtocolVersion("2026-07-28", "2025-11-25")).toBe(
+      "2026-07-28"
+    );
   });
 
   test("host default applies when no server override", () => {
     expect(resolveEffectiveMcpProtocolVersion(undefined, "2025-11-25")).toBe(
-      "2025-11-25",
+      "2025-11-25"
     );
   });
 
   test("returns undefined when neither layer has an opinion (SDK default semantics)", () => {
     expect(resolveEffectiveMcpProtocolVersion(undefined, undefined)).toBe(
-      undefined,
+      undefined
     );
   });
 
@@ -413,9 +410,9 @@ describe("resolveEffectiveMcpProtocolVersion — per-server override precedence"
     // migration test, one legacy server overridden back to 2025-11-25.
     // The override must reach the connect path or the legacy server
     // will fail with -32004.
-    expect(
-      resolveEffectiveMcpProtocolVersion("2025-11-25", "2026-07-28"),
-    ).toBe("2025-11-25");
+    expect(resolveEffectiveMcpProtocolVersion("2025-11-25", "2026-07-28")).toBe(
+      "2025-11-25"
+    );
   });
 });
 
@@ -425,31 +422,60 @@ describe("isMcpProfileEmpty (shared by every profile write path)", () => {
     // inlined at four write sites, so a field one of them didn't know about
     // silently collapsed the profile — losing the user's setting on save.
     for (const profile of [
-      { profileVersion: 1 as const, paginationTraversal: "firstPageOnly" as const },
+      {
+        profileVersion: 1 as const,
+        paginationTraversal: "firstPageOnly" as const,
+      },
       { profileVersion: 1 as const, mrtrSupport: "none" as const },
       { profileVersion: 1 as const, toolParamHeaderMirroring: "omit" as const },
+      {
+        profileVersion: 1 as const,
+        toolListChanged: { listens: false },
+      },
     ]) {
       expect(isMcpProfileEmpty(profile)).toBe(false);
     }
   });
 
-  it("treats an EMPTY initialize envelope as empty", () => {
-    // The canonicalizer drops an empty `initialize`, so persisting a profile
-    // that holds only one would mint a row hashing identically to no profile.
+  it("treats a profile whose only content was a storage toggle as empty", () => {
+    // The BrowserStorageCard setter deletes the leaf when an API is switched
+    // back on, leaving `{ profileVersion: 1, apps: undefined }`. If that does
+    // not read as empty, flipping a switch off and on again mints a config
+    // row whose hash differs from the absent profile it started from.
     expect(
-      isMcpProfileEmpty({ profileVersion: 1, initialize: {} }),
+      isMcpProfileEmpty({ profileVersion: 1, apps: undefined })
     ).toBe(true);
     expect(
       isMcpProfileEmpty({
         profileVersion: 1,
+        apps: { sandbox: { browserStorage: { localStorage: false } } },
+      })
+    ).toBe(false);
+  });
+
+  it("treats an all-absent toolListChanged record as empty", () => {
+    // A record with no leaves carries nothing the canonicalizer would keep,
+    // so persisting it would mint a row hashing identically to no profile.
+    expect(
+      isMcpProfileEmpty({ profileVersion: 1, toolListChanged: {} })
+    ).toBe(true);
+  });
+
+  it("treats an EMPTY initialize envelope as empty", () => {
+    // The canonicalizer drops an empty `initialize`, so persisting a profile
+    // that holds only one would mint a row hashing identically to no profile.
+    expect(isMcpProfileEmpty({ profileVersion: 1, initialize: {} })).toBe(true);
+    expect(
+      isMcpProfileEmpty({
+        profileVersion: 1,
         initialize: { supportedProtocolVersions: [] },
-      }),
+      })
     ).toBe(true);
     expect(
       isMcpProfileEmpty({
         profileVersion: 1,
         initialize: { supportedProtocolVersions: ["2026-07-28"] },
-      }),
+      })
     ).toBe(false);
   });
 

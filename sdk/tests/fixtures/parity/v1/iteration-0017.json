@@ -1,0 +1,100 @@
+{
+  "id": "hosted-0017",
+  "note": "argument mismatch on the expected call",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "list_files",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [
+          {
+            "toolName": "list_files",
+            "path": "path"
+          }
+        ],
+        "passed": false
+      }
+    ],
+    "predicateResults": []
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "failed",
+        "reason": "argumentMismatch",
+        "evidence": {
+          "promptIndexes": [
+            0
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "call",
+    "failureCategory": "arguments",
+    "stageAnalyzerVersion": 5
+  }
+}

@@ -24,6 +24,8 @@ import { buildSubmissionCasesFromRun } from "./run-submission";
 import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { ImportEvidenceCard } from "./import-evidence-card";
+import { useRunImportEligibility } from "./use-run-import-eligibility";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
@@ -45,7 +47,7 @@ import {
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import { ArrowUpDown, Download } from "lucide-react";
+import { ArrowUpDown, Download, Share2 } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 import { computeRunDashboardKpis } from "./run-detail-kpis";
@@ -167,6 +169,12 @@ interface RunDetailViewProps {
   /** Opens the OTLP trace-export modal for this run (rendered on the hero band). */
   onExportTraces?: () => void;
   /**
+   * Opens the share dialog. Owned by run-detail parents (not CI-embedded
+   * views). Widens the action-row guard so plugin-free runs still render
+   * the row when sharing is available.
+   */
+  onShare?: () => void;
+  /**
    * Navigate to another run on the accuracy hero's recent-run dot. Required for
    * CI/commit-detail callers so the jump stays on `/evals/runs/...` instead of
    * the default `buildEvalsPath` (`/evals/...`).
@@ -179,6 +187,15 @@ interface RunDetailViewProps {
    * Optional — CI/commit-detail parents don't have a live suite handle.
    */
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
+  /**
+   * The run's own canonical decision summary, as a slot.
+   *
+   * A SLOT rather than a fetch, because this view is shared: `/evals`, the CI
+   * commit detail and Evaluate all mount it, and only Evaluate opts into the
+   * D9 read. Passing the rendered node keeps the opt-in at the call site and
+   * keeps every non-Evaluate mount at exactly zero summary requests.
+   */
+  decisionSummarySlot?: React.ReactNode;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -397,6 +414,8 @@ export function RunDetailView({
   hideKpiStrip = false,
   hideAccuracyHero = false,
   onExportTraces,
+  onShare,
+  decisionSummarySlot,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -409,6 +428,14 @@ export function RunDetailView({
         }),
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
+
+  // The run's own eligibility, from the canonical single-run query. The list
+  // projection this screen's `selectedRunDetails` usually comes from does not
+  // carry one, so reading it off that object would render every converted run
+  // as though it had no imported cases.
+  const { eligibility: runImportEligibility } = useRunImportEligibility(
+    selectedRunDetails._id,
+  );
 
   const {
     result: serverQualityResult,
@@ -824,6 +851,12 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      {/* FROZEN import evidence, from the run's own snapshot.
+          Fetched canonically rather than derived from the suite's current
+          cases: those get edited after runs finish, and recomputing would let
+          an edit rewrite what a finished run is shown to have decided. */}
+      <ImportEvidenceCard eligibility={runImportEligibility} className="mb-4" />
+
       {!hideCiMetadata &&
         (selectedRunDetails.ciMetadata?.branch ||
           selectedRunDetails.ciMetadata?.commitSha ||
@@ -969,10 +1002,22 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3",
       )}
     >
-      {onExportTraces || pluginSubmissionVersions.length > 0 ? (
+      {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
         <div className="mb-3 flex shrink-0 justify-end gap-2">
+          {onShare ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onShare}
+              className="gap-1.5"
+              data-testid="run-detail-share"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </Button>
+          ) : null}
           {pluginSubmissionVersions.length > 0 ? (
             // Offered only for a run that pinned a plugin. The document's
             // entire value is naming the bundle it is evidence about, so on a
@@ -1003,7 +1048,16 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      <div className="shrink-0">{runMetadataBlock}</div>
+      {/* The run's own answer, above the browser's derived KPIs: what the run
+          DECIDED comes before how its trials went. Absent (and unfetched) on
+          every surface that does not pass the slot. */}
+      {decisionSummarySlot ? (
+        <div className="shrink-0">{decisionSummarySlot}</div>
+      ) : null}
+
+      <div className="shrink-0" data-testid="run-detail-metadata">
+        {runMetadataBlock}
+      </div>
 
       {useTwoColumnLayout ? (
         <>

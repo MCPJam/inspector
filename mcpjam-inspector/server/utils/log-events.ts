@@ -32,6 +32,26 @@ interface CommonLogContext {
   durationMs?: number;
 
   authType: AuthType;
+  /**
+   * Whether the caller presented a bearer credential AT ALL, set by
+   * `bearerAuthMiddleware` on every route it fronts. This is not "was the
+   * caller authorized" — an invalid key, an unknown user and an orphaned key
+   * are all `true`. It answers the one question a 401 count cannot: did
+   * somebody's credential fail, or did nobody send one?
+   *
+   * The distinction is the difference between a customer outage and
+   * background noise. A contracted pentest sweep (or any scanner) walks the
+   * public API with no `Authorization` header and produces hundreds of
+   * perfectly correct 401s; a real auth incident produces 401s from callers
+   * who DID present something. Without this field both fingerprint as
+   * "route 401" and the 4xx storm monitor cannot tell them apart — which is
+   * exactly what happened on 2026-08-18, where a scan tripped the WARN and
+   * triage had no query that could name the caller.
+   *
+   * Absent on routes that do not run `bearerAuthMiddleware`; monitors must
+   * treat null as "unknown", never as "no credential".
+   */
+  credentialPresented?: boolean | null;
   userId?: string | null;
   userExternalId?: string | null;
   guestExternalId?: string | null;
@@ -242,7 +262,13 @@ export type RequestEventMap = {
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -252,7 +278,13 @@ export type RequestEventMap = {
    */
   "chat.session.persist.skipped": {
     sourceType?: "scenario" | "direct" | "eval" | "swarm";
-    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    origin?:
+      | "playground"
+      | "mcpjam_agent"
+      | "scenario"
+      | "eval"
+      | "swarm"
+      | "api";
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };
@@ -321,6 +353,36 @@ export type SystemEventMap = {
   };
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
+  /**
+   * Heap and retained-buffer gauge, one line per sample that says something
+   * (see utils/process-vitals.ts). Emitted on startup, on a heap step, and on a
+   * slow heartbeat — never once per interval unconditionally, so a quiet
+   * session costs almost nothing.
+   *
+   * Exists because INSPECTOR-ELECTRON-W3 crashed after 21 minutes with ZERO
+   * breadcrumbs for the whole session: nothing recorded whether the heap ramped
+   * or spiked, and the difference is the entire diagnosis. Every field is a
+   * number or a three-valued reason, so cardinality is fixed.
+   */
+  "process.vitals": {
+    reason: "startup" | "heap_step" | "heartbeat";
+    uptimeSeconds: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    heapLimitBytes: number;
+    oldSpaceUsedBytes: number;
+    oldSpaceSizeBytes: number;
+    externalBytes: number;
+    rssBytes: number;
+    peakHeapUsedBytes: number;
+    rpcLogBufferBytes: number;
+    rpcLogBufferEvents: number;
+    rpcLogBufferServers: number;
+    rpcLogTruncatedFrames: number;
+    peakRpcLogBufferBytes: number;
+    tokenizerPeakChars: number;
+    tokenizerOversizeSkips: number;
+  };
   /**
    * Aggregated socket-level failure counters, one line per flush interval
    * (see utils/socket-diagnostics.ts). These are connections that died before

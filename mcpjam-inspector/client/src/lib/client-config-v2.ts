@@ -79,17 +79,41 @@ export type {
 export type HostStyleId = ScenarioHostStyle;
 
 /**
- * Personal cloud workstation attached to a host (Project Computers). The
- * resource attachment only; capabilities (e.g. `bash`) ride `builtInToolIds`.
- * Mirrors the SDK's resource shape — the legacy `toolset` key is dropped from
- * the client model (the backend still persists it vestigially while pinned to
- * the published SDK, and strips it on read into this shape).
+ * Computer attached to a host. The resource attachment only; capabilities
+ * (e.g. `bash`) ride `builtInToolIds`. Mirrors the SDK's resource shape — the
+ * legacy `toolset` key is dropped from the client model (the backend still
+ * persists it vestigially while pinned to the published SDK, and strips it on
+ * read into this shape).
+ *
+ * `kind` is a closed union:
+ *   - `"personal"` — the per-(project, user) cloud workstation, and the only
+ *     kind anything in this app can AUTHOR. Every editor writes this.
+ *   - `"ephemeral"` — a per-run box the platform mints at a run-snapshot
+ *     boundary (an eval run pins one per iteration, booted from the run's
+ *     frozen environment image). READ-ONLY snapshot data: it can appear when
+ *     reading a run's pinned config back, and must never be routed through a
+ *     host-save flow.
+ *
+ * The read path deliberately does NOT normalize an unknown kind to
+ * `"personal"`. Doing so would let a run's pinned config be read, laundered
+ * into a personal attachment, and saved onto a live host — turning a
+ * disposable per-run box into a claim on somebody's actual machine.
  */
+export type HostConfigComputerKindV2 = "personal" | "ephemeral";
+
 export type HostConfigComputerV2 = {
-  kind: "personal";
-  /** Optional initial working directory for shell/terminal sessions. */
+  kind: HostConfigComputerKindV2;
+  /** Optional initial working directory for shell/terminal sessions. Present
+   *  only on the personal kind; provisioning supplies an ephemeral box's cwd. */
   workdir?: string;
 };
+
+/** True when this attachment is platform-minted and therefore not editable. */
+export function isReadOnlyHostComputer(
+  computer: HostConfigComputerV2 | undefined
+): boolean {
+  return computer !== undefined && computer.kind !== "personal";
+}
 
 export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
@@ -309,6 +333,29 @@ export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
   partial?: Partial<HostConfigInputV2>
 ) => HostConfigInputV2;
 
+/**
+ * Strip a platform-minted computer from a config about to become an EDITABLE
+ * draft.
+ *
+ * `kind: "ephemeral"` names a per-run box the platform provisioned for one
+ * eval iteration. It is meaningful only inside that run, and the public write
+ * path cannot express it anyway (the backend's exported arg validator is
+ * `v.literal('personal')`), so a draft carrying one would be rejected on save
+ * at best — and at worst, if it were laundered to `"personal"` first, would
+ * turn a disposable box into a claim on the member's own machine.
+ *
+ * Dropping the attachment rather than converting it is the honest answer: the
+ * draft starts with no computer, which the editor already renders as
+ * "attach one", instead of silently claiming a box the user never attached.
+ */
+export function withoutReadOnlyComputer(
+  input: HostConfigInputV2
+): HostConfigInputV2 {
+  if (!isReadOnlyHostComputer(input.computer)) return input;
+  const { computer: _dropped, ...rest } = input;
+  return rest as HostConfigInputV2;
+}
+
 export function cloneHostTemplateInput(
   value: unknown,
   options: { themeMode?: ThemeMode } = {}
@@ -320,7 +367,9 @@ export function cloneHostTemplateInput(
       theme: options.themeMode,
     };
   }
-  return input;
+  // Every editor draft starts here, so this is the one place a platform-minted
+  // computer has to be dropped — see `withoutReadOnlyComputer`.
+  return withoutReadOnlyComputer(input);
 }
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
@@ -351,9 +400,16 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
     // Read only the resource shape; the backend may carry a vestigial
     // `toolset` on the wire (legacy key) which the client model omits.
+    //
+    // `kind` is CARRIED, not rewritten. This used to hardcode `"personal"`,
+    // which meant any kind the backend sent came back as a personal
+    // attachment — so reading a run's pinned config and saving it would
+    // convert a disposable per-run box into a claim on the member's own
+    // machine. A non-personal kind is read-only snapshot data
+    // (`isReadOnlyHostComputer`); surfaces must not route it through a save.
     computer: dto.computer
       ? {
-          kind: "personal",
+          kind: dto.computer.kind,
           ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
         }
       : undefined,
@@ -623,6 +679,31 @@ export function mergeMcpAppsCapabilities(
         ? modesOverride
         : (["inline"] as ResolvedMcpAppsCapabilities["availableDisplayModes"])
       : base.availableDisplayModes;
+  const cspConnectDomains =
+    base.cspConnectDomains || override.cspConnectDomains
+      ? { ...base.cspConnectDomains, ...override.cspConnectDomains }
+      : undefined;
+  const cspResourceDomains =
+    base.cspResourceDomains || override.cspResourceDomains
+      ? { ...base.cspResourceDomains, ...override.cspResourceDomains }
+      : undefined;
+  // Two levels deep, so a shallow spread would let an override that names
+  // only `structuredContent` erase the preset's per-block-kind answers.
+  const toolResult =
+    base.toolResult || override.toolResult
+      ? {
+          ...base.toolResult,
+          ...override.toolResult,
+          ...(base.toolResult?.content || override.toolResult?.content
+            ? {
+                content: {
+                  ...base.toolResult?.content,
+                  ...override.toolResult?.content,
+                },
+              }
+            : {}),
+        }
+      : undefined;
   return {
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
@@ -639,6 +720,9 @@ export function mergeMcpAppsCapabilities(
     sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
     cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspConnectDomains,
+    cspResourceDomains,
+    toolResult,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
@@ -760,6 +844,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // A record, so emptiness is per-leaf: `{}` carries nothing (the
+    // canonicalizer drops it), but any boolean leaf is a real setting.
+    (profile.toolListChanged === undefined ||
+      Object.values(profile.toolListChanged).every(
+        (value) => value === undefined
+      )) &&
     !profile.apps &&
     !profile.extensions
   );
@@ -1073,11 +1163,15 @@ export function hostConfigInputsEqual(
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
-  // Personal computer: presence + workdir (kind is always 'personal').
-  // Attaching/detaching or changing the workdir marks the draft dirty.
+  // Computer: presence, KIND and workdir. Attaching/detaching or changing the
+  // workdir marks the draft dirty. `kind` is compared because it is no longer
+  // always 'personal' — a run's pinned config can carry the platform-minted
+  // 'ephemeral' kind, and without this a personal and an ephemeral attachment
+  // with the same workdir would compare equal.
   if ((a.computer === undefined) !== (b.computer === undefined)) return false;
-  if (a.computer && b.computer && a.computer.workdir !== b.computer.workdir) {
-    return false;
+  if (a.computer && b.computer) {
+    if (a.computer.kind !== b.computer.kind) return false;
+    if (a.computer.workdir !== b.computer.workdir) return false;
   }
   // Harness selector: undefined vs "claude-code" are distinct states (backend
   // hashes them distinctly). Switching engines marks the draft dirty.

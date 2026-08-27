@@ -6,6 +6,14 @@ export interface PendingQuickConnectState {
   sourceTab: QuickConnectSourceTab;
   createdAt: number;
   registryServerId?: string;
+  /**
+   * The `catalogServers` row a Claude-directory connect came from.
+   *
+   * Separate from `registryServerId` rather than a shared "sourceId": the two
+   * ids address different tables with independent lifecycles, and one field
+   * holding either would make every reader ask which it got.
+   */
+  catalogServerId?: string;
 }
 
 const STORAGE_KEY = "mcp-quick-connect-pending";
@@ -34,6 +42,10 @@ export function readPendingQuickConnect(): PendingQuickConnectState | null {
           registryServerId:
             typeof parsed.registryServerId === "string"
               ? parsed.registryServerId
+              : undefined,
+          catalogServerId:
+            typeof parsed.catalogServerId === "string"
+              ? parsed.catalogServerId
               : undefined,
         };
       }

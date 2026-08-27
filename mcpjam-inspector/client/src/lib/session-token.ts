@@ -308,6 +308,9 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Local chat re-calls Convex for host/scenario runtime config and
+  // persistence, so resolve its bearer at request time as well.
+  "/api/mcp/chat-v2",
   // Local XAA proxy paths whose server-target / registration runs resolve a
   // Convex-stored secret on the user's behalf (the hosted `/api/web/xaa/*`
   // equivalents are already covered by the `/api/web/` prefix above).
@@ -332,6 +335,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/mcp/computers/local-consent",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
+  // Registry catalog/star routes are Convex HTTP actions called via absolute
+  // URL, and every one of them requires an identity (the catalog resolves
+  // per-viewer `isStarred`). Without this prefix the bearer is never attached
+  // and they all 401 with "Missing or invalid bearer token".
+  "/web/registry/",
 ];
 
 /**
@@ -361,7 +369,36 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
   return false;
 }
 
+/**
+ * Paths whose SCOPE sits in the middle, so no prefix can name them.
+ *
+ * `/api/v1/projects/{projectId}/readiness-runs...` and its server-scoped start
+ * carry ids the UI substitutes at call time, and the interesting segment comes
+ * after them. The alternative was the prefix `/api/v1/projects/`, which would
+ * hand the user's bearer to every project-scoped public-API route that ever
+ * ships — the exact opposite of the path-by-path scoping the list above
+ * exists to maintain. A pattern keeps the grant as narrow as the prefixes are.
+ *
+ * Anchored at both ends, and the id segments match one segment each: nothing
+ * with an extra path component can slip through.
+ */
+const HOSTED_AUTH_PATH_PATTERNS = [
+  // The /conformance page starting, polling, cancelling and reading a
+  // directory-readiness run.
+  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
+  // change: without this entry the UI's hint would silently 401, since
+  // `/api/v1/projects/` is not a prefix this list grants wholesale — see the
+  // module header on why a pattern, not a prefix, is what keeps the grant as
+  // narrow as the id segments in the middle.
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+];
+
 function pathMatchesHostedPrefix(pathname: string): boolean {
+  if (HOSTED_AUTH_PATH_PATTERNS.some((pattern) => pattern.test(pathname))) {
+    return true;
+  }
   return HOSTED_AUTH_PATH_PREFIXES.some((prefix) => {
     if (prefix.endsWith("/")) return pathname.startsWith(prefix);
     // Non-trailing-slash entries match the literal path AND any sub-path

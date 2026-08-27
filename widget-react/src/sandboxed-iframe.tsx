@@ -13,6 +13,7 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   stableStringifyJson,
   buildOuterAllowAttribute,
@@ -31,6 +32,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { CspSubtypePolicy } from "./widget-host";
 
 function isRecorderDebugEnabled() {
   try {
@@ -51,6 +53,112 @@ function recorderDebug(message: string, details?: Record<string, unknown>) {
   } catch {
     // best-effort debug logging only
   }
+}
+
+/** The parts of `window.location` the sandbox origin is derived from. */
+export type SandboxProxyLocation = Pick<
+  Location,
+  "hostname" | "port" | "protocol" | "origin"
+>;
+
+/**
+ * The canonical origin a configured SANDBOX_ORIGIN names, or null when it
+ * names none this iframe can load from.
+ *
+ * Comparing the configured string to `location.origin` directly misses every
+ * value that spells the app's own origin differently — a trailing slash,
+ * upper-case host, an explicit `:443`. Each one would have defeated the
+ * distinct-origin check AND been spliced into the proxy URL as written. A
+ * value that does not parse, or that carries a scheme no iframe can load, is
+ * no better than an unset one.
+ */
+function parseSandboxOrigin(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return null;
+  }
+  return parsed.origin;
+}
+
+/**
+ * Where the outer sandbox iframe loads from.
+ *
+ * SEP-1865: host and sandbox MUST have different origins.
+ *
+ * Hosted: prefer the operator-configured SANDBOX_ORIGIN
+ * (`VITE_MCPJAM_SANDBOX_ORIGIN`). It MUST be a distinct origin from the host
+ * app so the sandboxed iframe cannot reach host cookies or storage even when
+ * its sandbox carries `allow-same-origin`.
+ *
+ * A configured origin EQUAL to the app's own counts as unset. It produces
+ * exactly the same same-origin iframe as no value at all, and it is the more
+ * likely of the two mistakes because it looks configured. The client boot
+ * guard used to be the only thing that said so, and it could not tell that
+ * case apart from the app legitimately being loaded on the sandbox hostname
+ * (INSPECTOR-CLIENT-247) — so the deploy-level check moved to the server and
+ * this renderer stopped walking straight through the condition.
+ *
+ * Local: keep the localhost ↔ 127.0.0.1 swap so dev gets the same
+ * origin-separation property without operator config.
+ *
+ * Same-origin fallback exists only as a soft-fail for misconfigured hosted
+ * deploys; it emits a loud security warning.
+ */
+export function resolveSandboxProxyUrl({
+  hostedMode,
+  sandboxOrigin,
+  location,
+}: {
+  hostedMode: boolean;
+  sandboxOrigin: string;
+  location: SandboxProxyLocation;
+}): string {
+  const proxyPath = hostedMode
+    ? "/api/web/apps/mcp-apps/sandbox-proxy"
+    : "/api/apps/mcp-apps/sandbox-proxy";
+
+  const configuredOrigin = hostedMode
+    ? parseSandboxOrigin(sandboxOrigin)
+    : null;
+  if (configuredOrigin && configuredOrigin !== location.origin) {
+    return `${configuredOrigin}${proxyPath}?v=${Date.now()}`;
+  }
+
+  const currentHost = location.hostname;
+  const currentPort = location.port;
+  const protocol = location.protocol;
+
+  let sandboxHost: string;
+  if (currentHost === "localhost") {
+    sandboxHost = "127.0.0.1";
+  } else if (currentHost === "127.0.0.1") {
+    sandboxHost = "localhost";
+  } else {
+    if (hostedMode) {
+      console.warn(
+        "[SandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not set to an origin" +
+          " distinct from this app's; sandbox iframe is falling back to" +
+          " same-origin. This is a security regression — the sandbox shares" +
+          " cookies and storage with the host app. Configure a distinct origin" +
+          " (e.g. https://sandbox.mcpjam.com) and redeploy."
+      );
+    } else {
+      console.warn(
+        "[SandboxedIframe] Cross-origin isolation not available for hostname:",
+        currentHost,
+        "- falling back to same-origin sandbox"
+      );
+    }
+    sandboxHost = currentHost;
+  }
+
+  const portSuffix = currentPort ? `:${currentPort}` : "";
+  return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
 }
 
 export interface SandboxedIframeHandle {
@@ -89,6 +197,16 @@ interface SandboxedIframeProps {
    * (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
    */
   cspDirectives?: Record<string, string[]>;
+  /** Probe-derived host policy for individual CSP-backed browser APIs. */
+  cspSubtypePolicy?: CspSubtypePolicy;
+  /**
+   * Probe-derived host policy for browser storage inside the widget.
+   * Absent or `true` means available; `false` makes the proxy install a guard
+   * that throws `SecurityError` on access, as a real iframe without
+   * `allow-same-origin` does. Not a CSP concern — applies in permissive mode
+   * too.
+   */
+  browserStorage?: BrowserStoragePolicy;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /**
@@ -145,6 +263,8 @@ export const SandboxedIframe = forwardRef<
     sandboxAttrs,
     allowFeatures,
     cspDirectives,
+    cspSubtypePolicy,
+    browserStorage,
     permissive,
     recordMode,
     onProxyReady,
@@ -166,58 +286,13 @@ export const SandboxedIframe = forwardRef<
   onMessageRef.current = onMessage;
   onProxyReadyRef.current = onProxyReady;
 
-  // SEP-1865: Host and Sandbox MUST have different origins.
-  //
-  // Hosted: prefer the operator-configured SANDBOX_ORIGIN
-  // (`VITE_MCPJAM_SANDBOX_ORIGIN`). It MUST be a distinct origin from the
-  // host app so the sandboxed iframe cannot reach host cookies or storage
-  // even when its sandbox carries `allow-same-origin`.
-  //
-  // Local: keep the localhost ↔ 127.0.0.1 swap so dev gets the same
-  // origin-separation property without operator config.
-  //
-  // Same-origin fallback exists only as a soft-fail for misconfigured
-  // hosted deploys; it emits a loud security warning.
-  const [sandboxProxyUrl] = useState(() => {
-    const proxyPath = hostedMode
-      ? "/api/web/apps/mcp-apps/sandbox-proxy"
-      : "/api/apps/mcp-apps/sandbox-proxy";
-
-    if (hostedMode && sandboxOrigin) {
-      return `${sandboxOrigin}${proxyPath}?v=${Date.now()}`;
-    }
-
-    const currentHost = window.location.hostname;
-    const currentPort = window.location.port;
-    const protocol = window.location.protocol;
-
-    let sandboxHost: string;
-    if (currentHost === "localhost") {
-      sandboxHost = "127.0.0.1";
-    } else if (currentHost === "127.0.0.1") {
-      sandboxHost = "localhost";
-    } else {
-      if (hostedMode) {
-        console.warn(
-          "[SandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not configured;" +
-            " sandbox iframe is falling back to same-origin." +
-            " This is a security regression — the sandbox shares cookies and" +
-            " storage with the host app. Configure a distinct origin" +
-            " (e.g. https://sandbox.mcpjam.com) and redeploy."
-        );
-      } else {
-        console.warn(
-          "[SandboxedIframe] Cross-origin isolation not available for hostname:",
-          currentHost,
-          "- falling back to same-origin sandbox"
-        );
-      }
-      sandboxHost = currentHost;
-    }
-
-    const portSuffix = currentPort ? `:${currentPort}` : "";
-    return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
-  });
+  const [sandboxProxyUrl] = useState(() =>
+    resolveSandboxProxyUrl({
+      hostedMode,
+      sandboxOrigin,
+      location: window.location,
+    })
+  );
 
   const sandboxProxyOrigin = useMemo(() => {
     try {
@@ -346,6 +421,8 @@ export const SandboxedIframe = forwardRef<
       stableStringifyJson({
         csp: csp ?? null,
         cspDirectives: cspDirectives ?? null,
+        cspSubtypePolicy: cspSubtypePolicy ?? null,
+        browserStorage: browserStorage ?? null,
         html: html ?? null,
         permissive: permissive ?? null,
         permissions: permissions ?? null,
@@ -358,6 +435,8 @@ export const SandboxedIframe = forwardRef<
     [
       csp,
       cspDirectives,
+      cspSubtypePolicy,
+      browserStorage,
       html,
       permissive,
       permissions,
@@ -396,6 +475,8 @@ export const SandboxedIframe = forwardRef<
           // can't accidentally widen the inner grant by reading a stale
           // field.
           cspDirectives,
+          cspSubtypePolicy,
+          browserStorage,
           permissive,
           colorScheme,
           recordMode,

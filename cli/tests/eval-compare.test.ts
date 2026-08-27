@@ -1,5 +1,5 @@
 /**
- * Flag parsing and gate-input derivation for `mcpjam eval compare`.
+ * Flag parsing and gate-input derivation for `mcpjam cloud eval compare`.
  *
  * The derivations are where a comparison quietly goes wrong: a definition
  * change counted as a regression, or unequal iteration weighting passing

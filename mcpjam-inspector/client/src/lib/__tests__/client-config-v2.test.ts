@@ -664,6 +664,27 @@ describe("mergeMcpAppsCapabilities", () => {
     expect(merged.openLinks).toBe(true);
   });
 
+  it("deep-merges CSP subtype leaves and preserves omitted Goose websocket", () => {
+    const merged = mergeMcpAppsCapabilities(
+      {
+        ...MCP_APPS_FULL_SURFACE_FOR_TEST,
+        cspConnectDomains: { fetch: false, xhr: false },
+        cspResourceDomains: { script: false, image: false },
+      },
+      {
+        cspConnectDomains: { xhr: true },
+        cspResourceDomains: { image: true, font: false },
+      }
+    );
+    expect(merged.cspConnectDomains).toEqual({ fetch: false, xhr: true });
+    expect(merged.cspConnectDomains).not.toHaveProperty("websocket");
+    expect(merged.cspResourceDomains).toEqual({
+      script: false,
+      image: true,
+      font: false,
+    });
+  });
+
   it("replaces widgetDisplayModeRequests tri-state when override is set", () => {
     const merged = mergeMcpAppsCapabilities(
       { ...MCP_APPS_FULL_SURFACE_FOR_TEST },

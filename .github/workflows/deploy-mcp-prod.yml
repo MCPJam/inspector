@@ -96,14 +96,23 @@ jobs:
 
             // Fetch without branch/status filters — GitHub's search index
             // can lag minutes behind, causing false negatives on recent runs.
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-              owner,
-              repo,
-              workflow_id: workflowId,
-              per_page: 100,
-            });
+            //
+            // Paged with an early exit rather than github.paginate(), which
+            // walks every historical run of the workflow before filtering.
+            // Runs come back newest-first and this gate wants the most recent
+            // success, so page 1 answers it in the overwhelming majority of
+            // cases.
+            const iterator = github.paginate.iterator(
+              github.rest.actions.listWorkflowRuns,
+              { owner, repo, workflow_id: workflowId, per_page: 100 }
+            );
 
-            const latestSuccess = runs.find((run) => run.conclusion === "success");
+            let latestSuccess = null;
+            let pages = 0;
+            for await (const { data: runs } of iterator) {
+              latestSuccess = runs.find((run) => run.conclusion === "success");
+              if (latestSuccess || ++pages >= 5) break;
+            }
             if (!latestSuccess) {
               core.setFailed(
                 `No successful ${workflowId} run on main. Cannot promote.`

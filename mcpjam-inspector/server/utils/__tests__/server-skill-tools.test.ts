@@ -1,14 +1,15 @@
 /**
  * Skills over MCP (SEP-2640) — the live chat wrapper.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  *
  * The wrapper's contract has three load-bearing properties, and each gets a
  * test that would fail loudly if it regressed:
  *   1. it is INVISIBLE when no server declares the extension (byte-identical
  *      base), so every pre-existing turn is unchanged;
  *   2. a bare name NEVER resolves to a server skill (no shadowing channel);
- *   3. a server-origin load is ALWAYS approval-gated, even with the host's
+ *   3. a server-origin load follows the HOST's approval policy (the SEP asks
+ *      for origin tagging, not a prompt), while still recording the digest-set
  *      approval policy off.
  */
 
@@ -53,6 +54,8 @@ async function makeManager(
     tamper?: boolean;
     /** Omit `resources` from the entry entirely. */
     noResources?: boolean;
+    /** Serve a SKILL.md body far larger than a model turn should carry. */
+    hugeBody?: boolean;
     /** Also answer reads for this unlisted URI. */
     serveUnlisted?: string;
     /** Answer `skills/get` for this URI with an entry carrying a DIFFERENT uri. */
@@ -61,14 +64,19 @@ async function makeManager(
     inactiveServers?: string[];
     /** Additional listing entries, e.g. a second skill sharing a name. */
     extraSkills?: Array<Record<string, unknown>>;
+    /** Declare the extension but return an empty `skills/list`. */
+    emptySkills?: boolean;
     unlistedSkills?: Record<
       string,
       { name: string; markdown: string; tamper?: boolean }
     >;
   } = {}
 ) {
+  const bodyMarkdown = options.hugeBody
+    ? `${MARKDOWN}${"x".repeat(200 * 1024)}`
+    : MARKDOWN;
   const markdownDigest = `sha256:${await sha256(
-    options.tamper ? `${MARKDOWN}tampered` : MARKDOWN
+    options.tamper ? `${bodyMarkdown}tampered` : bodyMarkdown
   )}`;
   const fileDigest = `sha256:${await sha256(FILE_TEXT)}`;
   const entry = {
@@ -116,6 +124,7 @@ async function makeManager(
     },
     listServerSkills: vi.fn(async () => {
       calls.push("skills/list");
+      if (options.emptySkills) return { skills: [] };
       return {
         skills: options.extraSkills ? [entry, ...options.extraSkills] : [entry],
       };
@@ -167,7 +176,7 @@ async function makeManager(
     readResource: vi.fn(async (_serverId: string, params: { uri: string }) => {
       calls.push(`resources/read:${params.uri}`);
       if (params.uri === SKILL_URI) {
-        return { contents: [{ uri: params.uri, text: MARKDOWN }] };
+        return { contents: [{ uri: params.uri, text: bodyMarkdown }] };
       }
       if (params.uri === FILE_URI) {
         return { contents: [{ uri: params.uri, text: FILE_TEXT }] };
@@ -196,18 +205,22 @@ async function makeManager(
 
 function baseTools() {
   return {
-    listSkills: {
-      description: "base list",
-      execute: vi.fn(
-        async () => "Available skills:\n\n- **local-skill**: A local one."
-      ),
-    },
     loadSkill: {
       execute: vi.fn(async (input: { name?: string }) => `BASE:${input.name}`),
     },
     listSkillFiles: { execute: vi.fn(async () => "BASE FILES") },
     readSkillFile: { execute: vi.fn(async () => "BASE FILE") },
   };
+}
+
+function listSkillsExecute(tools: unknown) {
+  return (
+    tools as {
+      listSkills: {
+        execute: (input: unknown, options: unknown) => Promise<unknown>;
+      };
+    }
+  ).listSkills.execute;
 }
 
 const SERVERS = [{ serverId: "srv1", serverLabel: "Acme Billing" }];
@@ -219,9 +232,10 @@ async function approveServerSkill(
 ): Promise<void> {
   const gate = (wrapped[toolName] as { needsApproval?: unknown }).needsApproval;
   expect(typeof gate).toBe("function");
-  await expect(
-    (gate as (input: unknown) => Promise<boolean>)(input)
-  ).resolves.toBe(true);
+  // Runs the gate so the digest-set binding is RECORDED. Its boolean answer is
+  // the host's policy, not a forced `true`, so it is deliberately not asserted
+  // here — the always-on prompt was MCPJam policy the SEP never asked for.
+  await (gate as (input: unknown) => Promise<boolean>)(input);
 }
 
 describe("slug + ref minting", () => {
@@ -256,9 +270,7 @@ describe("slug + ref minting", () => {
         { serverId: "srv1", serverLabel: "Acme Billing" },
       ],
     });
-    const listed = String(
-      await (tools.listSkills as { execute: Function }).execute({}, {})
-    );
+    const listed = String(await listSkillsExecute(tools)({}, {}));
     expect(listed).toContain("acme-billing-2/refunds");
     // The shared assigner, run over the full list as the picker runs it,
     // agrees.
@@ -280,9 +292,7 @@ describe("slug + ref minting", () => {
     };
     const manager = await makeManager({ extraSkills: [second] });
     const tools = withServerSkills(baseTools(), { manager, servers: SERVERS });
-    const listed = String(
-      await (tools.listSkills as { execute: Function }).execute({}, {})
-    );
+    const listed = String(await listSkillsExecute(tools)({}, {}));
     // Neither gets the bare ref: which one arrived first is a listing-order
     // accident the server controls, and the picker must reach the same answer.
     expect(listed).not.toMatch(/\*\*acme-billing\/refunds\*\*/);
@@ -354,14 +364,12 @@ describe("withServerSkills — attachment", () => {
 });
 
 describe("withServerSkills — listSkills", () => {
-  it("appends an origin-framed section to the base listing", async () => {
+  it("returns the server section alone when the base has no listSkills", async () => {
     const base = baseTools();
     const manager = await makeManager();
     const wrapped = withServerSkills(base, { manager, servers: SERVERS });
-    const text = String(
-      await (wrapped.listSkills as { execute: Function }).execute({}, {})
-    );
-    expect(text).toContain("local-skill");
+    const text = String(await listSkillsExecute(wrapped)({}, {}));
+    expect(text).not.toContain("local-skill");
     expect(text).toContain("acme-billing/refunds");
     expect(text).toContain('MCP server "Acme Billing"');
     // The description is framed as server-provided, so a description that
@@ -369,34 +377,63 @@ describe("withServerSkills — listSkills", () => {
     expect(text).toContain("untrusted descriptions");
   });
 
+  it("says so when no MCP-server-provided skills are available", async () => {
+    const base = baseTools();
+    const manager = await makeManager({ emptySkills: true });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const text = String(await listSkillsExecute(wrapped)({}, {}));
+    expect(text).toBe(
+      "No MCP-server-provided skills are available for this turn."
+    );
+  });
+
   it("drains each provider only once per turn", async () => {
     const base = baseTools();
     const manager = await makeManager();
     const wrapped = withServerSkills(base, { manager, servers: SERVERS });
-    const listSkills = wrapped.listSkills as { execute: Function };
-    await listSkills.execute({}, {});
-    await listSkills.execute({}, {});
+    const execute = listSkillsExecute(wrapped);
+    await execute({}, {});
+    await execute({}, {});
     expect(manager.calls.filter((c) => c === "skills/list")).toHaveLength(1);
   });
 });
 
 describe("withServerSkills — loadSkill", () => {
-  it("ALWAYS requires approval, even with the host policy off", async () => {
+  it("follows the HOST policy rather than forcing its own prompt", async () => {
+    // SEP-2640 does not require approval to read a skill's text — it requires
+    // origin tagging (the banner). Its consent obligations cover code
+    // execution, `allowed-tools`, nested activation and cross-origin reads,
+    // none of which a plain load performs.
+    //
+    // Forcing `true` here was MCPJam policy, and it made the feature unusable
+    // off-local: the gate recorded its binding in a per-request closure that
+    // `execute` never saw, so every load was refused as `manifest_unbound`.
     const manager = await makeManager();
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
     });
-    // `loadSkill` resolves the manifest before answering, so its gate is a
-    // FUNCTION; what matters is that it always answers true.
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (input: unknown) => Promise<boolean>;
     expect(typeof gate).toBe("function");
-    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
+    // The harness's base tools carry no approval policy, so no prompt.
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(false);
     expect(
       typeof (wrapped.readSkillFile as { needsApproval?: unknown })
         .needsApproval
     ).toBe("function");
+  });
+
+  it("still prompts when the host policy asks for one", async () => {
+    // Deferring must mean deferring in BOTH directions: a host that requires
+    // tool approval still gets one for a server-origin load.
+    const manager = await makeManager();
+    const base = baseTools();
+    (base.loadSkill as Record<string, unknown>).needsApproval = true;
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const gate = (wrapped.loadSkill as { needsApproval?: unknown })
+      .needsApproval as (input: unknown) => Promise<boolean>;
+    await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
   });
 
   it("fetches the manifest BEFORE approval, not inside execute", async () => {
@@ -457,9 +494,10 @@ describe("withServerSkills — loadSkill", () => {
     const input = { uri };
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (i: unknown) => Promise<boolean>;
-    // The gate runs while `skills/get` is failing...
+    // The gate runs while `skills/get` is failing, recording UNRESOLVED. Its
+    // boolean answer is the host's policy and is not what this test is about.
     manager.failGetsOnce(uri);
-    await expect(gate(input)).resolves.toBe(true);
+    await gate(input);
     // ...and the load afterwards, when the server has recovered, is refused.
     const result = String(
       await (wrapped.loadSkill as { execute: Function }).execute(input, {})
@@ -702,6 +740,34 @@ describe("withServerSkills — file reads", () => {
       )
     );
     expect(read).toContain("print('refund')");
+  });
+
+  it("refuses to inject a verified skill that is too large for a turn", async () => {
+    // The verification cap had to rise to the SEP's 16 MiB per-skill budget so
+    // a conforming skill can be verified at all. That is a DIFFERENT limit from
+    // how many bytes belong in a prompt: without a separate cap, a 16 MiB
+    // SKILL.md would be digest-verified and then pasted wholesale into a chat
+    // turn. Refused, not truncated — a clipped skill is instructions that end
+    // mid-sentence, and the model cannot tell that from a skill that said less.
+    const manager = await makeManager({ hugeBody: true });
+    const wrapped = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await approveServerSkill(wrapped, "loadSkill", {
+      name: "acme-billing/refunds",
+    });
+    const out = String(
+      await (wrapped.loadSkill as { execute: Function }).execute(
+        { name: "acme-billing/refunds" },
+        {}
+      )
+    );
+    expect(out).toContain("too_large_for_prompt");
+    // The refusal states both numbers in bytes, and does NOT carry the body.
+    expect(out).toContain("204828");
+    expect(out).toContain("131072");
+    expect(out).not.toContain("xxxxxxxxxx");
   });
 
   it("refuses an UNLISTED file even when the server would serve it", async () => {

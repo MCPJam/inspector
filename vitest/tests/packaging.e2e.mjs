@@ -152,7 +152,11 @@ export function suiteOf(EvalSuite, EvalTest, cases) {
     suite.add(new EvalTest({
       // \`id\` is the case's declared identity and is required by @mcpjam/sdk.
       // Passed through from the scenario so the packaged tarball is exercised
-      // against the same shape a consumer writes.
+      // against the same shape a consumer writes. Where a scenario also sets
+      // \`externalCaseId\`, the two carry the SAME value: they are two claims
+      // about one case, and @mcpjam/sdk rejects a differing pair. The scenarios
+      // keep the external id because the \`[id]\` title suffix is derived from
+      // it, and the output assertions below match on that suffix.
       id: entry.id,
       name: entry.name,
       ...(entry.externalCaseId ? { externalCaseId: entry.externalCaseId } : {}),
@@ -181,7 +185,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { id: "c_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "case_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -200,7 +204,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { id: "c_red", name: "a case that fails", externalCaseId: "case_red", passes: false },
+  { id: "case_red", name: "a case that fails", externalCaseId: "case_red", passes: false },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -225,7 +229,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { id: "c_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "case_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },

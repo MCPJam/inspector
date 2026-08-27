@@ -4,13 +4,13 @@ vi.mock("../skill-tools.js", () => ({
   getSkillToolsAndPrompt: vi.fn(),
 }));
 
-vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types"
-  );
+vi.mock("../computers/cloud-skills.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../computers/cloud-skills.js")
+  >("../computers/cloud-skills.js");
   return {
     ...actual,
-    modelSupportsTemperature: vi.fn().mockReturnValue(true),
+    listCloudSkills: vi.fn(),
   };
 });
 
@@ -29,6 +29,8 @@ import {
   type UiToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
+import { CloudSkillsError, listCloudSkills } from "../computers/cloud-skills";
+import { CLOUD_SKILLS_FETCH_TIMEOUT_MS } from "../computers/cloud-skill-tools";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
@@ -53,9 +55,138 @@ beforeEach(() => {
     tools: {},
     systemPromptSection: "",
   });
+  vi.mocked(listCloudSkills).mockReset();
 });
 
 describe("prepareChatV2", () => {
+  it("drops temperature for Claude families that reject the field", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-opus-4-7-20260205-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature for Claude families that still accept it", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
+  });
+
+  it("leaves an omitted temperature omitted instead of substituting 0.7", async () => {
+    // A caller that expressed no preference gets the provider's default. The
+    // chat UI always sends its slider value, so this covers the SDK, the API
+    // and the eval runner, which previously could not ask for default sampling.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("drops temperature when the catalog says the model does not take it", async () => {
+    // Generalizes past the hardcoded gpt-5 name: a hosted row whose
+    // supported_parameters omits "temperature" loses the field on its word.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/o4-reasoning",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["tools", "max_tokens"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature when the catalog lists it", async () => {
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "openai/gpt-4o",
+        provider: "openai",
+        hosted: true,
+        supportedParameters: ["tools", "temperature"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
+  });
+
+  it("treats empty catalog parameters as no metadata, not as no support", async () => {
+    // A row cached before the field existed, and every BYOK/org/Ollama row,
+    // arrive with nothing here. Reading that as "accepts nothing" would strip
+    // temperature from every model on a stale cache.
+    for (const supportedParameters of [undefined, []]) {
+      const result = await prepareChatV2({
+        mcpClientManager: mockManager({}),
+        selectedServers: [],
+        modelDefinition: {
+          id: "openai/gpt-4o",
+          provider: "openai",
+          hosted: true,
+          supportedParameters,
+        } as any,
+        systemPrompt: "Base prompt.",
+        temperature: 0.5,
+      });
+
+      expect(result.resolvedTemperature, String(supportedParameters)).toBe(0.5);
+    }
+  });
+
+  it("will not let catalog metadata restore temperature to a rejecting family", async () => {
+    // A stale hosted row claiming the field for an affected Anthropic family
+    // must not win: the id predicate is what knows the request 400s.
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: {
+        id: "anthropic/claude-sonnet-5",
+        provider: "anthropic",
+        hosted: true,
+        supportedParameters: ["tools", "temperature"],
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
   it("does not add MCP tool inventory to the system prompt", async () => {
     const manager = mockManager({
       fetch_tasks: {
@@ -1344,6 +1475,11 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
     expect(result.allTools).not.toHaveProperty("loadSkill");
   });
 
+  // The throw is a CALLER contract (the two delivery channels are disjoint), not
+  // a claim that a harness cannot take pinned skills — it can, and does, as
+  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and pass
+  // `{ kind: "none" }` here; `resolveIterationSkillsSource` is the eval side of
+  // that, and `sessionSimulation/runner.ts` the swarm side.
   it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
@@ -1360,7 +1496,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
           ],
         },
       })
-    ).rejects.toThrow(/Pinned skills are not supported on harness/);
+    ).rejects.toThrow(/receive pinned skills on box via `pinnedHarnessSkills`/);
   });
 
   it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
@@ -1374,5 +1510,98 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
       skillsSource: { kind: "none" },
     });
     expect(Object.keys(result.allTools)).toEqual([]);
+  });
+});
+
+describe("prepareChatV2 — live cloud skills catalog", () => {
+  const cloudSkills = { authHeader: "Bearer t", projectId: "proj-1" };
+
+  it("inlines the catalog and advertises loadSkill, not listSkills", async () => {
+    vi.mocked(listCloudSkills).mockResolvedValue([
+      {
+        skillId: "sk1",
+        projectId: "proj-1",
+        name: "pdf-tools",
+        description: "Process PDFs",
+        sharing: "user",
+        isOwner: true,
+        aggregateHash: "h",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ] as never);
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      cloudSkills,
+    });
+    expect(result.enhancedSystemPrompt).toContain("## Skills");
+    expect(result.enhancedSystemPrompt).toContain(
+      "- **pdf-tools**: Process PDFs"
+    );
+    expect(result.enhancedSystemPrompt).toContain("loadSkill");
+    expect(result.allTools).toHaveProperty("loadSkill");
+    expect(result.allTools).not.toHaveProperty("listSkills");
+    expect(result.skillsFetchFailed).toBeUndefined();
+  });
+
+  it("advertises no skill tools or stanza when the project has zero skills", async () => {
+    vi.mocked(listCloudSkills).mockResolvedValue([]);
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      cloudSkills,
+    });
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+    expect(result.allTools).not.toHaveProperty("listSkills");
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
+    expect(result.skillsFetchFailed).toBeUndefined();
+  });
+
+  it("prepares the turn without skill tools when the catalog fetch throws", async () => {
+    vi.mocked(listCloudSkills).mockRejectedValue(
+      new CloudSkillsError("CONVEX_URL is not configured", 500)
+    );
+    const result = await prepareChatV2({
+      mcpClientManager: mockManager({}),
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      cloudSkills,
+    });
+    expect(result.allTools).not.toHaveProperty("loadSkill");
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
+    expect(result.skillsFetchFailed).toMatchObject({
+      errorClass: "CloudSkillsError",
+      status: 500,
+    });
+  });
+
+  it("prepares the turn without skill tools when the catalog fetch times out", async () => {
+    vi.useFakeTimers();
+    vi.mocked(listCloudSkills).mockImplementation(() => new Promise(() => {}));
+    try {
+      const resultPromise = prepareChatV2({
+        mcpClientManager: mockManager({}),
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        cloudSkills,
+      });
+      await vi.advanceTimersByTimeAsync(CLOUD_SKILLS_FETCH_TIMEOUT_MS);
+      const result = await resultPromise;
+      expect(result.allTools).not.toHaveProperty("loadSkill");
+      expect(result.enhancedSystemPrompt).toBe("Base prompt.");
+      expect(result.skillsFetchFailed).toMatchObject({
+        errorClass: "CloudSkillsFetchTimeoutError",
+        status: 504,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

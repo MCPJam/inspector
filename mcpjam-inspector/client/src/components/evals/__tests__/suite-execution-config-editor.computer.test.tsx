@@ -16,6 +16,9 @@ vi.mock("convex/react", () => ({
     return undefined;
   },
   useMutation: () => setSuiteConfig,
+  // No Convex identity: nothing to wait on, so `useActorCanQuery` lets the
+  // suite-config read through exactly as it did before it was gated.
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("sonner", () => ({

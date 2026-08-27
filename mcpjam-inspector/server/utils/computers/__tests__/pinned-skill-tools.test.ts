@@ -25,13 +25,6 @@ async function run(tool: any, input: unknown): Promise<string> {
 }
 
 describe("createPinnedSkillTools", () => {
-  it("lists pinned skills from memory (no network)", async () => {
-    const tools = createPinnedSkillTools(skills);
-    const out = await run(tools.listSkills, {});
-    expect(out).toContain("pdf-tools");
-    expect(out).toContain("data-viz");
-  });
-
   it("loads a skill's frozen content by name", async () => {
     const tools = createPinnedSkillTools(skills);
     const out = await run(tools.loadSkill, { name: "pdf-tools" });
@@ -48,31 +41,58 @@ describe("createPinnedSkillTools", () => {
     );
   });
 
-  it("handles an empty pinned set", async () => {
-    const tools = createPinnedSkillTools([]);
-    expect(await run(tools.listSkills, {})).toBe(
-      "No skills are available in this project.",
-    );
+  it("does not advertise listSkills", () => {
+    const tools = createPinnedSkillTools(skills);
+    expect(tools).not.toHaveProperty("listSkills");
   });
 
   it("pinned tools never call the network (no fetch)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch" as never);
     const tools = createPinnedSkillTools(skills);
-    await run(tools.listSkills, {});
     await run(tools.loadSkill, { name: "pdf-tools" });
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+});
 
-  it("getPinnedSkillToolsAndPrompt returns tools + a skills prompt section", () => {
+describe("getPinnedSkillToolsAndPrompt", () => {
+  it("inlines a sorted catalog and advertises loadSkill, not listSkills", () => {
     const { tools, systemPromptSection } = getPinnedSkillToolsAndPrompt(skills);
-    expect(tools.listSkills).toBeDefined();
     expect(tools.loadSkill).toBeDefined();
-    expect(systemPromptSection).toContain("Skills");
+    expect(tools).not.toHaveProperty("listSkills");
+    expect(systemPromptSection).toContain("## Skills");
+    expect(systemPromptSection).toContain("loadSkill");
+    expect(systemPromptSection).toContain("- **data-viz**: Make charts");
+    expect(systemPromptSection).toContain("- **pdf-tools**: Process PDFs");
+    // Sorted by name: data-viz before pdf-tools.
+    expect(systemPromptSection.indexOf("data-viz")).toBeLessThan(
+      systemPromptSection.indexOf("pdf-tools")
+    );
     // Pinned skills are file-free (decision 8c) — the prompt must NOT advertise
     // the file tools the pinned tool set doesn't expose.
     expect(systemPromptSection).not.toContain("listSkillFiles");
     expect(systemPromptSection).not.toContain("readSkillFile");
     expect(tools).not.toHaveProperty("listSkillFiles");
+  });
+
+  it("returns empty tools and no stanza for an empty pinned set", () => {
+    const { tools, systemPromptSection } = getPinnedSkillToolsAndPrompt([]);
+    expect(tools).toEqual({});
+    expect(systemPromptSection).toBe("");
+  });
+
+  it("budgets the inlined catalog and reports overflow", () => {
+    const many: PinnableSkill[] = Array.from({ length: 40 }, (_, index) => ({
+      name: `skill-${String(index).padStart(2, "0")}`,
+      description: "d".repeat(400),
+      content: "body",
+      contentHash: `h${index}`,
+    }));
+    const { systemPromptSection } = getPinnedSkillToolsAndPrompt(many, {
+      modelContextTokens: 1_000,
+    });
+    expect(systemPromptSection).toMatch(
+      /could not be listed within this model's skill-metadata budget/
+    );
   });
 });

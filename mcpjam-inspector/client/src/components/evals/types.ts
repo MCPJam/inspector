@@ -1,3 +1,4 @@
+import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type {
@@ -86,6 +87,84 @@ export type RunGroupQualityResult = {
   }>;
 };
 
+/**
+ * What a converter CLAIMED about one imported case.
+ *
+ * `exact` is CONVERTER-CLAIMED exact: the converter says it applied a
+ * structural mapping rule, cited in `note`. MCPJam has NOT verified semantic
+ * equivalence, and no surface may render this as "verified" or "accepted" —
+ * the copy is "claimed exact".
+ *
+ * Claim-only. Who approved an approximation, when, and why is a PER-RUN
+ * decision frozen on the run ({@link EvalImportRunDecision},
+ * {@link ImportApprovalReceipt}), never stored on the case.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated, so the
+ * four statuses cannot drift out of step with what a converter may write.
+ */
+export type EvalCaseImportClaim = EvalSuiteFileCaseImport;
+
+/**
+ * The run's FROZEN decision about one imported case, written at launch.
+ *
+ * `claimed_exact` carries no actor because no human decided anything — the run
+ * took the converter's word, having first checked it against the tool
+ * snapshot. `approved_approximation` carries all three facts an override owes:
+ * who, when, and why.
+ *
+ * Read this, never the case's current claim, when showing what a past run did:
+ * a case edited after the run would otherwise retroactively rewrite what that
+ * run is shown to have decided.
+ */
+export type EvalImportRunDecision =
+  | { status: "claimed_exact" }
+  | {
+      status: "approved_approximation";
+      approvedBy: string;
+      approvedAt: number;
+      reason: string;
+    };
+
+/** One frozen approval of an approximated import, as the run recorded it. */
+export type ImportApprovalReceipt = {
+  testCaseId: string;
+  caseKey?: string;
+  sourceCaseKey?: string;
+  approvedBy: string;
+  approvedAt: number;
+  reason: string;
+};
+
+/** One reason a run's import evidence is incomplete. */
+export type ImportEligibilityIssue = {
+  code: string;
+  testCaseId?: string;
+  caseKey?: string;
+  toolName?: string;
+};
+
+/**
+ * Whether a run's imported cases carry evidence a gate may rely on.
+ *
+ * Computed by the platform from the run's OWN frozen snapshot. Never
+ * recomputed here from the suite's current cases: those can be edited after
+ * the run, and recomputing would let an edit change what a finished run is
+ * shown to have proved.
+ *
+ * `incomplete` is NOT a test verdict. It means the run is not gateable, and
+ * every surface that renders it must say so in those words rather than as a
+ * failure.
+ */
+export type ImportEligibility = {
+  status: "legacy" | "eligible" | "incomplete";
+  gateable: boolean;
+  importedCaseCount: number;
+  claimedExactCaseIds: string[];
+  approvedApproximationCaseIds: string[];
+  approvedApproximationReceipts: ImportApprovalReceipt[];
+  issues: ImportEligibilityIssue[];
+};
+
 export type EvalSuiteConfigTest = {
   title: string;
   query: string;
@@ -111,6 +190,13 @@ export type EvalSuiteConfigTest = {
   /** Effective validator options for this entry, resolved at run-start. */
   matchOptions?: EvalMatchOptions;
   testCaseId?: string;
+  /**
+   * The claim FROZEN into this run's snapshot — what the case claimed when the
+   * run started, not what it claims now.
+   */
+  import?: EvalCaseImportClaim;
+  /** The run's own decision about this case. Absent on a native case. */
+  importRunDecision?: EvalImportRunDecision;
 };
 
 export type EvalSuite = {
@@ -288,6 +374,12 @@ export type EvalCase = {
    * overwritten by the next CI report.
    */
   lastSdkWriteAt?: number;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here. ABSENT means natively authored, which is a different fact
+   * from "imported, faithfulness unknown".
+   */
+  import?: EvalCaseImportClaim;
   _creationTime?: number; // Convex auto field
 };
 
@@ -365,13 +457,21 @@ export type EvalIteration = {
    * `getTestIterationBlob` regardless of which source feeds it.
    */
   preferLegacyBlob?: boolean;
+  /**
+   * LIFECYCLE, not verdict: how far the trial got, never how it graded. A
+   * trial that ran and graded badly is `completed` with `result: "failed"`.
+   * `setup_failed` (the environment never came up) and `skipped` (deliberately
+   * not run) are the two an older deployment cannot emit.
+   */
   status:
     | "pending"
     | "running"
     | "completed"
     | "failed"
     | "cancelled"
-    | "timed_out";
+    | "timed_out"
+    | "setup_failed"
+    | "skipped";
   result: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
   actualToolCalls: Array<{
     toolName: string;
@@ -420,7 +520,9 @@ export type CompareRunRecord = {
     | "completed"
     | "failed"
     | "cancelled"
-    | "timed_out";
+    | "timed_out"
+    | "setup_failed"
+    | "skipped";
   /**
    * When `status === "running"` and there is no iteration yet, true if this run
    * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
@@ -430,7 +532,15 @@ export type CompareRunRecord = {
   error?: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out" | null;
+  result:
+    | "pending"
+    | "passed"
+    | "failed"
+    | "cancelled"
+    | "timed_out"
+    | "setup_failed"
+    | "skipped"
+    | null;
   metrics: {
     durationMs: number | null;
     toolCallCount: number;
@@ -481,14 +591,45 @@ export type CompareRunRecord = {
   streamingStepStatus?: Record<string, EvalStepStatusEntry>;
 };
 
+/**
+ * A policy-2 verdict as the backend decided it.
+ *
+ * Deliberately shallow: the client renders reasons and denominators and must
+ * not re-derive the verdict, so only the fields the UI displays are named and
+ * the rest of the contract shape rides along untyped.
+ */
+export type EvalRunVerdictSummary = {
+  verdict?: "passed" | "failed" | "inconclusive";
+  reasons?: string[];
+  validity?: {
+    valid?: boolean;
+    eligibleTrials?: number;
+    attemptedTrials?: number;
+    configuredTrials?: number;
+    completionRate?: number | null;
+    evaluatorErrorRate?: number | null;
+    notMeasured?: boolean;
+  } & Record<string, unknown>;
+} & Record<string, unknown>;
+
 export type EvalSuiteRunSummary = {
   total: number;
   passed: number;
   failed: number;
   passRate: number;
+  policyBlockedIterations?: number;
 };
 
 export type EvalSuiteRun = {
+  /**
+   * Whether this run's imported cases carry evidence a gate may rely on.
+   *
+   * Served by the CANONICAL selected-run queries (`getTestSuiteRun` /
+   * `getTestSuiteRunDetails`), not by the run LIST projection — so a list row
+   * legitimately has none, and absence here must never be rendered as
+   * `legacy`. Absent also on a deployment that predates the projection.
+   */
+  importEligibility?: ImportEligibility;
   _id: string;
   suiteId: string;
   createdBy: string;
@@ -594,7 +735,36 @@ export type EvalSuiteRun = {
    * re-confirming the override.
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
-  result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
+  result?:
+    | "pending"
+    | "passed"
+    | "failed"
+    | "cancelled"
+    | "timed_out"
+    /**
+     * Verdict policy 2 only: the run could not be measured well enough to
+     * decide (too few gradeable trials, too many evaluator errors). NOT a
+     * failure — folding it into `failed` reports a defect nothing observed —
+     * and excluded from pass/fail metrics rather than counted on either side.
+     */
+    | "inconclusive";
+  /**
+   * The verdict policy this run was decided under, frozen at run start.
+   * Absent means legacy percent grading, where `inconclusive` cannot occur
+   * and there is no `verdictSummary`.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * The backend's decision record: resolved validity policy, measured rates
+   * with their denominators and exclusions, per-case and per-variant
+   * aggregates, and the exact reasons. Displayed, never recomputed — a second
+   * client-side derivation would disagree with the gate that already ran.
+   * Absent when the stored summary failed contract validation at the API
+   * boundary, because a partially-valid decision is not evidence.
+   */
+  verdictSummary?: EvalRunVerdictSummary;
+  /** Why a policy-2 run could not be decided from its own evidence. */
+  verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
     | "user_cancelled"
@@ -636,6 +806,13 @@ export type EvalSuiteRun = {
    * rows. Set client-side at fan-out and persisted on `testSuiteRun`.
    */
   runGroupId?: string;
+  /**
+   * Model the run actually executed with, persisted at launch (Phase 1).
+   * Absent on pre-attribution rows — fall back to the env join.
+   */
+  effectiveModelId?: string;
+  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
+  modelSource?: "client_default" | "override";
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";
@@ -978,8 +1155,20 @@ export type CommitGroup = {
   shortSha: string; // first 7 chars
   branch: string | null;
   timestamp: number; // most recent run time
-  status: "passed" | "failed" | "running" | "mixed";
+  /**
+   * `inconclusive` is the verdict-policy-2 outcome: the commit's runs were
+   * decided by nobody, so the group is neither green nor red. Without it a
+   * commit whose every run was unmeasurable falls through the pass/fail counts
+   * and renders as "All runs passed".
+   */
+  status: "passed" | "failed" | "running" | "mixed" | "inconclusive";
   runs: EvalSuiteRun[];
   suiteMap: Map<string, string>; // suiteId → suite name
-  summary: { total: number; passed: number; failed: number; running: number };
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+    running: number;
+    inconclusive: number;
+  };
 };

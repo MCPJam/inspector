@@ -28,7 +28,14 @@ interface RunAccordionViewProps {
 interface RunTestCase {
   testCaseId: string;
   title: string;
-  result: "passed" | "failed" | "pending" | "cancelled" | "timed_out";
+  result:
+    | "passed"
+    | "failed"
+    | "pending"
+    | "cancelled"
+    | "timed_out"
+    | "setup_failed"
+    | "skipped";
   duration: number;
   model?: string;
 }
@@ -93,11 +100,15 @@ export function RunAccordionView({
       }));
       // Sort: failed first, then passed, then pending
       testCases.sort((a, b) => {
-        const order = {
+        const order: Partial<Record<RunTestCase["result"], number>> = {
           failed: 0,
           timed_out: 0,
           pending: 1,
           cancelled: 2,
+          // Ungraded lifecycle stops sort with the other non-verdicts, above
+          // passes but below real failures, which are what needs triage.
+          setup_failed: 2,
+          skipped: 2,
           passed: 3,
         };
         return (order[a.result] ?? 4) - (order[b.result] ?? 4);

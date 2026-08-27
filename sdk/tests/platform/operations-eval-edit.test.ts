@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PlatformApiClient } from "../../src/platform/client.js";
 import {
   createEvalCaseOperation,
+  createEvalCasesOperation,
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -26,15 +27,31 @@ const ENVIRONMENTS = [
 
 function makeClient(): {
   client: PlatformApiClient;
-  calls: Array<{ method: string; path: string; body?: any }>;
+  calls: Array<{
+    method: string;
+    path: string;
+    body?: any;
+    headers: Record<string, string>;
+  }>;
 } {
-  const calls: Array<{ method: string; path: string; body?: any }> = [];
+  const calls: Array<{
+    method: string;
+    path: string;
+    body?: any;
+    headers: Record<string, string>;
+  }> = [];
   const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
     const url = new URL(String(target));
     const path = url.pathname;
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method, path, body });
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(
+      (init?.headers ?? {}) as Record<string, string>
+    )) {
+      headers[key.toLowerCase()] = value;
+    }
+    calls.push({ method, path, body, headers });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/environments$/.test(path))
@@ -90,6 +107,19 @@ describe("eval-edit operation input validation", () => {
       setEvalSuiteScheduleOperation.inputSchema.safeParse({ suite: "s1" })
         .success
     ).toBe(false);
+  });
+
+  it("update_eval_suite rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = updateEvalSuiteOperation.inputSchema.safeParse({
+      suite: "s1",
+      hostIds: ["h1"],
+      servers: ["echo"],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const detail = parsed.error.issues.map((issue) => issue.message).join("; ");
+    expect(detail).toContain("hostIds");
+    expect(detail).toContain("servers");
   });
 
   it("update_eval_suite rejects an out-of-range minimumAccuracy", () => {
@@ -163,6 +193,76 @@ describe("eval-edit operation execution", () => {
     });
   });
 
+  it("create_eval_case carries the converter's import claim to the wire", async () => {
+    const { client, calls } = makeClient();
+    const claim = {
+      status: "approximated" as const,
+      sourceCaseKey: "promptfoo:tests[3]",
+      note: "Source asserted a regex; MCPJam asserts a substring.",
+    };
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Converted", import: claim },
+      { client }
+    );
+    const post = calls.find((c) => c.method === "POST");
+    // Dropping the claim here does not merely lose provenance: a case with no
+    // claim is a NATIVE case, and a native case needs no approval — so an
+    // approximated case would run and gate on evidence nobody reviewed.
+    expect(post?.body?.import).toEqual(claim);
+  });
+
+  it("update_eval_case forwards a claim, and null to clear one", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", import: null },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    // `null` CLEARS; omitting leaves the stored claim alone. `buildCaseBody`
+    // drops undefined and keeps null, which is exactly that distinction.
+    expect(patch?.body).toEqual({ import: null });
+  });
+
+  it("create rejects import: null, which the route would 400", async () => {
+    // The REST create schema takes the claim or nothing; only PATCH accepts
+    // null. An input schema that advertised null here would tell the caller a
+    // body is valid and then have the server reject it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: null,
+      }).success
+    ).toBe(false);
+    expect(
+      createEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        cases: [{ title: "t", import: null }],
+      }).success
+    ).toBe(false);
+    // Update still clears with null — that is the whole point of the asymmetry.
+    expect(
+      updateEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        case: "c1",
+        import: null,
+      }).success
+    ).toBe(true);
+  });
+
+  it("create_eval_case rejects an exact claim with no note", async () => {
+    // The contract schema is reused verbatim, so a claim means the same thing
+    // whether it arrives from a suite file or this operation — including the
+    // rule that `exact` must cite the mapping rule that earns it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: { status: "exact" },
+      }).success
+    ).toBe(false);
+  });
+
   it("get_eval_case resolves a case by title", async () => {
     const { client, calls } = makeClient();
     const result = await getEvalCaseOperation.execute(
@@ -223,6 +323,38 @@ describe("eval-edit operation execution", () => {
       caseMix: { simple: 3, negative: 1 },
       varyUserStyles: true,
     });
+  });
+
+  it("generate_eval_cases forwards the idempotency key on BOTH channels", async () => {
+    // The bug this pins: the operation used to send no key at all, so the
+    // surfaces most likely to time out (CLI, MCP plugin, direct SDK) re-spent
+    // on every retry. The body is the channel the route reads by schema —
+    // matching run_eval_suite and run_eval_case, the two closest siblings that
+    // also spend — and the header is the one the client already speaks. They
+    // must carry the SAME key: two channels that could disagree would be a
+    // worse bug than the one being fixed.
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute(
+      { suite: "s1", idempotencyKey: "cli-run-7" },
+      { client }
+    );
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({ idempotencyKey: "cli-run-7" });
+    expect(gen?.headers["idempotency-key"]).toBe("cli-run-7");
+  });
+
+  it("generate_eval_cases sends no key when the caller passes none", async () => {
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute({ suite: "s1" }, { client });
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({});
+    expect(gen?.headers["idempotency-key"]).toBeUndefined();
+  });
+
+  it("generate_eval_cases is labelled as spending", () => {
+    // `operationDescription` appends the "COSTS MONEY" warning to the MCP tool
+    // off this facet, and the operation spends the organization's credits.
+    expect(generateEvalCasesOperation.risk).toBe("spend");
   });
 
   it("generate_eval_cases omits varyUserStyles when not enabled", async () => {

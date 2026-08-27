@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   ArrowLeftRight,
   Building2,
@@ -42,6 +43,7 @@ import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface SidebarContextSwitcherProps {
   activeProjectId: string;
@@ -50,7 +52,8 @@ interface SidebarContextSwitcherProps {
   onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoading?: boolean;
-  onNavigateToSettings?: () => void;
+  /** Opens one project's settings directly. See `onOpenProjectSettings`. */
+  onNavigateToSettings?: (projectId: string) => void;
   isCreateDisabled?: boolean;
   createDisabledReason?: string;
   onLearnMoreExpand?: (tabId: string, sourceRect: DOMRect | null) => void;
@@ -333,15 +336,12 @@ export function SidebarContextSwitcher({
                           onNavigateToSettings
                             ? () => {
                                 setMenuOpen(false);
-                                // Switch and navigate in one gesture. Awaiting
-                                // the switch first let the project change land
-                                // on the old route, where the snap-to-Servers
-                                // effect read it as a bare project switch and
-                                // bounced off the settings page.
-                                if (project.id !== activeProjectId) {
-                                  onSwitchProject(project.id);
-                                }
-                                onNavigateToSettings();
+                                // ONE navigation, to that project's settings
+                                // URL. No pre-switch: the URL is the switch,
+                                // and the route coordinator performs it. The
+                                // old switch-then-navigate pair is what the
+                                // snap-to-Servers effect used to race.
+                                onNavigateToSettings(project.id);
                               }
                             : undefined
                         }
@@ -362,7 +362,8 @@ export function SidebarContextSwitcher({
                     type="button"
                     data-testid="org-sign-in-button"
                     onClick={() => {
-                      signIn();
+                      captureAppSignInReturnPath();
+                      signIn(permalinkSignInOptions());
                       setMenuOpen(false);
                     }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
@@ -463,13 +464,19 @@ export function SidebarContextSwitcher({
                       <div data-testid="org-switch-list" className="mt-0.5">
                         {sortedOrganizations.map((org) => {
                           const tint = getOrgTint(org._id);
-                          return (
+                          // Paid-seat invite that hasn't linked yet: the
+                          // backend denies every query for this org, so the
+                          // row is shown but not openable.
+                          const isSeatPending = org.seatPending === true;
+                          const row = (
                             <div
                               key={org._id}
                               role="menuitem"
-                              tabIndex={0}
+                              tabIndex={isSeatPending ? -1 : 0}
+                              aria-disabled={isSeatPending || undefined}
                               data-testid={`org-row-${org._id}`}
                               onClick={() => {
+                                if (isSeatPending) return;
                                 if (org._id !== activeOrganizationId) {
                                   onSwitchActiveOrganization?.(org._id);
                                 }
@@ -478,6 +485,7 @@ export function SidebarContextSwitcher({
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
+                                  if (isSeatPending) return;
                                   if (org._id !== activeOrganizationId) {
                                     onSwitchActiveOrganization?.(org._id);
                                   }
@@ -485,10 +493,13 @@ export function SidebarContextSwitcher({
                                 }
                               }}
                               className={cn(
-                                "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] cursor-pointer",
+                                "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px]",
+                                isSeatPending
+                                  ? "cursor-not-allowed opacity-50"
+                                  : "cursor-pointer",
                                 org._id === activeOrganizationId
                                   ? "bg-accent"
-                                  : "hover:bg-accent/60"
+                                  : !isSeatPending && "hover:bg-accent/60"
                               )}
                             >
                               <div
@@ -503,7 +514,7 @@ export function SidebarContextSwitcher({
                               <span className="flex-1 truncate font-medium">
                                 {org.name}
                               </span>
-                              {onSwitchOrganization ? (
+                              {onSwitchOrganization && !isSeatPending ? (
                                 <button
                                   type="button"
                                   aria-label={`Open ${org.name} settings`}
@@ -519,6 +530,16 @@ export function SidebarContextSwitcher({
                                 </button>
                               ) : null}
                             </div>
+                          );
+
+                          if (!isSeatPending) return row;
+                          return (
+                            <Tooltip key={org._id}>
+                              <TooltipTrigger asChild>{row}</TooltipTrigger>
+                              <TooltipContent side="right">
+                                Seat not paid yet
+                              </TooltipContent>
+                            </Tooltip>
                           );
                         })}
                         {newOrganizationRow}

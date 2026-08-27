@@ -38,7 +38,10 @@ import {
   trimOptional,
 } from "../lib/inspector-render.js";
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
-import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import {
+  attachCliDurationMs,
+  createCliRpcLogCollector,
+} from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
 import {
@@ -651,7 +654,7 @@ export function registerToolsCommands(program: Command): void {
       )
       .option(
         "--reporter <reporter>",
-        "Structured reporter output: json-summary or junit-xml",
+        "Structured reporter output: json-summary, junit-xml, or html",
       )
       .option(
         "--debug-out <path>",
@@ -929,6 +932,12 @@ export function registerToolsCommands(program: Command): void {
     let result: unknown;
     let commandError: unknown;
     const startedAt = Date.now();
+    // The TOOL CALL only — not connect, not the host visibility probe. This is
+    // what `_durationMs` reports, so it means the same thing as `durationMs` on
+    // `POST /v1/.../tools/call`; two fields that near-share a name must not
+    // measure different windows. The reporter keeps the end-to-end clock below,
+    // which is what a JUnit case duration is expected to cover.
+    let toolCallDurationMs = 0;
 
     try {
       result = await withEphemeralManager(
@@ -936,16 +945,21 @@ export function registerToolsCommands(program: Command): void {
         async (manager, serverId) => {
           // As a host: an app-only tool isn't callable by that host's model.
           if (host) await assertToolVisibleToHost(manager, serverId, toolName, host);
-          return manager.executeTool(
-            serverId,
-            toolName,
-            params,
-            // Caller-supplied headers WIN over the mirrored ones (the seam in
-            // `MCPClientManager`), which is the whole point of `--mcp-header`:
-            // sending a deliberately wrong value is how you exercise a
-            // server's -32020.
-            mcpHeaders ? { headers: mcpHeaders } : undefined,
-          );
+          const toolStartedAt = Date.now();
+          try {
+            return await manager.executeTool(
+              serverId,
+              toolName,
+              params,
+              // Caller-supplied headers WIN over the mirrored ones (the seam in
+              // `MCPClientManager`), which is the whole point of `--mcp-header`:
+              // sending a deliberately wrong value is how you exercise a
+              // server's -32020.
+              mcpHeaders ? { headers: mcpHeaders } : undefined,
+            );
+          } finally {
+            toolCallDurationMs = Math.max(0, Date.now() - toolStartedAt);
+          }
         },
         {
           timeout: globalOptions.timeout,
@@ -958,6 +972,10 @@ export function registerToolsCommands(program: Command): void {
     } catch (error) {
       commandError = error;
     }
+    // Stop the clock at tool-call completion so the reporter's `durationMs`
+    // does not include validation, Inspector render, or debug I/O. This one is
+    // end-to-end (connect + call); `toolCallDurationMs` above is the call.
+    const durationMs = Math.max(0, Date.now() - startedAt);
 
     if (commandError) {
       await writeCommandDebugArtifact({
@@ -1004,8 +1022,9 @@ export function registerToolsCommands(program: Command): void {
       validationResult && !validationResult.passed,
     );
     const toolResultError = isCallToolResultError(result);
+    const resultWithDuration = attachCliDurationMs(result, toolCallDurationMs);
 
-    let outputPayload = result;
+    let outputPayload = resultWithDuration;
     let debugOutputPayload: unknown = outputPayload;
     let inspectorRenderError:
       | { code: string; message: string; details?: unknown }
@@ -1095,7 +1114,7 @@ export function registerToolsCommands(program: Command): void {
         target,
         toolName,
         parameterKeys: Object.keys(params),
-        result,
+        result: resultWithDuration,
         inspectorRender: compactInspectorRender,
         ...(inspectorRenderError
           ? inspectorRenderSkipped && !requireRender
@@ -1174,7 +1193,7 @@ export function registerToolsCommands(program: Command): void {
       writeReporterResult(
         reporter,
         buildToolCallValidationReport(validationResult!, {
-          durationMs: Date.now() - startedAt,
+          durationMs,
           rawResult: result,
           metadata: {
             toolName,
@@ -1183,7 +1202,11 @@ export function registerToolsCommands(program: Command): void {
       );
     } else {
       writeResult(
-        withRpcLogsIfRequested(outputPayload, primaryCollector, globalOptions),
+        withRpcLogsIfRequested(
+          outputPayload,
+          primaryCollector,
+          globalOptions,
+        ),
         globalOptions.format,
       );
     }

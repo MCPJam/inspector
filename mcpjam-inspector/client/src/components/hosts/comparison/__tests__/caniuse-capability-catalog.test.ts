@@ -6,27 +6,95 @@ import {
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityForField,
   getCaniuseCapabilityBySlug,
+  getCaniuseSupportLabel,
+  getCaniuseSupportLevel,
 } from "../caniuse-capability-catalog";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 
 describe("caniuse capability catalog", () => {
   it("includes stable public capability slugs", () => {
     expect(getCaniuseCapabilityBySlug("sampling")?.field.id).toBe(
-      "capabilities.sampling",
+      "capabilities.sampling"
     );
     expect(getCaniuseCapabilityBySlug("elicitation")?.field.id).toBe(
-      "capabilities.elicitation",
+      "capabilities.elicitation"
     );
     expect(getCaniuseCapabilityBySlug("roots")?.field.id).toBe(
-      "capabilities.roots",
+      "capabilities.roots"
     );
     expect(
-      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id,
+      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id
     ).toBe("appsCap.availableDisplayModes");
     expect(
       getCaniuseCapabilityForField(hostConfigField("capabilities.elicitation"))
-        ?.slug,
+        ?.slug
     ).toBe("elicitation");
+  });
+
+  it("includes every CSP subtype as its own capability row", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "appsCap.cspConnectDomains.fetch",
+        "appsCap.cspConnectDomains.xhr",
+        "appsCap.cspConnectDomains.websocket",
+        "appsCap.cspResourceDomains.script",
+        "appsCap.cspResourceDomains.stylesheet",
+        "appsCap.cspResourceDomains.image",
+        "appsCap.cspResourceDomains.font",
+        "appsCap.cspResourceDomains.media",
+        "appsCap.cspFrameDomains",
+        "appsCap.cspBaseUriDomains",
+      ])
+    );
+  });
+
+  it("includes the widget tool-result and sandbox storage probe rows", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "toolResult.structuredContent",
+        "toolResult.content.text",
+        "toolResult.content.resourceLink",
+        "sandbox.browserStorage.localStorage",
+        "sandbox.browserStorage.sessionStorage",
+        "sandbox.browserStorage.indexedDB",
+      ])
+    );
+
+    const config = emptyHostConfigInputV2() as never;
+    expect(
+      getCaniuseSupportLevel(
+        hostConfigField("toolResult.structuredContent"),
+        config
+      )
+    ).toBe("unknown");
+    expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+
+  it("publishes pagination as a yes/no row, unknown until probed", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("paginationTraversal");
+
+    const field = hostConfigField("paginationTraversal");
+    const withValue = (value: string) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        mcpProfile: { profileVersion: 1, paginationTraversal: value },
+      }) as never;
+
+    // Binary by design: a client either follows nextCursor or stops at page
+    // one. There is no partial state to render.
+    expect(getCaniuseSupportLevel(field, withValue("full"))).toBe("supported");
+    expect(getCaniuseSupportLevel(field, withValue("firstPageOnly"))).toBe(
+      "unsupported"
+    );
+
+    // A host nobody probed must never be published as failing.
+    expect(
+      getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
+    ).toBe("unknown");
   });
 
   it("excludes config-only fields from public capability pages", () => {
@@ -43,14 +111,14 @@ describe("caniuse capability catalog", () => {
     const slugs = CANIUSE_CAPABILITIES.map((capability) => capability.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     expect(slugs.every((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))).toBe(
-      true,
+      true
     );
     expect(buildCaniuseCapabilityPath("sampling")).toBe(
-      "/capabilities/sampling",
+      "/capabilities/sampling"
     );
   });
 
   it("uses a static latest verification date for v1", () => {
-    expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-07-07");
+    expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-08-14");
   });
 });

@@ -41,6 +41,7 @@ import {
   mintCaseId,
   opaqueIdSchema,
 } from "./contract/identity.js";
+import type { IterationStatus } from "./contract/chain.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
 import type { Scorer } from "./scorers/types.js";
@@ -115,6 +116,47 @@ function suggestedCaseId(config: EvalTestConfig): string {
 }
 
 /**
+ * The fix sentence for a config with no `id`. Three situations, three fixes —
+ * and getting this wrong is not cosmetic.
+ *
+ * A pre-6 config carrying an `externalCaseId` that CANNOT be an id used to be
+ * told "mint one and commit it", which is a complete instruction only until
+ * `assertSingleCaseIdentity` exists. Followed verbatim it produces a minted id
+ * beside an unchanged external id — a differing pair — so the very next run
+ * throws again, and the whole migration is only revealed one error at a time.
+ * An error that prescribes a change which cannot construct is worse than one
+ * that says nothing, so that case states BOTH halves at once.
+ */
+function missingCaseIdFix(
+  external: string | undefined,
+  suggestion: string
+): string {
+  if (external === undefined) {
+    return `Mint one once and commit it: id: "${suggestion}"`;
+  }
+  if (external === suggestion) {
+    return (
+      `This test already declares \`externalCaseId\`, which is the key its ` +
+      `hosted history is joined on, so reuse it verbatim: id: "${suggestion}"`
+    );
+  }
+  // `suggestedCaseId` only reuses an `externalCaseId` that can BE an id, so
+  // reaching here means it cannot — and `id := externalCaseId`, the migration
+  // every other external-id user gets, is simply unavailable.
+  return (
+    `Its \`externalCaseId\` (${JSON.stringify(
+      external
+    )}) cannot itself be an ` +
+    `id — ids are 1-128 characters of letters, digits, '-' and '_' — so no id ` +
+    `can agree with it, and a differing pair is refused here and at ingest. ` +
+    `Rename the external id to a conforming value and declare that same value ` +
+    `in BOTH fields: id: "${suggestion}", externalCaseId: "${suggestion}". An ` +
+    `external id that was never charset-valid has no hosted history for the ` +
+    `rename to strand.`
+  );
+}
+
+/**
  * A case's identity must be DECLARED, and it must be usable in a URL, a file
  * path and a CLI argument.
  *
@@ -127,16 +169,14 @@ function assertDeclaredCaseId(config: EvalTestConfig): void {
   const label = config.name ? `"${config.name}"` : "(unnamed)";
   if (config.id === undefined || config.id === null || config.id === "") {
     const suggestion = suggestedCaseId(config);
-    const reusesExternal = suggestion === config.externalCaseId;
+    // `""` is absent here for the same reason it is in `assertSingleCaseIdentity`.
+    const external =
+      config.externalCaseId === "" ? undefined : config.externalCaseId;
     throw new Error(
       `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
         `derived from its name — otherwise renaming the test forks its hosted ` +
         `history. ` +
-        (reusesExternal
-          ? `This test already declares \`externalCaseId\`, which is the key its ` +
-            `hosted history is joined on, so reuse it verbatim: `
-          : `Mint one once and commit it: `) +
-        `id: "${suggestion}"`
+        missingCaseIdFix(external, suggestion)
     );
   }
   const parsed = opaqueIdSchema.safeParse(config.id);
@@ -149,6 +189,53 @@ function assertDeclaredCaseId(config: EvalTestConfig): void {
         `Ids travel in URLs, file paths and CLI arguments.`
     );
   }
+}
+
+/**
+ * One case, one identity.
+ *
+ * `id` and `externalCaseId` are two claims about WHICH case this is, and from
+ * this step on both ride the wire. Picking a winner between them silently is
+ * how one case's history gets cross-joined onto another's, so a differing pair
+ * is a hard error — here at construction, and again in the backend's ingest
+ * preflight for callers that never build an `EvalTest`. Failing here is the
+ * kinder half of the same rule: it costs a stack trace instead of a rejected
+ * upload at the end of a run.
+ *
+ * The migration is always `id := externalCaseId`, because `externalCaseId` is
+ * the key the hosted case already lives under (`external:<id>`). The one case
+ * where that is impossible is an `externalCaseId` outside the opaque-id charset
+ * — never charset-bound, so values exist that no `id` can equal — and the
+ * message says so rather than suggesting a fix that the next line rejects.
+ */
+function assertSingleCaseIdentity(config: EvalTestConfig): void {
+  const external = config.externalCaseId;
+  // `""` is absent, not present-and-conflicting. The constructor's
+  // normalization above drops a whitespace-only value but leaves a literal
+  // empty string, and `getCaseKey` reads both as "no external id" — so does
+  // the backend's equality rule (`external.length > 0 && external !== declared`).
+  // Throwing here would refuse a config the wire accepts.
+  if (external === undefined || external === "" || config.id === external) {
+    return;
+  }
+  const label = config.name ? `"${config.name}"` : "(unnamed)";
+  const externalCanBeAnId = opaqueIdSchema.safeParse(external).success;
+  throw new Error(
+    `EvalTest ${label} declares two different identities: id ` +
+      `${JSON.stringify(config.id)} and externalCaseId ` +
+      `${JSON.stringify(external)}. ` +
+      (externalCanBeAnId
+        ? `The hosted case is keyed as external:${external}, so the migration ` +
+          `is id: ${JSON.stringify(external)} — the declared id lands in the ` +
+          `join the case already lives under and its history continues.`
+        : `externalCaseId ${JSON.stringify(external)} cannot itself be an id ` +
+          `(1-128 characters of letters, digits, '-' and '_'), so no id can ` +
+          `agree with it. Rename the external id to a conforming value and ` +
+          `declare that same value as \`id\`: an external id that was never ` +
+          `charset-valid has no hosted history for the rename to strand.`) +
+      ` A differing pair is rejected at ingest too, so shipping it would fail ` +
+      `the upload rather than pick a winner.`
+  );
 }
 
 /**
@@ -170,8 +257,10 @@ export interface EvalTestConfig {
    * `opaqueIdSchema`) — our `c_` prefix is a grep convenience, not a rule.
    *
    * Distinct from {@link EvalTestConfig.externalCaseId}, which is the hosted
-   * JOIN key with live wire semantics. Nothing on the wire changes because of
-   * this field yet; the upload payload is byte-identical to before.
+   * JOIN key that predates the charset rule. Both ride the upload now, as
+   * `caseId` and `externalCaseId`, and they must AGREE when both are set — a
+   * differing pair throws at construction and is refused at ingest. The
+   * migration for an existing `externalCaseId` user is `id := externalCaseId`.
    */
   id: string;
   name: string;
@@ -198,10 +287,12 @@ export interface EvalTestConfig {
    * case's history on the run page. Identity rides HERE, never on `name`:
    * display names collide and get renamed.
    *
-   * Kept alongside the new required {@link EvalTestConfig.id}: this one has
-   * live wire semantics that a deployed backend depends on, while `id` is the
-   * declared identity the contract now requires. Converging the two is a
-   * backend change that happens after the mirroring backend work ships.
+   * Kept alongside the required {@link EvalTestConfig.id}: this one is the
+   * `external:` join key a deployed backend depends on, while `id` is the
+   * declared identity the contract requires. Both are uploaded, so a config
+   * that sets both must set them to the SAME value — see
+   * {@link EvalTestConfig.id}. Retiring this field is a later step; it has
+   * live wire semantics until one is written to converge them.
    *
    * **NORMALIZED at construction**: surrounding whitespace is trimmed, and a
    * whitespace-only value is dropped as though it were absent. The value you
@@ -268,6 +359,20 @@ export interface EvalTestRunOptions {
  */
 export interface IterationResult {
   passed: boolean;
+  /**
+   * What happened to this iteration's EXECUTION, independent of `passed`.
+   *
+   * Always set on a terminal iteration: `completed` once the iteration ran and
+   * was graded (including when it graded FAILED — that is the server's verdict,
+   * not an execution failure), `timed_out` when the iteration budget expired,
+   * and `failed` when it threw and retries were exhausted.
+   *
+   * Optional only because `IterationResult` is also constructed by callers
+   * outside this file; consumers that need a status use
+   * `resolveIterationLifecycleStatus`, which keeps the legacy inference in one
+   * named place instead of re-deriving a status from a verdict.
+   */
+  status?: IterationStatus;
   latencies: LatencyBreakdown[];
   tokens: { total: number; input: number; output: number };
   error?: string;
@@ -484,6 +589,10 @@ export class EvalTest {
       }
     }
     assertDeclaredCaseId(config);
+    // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
+    // no `id` gets the missing-id error that already names `id := externalCaseId`
+    // as the fix, rather than a conflict error about a field it never set.
+    assertSingleCaseIdentity(config);
     assertValidMatchOptions(config.matchOptions ?? {});
     assertLocallyEvaluablePredicates(config.predicates);
     // A negative case asserts "no tool was called", so `evaluateToolCalls`
@@ -539,6 +648,7 @@ export class EvalTest {
       await semaphore.acquire();
       try {
         let lastError: string | undefined;
+        let lastAttemptTimedOut = false;
         let iterationAgent: HostExecutor | undefined;
 
         for (let attempt = 0; attempt <= retries; attempt++) {
@@ -604,6 +714,13 @@ export class EvalTest {
               // `expectedToolCalls` and each predicate each contribute one
               // gating score of exactly that value.
               passed: graded.passed,
+              // The iteration RAN. `graded.passed === false` is the server
+              // under test failing its task, which is not an execution
+              // failure — only the timeout stopped execution short. Bound to
+              // the same condition that stamps the timeout error, so a test
+              // that finished DESPITE a fired abort is not retroactively
+              // reclassified as stopped.
+              status: timeoutTriggered && !passed ? "timed_out" : "completed",
               ...promptMetrics,
               ...(timeoutTriggered && !passed
                 ? { error: timeoutError.message }
@@ -618,6 +735,7 @@ export class EvalTest {
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
+            lastAttemptTimedOut = timeoutTriggered;
 
             if (attempt < retries) {
               await sleep(100 * Math.pow(2, attempt));
@@ -656,6 +774,11 @@ export class EvalTest {
 
         return {
           passed: false,
+          // Retries are exhausted: the EXECUTION failed rather than the task
+          // being graded down. `timed_out` when the last attempt was stopped by
+          // the iteration budget — the same distinction the run-level verdict
+          // policy draws when it decides which trials it could measure.
+          status: lastAttemptTimedOut ? "timed_out" : "failed",
           ...promptMetrics,
           error: lastError,
           retryCount: retries,
@@ -1049,6 +1172,12 @@ export class EvalTest {
       this.config.matchOptions,
       this.lastEvaluationConfig ?? undefined,
       {
+        // The standalone-run twin of `EvalSuite`'s identity object. A test run
+        // directly with reporting enabled uploads through HERE, not through the
+        // suite, so leaving `caseId` off this one would mean a renamed
+        // standalone test still forks its hosted history — the exact bug the
+        // declared id exists to retire, surviving on the path nobody looked at.
+        caseId: this.config.id,
         ...(this.config.externalCaseId !== undefined
           ? { externalCaseId: this.config.externalCaseId }
           : {}),

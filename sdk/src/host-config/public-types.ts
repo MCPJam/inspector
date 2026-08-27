@@ -15,7 +15,6 @@
 import type {
   CspDomainSet,
   HostConfigComputer,
-  HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   HostConfigSkillSelection,
@@ -52,10 +51,17 @@ export type {
 };
 
 /**
- * Personal cloud workstation attached to a host — one machine per
- * (project, user). This is the RESOURCE attachment only; the capabilities
- * the model gets on it (e.g. `bash`) are granted via `builtInToolIds`.
- * `{ kind: "personal" }` is the only shape in MVP.
+ * Computer attached to a host, as it appears on a NORMALIZED snapshot. This
+ * is the RESOURCE attachment only; the capabilities the model gets on it
+ * (e.g. `bash`) are granted via `builtInToolIds`.
+ *
+ * `kind: "personal"` is the cloud workstation — one machine per
+ * (project, user) — and the only kind you can author.
+ * `kind: "ephemeral"` is a per-run box the platform mints itself (eval runs
+ * boot one per iteration from the run's frozen environment image). It can
+ * appear when you READ a snapshot back; it is not something you write, so
+ * treat an ephemeral computer as read-only snapshot data. See
+ * {@link HostComputerInput} for the authoring shape.
  */
 export type HostComputer = HostConfigComputer;
 
@@ -64,8 +70,16 @@ export type HostComputer = HostConfigComputer;
  * legacy `toolset` key is accepted (and dropped by the canonicalizer) so
  * pre-existing programmatic callers keep compiling. New code should write
  * `{ kind: "personal" }` and grant capabilities via `builtInToolIds`.
+ *
+ * Deliberately NOT an alias of the canonical {@link HostComputer}: authoring
+ * is personal-only. `"ephemeral"` is minted by the platform at a run-snapshot
+ * boundary and is never authored, so it is absent from every input type.
  */
-export type HostComputerInput = HostConfigComputerInput;
+export type HostComputerInput = {
+  kind: "personal";
+  toolset?: "bash";
+  workdir?: string;
+};
 
 /**
  * Skill selection policy for a host (OpenAI plugin import).
@@ -92,8 +106,8 @@ export type HostMcp = Omit<
   HostConfigMcpProfileV1,
   "profileVersion" | "mcpProtocolVersion"
 > & {
-  /** Host-default pinned MCP protocol version (e.g. "2025-11-25"). */
-  protocolVersion?: McpProtocolVersion;
+  /** Automatic negotiation or one concrete host-default wire pin. */
+  protocolVersion?: McpProtocolVersion | "auto";
 };
 
 /**
@@ -117,8 +131,9 @@ export interface HostJson {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Human-facing rendering policy for MCP tool-returned images. */
   mcpToolResultImageRendering?: McpToolResultImageRendering;
-  /** Personal computer attached to this host; absent ⇒ none. Normalized:
-   * `null` input never survives to `HostJson`. */
+  /** Computer attached to this host; absent ⇒ none. Normalized: `null` input
+   * never survives to `HostJson`. Authored hosts are always `"personal"`;
+   * a snapshot read back from a platform run may carry `"ephemeral"`. */
   computer?: HostComputer;
   /** Which harness runs the turn; absent ⇒ emulated. `"claude-code"` runs the
    * turn in a real Claude Code runtime (requires an attached `computer`). */
@@ -181,9 +196,10 @@ export interface HostInit {
   /**
    * Attach a personal cloud workstation (chat `bash` tool + web terminal).
    * Absent or `null` ⇒ no computer; `null` is accepted so an editor can
-   * clear the field and is normalized away at `toJSON()`.
+   * clear the field and is normalized away at `toJSON()`. Personal-only —
+   * the platform's `"ephemeral"` kind is not authorable.
    */
-  computer?: HostComputer | null;
+  computer?: HostComputerInput | null;
   /**
    * Which harness runs the turn; absent ⇒ emulated (MCPJam's own loop). Set to
    * `"claude-code"` to run the turn inside a real Claude Code runtime via the

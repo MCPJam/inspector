@@ -304,6 +304,33 @@ export type BaseServerConfig = {
    */
   firstPageOnly?: boolean;
   /**
+   * Whether the client opens the server→client notification channel at all.
+   *
+   * `undefined` (the default) and `false` both open it. `true` simulates a
+   * client that never does — ChatGPT measures this way — so a server author
+   * can see that its `notifications/*` never reach that host, no matter what
+   * the server declares.
+   *
+   * On Streamable HTTP this refuses the standalone GET SSE stream the
+   * upstream client opens after `notifications/initialized`. On the legacy
+   * HTTP+SSE transport the GET stream IS the connection, so this cannot
+   * apply — a real client on that transport cannot not-listen either.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.listens === false`.
+   */
+  suppressListenChannel?: boolean;
+  /**
+   * Whether the client acts on `notifications/tools/list_changed`.
+   *
+   * `undefined` (the default) and `false` both act on it. `true` simulates a
+   * client that ignores it: the notification is dropped before the client
+   * sees it, so its `tools/list` cache is never evicted and the stale list
+   * stays in use — exactly what a server author sees from such a host.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.refetches === false`.
+   */
+  dropToolListChanged?: boolean;
+  /**
    * Whether the client drives MRTR (`resultType: "input_required"`) retry
    * rounds at all.
    *
@@ -336,6 +363,24 @@ export type BaseServerConfig = {
    * reaches a fetch, so it emits nothing.
    */
   httpLogger?: HttpExchangeLogger;
+  /**
+   * The `fetch` the HTTP transport dials through, replacing the global one.
+   *
+   * WHY THIS EXISTS: hosted runs must not reach a private address, and
+   * checking the URL the caller NAMED is not the same as checking the address
+   * we end up dialling — a target can answer `302 Location:
+   * http://169.254.169.254/`. Handing a DNS-pinned fetch
+   * (`@mcpjam/sdk/oauth/node`'s `createPinnedStreamingFetch`) in here is what
+   * puts the one real MCP connection under the same guard as the raw probes
+   * beside it; before this existed, that connection followed redirects
+   * unchecked and the conformance suite documented the hole in a comment.
+   *
+   * It is the INNERMOST fetch: the task-routing and HTTP-logging wrappers are
+   * layered on top, so the bytes this sees are the bytes that leave. Ignored
+   * by stdio, which never reaches a fetch. Absent ⇒ `globalThis.fetch`,
+   * byte-identical to the behavior before this field.
+   */
+  baseFetch?: typeof fetch;
 };
 
 /**
@@ -598,6 +643,9 @@ export interface MCPClientManagerOptions {
   /** Global HTTP-exchange (headers-only) logger. See `httpLogger` on the
    *  server config for why this is a separate channel from `rpcLogger`. */
   httpLogger?: HttpExchangeLogger;
+  /** Default transport `fetch` for every HTTP server. Per-server `baseFetch`
+   *  overrides it. See `baseFetch` on the server config. */
+  baseFetch?: typeof fetch;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
   /**

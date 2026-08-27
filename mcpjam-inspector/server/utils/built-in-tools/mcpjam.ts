@@ -35,9 +35,15 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
+  getEvalRunDisclosureOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -57,6 +63,16 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -88,6 +104,14 @@ import {
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -113,16 +137,36 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // Read-only, checked BEFORE a launch decision — placed ahead of the two run
+  // operations it exists to inform. `run_eval_suite` already fetches and
+  // returns its own disclosure on the receipt, so this is for when a caller
+  // needs the answer before committing to launch, not after.
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
@@ -182,6 +226,14 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /**
@@ -196,6 +248,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  connect_eval_check_repo:
+    "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
@@ -218,6 +272,24 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
   cancel_wave_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  // Launches a browser and executes the caller's tool. The Apps tab renders
+  // the same widget interactively, with the console and network panes beside
+  // it — a chat tool would hand back a verdict with none of that context.
+  render_server_widget:
+    "The Apps tab renders the widget interactively, with the console and network evidence beside it. Available on REST/CLI/MCP.",
+  // Agent Playground. `send_chat_message` runs an assistant turn, and this
+  // toolset IS an assistant turn — offering it here lets a chat turn spawn
+  // chat turns, which is recursive spend with no natural floor. The two reads
+  // follow it out rather than being split off: their only use in chat is to
+  // read back a session this toolset cannot create, and the Sessions tab
+  // already renders both the transcript and the trace with the context around
+  // them.
+  send_chat_message:
+    "An assistant turn that starts assistant turns — recursive spend with no floor. Available on REST/CLI/MCP, where the caller is not already inside a turn.",
+  get_chat_session:
+    "Reads back a session this toolset cannot create; the Sessions tab renders the transcript with its context.",
+  get_chat_session_trace:
+    "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
   // Scenarios (user testing).
   publish_scenario:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",
@@ -241,6 +313,12 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
   rotate_user_testing_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  rotate_share_link:
+    "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
+  get_share_settings:
+    "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
+  set_share_mode:
+    "Changing who can open a shared resource belongs next to the share link the UI already shows.",
   upsert_user_testing_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
   remove_user_testing_member:
@@ -281,26 +359,40 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   list_eval_cases: "Case-level browsing is the Evaluate tab's job.",
   get_eval_case: "Case-level browsing is the Evaluate tab's job.",
   create_eval_case: "Case authoring belongs to the Evaluate editor.",
+  create_eval_cases: "Case authoring belongs to the Evaluate editor.",
   update_eval_case: "Case authoring belongs to the Evaluate editor.",
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
     "Spends model quota; the Evaluate tab offers it explicitly.",
 
   // Host and environment administration: re-wires the execution surface.
-  list_hosts: "Host administration has its own tab.",
-  get_host: "Host administration has its own tab.",
-  create_host: "Host creation re-wires the execution surface.",
-  update_host: "Host config changes affect every later run.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative action.",
-  duplicate_host: "Host administration has its own tab.",
+  // Clients stay OUT of the in-app toolset, and this is the one surface where
+  // that did not change. The Clients tab and the WebMCP `ui_*_client` tools own
+  // this surface: the person is already looking at the editor, with undo, a
+  // diff and the whole config in front of them. A chat tool that edits the
+  // client the chat itself is running on would be a worse version of the thing
+  // on screen. The MCP catalog and the agent registry are different — there is
+  // no editor there to defer to.
+  list_clients: "Client administration has its own tab.",
+  get_client: "Client administration has its own tab.",
+  create_client: "Client creation re-wires the execution surface.",
+  update_client:
+    "Client config changes affect every later run, and the Clients tab (plus the WebMCP client tools) is the surface that owns them in-app.",
+  delete_client:
+    "Irreversible and rotates every client config that referenced it.",
+  set_client_servers:
+    "Re-wiring a client's server set is an administrative action.",
+  duplicate_client: "Client administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
   get_project_environment_capabilities:
     "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
+  ensure_adhoc_environment:
+    "Environment authoring has its own editor, and the composer is where a workspace user assembles a stack. The RUN path already carries it: run_eval_suite takes a `compose` object and ensures the environment itself.",
+  name_environment:
+    "Promoting a composed environment into the project's permanent list is an editor action, and the composer offers it in place.",
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
@@ -337,14 +429,24 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   export_server: "Emits a full server config including its auth shape.",
   show_servers:
     "The widget-bearing variant for MCP Apps hosts, not in-app chat.",
+
+  // Cloud Skills, the read half. Advertised on the agent catalog
+  // (`mcp/src/tools/platformTools.ts`) because an agent driving eval runs
+  // cannot pin a skill it cannot name. In-app chat is the surface where that
+  // argument does NOT hold: the person is already looking at /skills, which
+  // lists the same rows with the pinnability and the body beside them.
+  list_project_skills:
+    "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
+  get_project_skill:
+    "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 };
 
 const OPERATIONS_BY_ID = new Map(
-  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])
+  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation]),
 );
 
 export const MCPJAM_TOOL_IDS: ReadonlyArray<string> = WORKSPACE_OPERATIONS.map(
-  (operation) => operation.name
+  (operation) => operation.name,
 );
 
 export function isMcpjamToolId(id: string): boolean {
@@ -370,6 +472,17 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  // SPENDS the organization's model budget, on a run the chat can name from
+  // a list. Advertised rather than excluded because reading grades is only
+  // useful if you can ask for them — but the spend is the user's to approve,
+  // so it sits here with `cancel_eval_run` rather than executing on request.
+  requestEvalRunJudgeOperation.name,
+  // Dials a third party's server for minutes and, with the opt-in, spends the
+  // organization's credits. Reading grades is only useful if you can ask for
+  // one, so these are advertised rather than excluded — but the asking is the
+  // user's to approve. Cancelling is NOT here: it stops that traffic.
+  startClaudeReadinessRunOperation.name,
+  startOpenAIReadinessRunOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
@@ -377,6 +490,16 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // supplied by whoever is talking to the model, this server dials it, and a
   // completed flow adds a server row to the user's project.
   connectProjectServerOperation.name,
+  // create_project_server with different spelling: the caller supplies
+  // `endpointUrl`, and a completed install adds a server row to the user's
+  // project — so it takes the same approval its sibling does.
+  installRegistryDirectoryServerOperation.name,
+  // Installs a registry card whose config was written by another org member;
+  // the completed flow still adds a server row to the user's project.
+  installRegistryServerOperation.name,
+  // Destructive, same as delete_project_server: removes the installed server
+  // row and its connection.
+  uninstallRegistryServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted
@@ -410,7 +533,7 @@ const AMBIENT_PROJECT_NOTE =
 type WorkspaceInputClamp = {
   descriptionNote: string;
   transform: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => Record<string, unknown> | { error: string };
 };
 
@@ -505,7 +628,7 @@ export function capForModel(value: unknown): unknown {
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
 export function toToolError(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
@@ -518,7 +641,7 @@ export function toToolError(
  */
 export function buildMcpjamTool(
   id: string,
-  opts: McpjamToolOptions
+  opts: McpjamToolOptions,
 ): ToolSet[string] | null {
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;

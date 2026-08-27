@@ -6,6 +6,36 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it("forwards per-run import approvals, and omits the key when there are none", async () => {
+    // The mutation args are RECONSTRUCTED field by field in this function, so
+    // a field nobody names here never reaches Convex — and an approval that
+    // never arrives surfaces to the caller as the backend refusing a run they
+    // did approve. Asserting the exact args is the only thing that catches it.
+    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation } as any;
+    const importApprovals = [
+      { testCaseId: "tc-1", reason: "Reviewed against the upstream rubric." },
+    ];
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      importApprovals,
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({ importApprovals });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+    });
+    // Absent rather than `[]`: an empty array is a claim ("I approved
+    // nothing"), and the backend reads the two differently.
+    expect("importApprovals" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
   it("forwards tool snapshot metadata when creating a suite run", async () => {
     const mutationMock = vi
       .fn()
@@ -430,6 +460,7 @@ describe("createSuiteRunRecorder", () => {
     await recorder.finishIteration({
       iterationId: "iter1",
       passed: true,
+      status: "completed",
       toolsCalled: [],
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       messages: [{ role: "user", content: "hi" } as ModelMessage],

@@ -13,16 +13,16 @@ import {
   executeClaimedCheck,
   runReachedAVerdict,
   verifyRunSnapshot,
+  claimNextForTests,
+  CloneTokenUnavailableError,
   LeaseLostError,
+  mintCloneTokenForTests,
   startGithubChecksWorker,
   type CheckExecutionDeps,
   type PlanlessCheckReport,
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
-import {
-  CheckStepError,
-  type CheckSandbox,
-} from "../github-checks/sandbox";
+import { CheckStepError, type CheckSandbox } from "../github-checks/sandbox";
 import {
   CheckStoppedByPlan,
   PlanProtocolError,
@@ -54,7 +54,14 @@ const CLAIM: ClaimedGithubCheck = {
   projectId: "proj-1",
   createdByExternalId: "user_workos_1",
   suiteId: "suite-1",
+  repoPrivate: false,
 };
+
+/** The same check, on a repository that needs a credential to clone. */
+const PRIVATE_CLAIM: ClaimedGithubCheck = { ...CLAIM, repoPrivate: true };
+
+/** A stand-in installation token. Never real, always asserted absent. */
+const CLONE_TOKEN = "ghs_privateRepoToken1234567890";
 
 const RECIPE = {
   build: "npm ci && npm run build",
@@ -68,6 +75,7 @@ const RECIPE = {
 
 type Completion = {
   runId?: string;
+  conformanceRunId?: string;
   summary?: unknown;
   detailsMarkdown?: string;
   terminalAttempt?: AttemptInput;
@@ -75,6 +83,8 @@ type Completion = {
 
 type Harness = {
   deps: Partial<CheckExecutionDeps>;
+  /** Every `resolveAndStart` args object, so the threaded token is assertable. */
+  resolveArgs: Array<{ cloneToken?: string }>;
   /** Planless reports — reachable ONLY when `/plan/begin` produced no plan. */
   reports: PlanlessCheckReport[];
   /** Every `/attempt` the worker itself posted (the resolver's are its own). */
@@ -102,6 +112,7 @@ function harness(
   planOptions?: {
     beginThrows?: unknown;
     attemptThrows?: (input: AttemptInput) => unknown;
+    evalAction?: "complete" | "run_conformance";
   }
 ): Harness {
   const reports: PlanlessCheckReport[] = [];
@@ -109,6 +120,12 @@ function harness(
   const completions: Completion[] = [];
   const events: string[] = [];
   const heartbeats: string[] = [];
+  const resolveArgs: Array<{ cloneToken?: string }> = [];
+  const {
+    runEvalSuite: runEvalSuiteOverride,
+    runConformance: runConformanceOverride,
+    ...restOverrides
+  } = overrides ?? {};
 
   const session: CheckPlanSession = {
     planId: "plan-1",
@@ -122,6 +139,9 @@ function harness(
       const thrown = planOptions?.attemptThrows?.(input);
       if (thrown) throw thrown;
       if (input.phase === "eval" && input.ok) {
+        if (planOptions?.evalAction === "run_conformance") {
+          return { action: "run_conformance", reason: "eval_bound" };
+        }
         return { action: "complete", reason: "verdict_established" };
       }
       return { action: "continue_phase" };
@@ -159,7 +179,12 @@ function harness(
     // collaborator (`resolve-and-start.ts`, tested in its own suite). What the
     // WORKER owes is exactly one completion per claim, the eval attempt posted
     // at launch, and teardown of whatever box it was handed.
+    mintCloneToken: async () => {
+      events.push("mintCloneToken");
+      return CLONE_TOKEN;
+    },
     resolveAndStart: async (_args, overrides) => {
+      resolveArgs.push(_args);
       events.push("resolveAndStart");
       overrides?.onSandbox?.(sandbox);
       return {
@@ -196,12 +221,19 @@ function harness(
     },
     runEvalSuite: async (args) => {
       events.push("runEvalSuite");
+      if (runEvalSuiteOverride) return runEvalSuiteOverride(args);
       await args.onRunStarted?.("run-1");
       return {
         runId: "run-1",
         result: "passed",
         summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
       };
+    },
+    runConformance: async (args) => {
+      events.push("runConformance");
+      if (runConformanceOverride) return runConformanceOverride(args);
+      await args.onRunStarted?.("conf-run-1");
+      return { runId: "conf-run-1" };
     },
     report: async (report) => {
       reports.push(report);
@@ -211,11 +243,12 @@ function harness(
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
-    ...overrides,
+    ...restOverrides,
   };
 
   return {
     deps,
+    resolveArgs,
     reports,
     attempts,
     completions,
@@ -256,6 +289,46 @@ describe("executeClaimedCheck — happy path", () => {
     // And the planless path — the only one that still names an outcome — was
     // never taken.
     expect(h.reports).toHaveLength(0);
+  });
+
+  it("runs conformance after a product-failing eval when the backend says run_conformance", async () => {
+    const h = harness(
+      {
+        runEvalSuite: async (args) => {
+          await args.onRunStarted?.("run-2");
+          return {
+            runId: "run-2",
+            result: "failed",
+            summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
+          };
+        },
+      },
+      undefined,
+      { evalAction: "run_conformance" }
+    );
+    await executeClaimedCheck(
+      { ...CLAIM, conformanceEnabled: true },
+      "worker-1",
+      h.deps
+    );
+
+    expect(h.events).toEqual(
+      expect.arrayContaining([
+        "runEvalSuite",
+        "attempt:eval:ok",
+        "runConformance",
+        "attempt:conformance:ok",
+        "complete",
+      ])
+    );
+    expect(h.events.indexOf("runEvalSuite")).toBeLessThan(
+      h.events.indexOf("runConformance")
+    );
+    expect(h.completions[0]).toMatchObject({
+      runId: "run-2",
+      conformanceRunId: "conf-run-1",
+    });
+    expect(JSON.stringify(h.attempts)).not.toContain("evals_failed");
   });
 
   it("posts the eval attempt AT LAUNCH, carrying the runId that binds the run", async () => {
@@ -339,7 +412,6 @@ describe("executeClaimedCheck — happy path", () => {
       serverName: "gh-check-trig-1",
     });
   });
-
 });
 
 describe("executeClaimedCheck — the plan owns the verdict", () => {
@@ -487,7 +559,9 @@ describe("executeClaimedCheck — the plan owns the verdict", () => {
   });
 
   const evalDies = {
-    runEvalSuite: async (args: { onRunStarted?: (id: string) => Promise<void> }) => {
+    runEvalSuite: async (args: {
+      onRunStarted?: (id: string) => Promise<void>;
+    }) => {
       await args.onRunStarted?.("run-1");
       throw new Error("fetch failed: ECONNREFUSED");
     },
@@ -944,6 +1018,24 @@ describe("effectiveRunResult", () => {
     ).toBe("failed");
   });
 
+  it("reports an INCONCLUSIVE verdict verbatim instead of recomputing it", () => {
+    // Verdict policy 2's third result. The counts here would derive "passed"
+    // (2/2 at the default 100% bar), which is precisely the claim the platform
+    // declined to make: too little of the run was gradeable. The worker reports
+    // facts and the control plane maps `inconclusive` to a NEUTRAL check, so
+    // re-deriving it here is how an undecided run turns into a green check.
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        result: "inconclusive",
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      })
+    ).toBe("inconclusive");
+    // And it stays a verdict-bearing run: `inconclusive` is a result, not an
+    // abandoned run, so the worker does not raise "did not complete".
+    expect(runReachedAVerdict("completed")).toBe(true);
+  });
+
   it("never invents a pass when there is nothing to derive from", () => {
     expect(effectiveRunResult({ status: "completed" })).toBeUndefined();
     expect(effectiveRunResult(null)).toBeUndefined();
@@ -1192,5 +1284,315 @@ describe("runReachedAVerdict", () => {
     ]) {
       expect(runReachedAVerdict(status)).toBe(false);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRIVATE REPOSITORIES
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The ordering is the load-bearing part and the reason these live here rather
+// than in the resolver's suite: the credential is minted AFTER the plan exists
+// and BEFORE a box is provisioned, so a mint failure is an ordinary attempt on
+// an existing plan instead of a second planless completion, and costs no E2B
+// box. Everything else below is about the credential not escaping.
+
+describe("executeClaimedCheck — the private-repository clone credential", () => {
+  /** Computed independently of the module under test. */
+  const basic = Buffer.from(`x-access-token:${CLONE_TOKEN}`, "utf8").toString(
+    "base64"
+  );
+  const credentialForms = [CLONE_TOKEN, basic, `AUTHORIZATION: basic ${basic}`];
+
+  it("mints AFTER the plan and BEFORE the first sandbox, then threads it to the clone", async () => {
+    const h = harness();
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    // `beginPlan` → `mintCloneToken` → `resolveAndStart`, in that order and no
+    // other. `resolveAndStart` owns provisioning, so its position IS the
+    // "before any box" guarantee.
+    expect(h.events.slice(0, 3)).toEqual([
+      "beginPlan",
+      "mintCloneToken",
+      "resolveAndStart",
+    ]);
+    expect(h.resolveArgs[0].cloneToken).toBe(CLONE_TOKEN);
+    // The ordinary check still happened, end to end.
+    expect(h.completions).toHaveLength(1);
+    expect(h.reports).toHaveLength(0);
+  });
+
+  it("never asks for a credential for a public repository", async () => {
+    // Not an optimization: minting a `contents: read` token nothing needs is
+    // blast radius bought for nothing.
+    const h = harness();
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    expect(h.events).not.toContain("mintCloneToken");
+    expect(h.resolveArgs[0]).not.toHaveProperty("cloneToken");
+  });
+
+  it("completes with a ladder `clone_failed` when the mint fails, and provisions nothing", async () => {
+    // A 502 from the mint route. There is a plan, so this is reported THROUGH
+    // it — the planless completion is only for a check that never got one.
+    const h = harness({
+      mintCloneToken: async () => {
+        throw new CloneTokenUnavailableError(
+          "the backend could not mint a clone token (502)"
+        );
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    expect(h.events).not.toContain("resolveAndStart");
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].terminalAttempt).toMatchObject({
+      // LADDER-scoped: no candidate exists, because nothing was detected yet.
+      phase: "clone",
+      ok: false,
+      failureKind: "clone_failed",
+    });
+    expect(h.completions[0].terminalAttempt).not.toHaveProperty("candidateId");
+    // No outcome named here either — a ladder `clone_failed` is `infra_error`
+    // backend-side, and it is never the pull request's fault.
+    expect(h.completions[0]).not.toHaveProperty("outcome");
+    expect(h.reports).toHaveLength(0);
+  });
+
+  it("never completes the fresh plan with an empty attempt log", async () => {
+    // The consequence the typed transport failure exists to prevent. An untyped
+    // throw from the mint reaches the generic catch, which has no degraded
+    // marker for it either — so `/complete` would carry no `terminalAttempt`
+    // and the backend would derive an outcome from nothing at all.
+    const h = harness({
+      mintCloneToken: async () => {
+        throw new Error("service route /clone-token timed out after 15000ms");
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    expect(h.events).not.toContain("resolveAndStart");
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].terminalAttempt).toMatchObject({
+      phase: "clone",
+      ok: false,
+      failureKind: "clone_failed",
+    });
+  });
+
+  it("treats a null token for a private repository exactly like a failed mint", async () => {
+    // `cloneToken: null` is the PUBLIC answer. Arriving for a private claim it
+    // means the same thing a 502 does — we cannot clone — so an anonymous
+    // attempt that would 404 and read as "the repository vanished" is refused.
+    const h = harness({ mintCloneToken: async () => null });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    expect(h.events).not.toContain("resolveAndStart");
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].terminalAttempt).toMatchObject({
+      phase: "clone",
+      ok: false,
+      failureKind: "clone_failed",
+    });
+  });
+
+  it("abandons the check on a 409 from the mint, with no competing completion", async () => {
+    // 409 means somebody else holds the claim, which means the backend has
+    // already concluded this check. A completion posted over the top would be
+    // rejected at best and a competing verdict at worst.
+    const h = harness({
+      mintCloneToken: async () => {
+        throw new LeaseLostError("trigger_completed");
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    expect(h.completions).toHaveLength(0);
+    expect(h.reports).toHaveLength(0);
+    expect(h.events).not.toContain("resolveAndStart");
+    // The box that was never provisioned is still "killed" (a null handle), so
+    // the cleanup path is uniform.
+    expect(h.events).toContain("killSandbox");
+  });
+
+  /** Capture every `logger.error` call, argument objects included. */
+  async function captureErrorLogs(): Promise<unknown[]> {
+    const logger = await import("../../utils/logger");
+    const logged: unknown[] = [];
+    const spy = vi
+      .spyOn(logger.logger, "error")
+      .mockImplementation((message, error, context) => {
+        logged.push([
+          message,
+          error instanceof Error ? `${error.message}\n${error.stack}` : error,
+          context,
+        ]);
+      });
+    onTestFinished(() => spy.mockRestore());
+    return logged;
+  }
+
+  it("leaks no credential form through the failure, the log, the attempt or the completion", async () => {
+    // THE LEAK TEST. `sandbox.commands.run` throwing an error that quotes the
+    // WHOLE command is exactly what an E2B transport failure looks like, and the
+    // command it quotes is the one carrying the auth header. `sandbox.ts`
+    // redacts it at the boundary it owns; this asserts the worker's own
+    // observables — the log (Sentry's only capture path), the terminal attempt
+    // and the completion — are clean even if that first boundary ever fails.
+    const logged = await captureErrorLogs();
+    const echoedCommand = `bash -lc 'git -c 'http.extraheader=AUTHORIZATION: basic ${basic}' clone --depth 50' (raw ${CLONE_TOKEN})`;
+    const h = harness({
+      resolveAndStart: async () => {
+        throw new CheckStepError(
+          "infra_error",
+          `sandbox command failed: ${echoedCommand}`,
+          `\`\`\`text\n${echoedCommand}\n\`\`\``
+        );
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    const observable = JSON.stringify({
+      logged,
+      completions: h.completions,
+      attempts: h.attempts,
+      reports: h.reports,
+    });
+    for (const form of credentialForms) {
+      expect(observable).not.toContain(form);
+    }
+    // The check still got its one completion, and the failure is still legible.
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].detailsMarkdown).toContain("[redacted]");
+    expect(JSON.stringify(logged)).toContain("sandbox command failed");
+  });
+
+  it("leaks no credential form when the MINT itself fails", async () => {
+    // The worker holds no token on this path — the mint is what failed — so the
+    // constant `AUTHORIZATION:` sweep is the whole defence, and it has to be
+    // enough on its own.
+    const logged = await captureErrorLogs();
+    const h = harness({
+      mintCloneToken: async () => {
+        throw new CloneTokenUnavailableError(
+          `mint failed while sending AUTHORIZATION: basic ${basic}`
+        );
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    const observable = JSON.stringify({ logged, completions: h.completions });
+    expect(observable).not.toContain(basic);
+    expect(observable).not.toContain(`AUTHORIZATION: basic ${basic}`);
+    // Redacted, not swallowed: the operator still gets a legible failure.
+    expect(h.completions[0].terminalAttempt?.detailsClamped).toContain(
+      "mint failed"
+    );
+    expect(h.completions[0].terminalAttempt?.detailsClamped).toContain(
+      "[redacted]"
+    );
+    expect(h.completions[0].detailsMarkdown).toContain(
+      "not a problem with the pull request"
+    );
+  });
+});
+
+describe("the clone-token wire contract", () => {
+  // Hand-mirrored from the backend across two repos, so the status mapping is
+  // pinned at the wire rather than only at the dep seam.
+  function stubFetch(status: number, body: unknown) {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    });
+    return fetchMock;
+  }
+
+  it("posts { triggerId, claimedBy } and returns the token", async () => {
+    const fetchMock = stubFetch(200, {
+      ok: true,
+      cloneToken: CLONE_TOKEN,
+      expiresAt: 1_700_000_000,
+    });
+    await expect(mintCloneTokenForTests("trig-1", "worker-1")).resolves.toBe(
+      CLONE_TOKEN
+    );
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit
+    ];
+    expect(url).toContain("/internal/v1/github-checks/clone-token");
+    expect(JSON.parse(String(init.body))).toEqual({
+      triggerId: "trig-1",
+      claimedBy: "worker-1",
+    });
+  });
+
+  it("answers null when the backend says no token was needed", async () => {
+    stubFetch(200, { ok: true, cloneToken: null });
+    await expect(
+      mintCloneTokenForTests("trig-1", "worker-1")
+    ).resolves.toBeNull();
+  });
+
+  it("maps 409 to lease loss, not to a mint failure", async () => {
+    stubFetch(409, { ok: false, error: "trigger_completed" });
+    await expect(
+      mintCloneTokenForTests("trig-1", "worker-1")
+    ).rejects.toBeInstanceOf(LeaseLostError);
+  });
+
+  it("maps a transport failure to a mint failure, not an untyped throw", async () => {
+    // The route rejecting BEFORE it answers — a network failure, or the
+    // service-route's own deadline. Untyped, this would skip the mint-failure
+    // branch entirely and complete the plan with no attempt on it at all.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED 10.0.0.1:443");
+      })
+    );
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    });
+
+    const error = await mintCloneTokenForTests("trig-1", "worker-1").catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(CloneTokenUnavailableError);
+    expect(String(error)).toContain("ECONNREFUSED");
+  });
+
+  it("maps 502 to a mint failure, without echoing the backend's body", async () => {
+    stubFetch(502, { ok: false, error: "Could not mint a clone token" });
+    const error = await mintCloneTokenForTests("trig-1", "worker-1").catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(CloneTokenUnavailableError);
+    expect(String(error)).toContain("502");
+  });
+
+  it("mirrors repoPrivate off the claim body", async () => {
+    // The field is hand-mirrored across two repos, and dropping it here would
+    // silently degrade every private repository to an anonymous clone.
+    stubFetch(200, {
+      ok: true,
+      claimed: { ...PRIVATE_CLAIM, triggerId: "trig-9" },
+    });
+    const claimed = await claimNextForTests("worker-1");
+    expect(claimed).toMatchObject({ triggerId: "trig-9", repoPrivate: true });
   });
 });

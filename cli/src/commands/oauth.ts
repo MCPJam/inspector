@@ -45,6 +45,7 @@ import {
   renderConformanceReporterResult,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { readInputSource } from "../lib/json-input.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
@@ -368,6 +369,11 @@ export function registerOAuthCommands(program: Command): void {
       "--credentials-out <path>",
       "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
     )
+    .option("--upload", "Upload this suite's result into MCPJam run history")
+    .option(
+      "--require-upload",
+      "Fail if reporting is configured but the UI record cannot be written",
+    )
     .option(
       "--print-url",
       "In interactive mode, print the consent URL to stderr instead of launching a browser",
@@ -414,6 +420,16 @@ export function registerOAuthCommands(program: Command): void {
       // "we never established anything" is a different failure from "the
       // server violated the spec", and a human must not have to dig for why.
       reportIncomplete(result, command);
+      await maybeUploadSingleSuite({
+        suiteKind: "oauth",
+        result,
+        serverUrl: (options as { url?: string }).url,
+        upload: Boolean((options as { upload?: boolean }).upload),
+        requireUpload: Boolean(
+          (options as { requireUpload?: boolean }).requireUpload
+        ),
+        command,
+      });
       if (result.outcome === "failed") {
         setProcessExitCode(1);
       } else if (result.outcome === "incomplete") {
