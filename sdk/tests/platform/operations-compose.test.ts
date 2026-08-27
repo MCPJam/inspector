@@ -52,6 +52,39 @@ const IMAGES = [
   { id: "img-heavy", name: "heavy", projectId: PROJECT.id },
 ];
 
+const SERVERS = [
+  {
+    id: "srv-vercel",
+    name: "Vercel",
+    projectId: PROJECT.id,
+    enabled: true,
+    transportType: "http",
+    url: "https://vercel.test/mcp",
+    useOAuth: false,
+    hasClientSecret: false,
+  },
+  {
+    id: "srv-sentry",
+    name: "Sentry",
+    projectId: PROJECT.id,
+    enabled: true,
+    transportType: "http",
+    url: "https://sentry.test/mcp",
+    useOAuth: false,
+    hasClientSecret: false,
+  },
+  {
+    id: "srv-local",
+    name: "Local",
+    projectId: PROJECT.id,
+    enabled: true,
+    transportType: "stdio",
+    url: null,
+    useOAuth: false,
+    hasClientSecret: false,
+  },
+];
+
 const ADHOC_ENVIRONMENT = {
   id: "env-adhoc-1",
   projectId: PROJECT.id,
@@ -81,15 +114,89 @@ interface Fixture {
   modelOverrides?: boolean;
   /** Suite already has these attached environment ids (union-cap tests). */
   attachedEnvironmentIds?: string[];
+  /** Server groups the project already holds. */
+  serverGroups?: Array<{ id: string; name: string; serverIds: string[] }>;
+  /** Deployment that predates the server-group routes (404s the route). */
+  serverGroupsUnavailable?: boolean;
+  /**
+   * Names whose FIRST create attempt answers 409, modelling a name already
+   * taken by a group holding different servers.
+   */
+  takenGroupNames?: string[];
+  /**
+   * A concurrent compose that wins the create race: the conflicting POST is
+   * answered 409 AND this group appears in the next list.
+   */
+  raceGroupOnConflict?: { id: string; name: string; serverIds: string[] };
 }
 
 function makeClient(fixture: Fixture = {}) {
+  // Mutable so a create is visible to the list that follows it — the
+  // conflict-then-relist path depends on that ordering.
+  const serverGroups = [...(fixture.serverGroups ?? [])];
+  let createdGroupCount = 0;
   const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
     const path = new URL(String(target)).pathname;
     const method = init?.method ?? "GET";
     if (path === "/api/v1/projects") return Response.json({ items: [PROJECT] });
     if (/\/hosts$/.test(path)) return Response.json({ items: HOSTS });
     if (/\/images$/.test(path)) return Response.json({ items: IMAGES });
+    if (/\/servers$/.test(path) && method === "GET") {
+      return Response.json({ items: SERVERS });
+    }
+    if (/\/server-groups$/.test(path) && fixture.serverGroupsUnavailable) {
+      return Response.json(
+        { code: "NOT_FOUND", message: "Not Found" },
+        { status: 404 },
+      );
+    }
+    if (/\/server-groups$/.test(path) && method === "GET") {
+      return Response.json({
+        items: serverGroups.map((group) => ({
+          ...group,
+          description: null,
+          serverNames: [],
+          createdAt: 1,
+          updatedAt: 1,
+        })),
+      });
+    }
+    if (/\/server-groups$/.test(path) && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as {
+        name: string;
+        serverIds: string[];
+      };
+      if (fixture.takenGroupNames?.includes(body.name)) {
+        if (fixture.raceGroupOnConflict) {
+          serverGroups.push(fixture.raceGroupOnConflict);
+        }
+        return Response.json(
+          {
+            code: "CONFLICT",
+            message:
+              "A server group with that name already exists in this project.",
+          },
+          { status: 409 },
+        );
+      }
+      createdGroupCount += 1;
+      const group = {
+        id: `grp-created-${createdGroupCount}`,
+        name: body.name,
+        serverIds: body.serverIds,
+      };
+      serverGroups.push(group);
+      return Response.json(
+        {
+          ...group,
+          description: null,
+          serverNames: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        { status: 201 },
+      );
+    }
     if (/\/eval-suites$/.test(path) && method === "GET") {
       return Response.json({ items: [SUITE] });
     }
@@ -272,6 +379,240 @@ describe("ensure_adhoc_environment", () => {
     expect((error as PlatformApiError).message).toContain(
       "predates ad-hoc environments",
     );
+  });
+});
+
+/**
+ * `server`/`servers` on a composed stack.
+ *
+ * The bug they close: without a pinned group, a composed environment follows
+ * its HOST's live server list, so editing a shared host silently repoints
+ * every eval composed against it. These selectors snapshot the servers into a
+ * group instead, and the environment pins that group.
+ *
+ * Reuse is by CONTENT, not name, because the environment fingerprint keys on
+ * the group id — minting a fresh group per run would mint a fresh environment
+ * per run and leave undeletable near-duplicates behind.
+ */
+describe("compose server selectors", () => {
+  function groupBodies(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls
+      .filter(
+        ([target, init]) =>
+          /\/server-groups$/.test(new URL(String(target)).pathname) &&
+          (init as RequestInit | undefined)?.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  }
+
+  it("resolves server names, snapshots a group, and pins it on the stack", async () => {
+    const { client, fetchMock } = makeClient();
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", server: "Vercel" },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toEqual([
+      { name: "Vercel", serverIds: ["srv-vercel"] },
+    ]);
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      serverAttachmentId: "grp-created-1",
+    });
+  });
+
+  it("reuses a group holding the same servers, whatever its name or order", async () => {
+    const { client, fetchMock } = makeClient({
+      serverGroups: [
+        {
+          id: "grp-existing",
+          name: "hand made",
+          serverIds: ["srv-sentry", "srv-vercel"],
+        },
+      ],
+    });
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", servers: ["Vercel", "Sentry"] },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toEqual([]);
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      serverAttachmentId: "grp-existing",
+    });
+  });
+
+  it("names a group independently of the order the servers were typed", async () => {
+    const { client, fetchMock } = makeClient();
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", servers: ["Vercel", "Sentry"] },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toEqual([
+      { name: "Sentry + Vercel", serverIds: ["srv-vercel", "srv-sentry"] },
+    ]);
+  });
+
+  it("resolves the group ONCE across a model matrix, not per cell", async () => {
+    // Resolving inside the fan-out would re-list per cell and let the run race
+    // itself into a name conflict against its own earlier create.
+    const { client, fetchMock } = makeClient();
+    await runEvalSuiteOperation.execute(
+      {
+        suite: "Smoke",
+        compose: {
+          host: "Claude Code",
+          server: "Vercel",
+          models: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.6"],
+        },
+      },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toHaveLength(1);
+    const ensureCalls = fetchMock.mock.calls.filter(([target]) =>
+      /ensure-adhoc$/.test(new URL(String(target)).pathname),
+    );
+    expect(ensureCalls).toHaveLength(2);
+    for (const [, init] of ensureCalls) {
+      expect(
+        JSON.parse(String((init as RequestInit).body)).serverAttachmentId,
+      ).toBe("grp-created-1");
+    }
+  });
+
+  it("reuses the winner when a concurrent compose takes the name first", async () => {
+    const { client, fetchMock } = makeClient({
+      takenGroupNames: ["Vercel"],
+      raceGroupOnConflict: {
+        id: "grp-raced",
+        name: "Vercel",
+        serverIds: ["srv-vercel"],
+      },
+    });
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", server: "Vercel" },
+      { client },
+    );
+    // The conflict is not an error: the other writer created exactly the group
+    // this run wanted, so it is adopted rather than suffixed around.
+    expect(groupBodies(fetchMock)).toEqual([
+      { name: "Vercel", serverIds: ["srv-vercel"] },
+    ]);
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      serverAttachmentId: "grp-raced",
+    });
+  });
+
+  it("suffixes when the name is taken by a group holding OTHER servers", async () => {
+    const { client, fetchMock } = makeClient({
+      takenGroupNames: ["Vercel"],
+      serverGroups: [
+        { id: "grp-stale", name: "Vercel", serverIds: ["srv-sentry"] },
+      ],
+    });
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", server: "Vercel" },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toEqual([
+      { name: "Vercel", serverIds: ["srv-vercel"] },
+      { name: "Vercel (2)", serverIds: ["srv-vercel"] },
+    ]);
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      serverAttachmentId: "grp-created-1",
+    });
+  });
+
+  it("names the escape hatch on a deployment without the routes", async () => {
+    // The routes ship with the inspector server, so a platform that has not
+    // taken that deploy 404s the ROUTE. A bare "not found" would name nothing
+    // the caller can act on, and --compose-server-group still works there.
+    const { client } = makeClient({ serverGroupsUnavailable: true });
+    const error = await ensureAdhocEnvironmentOperation
+      .execute({ host: "Claude Code", server: "Vercel" }, { client })
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "--compose-server-group",
+    );
+  });
+
+  it("refuses a stdio server before writing anything", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await ensureAdhocEnvironmentOperation
+      .execute({ host: "Claude Code", server: "Local" }, { client })
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "stdio servers are not supported",
+    );
+    expect(groupBodies(fetchMock)).toEqual([]);
+  });
+
+  it("refuses an unknown server name", async () => {
+    const { client } = makeClient();
+    const error = await ensureAdhocEnvironmentOperation
+      .execute({ host: "Claude Code", server: "Nope" }, { client })
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain("was not found");
+  });
+
+  it("rejects `servers` together with an explicit `serverGroup`", async () => {
+    // Both fill one slot. Guarded twice on purpose: the schema catches callers
+    // that parse their input, and `execute` catches the rest — without the
+    // second the resolved group would silently overwrite the explicit one.
+    const parsed = ensureAdhocEnvironmentOperation.inputSchema.safeParse({
+      host: "Claude Code",
+      server: "Vercel",
+      serverGroup: "grp-x",
+    });
+    expect(parsed.success).toBe(false);
+
+    const { client, fetchMock } = makeClient();
+    const error = await ensureAdhocEnvironmentOperation
+      .execute(
+        { host: "Claude Code", server: "Vercel", serverGroup: "grp-x" },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain("not both");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("rejects the singular and plural spellings together", async () => {
+    const parsed = ensureAdhocEnvironmentOperation.inputSchema.safeParse({
+      host: "Claude Code",
+      server: "Vercel",
+      servers: ["Sentry"],
+    });
+    expect(parsed.success).toBe(false);
+
+    // The schema only runs for callers that parse. A direct `execute()` would
+    // otherwise drop `server`, silently spending the run on `servers`.
+    const { client, fetchMock } = makeClient();
+    const error = await ensureAdhocEnvironmentOperation
+      .execute(
+        { host: "Claude Code", server: "Vercel", servers: ["Sentry"] },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain("not both");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("pins the same way for a single case run", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalCaseOperation.execute(
+      {
+        suite: "Smoke",
+        case: "case-1",
+        compose: { host: "Claude Code", server: "Vercel" },
+      },
+      { client },
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+      serverAttachmentId: "grp-created-1",
+    });
   });
 });
 

@@ -228,6 +228,7 @@ function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
+  composeServer?: string[];
   composeServerGroup?: string;
   composeSkill?: string[];
   withClientDefault?: boolean;
@@ -236,6 +237,8 @@ function composeField(options: {
   compose?: {
     host: string;
     serverGroup?: string;
+    server?: string;
+    servers?: string[];
     models?: string[];
     includeClientDefault?: boolean;
     saveTargets?: boolean;
@@ -251,6 +254,7 @@ function composeField(options: {
   const refinements =
     options.composeComputer !== undefined ||
     models !== undefined ||
+    (options.composeServer?.length ?? 0) > 0 ||
     options.composeServerGroup !== undefined ||
     (options.composeSkill?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
@@ -263,12 +267,23 @@ function composeField(options: {
     }
     return {};
   }
+  // Both fill the same slot: --compose-server RESOLVES to a group. Rejected
+  // here as well as in the op so the CLI names the two flags the user typed.
+  if (
+    options.composeServerGroup !== undefined &&
+    options.composeServer?.length
+  ) {
+    throw usageError(
+      "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
+    );
+  }
   return {
     compose: {
       host: options.composeHost,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
+      ...selectorField("server", "servers", options.composeServer),
       ...(models !== undefined ? { models } : {}),
       ...(options.withClientDefault === true
         ? { includeClientDefault: true }
@@ -2932,6 +2947,10 @@ export function registerEvalCommands(program: Command): void {
         "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
       )
       .option(
+        "--compose-server <id-or-name...>",
+        "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      )
+      .option(
         "--compose-server-group <id>",
         "Standalone server group to pin on the composed stack"
       )
@@ -2956,6 +2975,7 @@ export function registerEvalCommands(program: Command): void {
         composeModel?: string[];
         withClientDefault?: boolean;
         saveTargets?: boolean;
+        composeServer?: string[];
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;
@@ -4612,6 +4632,10 @@ export function registerEvalCommands(program: Command): void {
         "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
       )
       .option(
+        "--compose-server <id-or-name...>",
+        "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      )
+      .option(
         "--compose-server-group <id>",
         "Standalone server group to pin on the composed stack"
       )
@@ -4624,6 +4648,7 @@ export function registerEvalCommands(program: Command): void {
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string;
+        composeServer?: string[];
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;

@@ -18,6 +18,7 @@ import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rat
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverGroups from "./server-groups.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -109,6 +110,10 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+// Server groups (immutable standalone server snapshots). Guest-DENIED: the
+// Convex reads are membership-gated and creating one is a member write, so
+// there is no share-link flow that needs them.
+v1.route("/", serverGroups);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);

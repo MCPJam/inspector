@@ -220,6 +220,22 @@ export interface PlatformProjectServer {
   updatedAt: number | null;
 }
 
+/**
+ * An immutable snapshot of a set of saved servers (the backend's standalone
+ * `serverAttachment`). Pinning one on an environment is what keeps a run off
+ * its host's live server list.
+ */
+export interface PlatformServerGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  serverIds: string[];
+  /** Display names hydrated by the backend; ids stay authoritative. */
+  serverNames: string[];
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
 export interface PlatformEvalRunSummary {
   id: string | null;
   status: string | null;

@@ -2818,6 +2818,110 @@
         }
       }
     },
+    "/projects/{projectId}/server-groups": {
+      "get": {
+        "operationId": "listServerGroups",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "List a project's server groups",
+        "description": "A server group is an immutable snapshot of a set of saved servers. Pinning one on an environment is what keeps a run off its host's live server list, so a composed run keeps testing the servers it was composed against even after the shared host is edited.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's server groups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroupPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createServerGroup",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Snapshot servers into a server group",
+        "description": "Creates a server group holding exactly the given servers and responds `201` with its detail. Groups are create-only — there is no update route, because an editable group would reintroduce the drift that pinning exists to prevent. Names are unique per project, so a clash responds `409`. Servers must belong to this project and must not be plugin-managed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerGroupCreateRequest"
+              },
+              "example": {
+                "name": "Vercel",
+                "serverIds": [
+                  "p1750000000000000000000000000"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The server group was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/environments": {
       "post": {
         "operationId": "attachEvalSuiteEnvironment",
@@ -15144,6 +15248,96 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ProjectServer"
+            }
+          }
+        }
+      },
+      "ServerGroup": {
+        "type": "object",
+        "description": "An immutable snapshot of a set of saved servers. Pin one on an environment so a run uses exactly these servers instead of following its host's live server list.",
+        "required": [
+          "id",
+          "name",
+          "serverIds",
+          "serverNames"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serverIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The snapshotted server ids. Authoritative."
+          },
+          "serverNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Display names resolved at read time; a deleted server is labelled rather than dropped."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServerGroupPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerGroup"
+            }
+          }
+        }
+      },
+      "ServerGroupCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "serverIds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique among the project's live server groups."
+          },
+          "description": {
+            "type": "string"
+          },
+          "serverIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
             }
           }
         }

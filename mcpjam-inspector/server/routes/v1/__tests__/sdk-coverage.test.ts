@@ -82,6 +82,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Project servers
   "get /projects/{projectId}/servers": "listProjectServers",
   "post /projects/{projectId}/servers": "createProjectServer",
+  "get /projects/{projectId}/server-groups": "listServerGroups",
+  "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
