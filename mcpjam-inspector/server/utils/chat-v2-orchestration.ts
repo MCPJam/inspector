@@ -2,7 +2,7 @@
  * Shared chat-v2 tool preparation and message scrubbing.
  *
  * Encapsulates the identical prep logic used by both mcp/chat-v2 and web/chat-v2:
- *   1. getToolsForAiSdk + getSkillToolsAndPrompt + needsApproval merge
+ *   1. getToolsForAiSdk + the turn's skill source + needsApproval merge
  *   2. Anthropic tool name validation (throws on invalid names)
  *   3. System prompt + skills prompt concatenation
  *   4. Temperature resolution (GPT-5 check)
@@ -37,9 +37,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
   type CustomProviderConfig,
 } from "./chat-helpers.js";
-import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import {
-  getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
   type SkillsFetchFailure,
 } from "./computers/cloud-skill-tools.js";
@@ -68,7 +66,6 @@ import {
   WEBMCP_TOOL_MAX_ENTRIES,
   WEBMCP_TOOL_NAME_MAX_CHARS,
 } from "@/shared/webmcp-inspector-protocol";
-import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
   createDiscoveryState,
@@ -748,9 +745,8 @@ export interface PrepareChatV2Options {
    * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
    * instead of the local filesystem — the hosted/`/web` path. Only set by
    * callers whose host actually has a computer, so "advertise == enforce".
-   * Takes precedence over the local/HOSTED_MODE skill branches.
+   * The turn's only skill source.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
   /**
    * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
    * the legacy paths never set it → the existing precedence is byte-identical.
@@ -1161,7 +1157,6 @@ export async function prepareChatV2(
     uiTools,
     pageTools,
     builtInTools,
-    cloudSkills,
     skillsSource,
     harness,
     tasks,
@@ -1246,18 +1241,17 @@ export async function prepareChatV2(
       delete (mcpTools as Record<string, unknown>)[name];
     }
   }
-  // Skills source, in precedence order:
-  //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
-  //      `resolved` for a Project-Environment turn) or none. Above everything;
-  //      legacy chat callers never set it, so the chain below is byte-identical
-  //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
-  //      is an interactive turn and keeps the host's approval rule. All three
-  //      static surfaces inline the catalog in the prompt (no `listSkills`).
-  //   1. cloudSkills set ⇒ Convex-backed project skills. Catalog is fetched
-  //      at prompt-build time (timeout + latency log); failure skips skills
-  //      for the turn and sets `skillsFetchFailed`.
-  //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
-  //   3. local ⇒ the inspector's own filesystem.
+  // ONE skill source per turn, stated by the caller. Where a skill comes FROM —
+  // the project, a plugin, a connected server, this machine's filesystem — is a
+  // property of the skill inside an `EffectiveCapabilitySet`, not a mode the
+  // orchestrator picks between:
+  //   - `pinned` / `pinned-effective` ⇒ frozen eval content; the ONLY kinds
+  //     that bypass approval (decision 12), because an eval run auto-denies.
+  //   - `resolved` ⇒ a live or environment-resolved set, keeping the host's
+  //     approval rule. `composeLiveServerSkills` says which of the two it is.
+  //   - `none` ⇒ no skills, said deliberately.
+  // Every surface inlines its catalog in the prompt; there is no `listSkills`
+  // discovery tool on any of them.
   const skillsArePinned =
     skillsSource?.kind === "pinned" ||
     skillsSource?.kind === "pinned-effective";
@@ -1304,17 +1298,13 @@ export async function prepareChatV2(
             ...modelContextTokens,
           })
         : { tools: {}, systemPromptSection: "" }
-    : cloudSkills
-      ? await getCloudSkillToolsAndPrompt(
-          {
-            authHeader: cloudSkills.authHeader,
-            projectId: cloudSkills.projectId,
-          },
-          modelContextTokens,
-        )
-      : HOSTED_MODE
-        ? { tools: {}, systemPromptSection: "" }
-        : await getSkillToolsAndPrompt();
+    : // Every caller states its source now, so there is no implicit arm left to
+      // fall through to. The old chain ended `cloudSkills ? … : HOSTED_MODE ? {}
+      // : localFS` — exclusive arms, chosen by DEPLOYMENT rather than by what
+      // the user had, which is why a desktop turn could never see a project
+      // skill and a hosted one could never see a local file. A caller with no
+      // skills says `{ kind: "none" }` and means it.
+      { tools: {}, systemPromptSection: "" };
   const {
     tools: skillTools,
     systemPromptSection: skillsPromptSection,

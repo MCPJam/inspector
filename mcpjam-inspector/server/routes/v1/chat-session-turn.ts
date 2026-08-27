@@ -73,6 +73,11 @@ import {
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
 import { logger } from "../../utils/logger.js";
+import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  buildLiveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { readJsonObjectBody } from "./adapter.js";
@@ -971,9 +976,47 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
+    // The project's own skills, which this surface has never had. #4419 gave it
+    // a connected server's skills by advertising the extension above; the
+    // project pool was still invisible, so an agent driving MCPJam could read
+    // somebody else's skills but not its own.
+    //
+    // Lazy, like every other live surface: the catalog is one query and a body
+    // is fetched only for the skill the model loads. A catalog failure degrades
+    // to no skills rather than failing the turn.
+    let turnCapabilities: EffectiveCapabilitySet | undefined;
+    if (projectId) {
+      try {
+        turnCapabilities = buildLiveEffectiveCapabilities({
+          standaloneSkills: await listCloudRuntimeSkills({
+            authHeader,
+            projectId,
+          }),
+        });
+      } catch (error) {
+        logger.warn(
+          "[v1/chat-session-turn] project skill catalog unavailable",
+          {
+            projectId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    }
+
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      ...(turnCapabilities
+        ? {
+            skillsSource: {
+              kind: "resolved" as const,
+              capabilities: turnCapabilities,
+              // Keeps #4419's live server skills composed alongside them.
+              composeLiveServerSkills: true as const,
+            },
+          }
+        : {}),
       // Without this every server-skill ref is namespaced by the raw server
       // id, in the `listSkills` catalog the model reads AND in the origin
       // banner prepended to loaded skill content.
@@ -1007,8 +1050,8 @@ async function handleTurn(c: Context): Promise<Response> {
     const tools = noTools
       ? ({} as ToolSet)
       : body.maxToolCalls !== undefined && body.maxToolCalls > 0
-      ? capToolCalls(prepared.allTools, body.maxToolCalls)
-      : prepared.allTools;
+        ? capToolCalls(prepared.allTools, body.maxToolCalls)
+        : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -1029,8 +1072,7 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
 
     // Past this line the turn may have spent. See `modelCallStarted`.
     modelCallStarted = true;
@@ -1107,7 +1149,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message,
         {
           reason: rateLimited
-            ? lastEngineError?.code ?? "ORG_RATE_LIMIT"
+            ? (lastEngineError?.code ?? "ORG_RATE_LIMIT")
             : "TURN_FAILED",
         },
       );

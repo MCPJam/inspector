@@ -289,7 +289,15 @@ describe("web chat-v2 — environment execution target", () => {
     expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({ hostId: "host_legacy" })
     );
-    expect(convexQueryMock).not.toHaveBeenCalled();
+    // No ENVIRONMENT was resolved — which is what this test is about. A host
+    // target does now query the project's skill catalog, because its skills
+    // reach the turn as a live capability set rather than through a separate
+    // branch of the orchestrator, so "no Convex query at all" would assert
+    // something this path never promised.
+    expect(convexQueryMock).not.toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForRuntime",
+      expect.anything()
+    );
   });
 
   it("uses the RESOLVED server set everywhere, never the body's", async () => {

@@ -206,7 +206,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 }
 
 function toPersistedUsage(
-  usage: LiveChatTraceUsage | undefined
+  usage: LiveChatTraceUsage | undefined,
 ): { inputTokens: number; outputTokens: number } | undefined {
   if (
     typeof usage?.inputTokens !== "number" ||
@@ -224,7 +224,7 @@ function toPersistedUsage(
 function buildScopeStepUpErrorToolResult(
   toolCallId: string,
   toolName: string,
-  message: string
+  message: string,
 ): ModelMessage {
   return {
     role: "tool",
@@ -243,7 +243,7 @@ function readProtectedResourceUrl(
   mcpClientManager: {
     getServerConfig?: (serverId: string) => unknown;
   },
-  serverId: string
+  serverId: string,
 ): string | undefined {
   const config = mcpClientManager.getServerConfig?.(serverId);
   if (!config || typeof config !== "object") return undefined;
@@ -288,7 +288,7 @@ function buildLocalScopeStepUpResume(input: {
       ) {
         failLocalScopeStepUpContinuation(
           claimed.continuationId,
-          "original tool is no longer available"
+          "original tool is no longer available",
         );
         return {
           kind: "halted",
@@ -346,7 +346,7 @@ function buildLocalScopeStepUpResume(input: {
         if (repeatedChallenge) {
           failLocalScopeStepUpContinuation(
             claimed.continuationId,
-            "insufficient_scope repeated after authorization"
+            "insufficient_scope repeated after authorization",
           );
           return {
             kind: "recover",
@@ -356,13 +356,13 @@ function buildLocalScopeStepUpResume(input: {
               buildScopeStepUpErrorToolResult(
                 claimed.toolCallId,
                 claimed.toolName,
-                "Authorization completed, but the server still rejected the requested scope."
+                "Authorization completed, but the server still rejected the requested scope.",
               ),
           };
         }
         cancelLocalScopeStepUpContinuation(
           claimed.continuationId,
-          "tool replay failed after the request started"
+          "tool replay failed after the request started",
         );
         return {
           kind: "halted",
@@ -375,7 +375,7 @@ function buildLocalScopeStepUpResume(input: {
       if (!resultMessage) {
         failLocalScopeStepUpContinuation(
           claimed.continuationId,
-          "tool replay returned no result"
+          "tool replay returned no result",
         );
         return {
           kind: "halted",
@@ -437,7 +437,7 @@ function buildLocalScopeStepUpCancellation(input: {
           toolResultMessage: buildScopeStepUpErrorToolResult(
             input.request.toolCallId,
             cancelled.toolName,
-            "Authorization was not completed, so the tool was not retried."
+            "Authorization was not completed, so the tool was not retried.",
           ),
         };
       } catch (error) {
@@ -514,8 +514,7 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    | { outcome: PersistChatOutcome; turnId: string }
-    | undefined;
+    { outcome: PersistChatOutcome; turnId: string } | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -617,7 +616,7 @@ function streamDirectChatWithLiveTrace(options: {
             continue;
           }
           writer.write(
-            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools)
+            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools),
           );
         }
       } catch (error) {
@@ -681,7 +680,7 @@ chatV2.post("/", async (c) => {
     if (scopeStepUpResumeRequest && scopeStepUpCancelRequest) {
       return c.json(
         { error: "Only one scope step-up continuation action is allowed" },
-        400
+        400,
       );
     }
     const {
@@ -711,7 +710,7 @@ chatV2.post("/", async (c) => {
           error:
             "Project Environments can't run on local /api/mcp execution — use the hosted chat route.",
         },
-        400
+        400,
       );
     }
     const isScenarioSession = Boolean(bodyScenarioId);
@@ -725,7 +724,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? bodySurface ?? "preview" : undefined;
+      isScenarioSession ? (bodySurface ?? "preview") : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -769,7 +768,7 @@ chatV2.post("/", async (c) => {
             error:
               "Couldn't authenticate this scenario turn to load its settings — sign in (or retry) to continue.",
           },
-          401
+          401,
         );
       }
       {
@@ -795,7 +794,7 @@ chatV2.post("/", async (c) => {
               scenarioId: bodyScenarioId,
               status: runtime.status,
               error: runtime.error,
-            }
+            },
           );
           const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
           // This route hand-rolls its error envelope (no WebRouteError), so
@@ -806,20 +805,20 @@ chatV2.post("/", async (c) => {
           if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
-              409
+              409,
             );
           }
           if (runtime.status === 403) {
             return c.json(
               { error: failClosedMessage, code: "SCENARIO_ACCESS_DENIED" },
-              403
+              403,
             );
           }
           return c.json(
             { error: failClosedMessage },
             runtime.status >= 500
               ? 502
-              : (runtime.status as 400 | 401 | 403 | 409)
+              : (runtime.status as 400 | 401 | 403 | 409),
           );
         }
       }
@@ -841,13 +840,13 @@ chatV2.post("/", async (c) => {
       } else {
         logger.warn(
           "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
-          { hostId: bodyHostId, status: runtime.status, error: runtime.error }
+          { hostId: bodyHostId, status: runtime.status, error: runtime.error },
         );
         return c.json(
           {
             error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
           },
-          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403),
         );
       }
     }
@@ -880,7 +879,7 @@ chatV2.post("/", async (c) => {
             scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -889,7 +888,7 @@ chatV2.post("/", async (c) => {
             scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -898,7 +897,7 @@ chatV2.post("/", async (c) => {
             scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -910,7 +909,7 @@ chatV2.post("/", async (c) => {
             scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       }
     }
@@ -944,7 +943,7 @@ chatV2.post("/", async (c) => {
           body: model.id,
           host: hostModelId,
           provider: hostModel.provider,
-        }
+        },
       );
       resolvedModelOverride = hostModel;
     }
@@ -998,7 +997,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider)
+      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
     // Guests may use any hosted model — model curation for guests is gone;
     // the backend enforces spend caps (a soft postpaid guard), not an
@@ -1032,7 +1031,7 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions,
     );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
@@ -1073,7 +1072,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext
+        body.widgetModelContext,
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -1103,7 +1102,7 @@ chatV2.post("/", async (c) => {
         // Read from the server-resolved host config, never the body.
         xaaEnterprisePolicyOn:
           readXaaEnterprisePolicy(
-            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile
+            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
           ).kind !== "off",
       });
       if (!availability.ok) {
@@ -1111,7 +1110,7 @@ chatV2.post("/", async (c) => {
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
-          503
+          503,
         );
       }
     }
@@ -1126,9 +1125,7 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        | { executionScope?: ExecutionScope }
-        | null
-        | undefined
+        { executionScope?: ExecutionScope } | null | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1152,7 +1149,7 @@ chatV2.post("/", async (c) => {
     if (enginePref === "local" && !localPrefEligible) {
       logger.debug(
         "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
-        { isScenarioSession, isGuest: requestIsGuest }
+        { isScenarioSession, isGuest: requestIsGuest },
       );
     }
     const localConsentValid = localPrefEligible
@@ -1160,15 +1157,15 @@ chatV2.post("/", async (c) => {
       : false;
     if (localPrefEligible && !localConsentValid) {
       logger.warn(
-        "[mcp/chat-v2] computerEngine=local without a valid consent capability; local engine unavailable for this turn"
+        "[mcp/chat-v2] computerEngine=local without a valid consent capability; local engine unavailable for this turn",
       );
     }
     const computerEngine = resolvePersonalComputerEngine({
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-        ? { preference: "cloud" as const }
-        : {}),
+          ? { preference: "cloud" as const }
+          : {}),
       localConsentValid,
     });
 
@@ -1203,7 +1200,7 @@ chatV2.post("/", async (c) => {
             computerEngine,
             localComputerRequested: localPrefEligible,
           }
-        : null
+        : null,
     );
 
     // Blueprint knowledge/maintenance: when this turn advertises bash, append
@@ -1279,9 +1276,12 @@ chatV2.post("/", async (c) => {
     // Signed out, or with no project: local-only, which is exactly what this
     // route did before. What is new is that signing IN no longer means choosing.
     const localRuntimeSkills = await listLocalRuntimeSkills().catch((error) => {
-      logger.warn("[chat-v2] local skill scan failed; continuing without them", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "[chat-v2] local skill scan failed; continuing without them",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return [];
     });
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
@@ -1396,7 +1396,7 @@ chatV2.post("/", async (c) => {
     }) => {
       const resourceUrl = readProtectedResourceUrl(
         mcpClientManager,
-        info.serverId
+        info.serverId,
       );
       const event = createLocalScopeStepUpContinuation({
         bindingKey: scopeStepUpBindingKey,
@@ -1421,7 +1421,7 @@ chatV2.post("/", async (c) => {
             toolName,
             toolInput,
           }),
-      }
+      },
     );
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
@@ -1431,13 +1431,13 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-      ? buildLocalScopeStepUpCancellation({
-          request: scopeStepUpCancelRequest,
-          bindingKey: scopeStepUpBindingKey,
-        })
-      : undefined;
+        ? buildLocalScopeStepUpCancellation({
+            request: scopeStepUpCancelRequest,
+            bindingKey: scopeStepUpBindingKey,
+          })
+        : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-      validatedWidgetModelContext
+      validatedWidgetModelContext,
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
@@ -1475,7 +1475,7 @@ chatV2.post("/", async (c) => {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
-          500
+          500,
         );
       }
 
@@ -1488,13 +1488,13 @@ chatV2.post("/", async (c) => {
             error:
               "Unable to authenticate with MCPJam servers. Please try again or sign in.",
           },
-          503
+          503,
         );
       }
 
       const modelMessages = await convertToMcpjamModelMessages(
         messages,
-        inboundMcpToolResultModelOutputOptions
+        inboundMcpToolResultModelOutputOptions,
       );
       const sessionStartedAt = Date.now();
 
@@ -1594,7 +1594,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
-                  { authenticatedUserId }
+                  { authenticatedUserId },
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -1647,8 +1647,8 @@ chatV2.post("/", async (c) => {
       const modelMessages = scrubMessages(
         await convertToMcpjamModelMessages(
           messages,
-          inboundMcpToolResultModelOutputOptions
-        )
+          inboundMcpToolResultModelOutputOptions,
+        ),
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -1674,13 +1674,13 @@ chatV2.post("/", async (c) => {
                 scenarioId: bodyScenarioId,
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
-              }
+              },
             )
           : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
-            turnTrace: PersistedTurnTrace
+            turnTrace: PersistedTurnTrace,
           ) => {
             // Returned so the rail can stream the turn's persist receipt.
             return await persistChatSessionToConvex({
@@ -1699,7 +1699,7 @@ chatV2.post("/", async (c) => {
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
                 messages,
-                { authenticatedUserId }
+                { authenticatedUserId },
               ),
               startedAt: sessionStartedAt,
               lastActivityAt: Date.now(),
@@ -1822,7 +1822,7 @@ chatV2.post("/", async (c) => {
             "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
           code: "personal_byok_unsupported",
         },
-        401
+        401,
       );
     }
 
@@ -1834,24 +1834,23 @@ chatV2.post("/", async (c) => {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
       },
-      body.customProviders
+      body.customProviders,
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions,
     );
 
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      | AbortSignal
-      | undefined;
+      AbortSignal | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
-      modelMessages as ModelMessage[]
+      modelMessages as ModelMessage[],
     );
 
     return streamDirectChatWithLiveTrace({
@@ -1906,7 +1905,7 @@ chatV2.post("/", async (c) => {
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
-                { authenticatedUserId }
+                { authenticatedUserId },
               ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
@@ -1952,7 +1951,7 @@ chatV2.post("/", async (c) => {
     const { origin } = reportRouteFailureForResponse(
       "[mcp/chat-v2] failed to process chat request",
       error,
-      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" }
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
     );
     // Also a HEADER, not just the body. By the time the failure reaches the
     // client's reporter the Response is gone — the AI SDK throws

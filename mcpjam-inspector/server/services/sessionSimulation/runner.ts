@@ -38,7 +38,14 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
-import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  listCloudRuntimeSkills,
+  shouldEnableCloudSkillTools,
+} from "../../utils/computers/cloud-skill-tools.js";
+import {
+  buildLiveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
 import {
   persistChatSessionToConvex,
   type PersistChatOutcome,
@@ -56,7 +63,7 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/e
 function warnIfSimulationPersistNotSaved(
   outcome: PersistChatOutcome | undefined,
   stage: "empty-session" | "turn",
-  chatSessionId: string
+  chatSessionId: string,
 ): void {
   // This is observability, not control flow — it must never be the thing that
   // takes a synthetic run down, so an absent outcome is simply nothing to say.
@@ -162,7 +169,7 @@ const TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
 async function withDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  fallback: T
+  fallback: T,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -337,7 +344,7 @@ export interface SyntheticHostSessionAdapter {
   abortSignal?: AbortSignal;
   /** Surface persona driver: produce the next simulated user message. */
   nextPersonaTurn(
-    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>
+    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
   ): Promise<{ message: string; endSession: boolean }>;
   /** Persistence attribution tags (scenario vs swarm). */
   persist: SyntheticPersistAttribution;
@@ -375,7 +382,7 @@ export interface SyntheticHostSessionAdapter {
 }
 
 export async function runSyntheticHostSession(
-  adapter: SyntheticHostSessionAdapter
+  adapter: SyntheticHostSessionAdapter,
 ): Promise<SessionResult> {
   const {
     runId,
@@ -536,7 +543,7 @@ export async function runSyntheticHostSession(
     warnIfSimulationPersistNotSaved(
       emptySessionPersist,
       "empty-session",
-      chatSessionId
+      chatSessionId,
     );
     sessionRowEnsured = true;
   };
@@ -577,7 +584,7 @@ export async function runSyntheticHostSession(
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
           ? selectedServerNames.filter(
-              (_, i) => !nonResumable.has(selectedServerIds[i]!)
+              (_, i) => !nonResumable.has(selectedServerIds[i]!),
             )
           : selectedServerIds.filter((id) => !nonResumable.has(id)),
     };
@@ -626,7 +633,7 @@ export async function runSyntheticHostSession(
             message,
           });
         },
-      }
+      },
     );
 
     // Cloud Skills parity with a real chat-v2 visitor: a synthetic session is
@@ -667,25 +674,55 @@ export async function runSyntheticHostSession(
     // rationale as the cloudSkills gate above), and (c) HARNESS turns —
     // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
     // artifacts ride `pinnedHarnessSkills` on the drain instead.
+    // The live arm, for a run with no pins: the project pool as a capability
+    // set. Previously this was "pass nothing and let the orchestrator fall
+    // through to its cloud branch"; that fallback is gone, so the source is
+    // now stated here. A catalog failure degrades to no skills rather than
+    // failing the run — a simulation that loses its skills is still a
+    // simulation, and `prepared.skillsFetchFailed` telemetry below records it.
+    let liveCapabilities: EffectiveCapabilitySet | undefined;
+    if (cloudSkillsEnabled && authHeader && projectId) {
+      try {
+        liveCapabilities = buildLiveEffectiveCapabilities({
+          standaloneSkills: await listCloudRuntimeSkills({
+            authHeader,
+            projectId,
+          }),
+        });
+      } catch {
+        liveCapabilities = undefined;
+      }
+    }
+
     const skillsSource:
       | { kind: "pinned"; skills: PinnableSkill[] }
       | { kind: "none" }
-      | undefined =
+      | {
+          kind: "resolved";
+          capabilities: EffectiveCapabilitySet;
+          composeLiveServerSkills?: boolean;
+        } =
       pinnedSkills === undefined
-        ? undefined
+        ? liveCapabilities
+          ? {
+              kind: "resolved",
+              capabilities: liveCapabilities,
+              // Live surface: server skills come from the connected servers,
+              // preserving what the fallthrough arm used to compose.
+              composeLiveServerSkills: true,
+            }
+          : { kind: "none" }
         : harness || requireToolApproval || pinnedSkills.length === 0
-        ? { kind: "none" }
-        : {
-            kind: "pinned",
-            skills: pinnedSkills.map(
-              (a): PinnableSkill => ({
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map((a): PinnableSkill => ({
                 name: a.name,
                 description: a.description,
                 content: a.content,
                 contentHash: a.contentHash,
-              })
-            ),
-          };
+              })),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -705,7 +742,7 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
-      ...(skillsSource ? { skillsSource } : {}),
+      skillsSource,
       ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
     });
 
@@ -989,7 +1026,7 @@ export async function runSyntheticHostSession(
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
               knownIds,
-              { logPrefix: "sessionSimulation.persist" }
+              { logPrefix: "sessionSimulation.persist" },
             );
         }
       } catch {
@@ -1066,7 +1103,7 @@ export async function runSyntheticHostSession(
               chatSessionId,
               promptIndex: turn,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
@@ -1159,7 +1196,7 @@ export async function runSyntheticHostSession(
               runId,
               chatSessionId,
               error: err instanceof Error ? err.message : String(err),
-            }
+            },
           );
         }
       }
@@ -1201,7 +1238,7 @@ export async function runSyntheticHostSession(
                     runId,
                     chatSessionId,
                     error: err instanceof Error ? err.message : String(err),
-                  }
+                  },
                 );
               }
               if (videoBytes) await outbox.stageVideo(videoBytes);
@@ -1218,7 +1255,7 @@ export async function runSyntheticHostSession(
                   written: 0,
                   pending: outbox.pendingBatchCount,
                   videoAttached: false,
-                }
+                },
               );
               if (result.pending > 0) {
                 logger.warn(
@@ -1228,7 +1265,7 @@ export async function runSyntheticHostSession(
                     chatSessionId,
                     pending: result.pending,
                     videoAttached: result.videoAttached,
-                  }
+                  },
                 );
               }
             },
@@ -1307,7 +1344,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   if (!convexUrl) {
     logger.warn(
       "[sessionSimulation.runner] CONVEX_URL not set; skipping widget snapshot capture",
-      { chatSessionId, scenarioId }
+      { chatSessionId, scenarioId },
     );
     return;
   }
@@ -1366,7 +1403,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
-          }
+          },
         );
         // Null = the ingest race (session row not written yet) — leave the
         // id unmarked so the next turn retries. Anything else is the row id.
@@ -1380,7 +1417,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-    })
+    }),
   );
 }
 
@@ -1452,7 +1489,7 @@ export async function drainAssistantTurn(
     journeyRunId?: string;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
-  }
+  },
 ): Promise<{
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
@@ -1486,7 +1523,7 @@ export async function drainAssistantTurn(
   if (args.sourceType === "swarm" && !!journeyRunId !== !!hostId) {
     throw new Error(
       "Swarm turn has partial continuity identity: journeyRunId and hostId " +
-        "must be provided together"
+        "must be provided together",
     );
   }
 
@@ -1539,8 +1576,7 @@ export async function drainAssistantTurn(
   // Engine-error signal. Structural type covers both the hosted
   // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
   let lastEngineError:
-    | { message: string; code?: string; httpStatus?: number }
-    | undefined;
+    { message: string; code?: string; httpStatus?: number } | undefined;
   const captureEngineError = (event: {
     message: string;
     code?: string;
@@ -1611,7 +1647,7 @@ export async function drainAssistantTurn(
     // billing — with the same message shape the old headless path did.
     if (lastEngineError) {
       throw new Error(
-        lastEngineError.message || "Local org-BYOK turn failed mid-stream."
+        lastEngineError.message || "Local org-BYOK turn failed mid-stream.",
       );
     }
 
@@ -1719,11 +1755,11 @@ export async function drainAssistantTurn(
       throw new Error(
         detail
           ? `${lastEngineError.message} (${detail})`
-          : lastEngineError.message
+          : lastEngineError.message,
       );
     }
     throw new Error(
-      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)"
+      "Assistant turn failed: the engine returned no turn trace (stream error or empty response)",
     );
   }
 
@@ -1753,7 +1789,7 @@ function extractAssistantText(history: ModelMessage[]): string {
           typeof part === "object" &&
           part !== null &&
           (part as { type?: string }).type === "text" &&
-          typeof (part as { text?: unknown }).text === "string"
+          typeof (part as { text?: unknown }).text === "string",
       )
       .map((part) => part.text)
       .join("");
