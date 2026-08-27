@@ -220,9 +220,19 @@ function LoadFailureState({
  * yet: a persona avatar says "a user", but this page is about a study — the
  * desk, the brief and the observed subject are the thing being described.
  *
- * Sized to its native 196×250 so the pixel art lands on whole device pixels;
- * `image-rendering: pixelated` keeps the edges hard on retina rather than
- * letting the browser smooth them into mush.
+ * Drawn at the height of the Swarm empty state's characters, so the two
+ * empty pages carry the same weight: `PersonaPixelAvatar size="lg"` is 19
+ * cells of 2.75px plus 4, i.e. 56px — `h-14`. At its native 250px it
+ * towered over the heading below it.
+ *
+ * `w-auto` rather than a matching width: 196×250 has no clean integer
+ * downscale (their GCD is 2), so pinning both dimensions would round the
+ * ratio. The intrinsic size stays on the attributes to reserve the box
+ * before the file loads.
+ *
+ * No `image-rendering: pixelated` either. That keeps edges hard when pixel
+ * art is scaled UP; scaling 4.5× DOWN it would drop rows unevenly and
+ * alias. The browser's own filtering is the better of the two here.
  */
 function EmptyState({
   onCreateScenario,
@@ -243,7 +253,7 @@ function EmptyState({
         height={250}
         aria-hidden
         data-testid="user-testing-empty-illustration"
-        className="h-[250px] w-[196px] max-w-full object-contain [image-rendering:pixelated]"
+        className="h-14 w-auto max-w-full object-contain"
       />
       <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
