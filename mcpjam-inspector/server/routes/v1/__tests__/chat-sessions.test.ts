@@ -587,6 +587,40 @@ describe("computeExcludedToolNames", () => {
   });
 });
 
+describe("unappliedBuiltInToolIds", () => {
+  const { unappliedBuiltInToolIds } = __testing;
+
+  // This surface does not wire built-in tools — `bash` and `web_search` are
+  // applied in routes/web/chat-v2.ts, not here. Observed on a real turn: a
+  // client with a computer attached and `builtInToolIds: ["bash"]` ran with
+  // the MCP server's tools alone and the model answered "I don't actually
+  // have a bash tool", which a caller cannot tell apart from the model
+  // declining to use one. Naming it is the fix; refusing the turn is not.
+  it("names the built-ins a client asked for", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: ["bash"] })).toEqual([
+      "bash",
+    ]);
+    expect(
+      unappliedBuiltInToolIds({ builtInToolIds: ["bash", "web_search"] }),
+    ).toEqual(["bash", "web_search"]);
+  });
+
+  // A client that asked for nothing must not grow a field in the response.
+  it("is empty for a client that configures none", () => {
+    expect(unappliedBuiltInToolIds({})).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [] })).toEqual([]);
+    expect(unappliedBuiltInToolIds(undefined)).toEqual([]);
+  });
+
+  // The config blob is opaque to this route, so it is not assumed well-formed.
+  it("ignores a malformed builtInToolIds", () => {
+    expect(unappliedBuiltInToolIds({ builtInToolIds: "bash" })).toEqual([]);
+    expect(unappliedBuiltInToolIds({ builtInToolIds: [1, "", null] })).toEqual(
+      [],
+    );
+  });
+});
+
 // ── Target narrowing ────────────────────────────────────────────────────────
 
 describe("allowedServerIds narrowing", () => {
