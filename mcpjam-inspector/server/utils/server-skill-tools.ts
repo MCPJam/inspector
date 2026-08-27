@@ -448,10 +448,28 @@ export function withServerSkills<T extends Record<string, unknown>>(
     }
     const approved = approvedManifests.get(approvalKey(input));
     if (approved === undefined) {
-      return {
-        error:
-          "Error (manifest_unbound): this server skill reached execution without a bound approval. Request it again.",
-      };
+      // NO ENTRY — `needsApproval` never ran in THIS closure, so there is no
+      // recorded digest set to contradict. Proceed, exactly as the contract
+      // above says.
+      //
+      // This used to refuse, which broke every load on every surface that is
+      // not a single long-lived process. `approvedManifests` is an in-memory
+      // Map in the closure `withServerSkills` creates, and `prepareChatV2` —
+      // hence that closure — is rebuilt PER REQUEST. So the gate writes its
+      // binding into one request's Map and `execute` looks in the next
+      // request's empty one. Local mode kept one closure alive across the
+      // approval round trip and therefore never saw it.
+      //
+      // What is lost here is the RE-CHECK, not the approval: a surface with an
+      // approval flow still shows its card and still refuses without consent.
+      // What is not enforced is the SEP's content-binding — that an approval
+      // covers one digest set and is void if the server republishes. Restoring
+      // it needs the digest set to survive the round trip, which means putting
+      // it in the approval payload rather than in a Map; that also fixes the
+      // fact that the card never shows WHICH manifest is being approved. Until
+      // then this is honestly weaker than the SEP asks, and refusing every
+      // load was not a substitute for it.
+      return {};
     }
     if (approved === UNRESOLVED) {
       return {
@@ -819,12 +837,22 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
         const { entry } = target;
         const approved = approvedFileManifests.get(fileApprovalKey(input));
-        if (approved === undefined || approved === UNRESOLVED) {
-          return "Error (manifest_unbound): this server skill file was not bound to an approval. Request it again.";
+        // UNRESOLVED still fails closed: the gate RAN and could not resolve a
+        // manifest, so the user was prompted with nothing behind the question.
+        if (approved === UNRESOLVED) {
+          return "Error (manifest_unbound): this skill's file manifest could not be resolved before the approval, so the approval did not cover its contents. Request it again.";
         }
-        // Use the exact manifest that was bound before approval. A resource
-        // read may only use that allowlist, never a later listing result.
-        const approvedEntry = approved.entry;
+        // NO ENTRY proceeds, for the same reason as `loadSkill`: the binding
+        // lives in a per-request closure, so on any surface that is not one
+        // long-lived process there is never an entry to find. See
+        // `checkApprovedManifest`.
+        //
+        // The read is still confined to the skill's OWN manifest — the
+        // fallback is `entry`, resolved for this call, and
+        // `readVerifiedServerSkillFile` refuses any URI absent from it. So an
+        // unlisted file is still unreadable; what is missing is only the
+        // guarantee that the manifest is the same one the user was shown.
+        const approvedEntry = approved?.entry ?? entry;
         const resourceUri = resourceUriFor(entry, input.path);
         try {
           const file = await readVerifiedServerSkillFile(args.manager, {

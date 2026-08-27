@@ -939,9 +939,25 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
+    // The user-assigned server names, so a server skill is addressed as
+    // `mcpjam-staging-skills/run-mcpjam-evals` rather than
+    // `p176vpy587jn4v51vd9bm5g3rx8d8yry/run-mcpjam-evals`. `prepareChatV2`
+    // falls back to the id when this is absent — safe, since the id is
+    // host-assigned too, but unreadable in a ref the model and the user both
+    // see. `narrowTarget` already carries the name alongside each id; it was
+    // simply never forwarded.
+    const serverLabels = Object.fromEntries(
+      selected.flatMap((entry) =>
+        typeof entry.name === "string" && entry.name.length > 0
+          ? [[entry.id, entry.name] as const]
+          : [],
+      ),
+    );
+
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      ...(Object.keys(serverLabels).length > 0 ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
       ...(pins.temperature !== undefined
