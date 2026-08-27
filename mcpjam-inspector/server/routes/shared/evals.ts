@@ -3,7 +3,9 @@ import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import {
   caseIntentUpdateSchema,
-  normalizeIntent, evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+  normalizeIntent,
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";

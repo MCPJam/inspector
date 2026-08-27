@@ -496,7 +496,7 @@ const createEvalSuiteSchema = z.strictObject({
           .passthrough()
           .optional(),
         matchOptions: matchOptionsSchema.optional(),
-  intent: caseIntentUpdateSchema.optional(),
+        intent: caseIntentUpdateSchema.optional(),
         predicates: casePredicatesSchema.optional(),
       }),
     )
