@@ -8,6 +8,8 @@
  * answer. BB-136.
  */
 
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
+
 /** Anthropic rejects a budget below 1024; 4096 fits a real chain without a
  *  large latency cost on the short turns the Playground sends. */
 const ANTHROPIC_THINKING_BUDGET_TOKENS = 4096;
@@ -23,7 +25,7 @@ const ANTHROPIC_THINKING_BUDGET_TOKENS = 4096;
  */
 export function reasoningProviderOptions(
   provider: string | undefined,
-): Record<string, Record<string, unknown>> {
+): ProviderOptions {
   switch (provider?.toLowerCase()) {
     case "anthropic":
       return {

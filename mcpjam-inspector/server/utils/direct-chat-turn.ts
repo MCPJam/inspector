@@ -28,6 +28,7 @@ import {
   toTraceRecord,
 } from "./live-chat-trace-stream";
 import { normalizeSystemPromptForProvider } from "./model-request-payload";
+import { reasoningProviderOptions } from "./reasoning-provider-options";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -708,6 +709,12 @@ export function runDirectChatTurn(
   // a sync throw (provider config error, ToolSet shape validation, …)
   // leaks the listener and the SSE caller has no handle to call
   // `cleanup()` against.
+
+  // Without this the provider inlines its reasoning in the text channel and the
+  // stream carries no `reasoning-*` parts, so the client renders the model's
+  // scratch work as the answer. BB-136.
+  const reasoningOptions = reasoningProviderOptions(provider);
+
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
@@ -722,6 +729,9 @@ export function runDirectChatTurn(
     ],
     ...(abortSignal ? { abortSignal } : {}),
     ...(toolChoice ? { toolChoice } : {}),
+    ...(Object.keys(reasoningOptions).length > 0
+      ? { providerOptions: reasoningOptions }
+      : {}),
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
