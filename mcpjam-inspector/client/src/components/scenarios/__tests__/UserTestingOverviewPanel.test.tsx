@@ -188,10 +188,11 @@ describe("UserTestingOverviewPanel", () => {
     const art = screen.getByTestId("user-testing-empty-illustration");
     expect(art).toBeVisible();
     expect(art).toHaveAttribute("src", "/user-testing-empty.png");
-    // h-14 is 56px: the height of the Swarm empty state's characters
-    // (PersonaPixelAvatar "lg" = 19 cells x 2.75px + 4). The two empty pages
-    // are meant to carry the same weight.
-    expect(art.className).toContain("h-14");
+    // h-28 is 112px: twice the height of the Swarm empty state's characters
+    // (PersonaPixelAvatar "lg" = 19 cells x 2.75px + 4 = 56px). That page
+    // runs four of them side by side, so matching its HEIGHT left this one
+    // reading as a quarter of the picture — the two are matched by area.
+    expect(art.className).toContain("h-28");
     // Decorative: the heading and body below already say what this is, so a
     // screen reader announcing the art too would only repeat them.
     expect(art).toHaveAttribute("alt", "");
