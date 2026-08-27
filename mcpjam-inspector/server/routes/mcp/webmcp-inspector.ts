@@ -18,7 +18,7 @@ import {
   WebMcpUnsupportedError,
 } from "../../services/webmcp-inspector/provider";
 import { WebMcpQueueFullError } from "../../services/webmcp-inspector/session-runtime";
-import { logger } from "../../utils/logger";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /**
  * webmcp-inspector.ts — a managed browser pointed at a page, so its WebMCP
@@ -116,7 +116,10 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   if (error instanceof WebMcpToolGoneError) {
     return c.json({ error: error.message, code: "tool-gone" }, 409);
   }
-  logger.error("[webmcp] unhandled route error", { error });
+  reportRouteFailure("[webmcp] unhandled route error", error, {
+    source: "mcp.webmcp-inspector",
+    hop: "mcpjam_internal",
+  });
   return c.json(
     { error: error instanceof Error ? error.message : fallback },
     500,
@@ -166,7 +169,19 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
     : 200;
 
   let unsubscribe: (() => void) | undefined;
+  let keepalive: ReturnType<typeof setInterval> | undefined;
   const encoder = new TextEncoder();
+
+  // Shared by the abort listener and `cancel()`. A consumer that cancels the
+  // stream without an abort event would otherwise leave the interval running
+  // for the life of the process, enqueueing into a closed controller every 15
+  // seconds with the throw swallowed.
+  const teardown = () => {
+    if (keepalive) clearInterval(keepalive);
+    keepalive = undefined;
+    unsubscribe?.();
+    unsubscribe = undefined;
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -191,7 +206,7 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
         return;
       }
 
-      const keepalive = setInterval(() => {
+      keepalive = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`));
         } catch {
@@ -200,8 +215,7 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
       }, 15_000);
 
       c.req.raw.signal.addEventListener("abort", () => {
-        clearInterval(keepalive);
-        unsubscribe?.();
+        teardown();
         try {
           controller.close();
         } catch {
@@ -210,7 +224,7 @@ webmcpInspector.get("/sessions/:id/events", (c) => {
       });
     },
     cancel() {
-      unsubscribe?.();
+      teardown();
     },
   });
 

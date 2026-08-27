@@ -132,6 +132,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -840,6 +841,12 @@ export function PlaygroundMain({
   const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Whether this turn may use the tools of the page open in the WebMCP tab.
+  // Held in the inspector store so the Tools-panel toggle and this transport
+  // read one value without threading a boolean between them.
+  const webmcpPageToolsEnabled = useWebmcpInspectorStore(
+    (state) => state.chatEnabled,
+  );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
@@ -939,6 +946,9 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
+    // Opt-in from the Tools panel's Page tools section. Off unless the user
+    // ticked it for the page they currently have open in the WebMCP tab.
+    usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
     hostedContext: {

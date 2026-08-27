@@ -218,6 +218,27 @@ describe("WebMcpSessionRegistry — shutdown", () => {
     ).rejects.toBeInstanceOf(WebMcpSessionUnavailableError);
   });
 
+  it("closes a browser that finishes launching during a permanent shutdown", async () => {
+    const { registry } = makeRegistry({ maxSessions: 1 });
+    const provider = new FakeProvider();
+    provider.launchGate = deferred<void>();
+
+    const starting = startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+    });
+    // Shutdown lands while the launch is still in flight: registration will be
+    // refused, and the browser that arrives afterwards has no owner.
+    await registry.disposeAll({ permanent: true });
+    provider.launchGate.resolve();
+
+    await expect(starting).rejects.toBeInstanceOf(
+      WebMcpSessionUnavailableError,
+    );
+    await vi.waitFor(() => expect(provider.sessions[0].disposed).toBe(true));
+  });
+
   it("disposes an unsupported browser instead of holding a slot with it", async () => {
     const { registry } = makeRegistry({ maxSessions: 1 });
     const provider = new FakeProvider();

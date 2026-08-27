@@ -90,17 +90,24 @@ function ActivityRow({ entry }: { entry: WebMcpActivityEntry }) {
       return header("Session error", entry.message, "error");
     case "unsupported":
       return header("WebMCP unavailable", entry.message, "warn");
+    // The two invocation rows are disclosures: the HEADER is the button, and
+    // the panel is its sibling. Nesting the panel inside would put flow content
+    // (div/p/pre/figure) in a <button>, which is invalid, and would make the
+    // whole payload — screenshot included — one giant click target.
     case "invocation_started":
       return (
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          className="w-full text-left"
-        >
-          {header(
-            `Invoked ${entry.toolKey}`,
-            entry.source === "chat" ? "from chat" : "manual",
-          )}
+        <div>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+            className="w-full text-left"
+          >
+            {header(
+              `Invoked ${entry.toolKey}`,
+              entry.source === "chat" ? "from chat" : "manual",
+            )}
+          </button>
           {open ? (
             <div className="pl-14 pt-1 space-y-2">
               <Payload
@@ -111,20 +118,23 @@ function ActivityRow({ entry }: { entry: WebMcpActivityEntry }) {
               <Shot base64={entry.screenshotBase64} caption="Before" />
             </div>
           ) : null}
-        </button>
+        </div>
       );
     case "invocation_settled":
       return (
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          className="w-full text-left"
-        >
-          {header(
-            `${entry.state} · ${entry.toolKey}`,
-            `${entry.durationMs}ms`,
-            entry.state === "succeeded" ? undefined : "error",
-          )}
+        <div>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+            className="w-full text-left"
+          >
+            {header(
+              `${entry.state} · ${entry.toolKey}`,
+              `${entry.durationMs}ms`,
+              entry.state === "succeeded" ? undefined : "error",
+            )}
+          </button>
           {open ? (
             <div className="pl-14 pt-1 space-y-2">
               {entry.errorMessage ? (
@@ -140,7 +150,7 @@ function ActivityRow({ entry }: { entry: WebMcpActivityEntry }) {
               <Shot base64={entry.screenshotBase64} caption="After" />
             </div>
           ) : null}
-        </button>
+        </div>
       );
   }
 }

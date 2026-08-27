@@ -7,7 +7,10 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { ToolsPanel } from "./ToolsPanel";
 import { ToolInvokePane } from "./ToolInvokePane";
 import { ActivityTimeline } from "./ActivityTimeline";
-import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpActivityEntry,
+  WebMcpSessionStatus,
+} from "@/shared/webmcp-inspector-protocol";
 
 /**
  * The WebMCP workspace: a URL bar, the live tool registry, one tool's schema
@@ -36,6 +39,7 @@ export function WebmcpInspectorTab() {
     cancelInvocation,
     captureScreenshot,
     clearError,
+    reconnect,
     disconnect,
   } = useWebmcpInspectorStore();
 
@@ -44,8 +48,14 @@ export function WebmcpInspectorTab() {
   const [rightTab, setRightTab] = useState<"tools" | "activity">("tools");
 
   // The browser outlives this screen on purpose — a developer may tab away
-  // mid-flow — so unmounting closes the event stream and nothing else.
-  useEffect(() => () => disconnect(), [disconnect]);
+  // mid-flow — so unmounting closes the event stream and nothing else. Coming
+  // back re-attaches to the session still running: without this, the header
+  // would still say a browser is open while no tool registration or invocation
+  // result could ever arrive, and an invoke would appear to hang forever.
+  useEffect(() => {
+    reconnect();
+    return () => disconnect();
+  }, [reconnect, disconnect]);
 
   const selectedTool = tools.find((tool) => tool.toolKey === selectedToolKey);
   const pendingForSelected = pending.find(
@@ -81,6 +91,9 @@ export function WebmcpInspectorTab() {
           placeholder="http://localhost:3000"
           className="max-w-md font-mono text-sm"
           spellCheck={false}
+          // The placeholder never shows — `url` starts populated — so without
+          // this the field has no accessible name at all.
+          aria-label="Page URL to inspect"
         />
         {live ? (
           <>
@@ -210,15 +223,18 @@ export function WebmcpInspectorTab() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const tone =
+function StatusBadge({ status }: { status: WebMcpSessionStatus }) {
+  // Typed against the protocol union rather than `string`: if a status is
+  // renamed there, this mapping should fail to compile instead of silently
+  // falling through to "secondary".
+  const tone: "default" | "destructive" | "secondary" =
     status === "ready"
       ? "default"
       : status === "error" || status === "unsupported"
         ? "destructive"
         : "secondary";
   return (
-    <Badge variant={tone as never} className="text-[10px] capitalize">
+    <Badge variant={tone} className="text-[10px] capitalize">
       {status}
     </Badge>
   );

@@ -313,12 +313,15 @@ export async function startWebMcpSession(
   } catch (error) {
     if (error instanceof WebMcpUnsupportedError) {
       // The browser is fine and the page loaded; there is simply nothing to
-      // inspect. Keeping the session lets the UI say so precisely instead of
-      // failing the whole request — but the browser is torn down, because a
-      // window nobody can inspect is not worth a capacity slot.
+      // inspect. Marking the session says so precisely instead of failing with
+      // a generic error — but the browser still goes, because a window nobody
+      // can inspect is not worth a capacity slot.
       runtime.markUnsupported(error.message);
-      await runtime.close();
     }
+    // Closed for EVERY failure, not just the unsupported one. A browser that
+    // launched and then failed to register — the shutdown race, or the cap —
+    // is a real Chromium nobody holds a handle to any more.
+    await runtime.close().catch(() => {});
     registry.release(reservation);
     throw error;
   }
@@ -339,9 +342,27 @@ export function wireWebMcpShutdown(
   const dispose = () => {
     void registry.disposeAll({ permanent: true });
   };
+  // A BACKSTOP, not the primary path. The standalone server calls
+  // `shutdownWebMcpSessions` from its own shutdown, which awaits teardown
+  // before `process.exit(0)`; these handlers cover the paths that do not run
+  // it — the Electron main process, and an exit that bypasses that function.
   process.once("SIGINT", dispose);
   process.once("SIGTERM", dispose);
   process.once("beforeExit", dispose);
+}
+
+/**
+ * Await every browser's teardown.
+ *
+ * The signal handlers above cannot be relied on alone: the server's own
+ * shutdown calls `process.exit(0)` as soon as its awaits finish, and a
+ * fire-and-forget disposal started from a sibling SIGTERM handler loses that
+ * race — leaving a Chromium window open with nothing left to close it.
+ */
+export async function shutdownWebMcpSessions(
+  registry: WebMcpSessionRegistry = webMcpSessions,
+): Promise<void> {
+  await registry.disposeAll({ permanent: true });
 }
 
 /** Test seam: lets a suite re-wire the latch. */

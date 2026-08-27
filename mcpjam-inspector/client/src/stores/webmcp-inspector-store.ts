@@ -33,6 +33,17 @@ export interface PendingInvocation {
   startedAt: number;
 }
 
+/** The settled outcome of one invocation, as a caller awaiting it sees it. */
+export interface PageToolInvocationResult {
+  state: "succeeded" | "failed" | "cancelled" | "timeout";
+  output?: unknown;
+  outputTruncated?: boolean;
+  errorMessage?: string;
+}
+
+/** How long to wait for a settle event before giving up on the stream. */
+const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
+
 interface WebMcpInspectorState {
   session: WebMcpSessionPublic | undefined;
   tools: WebMcpToolDescriptor[];
@@ -42,14 +53,34 @@ interface WebMcpInspectorState {
   starting: boolean;
   error: WebMcpRequestError | undefined;
   lastScreenshot: string | undefined;
+  /**
+   * Whether chat turns may use this page's tools. Off by default and reset when
+   * a session closes: a chat should never silently acquire tools because a
+   * browser was left open somewhere else in the app.
+   */
+  chatEnabled: boolean;
+  setChatEnabled(enabled: boolean): void;
 
   startSession(url: string): Promise<void>;
   closeSession(): Promise<void>;
   sendCommand(command: WebMcpCommand): Promise<unknown>;
   invokeTool(toolKey: string, input: Record<string, unknown>): Promise<void>;
+  /**
+   * Invoke and wait for the result, for callers that need the value rather
+   * than the timeline — chat, which must hand the model back what it asked for.
+   */
+  invokeToolForResult(
+    toolKey: string,
+    input: Record<string, unknown>,
+  ): Promise<PageToolInvocationResult>;
   cancelInvocation(invokeId: string): Promise<void>;
   captureScreenshot(): Promise<void>;
   clearError(): void;
+  /**
+   * Re-attach the event stream to the session that is still running, e.g. after
+   * the surface unmounts and mounts again. Idempotent for the same session.
+   */
+  reconnect(): void;
   /** Test seam; also used when the surface unmounts. */
   disconnect(): void;
 }
@@ -102,6 +133,29 @@ async function request<T>(
   }
 }
 
+/**
+ * Callers awaiting a specific invocation, keyed by invokeId.
+ *
+ * The settle arrives on the SSE stream rather than as an HTTP response — the
+ * invoke request answers as soon as the call is queued — so a caller that needs
+ * the value parks here and the stream handler resolves it.
+ */
+const invocationWaiters = new Map<
+  string,
+  (result: PageToolInvocationResult) => void
+>();
+
+/**
+ * Activity ids already applied.
+ *
+ * EventSource reconnects on its own, and every reconnect replays the ring, so
+ * the same entries arrive more than once. Appending them blindly would show the
+ * timeline doubled, hand React duplicate keys, and — worse — re-add an
+ * `invocation_started` whose `invocation_settled` has scrolled out of the replay
+ * window, leaving a tool stuck showing "Running…" with Invoke disabled.
+ */
+let seenActivityIds = new Set<string>();
+
 export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
   (set, get) => {
     function applyEvent(event: WebMcpEvent) {
@@ -114,6 +168,8 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         return;
       }
       const entry = event.entry;
+      if (seenActivityIds.has(entry.id)) return;
+      seenActivityIds.add(entry.id);
       set((state) => {
         const activity = [...state.activity, entry].slice(-MAX_ACTIVITY);
         let pending = state.pending;
@@ -133,6 +189,19 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         }
         return { activity, pending };
       });
+
+      if (entry.kind === "invocation_settled") {
+        const waiter = invocationWaiters.get(entry.invokeId);
+        if (waiter) {
+          invocationWaiters.delete(entry.invokeId);
+          waiter({
+            state: entry.state,
+            output: entry.output,
+            outputTruncated: entry.outputTruncated,
+            errorMessage: entry.errorMessage,
+          });
+        }
+      }
     }
 
     function connect(sessionId: string) {
@@ -190,8 +259,16 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       starting: false,
       error: undefined,
       lastScreenshot: undefined,
+      chatEnabled: false,
+
+      setChatEnabled(enabled) {
+        set({ chatEnabled: enabled });
+      },
 
       async startSession(url) {
+        // A new session starts a new timeline, so the dedup set starts over
+        // with it — otherwise it grows for the life of the tab.
+        seenActivityIds = new Set();
         set({
           starting: true,
           error: undefined,
@@ -214,10 +291,29 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       async closeSession() {
         const sessionId = get().session?.sessionId;
         disconnectStream();
-        set({ session: undefined, tools: [], pending: [] });
+        // Opting the next page in has to be a fresh decision: carrying the
+        // choice across sessions would silently grant a DIFFERENT site's tools
+        // to chat.
+        set({
+          session: undefined,
+          tools: [],
+          pending: [],
+          chatEnabled: false,
+        });
         if (sessionId) {
-          await request(`/sessions/${sessionId}`, { method: "DELETE" });
+          const result = await request(`/sessions/${sessionId}`, {
+            method: "DELETE",
+          });
+          // Surfaced rather than swallowed: the session is already cleared from
+          // the UI, so a silent failure leaves a browser window open with no
+          // "Close browser" button left to try again with.
+          if (!result.ok) set({ error: result.error });
         }
+      },
+
+      reconnect() {
+        const sessionId = get().session?.sessionId;
+        if (sessionId) connect(sessionId);
       },
 
       async sendCommand(command) {
@@ -246,6 +342,42 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           toolKey,
           input,
           source: "manual",
+        });
+      },
+
+      async invokeToolForResult(toolKey, input) {
+        const response = (await get().sendCommand({
+          type: "invoke_tool",
+          toolKey,
+          input,
+          source: "chat",
+        })) as { invokeId?: string } | undefined;
+
+        if (!response?.invokeId) {
+          const message =
+            get().error?.message ?? "The page tool could not be invoked.";
+          return { state: "failed", errorMessage: message };
+        }
+
+        return new Promise<PageToolInvocationResult>((resolve) => {
+          const invokeId = response.invokeId!;
+          const timer = setTimeout(() => {
+            // The server enforces its own per-invocation timeout, so reaching
+            // this one means the settle event itself never arrived — a dropped
+            // stream, or a server that went away. Either way the caller gets an
+            // answer rather than waiting forever.
+            if (!invocationWaiters.delete(invokeId)) return;
+            resolve({
+              state: "failed",
+              errorMessage:
+                "Lost track of this invocation — the connection to the browser session dropped.",
+            });
+          }, INVOCATION_WAIT_TIMEOUT_MS);
+
+          invocationWaiters.set(invokeId, (result) => {
+            clearTimeout(timer);
+            resolve(result);
+          });
         });
       },
 

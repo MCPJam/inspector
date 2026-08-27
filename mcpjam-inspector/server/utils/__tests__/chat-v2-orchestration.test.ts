@@ -1312,7 +1312,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
       })
-    ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
+    ).rejects.toThrow(/collides with an existing app, UI, page, or skill tool/);
   });
 
   it("exempts UI tools from progressive discovery (never cataloged, always advertised)", async () => {

@@ -56,7 +56,9 @@ import {
   type ModelDefinition,
 } from "@/shared/types";
 import {
+  PAGE_TOOL_ALIAS_REGEX,
   UI_TOOL_NAME_REGEX,
+  pageToolCallNeedsApproval,
   uiToolCallNeedsApproval,
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
@@ -123,6 +125,13 @@ const UI_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const WIDGET_MODEL_CONTEXT_MAX_ENTRIES = 32;
 const WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS = 32;
 const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
+// WebMCP Inspector page-tool caps. Same shape as the app-tool caps above, and
+// deliberately no more generous: the entries describe tools a third-party page
+// registered, so every field here is attacker-influenced text.
+const PAGE_TOOL_MAX_ENTRIES = 64;
+const PAGE_TOOL_MAX_NAME_CHARS = 128;
+const PAGE_TOOL_MAX_DESCRIPTION_CHARS = 512;
+const PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 
 export class AppToolValidationError extends Error {
   constructor(message: string) {
@@ -726,6 +735,12 @@ export interface PrepareChatV2Options {
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
+  /**
+   * Browser-native WebMCP tools from a page the WebMCP Inspector has open.
+   * Client-fulfilled like `appTools`, and always approval-gated: unlike the
+   * two above, these run code on a third-party site.
+   */
+  pageTools?: PageToolEntry[];
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
   /**
@@ -869,6 +884,151 @@ export function buildUiTools(
   return out;
 }
 
+/** One WebMCP page tool, as the client snapshots it for a turn. */
+export interface PageToolEntry {
+  /** Model-facing opaque alias, `page_<8hex>`. */
+  alias: string;
+  /** Inspector session that owns the browser this tool lives in. */
+  sessionId: string;
+  /** Stable `origin::name` key the inspector invokes by. */
+  toolKey: string;
+  /** The name the page registered, for display and prompt text. */
+  rawName: string;
+  /** Origin that registered it — the model is told, so it knows whose tool this is. */
+  origin: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export class PageToolValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PageToolValidationError";
+  }
+}
+
+/**
+ * Validate the page-tool snapshot a turn advertised.
+ *
+ * Everything here originates on a third-party web page, so it is bounded the
+ * same way the app-tool snapshot is rather than trusted for being "ours".
+ */
+export function validatePageToolEntries(input: unknown): PageToolEntry[] {
+  if (input === undefined || input === null) return [];
+  if (!Array.isArray(input)) {
+    throw new PageToolValidationError("pageTools must be an array");
+  }
+  if (input.length > PAGE_TOOL_MAX_ENTRIES) {
+    throw new PageToolValidationError(
+      `pageTools accepts at most ${PAGE_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+    );
+  }
+  const out: PageToolEntry[] = [];
+  const seenAliases = new Set<string>();
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") {
+      throw new PageToolValidationError(`pageTools[${i}] must be an object`);
+    }
+    const alias = raw.alias;
+    if (typeof alias !== "string" || !PAGE_TOOL_ALIAS_REGEX.test(alias)) {
+      throw new PageToolValidationError(
+        `pageTools[${i}].alias must match ${PAGE_TOOL_ALIAS_REGEX}`
+      );
+    }
+    if (seenAliases.has(alias)) {
+      throw new PageToolValidationError(
+        `pageTools[${i}].alias '${alias}' is duplicated`
+      );
+    }
+    seenAliases.add(alias);
+    const str = (key: "sessionId" | "toolKey" | "rawName" | "origin") => {
+      const value = raw[key];
+      if (
+        typeof value !== "string" ||
+        value.length === 0 ||
+        value.length > PAGE_TOOL_MAX_NAME_CHARS
+      ) {
+        throw new PageToolValidationError(
+          `pageTools[${i}].${key} must be a non-empty string ≤${PAGE_TOOL_MAX_NAME_CHARS} chars`
+        );
+      }
+      return value;
+    };
+    const sessionId = str("sessionId");
+    const toolKey = str("toolKey");
+    const rawName = str("rawName");
+    const origin = str("origin");
+
+    let description: string | undefined;
+    if (raw.description !== undefined) {
+      if (
+        typeof raw.description !== "string" ||
+        raw.description.length > PAGE_TOOL_MAX_DESCRIPTION_CHARS
+      ) {
+        throw new PageToolValidationError(
+          `pageTools[${i}].description must be a string ≤${PAGE_TOOL_MAX_DESCRIPTION_CHARS} chars`
+        );
+      }
+      description = raw.description;
+    }
+
+    let inputSchema: Record<string, unknown> | undefined;
+    if (raw.inputSchema !== undefined) {
+      if (typeof raw.inputSchema !== "object" || raw.inputSchema === null) {
+        throw new PageToolValidationError(
+          `pageTools[${i}].inputSchema must be an object`
+        );
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(raw.inputSchema), "utf8");
+      if (bytes > PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES) {
+        throw new PageToolValidationError(
+          `pageTools[${i}].inputSchema exceeds ${PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+        );
+      }
+      inputSchema = raw.inputSchema as Record<string, unknown>;
+    }
+
+    out.push({
+      alias,
+      sessionId,
+      toolKey,
+      rawName,
+      origin,
+      description,
+      inputSchema,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build no-execute AI SDK entries for the WebMCP page tools.
+ *
+ * Client-fulfilled like `app_*` and `ui_*`: the inspector's browser session
+ * lives in the same process as the client's store, and the client already owns
+ * the approval handshake, so routing execution back through the server would
+ * add a round trip and a second approval path for no gain.
+ *
+ * `needsApproval` is unconditional — see `pageToolCallNeedsApproval`. The
+ * description carries the origin because a model choosing between tools should
+ * be able to see whose page each one belongs to.
+ */
+export function buildPageTools(pageTools: PageToolEntry[] | undefined): ToolSet {
+  if (!pageTools || pageTools.length === 0) return {};
+  const out: ToolSet = {};
+  for (const entry of pageTools) {
+    out[entry.alias] = toNoExecuteAiSdkTool({
+      description: `[WebMCP page tool — ${entry.origin}] ${
+        entry.description ?? entry.rawName
+      }`,
+      inputSchema: entry.inputSchema,
+      needsApproval: pageToolCallNeedsApproval(),
+    });
+  }
+  return out;
+}
+
 /**
  * System-prompt section advertising the UI tools. Empty when none were
  * snapshotted — or when none survived collision resolution — so surfaces
@@ -976,6 +1136,7 @@ export async function prepareChatV2(
     customProviders,
     appTools,
     uiTools,
+    pageTools,
     builtInTools,
     cloudSkills,
     skillsSource,
@@ -1206,6 +1367,11 @@ export async function prepareChatV2(
     return false;
   });
   const uiToolEntries = buildUiTools(effectiveUiTools, { requireToolApproval });
+  // WebMCP page tools — client-fulfilled like app tools, and opaque in the same
+  // way, so `page_<8hex>` cannot collide with a server tool, a UI tool or an
+  // app alias. A collision here would mean two sessions minted the same alias,
+  // which is a bug rather than a conflict to resolve, so it throws below.
+  const pageToolEntries = buildPageTools(pageTools);
   const builtInToolEntries = builtInTools ?? {};
   // Collision policy, per origin:
   //  - MCP tools: the built-in wins and the server tool is dropped with a
@@ -1228,10 +1394,26 @@ export async function prepareChatV2(
     if (
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(pageToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`
+        `Built-in tool '${name}' collides with an existing app, UI, page, or skill tool.`
+      );
+    }
+  }
+  // A page alias colliding with anything already merged means two aliases were
+  // minted the same, which is a bug in the minting rather than a configuration
+  // to resolve — so it fails loudly instead of silently shadowing a tool.
+  for (const name of Object.keys(pageToolEntries)) {
+    if (
+      Object.prototype.hasOwnProperty.call(mcpTools, name) ||
+      Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(finalSkillTools, name)
+    ) {
+      throw new Error(
+        `WebMCP page tool '${name}' collides with an existing tool of the same name.`
       );
     }
   }
@@ -1241,6 +1423,7 @@ export async function prepareChatV2(
     ...mcpTools,
     ...appToolEntries,
     ...uiToolEntries,
+    ...pageToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
   } as ToolSet;
@@ -1257,8 +1440,16 @@ export async function prepareChatV2(
   // Cataloging them would hide the `ui_*` tools behind a load step while
   // the system prompt advertises them unconditionally — and a 7-entry
   // first-party control surface is not what discovery exists to trim.
+  //
+  // WebMCP page tools are exempt for the same reason plus one of their own:
+  // the user opened this page in the inspector precisely so the model could
+  // use its tools, and gating them behind a search step would mean the model
+  // has to guess that a page it was never told about is worth searching for.
   const catalogSource: ToolSet = { ...realTools };
-  for (const name of Object.keys(uiToolEntries)) {
+  for (const name of [
+    ...Object.keys(uiToolEntries),
+    ...Object.keys(pageToolEntries),
+  ]) {
     delete catalogSource[name];
   }
   const catalog = buildToolCatalog(catalogSource);

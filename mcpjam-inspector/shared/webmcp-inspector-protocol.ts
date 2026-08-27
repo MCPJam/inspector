@@ -232,6 +232,26 @@ export function truncationMarker(totalBytes: number): string {
 }
 
 /**
+ * Cut serialized text so the result — INCLUDING the appended marker — fits the
+ * cap, and so the cut lands on a character boundary.
+ *
+ * Both matter. Reserving no room for the marker means "capped" output that
+ * still exceeds the cap, which defeats the point of having one. And slicing a
+ * UTF-8 buffer at an arbitrary byte can split a multi-byte character, leaving a
+ * replacement character at the end of every truncated non-ASCII result.
+ */
+function cutToCap(serialized: string, cap: number, totalBytes: number): string {
+  const marker = truncationMarker(totalBytes);
+  const room = Math.max(0, cap - Buffer.byteLength(marker, "utf8"));
+  const buffer = Buffer.from(serialized, "utf8");
+  let end = Math.min(room, buffer.length);
+  // Walk back off any continuation byte (0b10xxxxxx) so the slice ends on a
+  // whole character.
+  while (end > 0 && (buffer[end] & 0b1100_0000) === 0b1000_0000) end -= 1;
+  return buffer.subarray(0, end).toString("utf8") + marker;
+}
+
+/**
  * Truncate a tool result to the cap.
  *
  * Serializes once and measures the serialized form, because that is what both
@@ -260,10 +280,11 @@ export function capResult(value: unknown): {
   if (bytes <= WEBMCP_RESULT_CAP_BYTES) {
     return { value, truncated: false, bytes };
   }
-  const head = Buffer.from(serialized, "utf8")
-    .subarray(0, WEBMCP_RESULT_CAP_BYTES)
-    .toString("utf8");
-  return { value: head + truncationMarker(bytes), truncated: true, bytes };
+  return {
+    value: cutToCap(serialized, WEBMCP_RESULT_CAP_BYTES, bytes),
+    truncated: true,
+    bytes,
+  };
 }
 
 /** Same policy as {@link capResult}, at the smaller input-echo cap. */
@@ -279,8 +300,8 @@ export function capInputEcho(value: unknown): {
   }
   const bytes = Buffer.byteLength(serialized, "utf8");
   if (bytes <= WEBMCP_INPUT_ECHO_CAP_BYTES) return { value, truncated: false };
-  const head = Buffer.from(serialized, "utf8")
-    .subarray(0, WEBMCP_INPUT_ECHO_CAP_BYTES)
-    .toString("utf8");
-  return { value: head + truncationMarker(bytes), truncated: true };
+  return {
+    value: cutToCap(serialized, WEBMCP_INPUT_ECHO_CAP_BYTES, bytes),
+    truncated: true,
+  };
 }

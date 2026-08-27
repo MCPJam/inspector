@@ -357,7 +357,7 @@ export class WebMcpSessionRuntime {
     this.onActivity();
 
     if (!session) {
-      this.settle(item, "failed", startedAt, {
+      await this.settle(item, "failed", startedAt, {
         errorMessage: "The browser session is not ready.",
       });
       this.release(item);
@@ -373,7 +373,7 @@ export class WebMcpSessionRuntime {
     );
     if (!tool) {
       const message = `The page no longer offers "${item.toolKey}".`;
-      this.settle(item, "failed", startedAt, { errorMessage: message });
+      await this.settle(item, "failed", startedAt, { errorMessage: message });
       this.release(item);
       item.reject(new WebMcpToolGoneError(message));
       return;
@@ -402,7 +402,7 @@ export class WebMcpSessionRuntime {
         signal: item.controller.signal,
       });
       const capped = capResult(output);
-      this.settle(item, "succeeded", startedAt, {
+      await this.settle(item, "succeeded", startedAt, {
         output: capped.value,
         ...(capped.truncated
           ? { outputTruncated: true, outputBytes: capped.bytes }
@@ -419,7 +419,7 @@ export class WebMcpSessionRuntime {
           : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
-      this.settle(item, state, startedAt, { errorMessage: message });
+      await this.settle(item, state, startedAt, { errorMessage: message });
       this.release(item);
       item.reject(error instanceof Error ? error : new Error(message));
     } finally {
@@ -428,7 +428,17 @@ export class WebMcpSessionRuntime {
     }
   }
 
-  private settle(
+  /**
+   * Publish the terminal entry for an invocation, and WAIT for it.
+   *
+   * Awaited rather than fired off, because the after-screenshot it captures
+   * takes long enough for two things to go wrong otherwise: `drain` dequeues
+   * the next invocation and publishes its `invocation_started` first, so the
+   * timeline reports the two calls out of order; and a `close()` in between
+   * shuts the hub before the entry lands, so the last invocation of a session
+   * looks like it never finished.
+   */
+  private async settle(
     item: QueuedInvocation,
     state: WebMcpInvocationState,
     startedAt: number,
@@ -438,19 +448,18 @@ export class WebMcpSessionRuntime {
       outputBytes?: number;
       errorMessage?: string;
     },
-  ): void {
-    void this.screenshot().then((shot) =>
-      this.pushActivity({
-        kind: "invocation_settled",
-        invokeId: item.invokeId,
-        toolKey: item.toolKey,
-        source: item.source,
-        state,
-        durationMs: this.now() - startedAt,
-        ...extra,
-        ...shot,
-      }),
-    );
+  ): Promise<void> {
+    const shot = await this.screenshot();
+    this.pushActivity({
+      kind: "invocation_settled",
+      invokeId: item.invokeId,
+      toolKey: item.toolKey,
+      source: item.source,
+      state,
+      durationMs: this.now() - startedAt,
+      ...extra,
+      ...shot,
+    });
   }
 
   private async screenshot(): Promise<{ screenshotBase64?: string }> {

@@ -75,8 +75,7 @@ function isAutomaticAuthorizationDecisionMessage(
   message: unknown,
 ): message is string {
   return (
-    typeof message === "string" &&
-    message.startsWith("Automatic resolved to ")
+    typeof message === "string" && message.startsWith("Automatic resolved to ")
   );
 }
 
@@ -84,7 +83,9 @@ interface TrafficLogState {
   items: UiLogEvent[];
   mcpServerItems: McpServerRpcItem[];
   addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
-  addMcpServerLog: (item: Omit<McpServerRpcItem, "id"> & { id?: string }) => void;
+  addMcpServerLog: (
+    item: Omit<McpServerRpcItem, "id"> & { id?: string },
+  ) => void;
   clear: () => void;
 }
 
@@ -232,7 +233,9 @@ export function ingestOAuthTraceLogs(input: {
 
   const store = useTrafficLogStore.getState();
   trace.steps.forEach((step) => {
-    const timestamp = new Date(step.completedAt ?? step.startedAt).toISOString();
+    const timestamp = new Date(
+      step.completedAt ?? step.startedAt,
+    ).toISOString();
 
     if (isAutomaticAuthorizationDecisionMessage(step.message)) {
       store.addMcpServerLog({
@@ -276,7 +279,9 @@ export function ingestOAuthTraceLogs(input: {
         recovered: step.recovered,
         recoveredAt: step.recoveredAt,
         recoveryMessage: step.recoveryMessage,
-        httpHistory: trace.httpHistory.filter((entry) => entry.step === step.step),
+        httpHistory: trace.httpHistory.filter(
+          (entry) => entry.step === step.step,
+        ),
       },
       kind: "oauth",
       oauthStatus: step.status,

@@ -47,16 +47,20 @@ export function ToolInvokePane({
   const [rawError, setRawError] = useState<string | undefined>();
 
   useEffect(() => {
-    setFields(generateFormFieldsFromSchema(tool?.inputSchema));
+    const next = generateFormFieldsFromSchema(tool?.inputSchema);
+    setFields(next);
     setRawJson("{}");
     setRawError(undefined);
     // A schema with no describable properties has nothing to render as a form,
     // so those tools start in raw mode rather than showing an empty one.
-    setRawMode(
-      Boolean(tool) &&
-        generateFormFieldsFromSchema(tool?.inputSchema).length === 0,
-    );
-  }, [tool?.toolKey, tool?.inputSchema, tool]);
+    setRawMode(Boolean(tool) && next.length === 0);
+    // Keyed on the tool's stable identity ALONE. The store replaces `tools`
+    // wholesale on every frame, so `tool` and `tool.inputSchema` are new object
+    // identities each time the page re-registers — depending on them would wipe
+    // whatever the user was typing, and revert a deliberate "Use JSON" choice,
+    // every time the page touched its registry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool?.toolKey]);
 
   const schemaText = useMemo(
     () => (tool?.inputSchema ? JSON.stringify(tool.inputSchema, null, 2) : ""),
@@ -105,7 +109,10 @@ export function ToolInvokePane({
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+          <Label
+            htmlFor="webmcp-raw-input"
+            className="text-xs uppercase tracking-wide text-muted-foreground"
+          >
             Input
           </Label>
           <Button
@@ -121,14 +128,21 @@ export function ToolInvokePane({
         {rawMode ? (
           <div className="space-y-1">
             <textarea
+              id="webmcp-raw-input"
               value={rawJson}
               onChange={(event) => setRawJson(event.target.value)}
               spellCheck={false}
               rows={8}
               className="w-full rounded-md border bg-background p-2 font-mono text-xs"
+              aria-describedby={rawError ? "webmcp-raw-input-error" : undefined}
             />
             {rawError ? (
-              <p className="text-xs text-destructive">{rawError}</p>
+              <p
+                id="webmcp-raw-input-error"
+                className="text-xs text-destructive"
+              >
+                {rawError}
+              </p>
             ) : null}
           </div>
         ) : fields.length === 0 ? (
@@ -237,7 +251,9 @@ function InvocationResult({
           <p className="text-[11px] text-muted-foreground">
             Output comes from the page and is not trusted.
             {result.outputTruncated
-              ? ` Truncated — ${result.outputBytes} bytes total.`
+              ? result.outputBytes
+                ? ` Truncated — ${result.outputBytes} bytes total.`
+                : " Truncated."
               : ""}
           </p>
         </>

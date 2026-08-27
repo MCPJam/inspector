@@ -39,6 +39,7 @@ import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import { WebmcpPageToolsSection } from "@/components/playground/WebmcpPageToolsSection";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -474,6 +475,7 @@ function FlatToolList({
           selectedKey={selectedBuiltinKey}
           onSelect={onSelectBuiltin}
         />
+        <WebmcpPageToolsSection />
       </div>
     </div>
   );

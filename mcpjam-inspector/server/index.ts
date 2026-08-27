@@ -61,6 +61,7 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import { shutdownWebMcpSessions } from "./services/webmcp-inspector/session-registry";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
@@ -92,7 +93,7 @@ process.on("unhandledRejection", (reason, _promise) => {
       // only clue to what fired (emit stringifies it for Axiom).
       error: reason,
       sentry: true,
-    }
+    },
   );
 });
 
@@ -104,7 +105,7 @@ process.on("uncaughtException", (error) => {
   sysLogger.event(
     "process.uncaught_exception",
     { errorCode: error instanceof Error ? error.name : "unknown" },
-    { error }
+    { error },
   );
 });
 
@@ -125,7 +126,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│"
+        "│",
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -226,7 +227,7 @@ function getMCPConfigFromEnv() {
               headers: serverConfig.headers, // Custom headers for HTTP
               useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
-          }
+          },
         );
 
         // Check for auto-connect server filter
@@ -368,7 +369,7 @@ const strictModeResponse = (c: any, path: string) =>
       code: "FEATURE_NOT_SUPPORTED",
       message: `${path} is disabled in hosted mode`,
     },
-    410
+    410,
   );
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
@@ -403,7 +404,7 @@ const mcpClientManager = new MCPClientManager(
     cacheEventLogger,
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
-  }
+  },
 );
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -452,7 +453,7 @@ if (enableHttpLogs) {
     "*",
     logger((message) => {
       appLogger.info(scrubTokenFromUrl(message));
-    })
+    }),
   );
 }
 app.use(
@@ -460,7 +461,7 @@ app.use(
   cors({
     origin: CORS_ORIGINS,
     credentials: true,
-  })
+  }),
 );
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
@@ -507,7 +508,7 @@ app.route("/api/web", webRoutes);
 // auth is the Convex-minted terminal token (see routes/web/computer-terminal).
 app.get(
   "/api/web/computers/terminal",
-  createComputerTerminalWsHandler(upgradeWebSocket)
+  createComputerTerminalWsHandler(upgradeWebSocket),
 );
 // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
 // a hosted server must have no path at all to a local PTY. Auth is the
@@ -515,7 +516,7 @@ app.get(
 if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
-    createLocalComputerTerminalWsHandler(upgradeWebSocket)
+    createLocalComputerTerminalWsHandler(upgradeWebSocket),
   );
 }
 // Computer file upload (drag-and-drop from the Shell panel). Same terminal-token
@@ -528,10 +529,10 @@ app.post(
     onError: (c) =>
       c.json(
         { ok: false, error: "Upload exceeds the 30MB request limit." },
-        413
+        413,
       ),
   }),
-  createComputerUploadHandler()
+  createComputerUploadHandler(),
 );
 
 // Hosted public API (v1). Same 1MB JSON cap as /api/web; routes wrap the same
@@ -547,9 +548,9 @@ app.use(
           code: "VALIDATION_ERROR",
           message: "Request body exceeds 1MB limit",
         },
-        400
+        400,
       ),
-  })
+  }),
 );
 app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
@@ -628,11 +629,11 @@ app.get("/api/session-token", (c) => {
     appLogger.warn(
       `[Security] Token request denied - non-allowed Host: ${
         forwardedHost || host
-      }`
+      }`,
     );
     return c.json(
       { error: "Token only available via localhost or allowed hosts" },
-      403
+      403,
     );
   }
 
@@ -709,11 +710,11 @@ if (process.env.NODE_ENV === "production") {
       if (CANIUSE_LANDING_HOSTS.has(landingHost)) {
         htmlContent = htmlContent.replace(
           DEFAULT_DOCUMENT_TITLE_TAG,
-          getCaniuseTitleTag()
+          getCaniuseTitleTag(),
         );
         htmlContent = htmlContent.replace(
           "</head>",
-          `${getCaniuseMetaTagsHtml()}</head>`
+          `${getCaniuseMetaTagsHtml()}</head>`,
         );
       }
 
@@ -739,7 +740,7 @@ if (process.env.NODE_ENV === "production") {
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-allowed Host: ${host}`
+          `[Security] Token not injected - non-allowed Host: ${host}`,
         );
         const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
@@ -749,7 +750,7 @@ if (process.env.NODE_ENV === "production") {
       if (runtimeConfigScript) {
         htmlContent = htmlContent.replace(
           "</head>",
-          `${runtimeConfigScript}</head>`
+          `${runtimeConfigScript}</head>`,
         );
       }
 
@@ -757,7 +758,7 @@ if (process.env.NODE_ENV === "production") {
       const mcpConfig = getMCPConfigFromEnv();
       if (mcpConfig) {
         const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(
-          mcpConfig
+          mcpConfig,
         )};</script>`;
         htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       }
@@ -789,7 +790,7 @@ if (process.env.NODE_ENV === "production") {
             const bootstrapScript = buildGuestBootstrapScript(session);
             htmlContent = htmlContent.replace(
               "</head>",
-              `${bootstrapScript}</head>`
+              `${bootstrapScript}</head>`,
             );
             for (const cookie of setCookies) {
               appendGuestSessionSetCookie(c, cookie);
@@ -798,7 +799,7 @@ if (process.env.NODE_ENV === "production") {
         } catch (error) {
           appLogger.warn(
             "[guest-bootstrap] document mint failed; serving without blob",
-            { error: error instanceof Error ? error.message : String(error) }
+            { error: error instanceof Error ? error.message : String(error) },
           );
         }
       }
@@ -887,7 +888,7 @@ const productionChecksWorker: ProductionChecksWorkerHandle =
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
-  10
+  10,
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
@@ -897,7 +898,7 @@ const logFlushExitMs = 1000;
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs
+    logFlushExitMs,
   );
   exitFallbackTimer.unref();
 
@@ -922,7 +923,7 @@ async function shutdown() {
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
-      new Error("Shutdown timed out; forcing process exit.")
+      new Error("Shutdown timed out; forcing process exit."),
     );
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);
@@ -953,6 +954,10 @@ async function shutdown() {
     // does NOT tear down established sockets, so a live shell would otherwise
     // outlive the inspector.
     shutdownLocalComputerTerminals();
+    // Also before server.close(), and awaited: a WebMCP session owns a real
+    // Chromium — a visible window when it is headed — and a fire-and-forget
+    // teardown loses the race against the process.exit(0) below.
+    await shutdownWebMcpSessions();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

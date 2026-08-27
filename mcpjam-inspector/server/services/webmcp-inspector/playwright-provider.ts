@@ -105,6 +105,15 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     {
       resolve: (value: { output: unknown }) => void;
       reject: (error: Error) => void;
+      /**
+       * Why WE asked the browser to stop, if we did.
+       *
+       * The browser answers a cancel with `Canceled` whatever the reason, so
+       * without remembering it here a timed-out invocation would be recorded on
+       * the timeline as a user cancellation — the one place where the
+       * difference actually matters to whoever reads it later.
+       */
+      cancelReason?: "cancelled" | "timeout";
     }
   >();
   private url: string;
@@ -188,10 +197,13 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
         return;
       }
       if (responded.status === "Canceled") {
+        const reason = waiter.cancelReason ?? "cancelled";
         waiter.reject(
           new WebMcpInvocationCancelledError(
-            "The page cancelled this invocation.",
-            "cancelled",
+            reason === "timeout"
+              ? "The tool did not respond in time."
+              : "The invocation was cancelled.",
+            reason,
           ),
         );
         return;
@@ -361,9 +373,22 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
 
     return new Promise<{ output: unknown }>((resolve, reject) => {
-      this.pending.set(invocationId, { resolve, reject });
+      const waiter = { resolve, reject } as {
+        resolve: (value: { output: unknown }) => void;
+        reject: (error: Error) => void;
+        cancelReason?: "cancelled" | "timeout";
+      };
+      this.pending.set(invocationId, waiter);
+
+      let aborting = false;
       const onAbort = () => {
-        const timedOut = request.signal.reason === "timeout";
+        // Idempotent: this runs from the listener AND from the already-aborted
+        // re-check below, and both can be reached for one invocation.
+        if (aborting) return;
+        aborting = true;
+        const reason =
+          request.signal.reason === "timeout" ? "timeout" : "cancelled";
+        waiter.cancelReason = reason;
         // Ask the browser to stop, then settle on its Canceled response. If
         // that never arrives (the page died mid-invocation), settle anyway so
         // the caller is never left waiting on a browser that is gone.
@@ -375,15 +400,21 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           this.pending.delete(invocationId);
           reject(
             new WebMcpInvocationCancelledError(
-              timedOut
+              reason === "timeout"
                 ? "The tool did not respond in time."
                 : "The invocation was cancelled.",
-              timedOut ? "timeout" : "cancelled",
+              reason,
             ),
           );
         }, CANCEL_SETTLE_GRACE_MS);
       };
+
       request.signal.addEventListener("abort", onAbort, { once: true });
+      // The listener is registered only after `WebMCP.invokeTool` resolves, so
+      // an abort during that round trip has already fired and will never reach
+      // it. Without this re-check the browser is never told to stop and the
+      // caller waits on a tool nobody is going to cancel.
+      if (request.signal.aborted) onAbort();
     });
   }
 

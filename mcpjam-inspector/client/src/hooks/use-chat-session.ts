@@ -154,6 +154,15 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
+// WebMCP page tools ride the same client-fulfilled path as app aliases. The
+// predicate comes from `shared/` rather than a local mirror: the server's pause
+// and skip gates key on the same function, and a name the two sides disagreed
+// about would either execute server-side or strand the turn.
+import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
+import {
+  invokePageToolForChat,
+  snapshotPageToolsForTurn,
+} from "@/lib/webmcp-inspector/chat-dispatch";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -372,6 +381,13 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Offer this turn the WebMCP tools of the page the inspector currently has
+   * open. Off unless the caller opts in: a chat that silently gained tools from
+   * a browser session opened in another tab would be a surprise, and page tools
+   * run code on a third-party site.
+   */
+  usePageTools?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1865,6 +1881,11 @@ export function useChatSession(
   const builtInToolIdsRef = useRef<string[] | undefined>(undefined);
   builtInToolIdsRef.current =
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
+  // Read through a ref for the same reason the ids above are: the transport's
+  // body builder is created once and must see the CURRENT value at POST time,
+  // not the one captured when the transport was memoized.
+  const usePageToolsRef = useRef(false);
+  usePageToolsRef.current = options.usePageTools === true;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
@@ -2958,6 +2979,15 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
+          // WebMCP page tools, when the caller opted this turn into the tools
+          // of an open inspector session. Drained fresh at POST time for the
+          // same reason as `appTools`: the page may have registered or dropped
+          // tools since the last turn. `setAdvertisedPageTools` records what
+          // this turn advertised so an alias in the response resolves back to
+          // the tool it stood for.
+          ...(usePageToolsRef.current
+            ? { pageTools: snapshotPageToolsForTurn() }
+            : {}),
           // MCPJam UI tools are agent-surface-only; the only uiTools sender
           // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
@@ -3053,6 +3083,25 @@ export function useChatSession(
     // app aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
+
+      // WebMCP page tools: the model asked for a tool a real web page
+      // registered, and the browser session that owns that page lives in this
+      // app. Dispatch it through the inspector store and hand the result back,
+      // same client-fulfilled contract as an app alias.
+      if (isPageToolAlias(toolName)) {
+        const tc = toolCall as { toolCallId: string; input: unknown };
+        const output = await invokePageToolForChat(
+          toolName,
+          (tc.input ?? {}) as Record<string, unknown>,
+        );
+        addToolOutput({
+          tool: toolName,
+          toolCallId: tc.toolCallId,
+          output,
+        } as Parameters<typeof addToolOutput>[0]);
+        return;
+      }
+
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);

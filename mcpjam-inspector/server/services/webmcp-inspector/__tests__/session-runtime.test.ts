@@ -199,6 +199,46 @@ describe("invocation", () => {
     await second.settled;
   });
 
+  it("publishes each settle before the next invocation starts", async () => {
+    const { runtime, session, activity } = makeRuntime();
+    session.emitTools([fakeTool()]);
+
+    const first = runtime.invoke(
+      "https://example.test::echo",
+      { n: 1 },
+      "manual",
+    );
+    const second = runtime.invoke(
+      "https://example.test::echo",
+      { n: 2 },
+      "manual",
+    );
+    await first.settled;
+    await second.settled;
+
+    await vi.waitFor(() =>
+      expect(
+        activity().filter((entry) => entry.kind === "invocation_settled"),
+      ).toHaveLength(2),
+    );
+    // The after-screenshot takes long enough that a fire-and-forget publish
+    // would let the SECOND invocation's "started" overtake the FIRST's
+    // "settled", and the timeline would report the two calls out of order.
+    const kinds = activity()
+      .filter(
+        (entry) =>
+          entry.kind === "invocation_started" ||
+          entry.kind === "invocation_settled",
+      )
+      .map((entry) => entry.kind);
+    expect(kinds).toEqual([
+      "invocation_started",
+      "invocation_settled",
+      "invocation_started",
+      "invocation_settled",
+    ]);
+  });
+
   it("frees the session as soon as an invocation settles", async () => {
     const { runtime, session } = makeRuntime();
     session.emitTools([fakeTool()]);
@@ -307,6 +347,30 @@ describe("result capping", () => {
     expect(capped.bytes).toBeGreaterThan(WEBMCP_RESULT_CAP_BYTES);
     expect(String(capped.value)).toContain("truncated");
     expect(String(capped.value)).toContain(String(capped.bytes));
+  });
+
+  it("keeps the truncated value within the cap, marker included", () => {
+    const capped = capResult({
+      content: "x".repeat(WEBMCP_RESULT_CAP_BYTES * 2),
+    });
+    expect(capped.truncated).toBe(true);
+    // Reserving no room for the marker would produce "capped" output that still
+    // exceeds the cap, which defeats the point of having one.
+    expect(Buffer.byteLength(String(capped.value), "utf8")).toBeLessThanOrEqual(
+      WEBMCP_RESULT_CAP_BYTES,
+    );
+  });
+
+  it("cuts multibyte output on a character boundary", () => {
+    // A naive byte slice splits a multi-byte character and leaves a replacement
+    // character at the end of every truncated non-ASCII result.
+    const capped = capResult({ content: "🛒".repeat(WEBMCP_RESULT_CAP_BYTES) });
+    const text = String(capped.value);
+    expect(capped.truncated).toBe(true);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(
+      WEBMCP_RESULT_CAP_BYTES,
+    );
+    expect(text).not.toContain("�");
   });
 
   it("survives output that cannot be serialized at all", () => {
