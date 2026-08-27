@@ -177,6 +177,13 @@ describe("createRunSetupObserver folding", () => {
     expect(observer.buildSignals()?.connection?.durationMs).toBe(40);
   });
 
+  it("omits the duration when any settled target has an inverted interval", () => {
+    const observer = createRunSetupObserver({ expectedServerIds: ["a", "b"] });
+    observer.recordConnect("a", { outcome: "ok", startedAt: 10, endedAt: 25 });
+    observer.recordConnect("b", { outcome: "ok", startedAt: 40, endedAt: 20 });
+    expect(observer.buildSignals()?.connection).toEqual({ outcome: "ok" });
+  });
+
   // Absence of evidence, not evidence of failure: when connect fails for
   // every target, tools/list never runs, so the phase reports nothing and
   // the stage falls through to `notReached` behind the connection failure.

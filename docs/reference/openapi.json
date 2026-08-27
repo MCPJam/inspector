@@ -11216,7 +11216,10 @@
           },
           "intent": {
             "type": "string",
-            "description": "Optional authored analytics grouping label. Absent means unlabelled."
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; absent means unlabelled."
           },
           "models": {
             "type": "array",
@@ -11437,7 +11440,10 @@
           },
           "intent": {
             "type": "string",
-            "description": "Optional authored analytics grouping label."
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed."
           },
           "models": {
             "type": "array",
@@ -11795,7 +11801,10 @@
           },
           "intent": {
             "type": ["string", "null"],
-            "description": "Optional authored analytics grouping label. Omitted leaves the stored value unchanged; null clears it."
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
           },
           "models": {
             "type": "array",

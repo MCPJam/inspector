@@ -332,6 +332,13 @@ function foldPhase(
     ) {
       return undefined;
     }
+    // A wall-clock timestamp can move backwards (or a caller can provide a
+    // malformed interval). One inverted target poisons the envelope: using a
+    // different valid target to produce a duration would claim a phase was
+    // measured when part of its evidence is contradictory.
+    if (observed.some((row) => row.endedAt < row.startedAt)) {
+      return undefined;
+    }
     let start = Number.POSITIVE_INFINITY;
     let end = Number.NEGATIVE_INFINITY;
     for (const row of observed) {
