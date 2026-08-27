@@ -54,6 +54,7 @@ interface CdpTool {
   annotations?: {
     readOnly?: boolean;
     untrustedContent?: boolean;
+    consequential?: boolean;
     autosubmit?: boolean;
   };
   frameId: string;
@@ -149,7 +150,9 @@ class PlaywrightWebMcpSession implements WebMcpBrowserSession {
       throw new WebMcpUnsupportedError(
         "This browser build does not expose the WebMCP page API " +
           "(document.modelContext), so no tools can be discovered. The page " +
-          "itself loaded normally.",
+          "itself loaded normally; check that the page is origin-isolated, " +
+          "the WebMCP tools Permissions Policy is allowed, and the feature is " +
+          "enabled for this origin.",
       );
     }
   }
@@ -505,6 +508,10 @@ export class PlaywrightWebMcpProvider implements WebMcpBrowserProvider {
     try {
       browser = await chromium.launch({
         headless,
+        // The inspector opens arbitrary pages. Keep Chromium's renderer
+        // sandbox enabled; container/root deployments must opt out explicitly
+        // through their environment rather than weakening every local session.
+        chromiumSandbox: true,
         args: buildWebMcpLaunchArgs(),
       });
       context = await browser.newContext({

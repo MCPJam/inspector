@@ -23,6 +23,10 @@ import {
   type WebMcpSessionStatus,
   type WebMcpToolDescriptor,
   type WebMcpToolRef,
+  WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
+  WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
+  WEBMCP_TOOL_MAX_ENTRIES,
+  WEBMCP_TOOL_NAME_MAX_CHARS,
   WEBMCP_INSPECTOR_PROTOCOL_VERSION,
 } from "@/shared/webmcp-inspector-protocol";
 import {
@@ -75,6 +79,48 @@ interface QueuedInvocation {
   controller: AbortController;
   resolve: (result: { output: unknown; truncated: boolean }) => void;
   reject: (error: Error) => void;
+}
+
+/**
+ * Bound page-authored metadata before it enters the runtime or replay ring.
+ * The chat route validates the same limits at its HTTP boundary, but the
+ * provider feeds this path directly from CDP and never crosses that route.
+ * Oversized schemas are omitted rather than sliced so they remain valid JSON
+ * Schema; a tool with no schema is still manually invokable with `{}`.
+ */
+function boundProviderTools(
+  incoming: ProviderToolDescriptor[],
+): ProviderToolDescriptor[] {
+  return incoming
+    .slice(0, WEBMCP_TOOL_MAX_ENTRIES)
+    .filter(
+      (tool) =>
+        tool.name.length <= WEBMCP_TOOL_NAME_MAX_CHARS &&
+        tool.origin.length <= WEBMCP_TOOL_NAME_MAX_CHARS,
+    )
+    .map((tool) => {
+      let inputSchema = tool.inputSchema;
+      if (inputSchema !== undefined) {
+        try {
+          if (
+            Buffer.byteLength(JSON.stringify(inputSchema), "utf8") >
+            WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES
+          ) {
+            inputSchema = undefined;
+          }
+        } catch {
+          inputSchema = undefined;
+        }
+      }
+      return {
+        ...tool,
+        description: tool.description.slice(
+          0,
+          WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
+        ),
+        inputSchema,
+      };
+    });
 }
 
 export class WebMcpSessionRuntime {
@@ -201,7 +247,7 @@ export class WebMcpSessionRuntime {
 
   private applyTools(incoming: ProviderToolDescriptor[]): void {
     const previous = new Map(this.tools.map((t) => [t.toolKey, t]));
-    const next = assignToolKeys(incoming);
+    const next = assignToolKeys(boundProviderTools(incoming));
 
     const added = next.filter((tool) => !previous.has(tool.toolKey));
     const removed = this.tools.filter(

@@ -62,6 +62,12 @@ import {
   uiToolCallNeedsApproval,
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
+import {
+  WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
+  WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
+  WEBMCP_TOOL_MAX_ENTRIES,
+  WEBMCP_TOOL_NAME_MAX_CHARS,
+} from "@/shared/webmcp-inspector-protocol";
 import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
@@ -128,10 +134,6 @@ const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
 // WebMCP Inspector page-tool caps. Same shape as the app-tool caps above, and
 // deliberately no more generous: the entries describe tools a third-party page
 // registered, so every field here is attacker-influenced text.
-const PAGE_TOOL_MAX_ENTRIES = 64;
-const PAGE_TOOL_MAX_NAME_CHARS = 128;
-const PAGE_TOOL_MAX_DESCRIPTION_CHARS = 512;
-const PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 
 export class AppToolValidationError extends Error {
   constructor(message: string) {
@@ -917,9 +919,9 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
   if (!Array.isArray(input)) {
     throw new PageToolValidationError("pageTools must be an array");
   }
-  if (input.length > PAGE_TOOL_MAX_ENTRIES) {
+  if (input.length > WEBMCP_TOOL_MAX_ENTRIES) {
     throw new PageToolValidationError(
-      `pageTools accepts at most ${PAGE_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
+      `pageTools accepts at most ${WEBMCP_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
     );
   }
   const out: PageToolEntry[] = [];
@@ -946,10 +948,10 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
       if (
         typeof value !== "string" ||
         value.length === 0 ||
-        value.length > PAGE_TOOL_MAX_NAME_CHARS
+        value.length > WEBMCP_TOOL_NAME_MAX_CHARS
       ) {
         throw new PageToolValidationError(
-          `pageTools[${i}].${key} must be a non-empty string ≤${PAGE_TOOL_MAX_NAME_CHARS} chars`,
+          `pageTools[${i}].${key} must be a non-empty string ≤${WEBMCP_TOOL_NAME_MAX_CHARS} chars`,
         );
       }
       return value;
@@ -963,10 +965,10 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
     if (raw.description !== undefined) {
       if (
         typeof raw.description !== "string" ||
-        raw.description.length > PAGE_TOOL_MAX_DESCRIPTION_CHARS
+        raw.description.length > WEBMCP_TOOL_DESCRIPTION_MAX_CHARS
       ) {
         throw new PageToolValidationError(
-          `pageTools[${i}].description must be a string ≤${PAGE_TOOL_MAX_DESCRIPTION_CHARS} chars`,
+          `pageTools[${i}].description must be a string ≤${WEBMCP_TOOL_DESCRIPTION_MAX_CHARS} chars`,
         );
       }
       description = raw.description;
@@ -984,9 +986,9 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
         );
       }
       const bytes = Buffer.byteLength(JSON.stringify(raw.inputSchema), "utf8");
-      if (bytes > PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES) {
+      if (bytes > WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES) {
         throw new PageToolValidationError(
-          `pageTools[${i}].inputSchema exceeds ${PAGE_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`,
+          `pageTools[${i}].inputSchema exceeds ${WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES} bytes`,
         );
       }
       inputSchema = raw.inputSchema as Record<string, unknown>;

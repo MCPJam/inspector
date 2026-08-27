@@ -8,8 +8,12 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
+  __resetPageToolDispatchForTests,
+  deferPageToolCallForApproval,
+  fulfillApprovedPageToolCall,
   invokePageToolForChat,
   setAdvertisedPageTools,
+  settleDeniedPageToolCall,
   snapshotPageToolsForTurn,
 } from "../chat-dispatch";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
@@ -48,6 +52,7 @@ function stubStore(
 describe("invokePageToolForChat", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    __resetPageToolDispatchForTests();
     setAdvertisedPageTools([ENTRY]);
   });
 
@@ -122,6 +127,80 @@ describe("invokePageToolForChat", () => {
     await expect(invokePageToolForChat(ENTRY.alias, {})).resolves.toMatchObject(
       { isError: true },
     );
+  });
+});
+
+describe("page-tool approval dispatch", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    __resetPageToolDispatchForTests();
+    setAdvertisedPageTools([ENTRY]);
+  });
+
+  it("claims a page call without invoking it before approval", () => {
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "ok" }));
+    stubStore("session-1", invoke as never);
+    expect(
+      deferPageToolCallForApproval({
+        toolName: ENTRY.alias,
+        toolCallId: "tc-approval",
+        input: { sku: "ABC-123" },
+      }),
+    ).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("fulfills an approved call exactly once and ships its result", async () => {
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "ok" }));
+    stubStore("session-1", invoke as never);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "tc-approved",
+      input: { sku: "ABC-123" },
+    });
+    const addToolOutput = vi.fn();
+
+    await fulfillApprovedPageToolCall({
+      toolCallId: "tc-approved",
+      addToolOutput,
+    });
+    await fulfillApprovedPageToolCall({
+      toolCallId: "tc-approved",
+      addToolOutput,
+    });
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith(ENTRY.toolKey, { sku: "ABC-123" });
+    expect(addToolOutput).toHaveBeenCalledTimes(1);
+    expect(addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: ENTRY.alias,
+        toolCallId: "tc-approved",
+        output: expect.objectContaining({
+          content: [{ type: "text", text: "ok" }],
+        }),
+      }),
+    );
+  });
+
+  it("turns a denied call into a terminal no-op", async () => {
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "ok" }));
+    stubStore("session-1", invoke as never);
+    deferPageToolCallForApproval({
+      toolName: ENTRY.alias,
+      toolCallId: "tc-denied",
+      input: {},
+    });
+    settleDeniedPageToolCall("tc-denied");
+    const addToolOutput = vi.fn();
+
+    await fulfillApprovedPageToolCall({
+      toolCallId: "tc-denied",
+      addToolOutput,
+    });
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(addToolOutput).not.toHaveBeenCalled();
   });
 });
 

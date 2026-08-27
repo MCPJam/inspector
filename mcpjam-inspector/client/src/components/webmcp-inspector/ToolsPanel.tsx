@@ -27,6 +27,13 @@ function AnnotationBadges({ tool }: { tool: WebMcpToolDescriptor }) {
         "The page warns its output may contain third-party or user-generated content.",
     });
   }
+  if (tool.annotations?.consequential) {
+    badges.push({
+      label: "consequential",
+      title:
+        "The page claims this tool may have a consequential side effect. A claim, not a guarantee — model-driven calls still ask before running.",
+    });
+  }
   if (tool.annotations?.autosubmit) {
     badges.push({
       label: "autosubmit",

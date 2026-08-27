@@ -13,12 +13,94 @@
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { buildPageToolSnapshot } from "./page-tool-aliases";
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
+import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
 
 /** The turn's snapshot, so an alias can be resolved when its call arrives. */
 let advertised: PageToolSnapshotEntry[] = [];
 
+/**
+ * Page calls arrive on `onToolCall` before the AI SDK has applied the
+ * `tool-approval-request` chunk. Keep them parked until the approval pill
+ * explicitly fulfills them. This is deliberately separate from the live
+ * snapshot: an approval may be answered after the page has navigated or the
+ * inspector has refreshed its tool list.
+ */
+const deferredPageToolCalls = new Map<
+  string,
+  { alias: string; input: unknown }
+>();
+const settledPageToolCallIds = new Set<string>();
+const shippedPageToolAliases = new Set<string>();
+const MAX_SHIPPED_PAGE_ALIASES = 128;
+const MAX_SETTLED_PAGE_CALL_IDS = 256;
+
+function markPageToolCallSettled(toolCallId: string): void {
+  settledPageToolCallIds.add(toolCallId);
+  while (settledPageToolCallIds.size > MAX_SETTLED_PAGE_CALL_IDS) {
+    const oldest = settledPageToolCallIds.values().next().value;
+    if (oldest === undefined) break;
+    settledPageToolCallIds.delete(oldest);
+  }
+}
+
 export function setAdvertisedPageTools(entries: PageToolSnapshotEntry[]): void {
   advertised = entries;
+  for (const entry of entries) {
+    shippedPageToolAliases.add(entry.alias);
+    while (shippedPageToolAliases.size > MAX_SHIPPED_PAGE_ALIASES) {
+      const oldest = shippedPageToolAliases.values().next().value;
+      if (oldest === undefined) break;
+      shippedPageToolAliases.delete(oldest);
+    }
+  }
+}
+
+/** Test seam and session cleanup for client-fulfilled page calls. */
+export function __resetPageToolDispatchForTests(): void {
+  advertised = [];
+  deferredPageToolCalls.clear();
+  settledPageToolCallIds.clear();
+  shippedPageToolAliases.clear();
+}
+
+/** Whether an alias belongs to a page snapshot owned by this client. */
+export function ownsPageToolAlias(alias: string): boolean {
+  return (
+    isPageToolAlias(alias) &&
+    (resolvePageToolAlias(alias) !== undefined ||
+      shippedPageToolAliases.has(alias) ||
+      [...deferredPageToolCalls.values()].some((call) => call.alias === alias))
+  );
+}
+
+/**
+ * Claim a page call without executing it. The approval request is delivered
+ * after this callback returns, so this function must remain synchronous.
+ */
+export function deferPageToolCallForApproval(options: {
+  toolName: string;
+  toolCallId: string;
+  input: unknown;
+}): boolean {
+  if (!isPageToolAlias(options.toolName)) return false;
+  if (!ownsPageToolAlias(options.toolName)) return false;
+  if (
+    settledPageToolCallIds.has(options.toolCallId) ||
+    deferredPageToolCalls.has(options.toolCallId)
+  ) {
+    return true;
+  }
+  deferredPageToolCalls.set(options.toolCallId, {
+    alias: options.toolName,
+    input: options.input,
+  });
+  return true;
+}
+
+/** Make a denied call terminal so a duplicate approval event cannot execute it. */
+export function settleDeniedPageToolCall(toolCallId: string): void {
+  markPageToolCallSettled(toolCallId);
+  deferredPageToolCalls.delete(toolCallId);
 }
 
 /**
@@ -47,7 +129,7 @@ export function resolvePageToolAlias(
   return advertised.find((entry) => entry.alias === alias);
 }
 
-interface McpToolResult {
+export interface McpToolResult {
   content: { type: "text"; text: string }[];
   isError?: boolean;
 }
@@ -108,4 +190,46 @@ export async function invokePageToolForChat(
     );
   }
   return textResult(result.errorMessage ?? `"${entry.rawName}" failed.`, true);
+}
+
+/** Fulfill a page call after the user approves it. */
+export async function fulfillApprovedPageToolCall(options: {
+  toolCallId: string;
+  alias?: string;
+  input?: unknown;
+  addToolOutput: (output: {
+    tool: string;
+    toolCallId: string;
+    output: McpToolResult;
+  }) => void;
+}): Promise<void> {
+  if (settledPageToolCallIds.has(options.toolCallId)) return;
+  const deferred = deferredPageToolCalls.get(options.toolCallId);
+  const alias = options.alias ?? deferred?.alias;
+  if (!alias) return;
+  const input = options.input !== undefined ? options.input : deferred?.input;
+  markPageToolCallSettled(options.toolCallId);
+  deferredPageToolCalls.delete(options.toolCallId);
+
+  let output: McpToolResult;
+  try {
+    output = await invokePageToolForChat(
+      alias,
+      input && typeof input === "object" && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : {},
+    );
+  } catch (error) {
+    output = textResult(
+      `The WebMCP page tool failed: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+      true,
+    );
+  }
+  options.addToolOutput({
+    tool: alias,
+    toolCallId: options.toolCallId,
+    output,
+  });
 }

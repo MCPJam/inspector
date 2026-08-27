@@ -125,6 +125,24 @@ describe("tool registry events", () => {
     expect(removed?.tools.map((t) => t.name)).toEqual(["echo"]);
     expect(runtime.currentTools().map((t) => t.name)).toEqual(["other"]);
   });
+
+  it("bounds page-authored tool snapshots before publishing them", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools(
+      Array.from({ length: 80 }, (_, index) =>
+        fakeTool({
+          name: `tool-${index}`,
+          description: "d".repeat(2_000),
+          inputSchema: { blob: "x".repeat(10_000) },
+        }),
+      ),
+    );
+
+    const tools = runtime.currentTools();
+    expect(tools).toHaveLength(64);
+    expect(tools[0]?.description).toHaveLength(512);
+    expect(tools[0]?.inputSchema).toBeUndefined();
+  });
 });
 
 describe("invocation", () => {

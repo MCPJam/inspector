@@ -88,6 +88,42 @@ describe("webmcp-inspector routes", () => {
     expect(body.error).toMatch(/http/i);
   });
 
+  it.each([
+    ["empty", ""],
+    ["null", null],
+  ])("rejects a %s session URL", async (_label, url) => {
+    const { status } = await call("/api/mcp/webmcp/sessions", json({ url }));
+    expect(status).toBe(400);
+  });
+
+  it("rejects a non-http navigation URL", async () => {
+    const started = await openSession(provider);
+    const { status, body } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "navigate", url: "file:///etc/passwd" }),
+    );
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/http/i);
+  });
+
+  it("rejects a null command body", async () => {
+    const started = await openSession(provider);
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json(null),
+    );
+    expect(status).toBe(400);
+  });
+
+  it("rejects an invocation with an empty tool key", async () => {
+    const started = await openSession(provider);
+    const { status } = await call(
+      `/api/mcp/webmcp/sessions/${started.sessionId}/command`,
+      json({ type: "invoke_tool", toolKey: "", input: {} }),
+    );
+    expect(status).toBe(400);
+  });
+
   it("404s an unknown session", async () => {
     const { status, body } = await call("/api/mcp/webmcp/sessions/nope");
     expect(status).toBe(404);

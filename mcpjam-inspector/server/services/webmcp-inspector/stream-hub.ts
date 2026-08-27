@@ -2,9 +2,9 @@
  * Per-session event fan-out with bounded replay.
  *
  * Modelled on `sessionSimulation/swarm-stream-hub.ts`, minus its coalesced
- * frame channel: V1 streams no video, so every event is worth keeping in order.
- * A ring buffer means a client that connects late, reloads, or drops its
- * connection gets the recent history rather than an empty timeline.
+ * frame channel: V1 streams no video. Tool events are full snapshots, so only
+ * the latest one is retained; keeping 200 copies of a page-authored schema is
+ * both redundant and an avoidable memory multiplier.
  */
 import {
   WEBMCP_ACTIVITY_RING_SIZE,
@@ -15,6 +15,7 @@ export type WebMcpEventListener = (event: WebMcpEvent) => void;
 
 export class WebMcpStreamHub {
   private readonly ring: WebMcpEvent[] = [];
+  private latestTools: Extract<WebMcpEvent, { type: "tools" }> | undefined;
   private readonly listeners = new Set<WebMcpEventListener>();
   private closed = false;
 
@@ -26,9 +27,13 @@ export class WebMcpStreamHub {
 
   publish(event: WebMcpEvent): void {
     if (this.closed) return;
-    this.ring.push(event);
-    if (this.ring.length > this.ringSize) {
-      this.ring.splice(0, this.ring.length - this.ringSize);
+    if (event.type === "tools") {
+      this.latestTools = event;
+    } else {
+      this.ring.push(event);
+      if (this.ring.length > this.ringSize) {
+        this.ring.splice(0, this.ring.length - this.ringSize);
+      }
     }
     for (const listener of this.listeners) {
       // A throwing subscriber must not take down the publisher, which is the
@@ -44,7 +49,10 @@ export class WebMcpStreamHub {
   /** Replay up to `replay` buffered events, then stream live ones. */
   subscribe(listener: WebMcpEventListener, replay = this.ringSize): () => void {
     if (replay > 0) {
-      for (const event of this.ring.slice(-replay)) {
+      const replayEvents = this.ring.slice(-replay);
+      if (this.latestTools) replayEvents.push(this.latestTools);
+      replayEvents.sort((a, b) => a.seq - b.seq);
+      for (const event of replayEvents) {
         try {
           listener(event);
         } catch {
@@ -60,7 +68,9 @@ export class WebMcpStreamHub {
   }
 
   buffered(): readonly WebMcpEvent[] {
-    return this.ring;
+    const events = [...this.ring];
+    if (this.latestTools) events.push(this.latestTools);
+    return events.sort((a, b) => a.seq - b.seq);
   }
 
   close(): void {

@@ -26,13 +26,12 @@ export const WEBMCP_LAUNCH_ARGS: readonly string[] = [
 ];
 
 /**
- * Baseline sandbox/shared-memory switches, matching the widget harness
- * (`mcp-app-browser-harness.ts`). Kept separate from the WebMCP switches so a
- * future provider can reuse one without the other.
+ * Baseline shared-memory switch. Unlike the widget harness, this provider opens
+ * arbitrary third-party pages and must retain Chromium's renderer sandbox.
+ * `chromiumSandbox: true` is set at launch; disabling it here would turn a page
+ * exploit into a host-process exploit.
  */
 export const WEBMCP_BASE_LAUNCH_ARGS: readonly string[] = [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
 ];
 

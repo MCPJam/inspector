@@ -46,25 +46,25 @@ wireWebMcpShutdown();
 
 const webmcpInspector = new Hono();
 
-const startSchema = z.object({
-  url: z
-    .string()
-    .min(1)
-    .refine(
-      (value) => {
-        try {
-          const parsed = new URL(value);
-          return parsed.protocol === "http:" || parsed.protocol === "https:";
-        } catch {
-          return false;
-        }
-      },
-      { message: "Enter an http:// or https:// URL." },
-    ),
-});
+const httpUrlSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "Enter an http:// or https:// URL." },
+  );
+
+const startSchema = z.object({ url: httpUrlSchema });
 
 const commandSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("navigate"), url: z.string().min(1) }),
+  z.object({ type: z.literal("navigate"), url: httpUrlSchema }),
   z.object({ type: z.literal("reload") }),
   z.object({ type: z.literal("go_back") }),
   z.object({

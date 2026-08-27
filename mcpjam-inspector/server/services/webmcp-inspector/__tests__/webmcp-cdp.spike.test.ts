@@ -41,6 +41,32 @@ import {
 
 const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
+/**
+ * Playwright can have a Chromium binary installed without that binary exposing
+ * the experimental WebMCP CDP domain. Keep local runs useful on older images,
+ * while making CI fail loudly instead of silently skipping the contract suite.
+ */
+async function isWebMcpCdpAvailable(): Promise<boolean> {
+  if (!CHROMIUM_AVAILABLE) return false;
+  const browser = await chromium.launch({
+    headless: true,
+    args: buildWebMcpLaunchArgs(),
+  });
+  try {
+    const page = await browser.newPage();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("WebMCP.enable" as never);
+    await page.close();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+const WEBMCP_CDP_AVAILABLE = await isWebMcpCdpAvailable();
+
 // Locally a missing browser skips; in CI it fails. CI runs the pinned Playwright
 // image with Chromium preinstalled, so "skipped" there would mean the one test
 // that guards an experimental protocol quietly stopped running.
@@ -48,6 +74,12 @@ if (process.env.CI && !CHROMIUM_AVAILABLE) {
   throw new Error(
     "WebMCP CDP spike requires Chromium, which is preinstalled in the pinned " +
       "Playwright CI image. Its absence means the image or the pin is wrong.",
+  );
+}
+if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
+  throw new Error(
+    "WebMCP CDP spike requires a Chromium build exposing the WebMCP domain. " +
+      "Install the pinned Playwright browser before running CI.",
   );
 }
 
@@ -58,6 +90,7 @@ interface ToolPayload {
   annotations?: {
     readOnly?: boolean;
     untrustedContent?: boolean;
+    consequential?: boolean;
     autosubmit?: boolean;
   };
   frameId: string;
@@ -88,7 +121,7 @@ function waitFor<T>(
   });
 }
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
+describe.skipIf(!WEBMCP_CDP_AVAILABLE)("CDP WebMCP domain contract", () => {
   let fixture: WebMcpFixture;
   let browser: Browser;
   let page: Page;
@@ -363,15 +396,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("CDP WebMCP domain contract", () => {
   }, 30_000);
 });
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP support probing", () => {
+describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP support probing", () => {
   it("WebMCP.enable succeeds even with the feature off, so it cannot be the probe", async () => {
     const fixture = await startWebMcpFixtureServer();
     // Base args only: no --enable-features=WebMCP.
     const browser = await chromium.launch({
       headless: true,
       args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
       ],
     });

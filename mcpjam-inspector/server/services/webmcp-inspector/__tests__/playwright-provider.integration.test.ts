@@ -8,18 +8,43 @@
  * Runs headless. A user-facing session is headed, but headed needs a display
  * and would make this suite unrunnable in CI.
  */
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import { chromium } from "playwright";
 import { isChromiumInstalled } from "../../../utils/browser-rendering-setup";
 import { startWebMcpSession, WebMcpSessionRegistry } from "../session-registry";
 import { PlaywrightWebMcpProvider } from "../playwright-provider";
 import { WebMcpToolGoneError } from "../provider";
 import type { WebMcpActivityEntry } from "@/shared/webmcp-inspector-protocol";
 import { startWebMcpFixtureServer, type WebMcpFixture } from "./fixture-page";
+import { buildWebMcpLaunchArgs } from "../launch-args";
 
 const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+const WEBMCP_CDP_AVAILABLE = await (async () => {
+  if (!CHROMIUM_AVAILABLE) return false;
+  const browser = await chromium.launch({
+    headless: true,
+    args: buildWebMcpLaunchArgs(),
+  });
+  try {
+    const page = await browser.newPage();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("WebMCP.enable" as never);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+})();
 if (process.env.CI && !CHROMIUM_AVAILABLE) {
   throw new Error(
     "WebMCP provider integration requires Chromium, preinstalled in the pinned CI image.",
+  );
+}
+if (process.env.CI && CHROMIUM_AVAILABLE && !WEBMCP_CDP_AVAILABLE) {
+  throw new Error(
+    "WebMCP provider integration requires a Chromium build exposing the " +
+      "WebMCP domain. Install the pinned Playwright browser before running CI.",
   );
 }
 
@@ -32,7 +57,7 @@ class HeadlessProvider extends PlaywrightWebMcpProvider {
   }
 }
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
+describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () => {
   let fixture: WebMcpFixture;
   let registry: WebMcpSessionRegistry;
   const provider = new HeadlessProvider();
@@ -44,6 +69,10 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("WebMCP provider — real browser", () => {
   afterAll(async () => {
     await registry?.disposeAll({ permanent: true });
     await fixture?.close();
+  });
+
+  afterEach(async () => {
+    await registry?.disposeAll();
   });
 
   async function open() {

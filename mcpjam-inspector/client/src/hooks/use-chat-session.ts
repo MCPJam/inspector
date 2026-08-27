@@ -154,15 +154,11 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {} from "@/state/oauth-orchestrator";
-// WebMCP page tools ride the same client-fulfilled path as app aliases. The
-// predicate comes from `shared/` rather than a local mirror: the server's pause
-// and skip gates key on the same function, and a name the two sides disagreed
-// about would either execute server-side or strand the turn.
-import { isPageToolAlias } from "@/shared/client-fulfilled-tools";
 import {
-  invokePageToolForChat,
+  deferPageToolCallForApproval,
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
+import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -3061,7 +3057,7 @@ export function useChatSession(
     status,
     error,
     setMessages: baseSetMessages,
-    addToolApprovalResponse,
+    addToolApprovalResponse: sdkAddToolApprovalResponse,
     addToolOutput,
   } = useChat({
     id: chatSessionId,
@@ -3079,26 +3075,23 @@ export function useChatSession(
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
-    // resolve via the server's `execute` function); only client-fulfilled
-    // app aliases land here.
+    // resolve via the server's `execute` function); client-fulfilled app and
+    // page aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
 
       // WebMCP page tools: the model asked for a tool a real web page
       // registered, and the browser session that owns that page lives in this
-      // app. Dispatch it through the inspector store and hand the result back,
-      // same client-fulfilled contract as an app alias.
-      if (isPageToolAlias(toolName)) {
-        const tc = toolCall as { toolCallId: string; input: unknown };
-        const output = await invokePageToolForChat(
+      // app. Claim it synchronously and wait for the approval pill to fulfill
+      // it. AI SDK delivers tool-input-available before tool-approval-request,
+      // so invoking here would bypass the user's decision.
+      if (
+        deferPageToolCallForApproval({
           toolName,
-          (tc.input ?? {}) as Record<string, unknown>,
-        );
-        addToolOutput({
-          tool: toolName,
-          toolCallId: tc.toolCallId,
-          output,
-        } as Parameters<typeof addToolOutput>[0]);
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          input: (toolCall as { input: unknown }).input,
+        })
+      ) {
         return;
       }
 
@@ -3264,6 +3257,19 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  // UI/page tools are client-fulfilled. Their approval response must be
+  // routed through the shared defer/fulfill handler; a raw AI SDK approval
+  // response would leave a no-execute page tool without a result.
+  const addToolApprovalResponse = useMemo(
+    () =>
+      createUiAwareApprovalResponseHandler({
+        getMessages: () => messagesRef.current,
+        addToolApprovalResponse: sdkAddToolApprovalResponse,
+        addToolOutput,
+      }),
+    [sdkAddToolApprovalResponse, addToolOutput],
+  );
 
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;

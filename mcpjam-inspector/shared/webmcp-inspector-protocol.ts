@@ -32,6 +32,8 @@ export interface WebMcpToolAnnotations {
   readOnly?: boolean;
   /** "Output may contain untrusted content, ex: UGC, 3rd party data." */
   untrustedContent?: boolean;
+  /** The page claims this tool may cause a consequential side effect. */
+  consequential?: boolean;
   /** Set when a DECLARATIVE tool carried the autosubmit attribute. */
   autosubmit?: boolean;
 }
@@ -223,6 +225,12 @@ export const WEBMCP_INVOKE_QUEUE_LIMIT = 5;
 
 /** Events retained per session for replay to a (re)connecting client. */
 export const WEBMCP_ACTIVITY_RING_SIZE = 200;
+
+/** Defensive bounds for registry snapshots emitted by an inspected page. */
+export const WEBMCP_TOOL_MAX_ENTRIES = 64;
+export const WEBMCP_TOOL_NAME_MAX_CHARS = 128;
+export const WEBMCP_TOOL_DESCRIPTION_MAX_CHARS = 512;
+export const WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8 * 1024;
 
 export const WEBMCP_VIEWPORT = { width: 1280, height: 800 } as const;
 
