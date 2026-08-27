@@ -132,6 +132,9 @@ export {
   SkillsExtGetMethod,
   SkillsExtListMethod,
   INODE_DIRECTORY_MIME_TYPE,
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
   clientDeclaresSkillsExtension,
   resolveSkillsSupport,
   serverDeclaresSkillsExtension,
@@ -156,7 +159,10 @@ export {
   comparableAdvertisedFrontmatter,
   splitAdvertisedFrontmatter,
   computeSkillVersionHash,
+  checkManifestLimits,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isListedResource,
   parseDigest,
   sha256HexOfBytes,
@@ -164,6 +170,7 @@ export {
   skillNameFromUri,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
 } from "./mcp-client-manager/index.js";
 export type {
@@ -340,6 +347,7 @@ export {
   SUITE_FILE_DEFAULT_COVERAGE,
   SUITE_FILE_FINDING_CODES,
   SUITE_FILE_VALIDITY_DEFAULTS,
+  declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
   loadEvalSuiteFile,
   resolveEvalSuiteFile,
@@ -425,10 +433,31 @@ export {
 export {
   buildEvalDecisionSummary,
   buildEvalDecisionSummaryFromIterations,
+  buildEvalRunDecisionSummary,
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
   formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  readEvalRunDecisionSummary,
 } from "./eval-decision-summary.js";
+/**
+ * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
+ *
+ * Mirrored onto the main entry because the CLI and the reporters consume it
+ * beside the platform types, and making them import one shape from two subpaths
+ * is how a consumer ends up with two copies of the type at different versions.
+ */
+export {
+  assembleEvalRunDecisionSummary,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  evalRunDecisionSummarySchema,
+} from "./contract/index.js";
+export type {
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionSummary,
+  EvalRunDecisionVerdict,
+} from "./contract/index.js";
 export type {
   EvalDecisionSummary,
   EvalDecisionSummaryCase,
@@ -441,9 +470,11 @@ export type {
   StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
+  StructuredCaseWaiver,
   StructuredSummaryBucket,
   StructuredRunSummary,
   StructuredRunReport,
+  StructuredRunVerdict,
 } from "./structured-reporting.js";
 export {
   toConformanceReport,
@@ -919,6 +950,12 @@ export type {
   ProviderLanguageModel,
 } from "./model-factory.js";
 
+// Which sampling parameters a model accepts. Also exported from
+// `@mcpjam/sdk/browser` so client code can gate a temperature control without
+// pulling the Node graph in; exported here so a Node consumer building its own
+// request doesn't re-derive the version thresholds locally.
+export { modelRejectsTemperature } from "./model-sampling-support.js";
+
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
   serializeForInlineScript,
@@ -1203,6 +1240,7 @@ export type {
 // custom scorer without a second import path.
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   canonicalDigest,
   canonicalJson,
@@ -1297,14 +1335,20 @@ export type {
 // `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
+  GATE_WAIVER_MAX_DURATION_MS,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   GateError,
+  applyGateWaiver,
   assertGate,
   evaluateGates,
   formatGateReport,
+  formatGateWaiverLine,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
   gateInputFromSuiteResult,
   gateOutcomeVerdict,
+  isGateWaiverInForce,
   passRateFractionFromPercent,
 } from "./gates.js";
 export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
@@ -1315,6 +1359,7 @@ export type {
   GateScore,
   GateStatus,
   GateVerdict,
+  GateWaiver,
   ScoreIntegrity,
 } from "./gates.js";
 

@@ -35,6 +35,10 @@ export interface MetricStripData {
 export type CellMetricTrendInput = {
   runLabel: string;
   result: "passed" | "failed" | "pending" | "partial";
+  /** Iteration counts within the run; falls back to result-derived 0/1 counts. */
+  passed?: number;
+  failed?: number;
+  total?: number;
   latencyMs: number | null;
   latencyP95Ms?: number | null;
   tokens: number | null;
@@ -50,12 +54,24 @@ function passRateFromCellResult(
 }
 
 function metricPointFromCellTrend(point: CellMetricTrendInput): MetricStripPoint {
-  const passed = point.result === "passed" ? 1 : 0;
-  const failed = point.result === "failed" ? 1 : 0;
+  const hasCounts = point.total != null && point.total > 0;
+  const passed = hasCounts
+    ? (point.passed ?? 0)
+    : point.result === "passed"
+      ? 1
+      : 0;
+  const failed = hasCounts
+    ? (point.failed ?? 0)
+    : point.result === "failed"
+      ? 1
+      : 0;
+  const total = hasCounts ? (point.total ?? 1) : 1;
   return {
-    passRate: passRateFromCellResult(point.result),
+    passRate: hasCounts
+      ? Math.round((passed / total) * 100)
+      : passRateFromCellResult(point.result),
     passed,
-    total: 1,
+    total,
     failed,
     latencyP50: point.latencyMs,
     latencyP95: point.latencyP95Ms ?? point.latencyMs,
@@ -80,7 +96,11 @@ function latencyPercentilesAcrossRuns(
   };
 }
 
-/** Fold per-cell run history into the same strip model the suite header uses. */
+/**
+ * Fold per-cell run history into the same strip model the suite header uses.
+ * Headline pass counts are cumulative across all runs in the series so the
+ * All-runs dashboard reports total iterations, not just the latest run's.
+ */
 export function buildCellMetricStripData(
   trendSeries: CellMetricTrendInput[],
 ): MetricStripData | null {
@@ -92,10 +112,26 @@ export function buildCellMetricStripData(
 
   const { latencyP50, latencyP95 } = latencyPercentilesAcrossRuns(trendSeries);
 
+  let cumulativePassed = 0;
+  let cumulativeFailed = 0;
+  let cumulativeTotal = 0;
+  for (const point of series) {
+    cumulativePassed += point.passed;
+    cumulativeFailed += point.failed;
+    cumulativeTotal += point.total;
+  }
+
   return {
     ...base,
     latest: {
       ...base.latest,
+      passed: cumulativePassed,
+      failed: cumulativeFailed,
+      total: cumulativeTotal,
+      passRate:
+        cumulativeTotal > 0
+          ? Math.round((cumulativePassed / cumulativeTotal) * 100)
+          : base.latest.passRate,
       latencyP50,
       latencyP95,
     },

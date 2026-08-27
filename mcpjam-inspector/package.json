@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.48.0",
+  "version": "3.2.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -36,6 +36,7 @@
   "files": [
     "bin",
     "dist",
+    "!dist/**/*.map",
     "assets/icon.ico",
     "assets/icon.icns",
     ".env.production",
@@ -132,7 +133,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^7.1.0",
+    "@mcpjam/sdk": "^8.2.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -245,6 +246,7 @@
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",
+    "prettier": "^3.8.0",
     "run-script-os": "^1.1.6",
     "sharp": "^0.33.4",
     "tailwindcss": "^4.1.11",

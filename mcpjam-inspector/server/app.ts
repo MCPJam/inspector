@@ -16,6 +16,7 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
+import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -31,6 +32,7 @@ import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
+import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
@@ -98,6 +100,12 @@ export async function createHonoApp() {
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
   logGradingEngineModeOnce();
+
+  // Under Electron this process IS the main process, and it is the one that
+  // ran out of heap in INSPECTOR-ELECTRON-W3 with no session telemetry at all.
+  // Started here rather than in `src/main.ts` so the npm-package server gets it
+  // too, and so the sampler sits next to the buffers it reports on.
+  startProcessVitalsSampler();
 
   // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
   // This is crucial when launched from GUI apps (Electron) where PATH is minimal
@@ -292,6 +300,11 @@ export async function createHonoApp() {
   // no-ops at `off`/`shadow`, because the backend rings this on every judge
   // save without consulting the flag. Mirror of the mount in server/index.ts.
   app.route("/api/internal/evals", internalEvalJudgeCompletions);
+  // Backend → inspector doorbell for a chat session whose chain inputs moved.
+  // Same service-token gate and the same body-carries-no-authority rule as the
+  // judge doorbell above — the ring is a wake-up, and the pass claims from the
+  // backend's own queue rather than from anything the caller named.
+  app.route("/api/internal/chat-stage", internalChatStageDerivations);
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from

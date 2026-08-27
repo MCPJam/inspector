@@ -27,6 +27,7 @@ import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { usePromoteCapability } from "@/hooks/usePromoteCapability";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ScenarioSessionsMetricStrip } from "@/components/scenarios/scenario-sessions-metric-strip";
+import { ScenarioStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
 
 interface ScenarioUsagePanelProps {
   scenario: ScenarioSettings;
@@ -223,6 +224,14 @@ export function ScenarioUsagePanel({
       <ErrorBoundary fallback={null}>
         <ScenarioSessionsMetricStrip scenarioId={scenario.scenarioId} />
       </ErrorBoundary>
+
+      {/* D8: this scenario's REAL sessions, and only those — never combined
+          with a swarm run's funnel or with eval trials. Self-hiding until the
+          backend query exists, same dark-ship reasoning as the strip above. */}
+      <ScenarioStageFunnelPanel
+        scenarioId={scenario.scenarioId}
+        className="mx-3 mb-3"
+      />
 
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">

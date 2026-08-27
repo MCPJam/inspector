@@ -8,37 +8,62 @@
  *   - every SKILL.md is fetched via `resources/read` and verified against its
  *     manifest digest before any caller sees a byte;
  *   - a read of a URI absent from the manifest is a FAILURE, never a fetch;
+ *   - every fetched file's byte length is checked against its manifest `size`
+ *     BEFORE its digest, because the draft makes a length mismatch its own
+ *     verification failure and the two are different diagnoses;
  *   - the fetched frontmatter is re-checked field-by-field against what the
  *     listing advertised, and the name against the URI's final segment;
- *   - a skill with NO manifest is refused outright. SEP-2640 says a host MAY
- *     load content it cannot verify; MCPJam declines, and says so.
+ *   - the draft's per-skill limits (512 entries, 16 MiB summed) are enforced
+ *     from the manifest, before the first byte is fetched;
+ *   - a skill with no enumerated manifest is refused outright — whether it
+ *     declared `"dynamic"` or omitted `resources` entirely, which are
+ *     different server behaviours and get different refusals. SEP-2640 says a
+ *     host MAY load content it cannot verify; MCPJam declines, and says so.
  *
  * Everything here is manager-shaped rather than route-shaped so the local
  * (long-lived manager) and hosted (ephemeral per-request manager) paths share
  * one implementation. The SDK owns the wire and the crypto; this module owns
  * the ORCHESTRATION and the refusals.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
   SkillIntegrityError,
+  checkManifestLimits,
   checkSkillIdentity,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isSkillNotFoundError,
   listAllServerSkills,
   sha256HexOfText,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
   type SkillEntry,
 } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 
-/** Hard cap on a fetched SKILL.md, matching the cloud-skill body cap. */
-export const MAX_SERVER_SKILL_CONTENT_BYTES = 128 * 1024;
-/** Hard cap on a fetched supporting file. */
-export const MAX_SERVER_SKILL_FILE_BYTES = 2 * 1024 * 1024;
+/**
+ * Hard cap on any single fetched skill file, SKILL.md included.
+ *
+ * This is the SEP's PER-SKILL total, applied per read. It used to be 128 KiB
+ * for SKILL.md and 2 MiB for a supporting file — caps invented before the
+ * draft had any, and both now sit BELOW what the draft says a host MUST
+ * support. A conforming 3 MiB SKILL.md would have been refused as `too_large`,
+ * which is our bug to own, not the server's.
+ *
+ * A file cannot legitimately exceed the whole skill's budget, so reusing the
+ * total as the per-read ceiling is both spec-safe and a real bound on a server
+ * that streams without end. The manifest-level budget — the sum, and the entry
+ * count — is enforced separately in {@link normalizeManifest}, before the
+ * first byte is fetched, which is what `size` is for.
+ */
+export const MAX_SERVER_SKILL_READ_BYTES = MAX_SKILL_TOTAL_BYTES;
 
 export interface ServerSkillSummary {
   serverId: string;
@@ -48,9 +73,16 @@ export interface ServerSkillSummary {
   description: string;
   /** Verbatim frontmatter, as advertised. */
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
+  resources: Array<{ uri: string; digest: string; size?: number }>;
   /** Present ⇒ live-only: discoverable and refused for loading. */
-  unloadable?: { reason: "no_resources"; message: string };
+  unloadable?: {
+    reason:
+      | "no_resources"
+      | "dynamic_resources"
+      | "too_many_resources"
+      | "too_large";
+    message: string;
+  };
 }
 
 export interface ServerSkillListing {
@@ -74,7 +106,7 @@ export interface VerifiedServerSkill {
   content: string;
   contentSha256: string;
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
+  resources: Array<{ uri: string; digest: string; size?: number }>;
 }
 
 /**
@@ -87,9 +119,12 @@ export interface VerifiedServerSkill {
 export interface ServerSkillRefusal {
   kind:
     | "no_resources"
+    | "dynamic_resources"
     | "unlisted_resource"
     | "digest_mismatch"
     | "unsupported_digest"
+    | "size_mismatch"
+    | "too_many_resources"
     | "frontmatter_drift"
     | "identity_mismatch"
     | "not_found"
@@ -240,21 +275,28 @@ function normalizeManifest(
   skillUri: string,
   raw: unknown
 ):
-  | { ok: true; resources: Array<{ uri: string; digest: string }> }
+  | {
+      ok: true;
+      resources: Array<{ uri: string; digest: string; size?: number }>;
+    }
   | {
       ok: false;
       reason: string;
+      kind?: "too_many_resources" | "too_large";
     } {
   if (!Array.isArray(raw)) return { ok: true, resources: [] };
   const root = skillDirectoryOf(skillUri);
   if (root === undefined) {
     return { ok: false, reason: `skill URI does not end in SKILL.md` };
   }
-  const resources: Array<{ uri: string; digest: string }> = [];
+  const resources: Array<{ uri: string; digest: string; size?: number }> = [];
   const seen = new Set<string>();
   for (const entry of raw) {
     const uri = String((entry as { uri?: unknown })?.uri ?? "");
     const digest = String((entry as { digest?: unknown })?.digest ?? "");
+    // The wire guard has already constrained `size` to a non-negative integer
+    // when present; anything else never reaches here.
+    const size = (entry as { size?: unknown })?.size;
     if (uri.length === 0 || digest.length === 0) {
       return { ok: false, reason: "manifest entry is missing uri or digest" };
     }
@@ -276,7 +318,31 @@ function normalizeManifest(
         reason: `manifest entry "${uri}" contains a parent-directory segment`,
       };
     }
-    resources.push({ uri, digest });
+    resources.push({
+      uri,
+      digest,
+      ...(typeof size === "number" ? { size } : {}),
+    });
+  }
+
+  // The draft's per-skill limits, enforced from the manifest BEFORE the first
+  // fetch — which is the whole reason `size` exists. A skill over either limit
+  // is "not guaranteed to be loadable by any conforming host", and the draft
+  // asks that a host declining on this basis say why rather than fail silently
+  // on a later read.
+  const limits = checkManifestLimits(resources);
+  if (!limits.ok) {
+    return limits.reason === "too_many_resources"
+      ? {
+          ok: false,
+          kind: "too_many_resources",
+          reason: `manifest lists ${limits.actual} files, over the ${MAX_SKILL_RESOURCE_ENTRIES}-entry limit`,
+        }
+      : {
+          ok: false,
+          kind: "too_large",
+          reason: `manifest totals ${limits.actual} bytes, over the ${MAX_SKILL_TOTAL_BYTES}-byte per-skill limit`,
+        };
   }
   return { ok: true, resources };
 }
@@ -320,8 +386,35 @@ function toSummary(
   if (description.length === 0) {
     return { ok: false, reason: "frontmatter.description is missing" };
   }
-  const manifest = normalizeManifest(entry.uri, entry.resources);
+  const dynamic = isDynamicResources(entry);
+  const manifest = normalizeManifest(
+    entry.uri,
+    dynamic ? undefined : enumeratedResources(entry)
+  );
   if (!manifest.ok) {
+    // A LIMIT breach is not a malformed manifest. The skill is real, its
+    // manifest parses, and a user should see it in the catalog for the same
+    // reason a `dynamic` one is shown — dropping it into `rejected` hides a
+    // real skill behind what reads as a server bug. Only a manifest we cannot
+    // make sense of is rejected outright.
+    if (manifest.kind !== undefined) {
+      const advertised = enumeratedResources(entry) ?? [];
+      return {
+        ok: true,
+        skill: {
+          serverId,
+          skillUri: entry.uri,
+          name,
+          description,
+          frontmatter,
+          resources: advertised,
+          unloadable: {
+            reason: manifest.kind,
+            message: `This skill exceeds what a host is required to support: its ${manifest.reason}. MCPJam declines to load it.`,
+          },
+        },
+      };
+    }
     return { ok: false, reason: manifest.reason };
   }
   const resources = manifest.resources;
@@ -337,15 +430,29 @@ function toSummary(
       resources,
       // Recorded, not rejected: the skill is real and a user should see it in
       // the catalog. Loading is what we refuse.
-      ...(resources.length === 0
+      //
+      // `"dynamic"` and a MISSING manifest are both unloadable and are kept
+      // apart deliberately: one is a server exercising a form the draft
+      // defines, the other is a server omitting a field the draft requires.
+      // Collapsing them would tell a server author their conforming skill is
+      // malformed.
+      ...(dynamic
         ? {
             unloadable: {
-              reason: "no_resources" as const,
+              reason: "dynamic_resources" as const,
               message:
-                "This skill does not advertise a file manifest, so MCPJam cannot verify its contents and declines to load it.",
+                "This skill generates its content per request, so there is no manifest to verify it against. MCPJam declines to load unverifiable skills.",
             },
           }
-        : {}),
+        : resources.length === 0
+          ? {
+              unloadable: {
+                reason: "no_resources" as const,
+                message:
+                  "This skill does not advertise a file manifest, so MCPJam cannot verify its contents and declines to load it.",
+              },
+            }
+          : {}),
     },
   };
 }
@@ -471,9 +578,18 @@ export async function getVerifiedServerSkill(
     });
   }
 
-  // MCPJam policy, applied before any fetch: no manifest ⇒ nothing to verify
-  // against, and we decline the SEP's permission to load unverified content.
-  if (!entry.resources || entry.resources.length === 0) {
+  // MCPJam policy, applied before any fetch: nothing to verify against means
+  // we decline the SEP's permission to load unverified content. The two ways
+  // that happens get their own refusals — see `toSummary` for why.
+  if (isDynamicResources(entry)) {
+    throw new ServerSkillRefusalError({
+      kind: "dynamic_resources",
+      message: `Skill "${uri}" declares "dynamic" content, so there is no manifest to verify it against. MCPJam declines to load unverifiable skills.`,
+      skillUri: uri,
+    });
+  }
+  const advertised = enumeratedResources(entry);
+  if (!advertised || advertised.length === 0) {
     throw new ServerSkillRefusalError({
       kind: "no_resources",
       message: `Skill "${uri}" does not advertise a file manifest, so its contents cannot be verified. MCPJam declines to load unverifiable skills.`,
@@ -485,10 +601,13 @@ export async function getVerifiedServerSkill(
   // fetch — containment and uniqueness, same rule the listing path applies. A
   // manifest reaching `readVerifiedServerSkillFile` unchecked would let a skill
   // authorize reads of resources outside its own directory.
-  const manifest = normalizeManifest(entry.uri, entry.resources);
+  const manifest = normalizeManifest(entry.uri, advertised);
   if (!manifest.ok) {
     throw new ServerSkillRefusalError({
-      kind: "unlisted_resource",
+      // A limit breach is not a malformed manifest — the draft asks a host
+      // declining on that basis to say WHY, and `unlisted_resource` would
+      // point the reader at a containment bug that isn't there.
+      kind: manifest.kind ?? "unlisted_resource",
       message: `Skill "${uri}" advertises an invalid file manifest: ${manifest.reason}.`,
       skillUri: uri,
     });
@@ -498,7 +617,7 @@ export async function getVerifiedServerSkill(
     manager,
     serverId,
     entry.uri,
-    MAX_SERVER_SKILL_CONTENT_BYTES
+    MAX_SERVER_SKILL_READ_BYTES
   );
 
   let verified;
@@ -550,12 +669,24 @@ export async function readVerifiedServerSkillFile(
     manager,
     args.serverId,
     args.resourceUri,
-    MAX_SERVER_SKILL_FILE_BYTES
+    MAX_SERVER_SKILL_READ_BYTES
   );
-  const verification = await verifyDigest(
-    new TextEncoder().encode(text),
-    listed.digest
-  );
+  const bytes = new TextEncoder().encode(text);
+  // Size before digest, same order and same reasoning as `verifySkillMarkdown`:
+  // a truncated read and a tampered file are different diagnoses, and only the
+  // length check can tell them apart.
+  const sizing = verifySize(bytes.byteLength, listed);
+  if (!sizing.ok) {
+    throw new ServerSkillRefusalError({
+      kind: "size_mismatch",
+      message: `"${args.resourceUri}" is advertised as ${sizing.expected} bytes but the server returned ${sizing.actual}.`,
+      skillUri: args.entry.uri,
+      resourceUri: args.resourceUri,
+      expected: String(sizing.expected),
+      actual: String(sizing.actual),
+    });
+  }
+  const verification = await verifyDigest(bytes, listed.digest);
   if (!verification.ok) {
     throw new ServerSkillRefusalError({
       kind: verification.reason,

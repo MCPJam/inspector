@@ -14,6 +14,7 @@ import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
+import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
@@ -287,37 +288,54 @@ export const createSuiteRunRecorder = ({
       });
     },
     async finalize({ status, summary, notes, stopReason }) {
-      if (runDeleted) {
-        // Silently skip if run was deleted
-        return;
-      }
-
+      // Drop this run's shadow-mismatch bookkeeping FIRST, and unconditionally.
+      //
+      // `shadow-mismatch.ts` keeps a per-run dedupe set so one comparison is
+      // reported once rather than once per iteration; without a matching
+      // forget, that map is a leak that grows for the life of the process —
+      // one entry per run, one entry per (iteration, kind) inside it. It was
+      // harmless while no cohort produced score rows and stops being harmless
+      // the moment the observation window raises the volume, which is why the
+      // fix lands BEFORE the window rather than after someone notices.
+      //
+      // Before the early return, because a deleted run still had comparisons
+      // recorded against it, and in a `finally` because a failed finalize is
+      // exactly when the entry would otherwise be stranded.
       try {
-        await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
-          runId,
-          status,
-          summary,
-          notes,
-          stopReason,
-        });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        // Check if run was deleted/not found
-        if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("unauthorized")
-        ) {
-          runDeleted = true;
-          // Silently skip - run was likely cancelled/deleted
+        if (runDeleted) {
+          // Silently skip if run was deleted
           return;
         }
 
-        logger.error(
-          "[evals] Failed to finalize suite run:",
-          new Error(errorMessage)
-        );
+        try {
+          await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
+            runId,
+            status,
+            summary,
+            notes,
+            stopReason,
+          });
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+          // Check if run was deleted/not found
+          if (
+            errorMessage.includes("not found") ||
+            errorMessage.includes("unauthorized")
+          ) {
+            runDeleted = true;
+            // Silently skip - run was likely cancelled/deleted
+            return;
+          }
+
+          logger.error(
+            "[evals] Failed to finalize suite run:",
+            new Error(errorMessage)
+          );
+        }
+      } finally {
+        forgetShadowMismatchRun(runId);
       }
     },
   };
@@ -353,6 +371,7 @@ export const startSuiteRunWithRecorder = async ({
   sourceHash,
   skillsOverride,
   ephemeralEnvironment,
+  importApprovals,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -469,6 +488,20 @@ export const startSuiteRunWithRecorder = async ({
    * is not a suite member. Forwarded to `startTestSuiteRun`.
    */
   ephemeralEnvironment?: boolean;
+  /**
+   * Per-run approval of `approximated` imported cases, by hosted test-case id.
+   *
+   * Forwarded to `startTestSuiteRun.importApprovals`, which validates them
+   * against the cases this run will actually execute, derives the approver
+   * from the authenticated launcher, stamps the time, and freezes the
+   * resulting decision into the run's own case snapshot. Nothing here is
+   * persisted on the case: a later run needs a new approval.
+   *
+   * Must be declared here or a reconstruction of the mutation args would
+   * silently drop it — and a dropped approval surfaces to the caller as the
+   * backend refusing a run they did approve.
+   */
+  importApprovals?: Array<{ testCaseId: string; reason: string }>;
 }) => {
   let response: any;
   try {
@@ -503,6 +536,9 @@ export const startSuiteRunWithRecorder = async ({
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+        ...(importApprovals && importApprovals.length
+          ? { importApprovals }
+          : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
@@ -776,5 +812,19 @@ export const startSuiteRunWithRecorder = async ({
      */
     pluginVersions: (response?.configSnapshot as any)
       ?.environmentPluginVersions as RunPinnedPluginVersion[] | undefined,
+    /**
+     * The run's FROZEN grading-engine position, straight off its own snapshot.
+     *
+     * Read from the RUN row rather than re-resolved from the suite or a flag,
+     * for the same reason `pluginVersions` is: the run's immutable record is
+     * what every other reader (the judge second pass, all three backend write
+     * boundaries) consults, and a runner that resolved its own position could
+     * grade the first pass under a mode the rest of the pipeline disagrees
+     * with. Absent on a legacy run, an `off` run, or an older backend — all of
+     * which mean the same thing here.
+     */
+    gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
+      | { mode?: unknown }
+      | undefined,
   };
 };

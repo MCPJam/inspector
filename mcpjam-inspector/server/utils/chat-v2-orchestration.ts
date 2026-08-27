@@ -51,7 +51,10 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
+import {
+  modelDefinitionSupportsTemperature,
+  type ModelDefinition,
+} from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -70,8 +73,6 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
-
-const DEFAULT_TEMPERATURE = 0.7;
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here
@@ -1076,12 +1077,23 @@ export async function prepareChatV2(
   const skillsArePinned =
     skillsSource?.kind === "pinned" ||
     skillsSource?.kind === "pinned-effective";
-  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
-  // falsify the snapshot claim. Harness is stripped from suite configs already;
-  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  // The two skill-delivery channels are deliberately DISJOINT, and this is the
+  // single point both funnel through. A harness turn materializes SKILL.md on
+  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // an emulated turn gets in-memory `loadSkill` tools from `skillsSource`.
+  // Delivering both would hand the model the same skill twice, by two mechanisms.
+  //
+  // So this is a CALLER contract, not a statement about what a harness can do:
+  // harness callers pass `{ kind: "none" }` here and put their pins on
+  // `pinnedHarnessSkills`. (Historical note: this once read "harness runs
+  // live-fetch skills" — that stopped being true when on-box pinned delivery
+  // landed, and the stale wording cost real debugging time. `run-harness-turn`
+  // does not call `fetchRuntimeSkills` at all in pinned mode.)
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills)."
+      "Harness turns receive pinned skills on box via `pinnedHarnessSkills`, " +
+        "not via `skillsSource`. Pass `skillsSource: { kind: 'none' }` for a " +
+        "harness turn — the two delivery channels are deliberately disjoint."
     );
   }
   const modelContextTokens =
@@ -1354,8 +1366,19 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = modelSupportsTemperature(modelDefinition.id)
-    ? temperature ?? DEFAULT_TEMPERATURE
+  //
+  // An omitted temperature stays omitted rather than becoming 0.7, so a caller
+  // that expressed no preference gets the provider's own default instead of one
+  // this file invented. The chat UI always sends its slider value (0.7 until
+  // moved), so this only changes programmatic callers — the SDK, the API and the
+  // eval runner — which previously could not request default sampling at all.
+  //
+  // The persisted `hostConfig.temperature` is unaffected and stays numeric:
+  // `buildDirectHostConfig` falls back to the requested value, then to 0.7.
+  const resolvedTemperature = modelDefinitionSupportsTemperature(
+    modelDefinition
+  )
+    ? temperature
     : undefined;
 
   // 5. Message scrubber
