@@ -73,6 +73,14 @@ export type SideEffectGate = {
   /** Resolved by `suiteHash + caseId`, verified against the pins before launch. */
   sideEffects: ResolvedCaseSideEffects | undefined;
   benchmarkRunId: string;
+  /**
+   * The case whose manifest licensed the write.
+   *
+   * Carried into the ledger because the DURABLE row is keyed by it: the
+   * backend requires `caseId` on every recorded artifact, and the cleanup
+   * steps a resumed worker re-derives are looked up by it.
+   */
+  caseId?: string;
   iteration: number;
   ledger: BenchmarkArtifactLedger;
   /**
@@ -302,6 +310,8 @@ export function harvestCreatedArtifacts(args: {
         artifactName,
         createdId,
         cleanupSteps: manifest.cleanupSteps,
+        ...(args.gate.caseId ? { caseId: args.gate.caseId } : {}),
+        iteration: args.gate.iteration,
       });
     }
   }
@@ -328,6 +338,41 @@ export function harvestCreatedArtifacts(args: {
  * covers creating a page named for this run and overwriting the operator's
  * homepage.
  */
+/**
+ * The policy a benchmark write guard stands up when the suite declares none.
+ *
+ * ── WHY THE GUARD CANNOT DEPEND ON AN UNRELATED OPTIONAL FIELD ────────────
+ *
+ * The side-effect manifest was only ever attached inside `toolPolicy ? … :
+ * null`. A benchmark write cell arrives with a `benchmarkWriteGuard` and no
+ * `toolPolicy` — the claim does not carry one — so the gate came out `null`
+ * and NOTHING was enforced: no allowed-tool check, no argument or prefix
+ * validation, no mutation-target check, and no id harvesting, which also means
+ * no cleanup. The whole write-safety story was switched off by the absence of
+ * a field that has nothing to do with it.
+ *
+ * `mode: "default"` is the neutral classification baseline, and the manifest's
+ * own `allowedTools` are listed under `allow` so a create or cleanup tool
+ * annotated `destructiveHint` is not refused by the classification layer
+ * before the manifest — which is the thing that actually bounds it — has been
+ * consulted. Every other tool still falls under `default`, and
+ * {@link inspectSideEffects} refuses anything the manifest does not name.
+ *
+ * A guard whose manifest is MISSING gets `allow: []`, so the classification
+ * layer is at its strictest at exactly the moment there are no rules to apply;
+ * `requireManifest` then refuses the call outright.
+ */
+export function benchmarkEnforcementPolicy(
+  gate: SideEffectGate,
+): EvalSuiteFileToolPolicy {
+  const manifest = gate.sideEffects;
+  return {
+    mode: "default",
+    allow:
+      manifest?.mode === "test_write" ? [...manifest.allowedTools] : [],
+  };
+}
+
 export function createToolPolicyGate(args: {
   policy: EvalSuiteFileToolPolicy;
   annotations: ToolAnnotationsLookup;
@@ -459,6 +504,12 @@ export function createToolPolicyGate(args: {
               input,
               result,
             });
+            // And DURABLY before the model sees the result. The next tool call
+            // cannot be issued until this resolves, so an id is never one
+            // process death away from being lost while the artifact it names
+            // sits in somebody else's tenant. A no-op for a ledger with no
+            // sink, which is every ordinary eval.
+            await sideEffectGate.ledger.flush();
             return result;
           },
         };

@@ -14,12 +14,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  benchmarkEnforcementPolicy,
   createToolPolicyGate,
   inspectSideEffects,
   isToolPolicyBlockResult,
   toolAnnotationsKey,
 } from "../tool-policy-gate";
 import { createBenchmarkArtifactLedger } from "../artifact-ledger";
+import { resolveEnforcementGate } from "../../evals-runner";
 import type { ResolvedCaseSideEffects } from "../side-effect-manifest";
 
 const RUN_ID = "brun-1";
@@ -288,6 +290,263 @@ describe("side-effect write gate", () => {
     await wrapped.bash.execute!({}, {} as never);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(gate.blocks).toHaveLength(0);
+  });
+});
+
+describe("benchmarkEnforcementPolicy", () => {
+  // THE FINDING THESE LOCK: the side-effect manifest was only attached inside
+  // `toolPolicy ? createToolPolicyGate(…) : null`. A benchmark write cell
+  // arrives with a `benchmarkWriteGuard` and NO `toolPolicy` — the claim does
+  // not carry one — so the gate came out `null` and nothing was enforced: no
+  // allowed-tool check, no argument or prefix validation, no id harvesting,
+  // and therefore no cleanup either. The guard has to stand up its own
+  // enforcement gate, independent of that unrelated optional field.
+
+  it("exempts exactly the manifest's allowed tools from the classification layer", () => {
+    expect(
+      benchmarkEnforcementPolicy({
+        sideEffects: MANIFEST,
+        benchmarkRunId: RUN_ID,
+        iteration: 0,
+        ledger: createBenchmarkArtifactLedger(),
+        requireManifest: true,
+      }),
+    ).toEqual({
+      mode: "default",
+      allow: ["create_page", "update_page", "list_pages"],
+    });
+  });
+
+  it("allows nothing when the manifest is missing", () => {
+    // Strictest at exactly the moment there are no rules to apply.
+    expect(
+      benchmarkEnforcementPolicy({
+        sideEffects: undefined,
+        benchmarkRunId: RUN_ID,
+        iteration: 0,
+        ledger: createBenchmarkArtifactLedger(),
+        requireManifest: true,
+      }),
+    ).toEqual({ mode: "default", allow: [] });
+  });
+
+  it("enforces the manifest on a gate the write guard stood up alone", async () => {
+    // The end-to-end shape of the defect: a gate built from the guard's own
+    // policy, with no suite-authored `toolPolicy` anywhere.
+    const ledger = createBenchmarkArtifactLedger();
+    const execute = vi.fn().mockResolvedValue({ content: [] });
+    const sideEffectGate = {
+      sideEffects: MANIFEST,
+      benchmarkRunId: RUN_ID,
+      iteration: 0,
+      ledger,
+      requireManifest: true,
+    };
+    const gate = createToolPolicyGate({
+      policy: benchmarkEnforcementPolicy(sideEffectGate),
+      annotations: new Map(),
+      sideEffectGate,
+    });
+    const wrapped = gate.wrap({
+      create_page: { _serverId: "server-1", execute },
+      delete_page: { _serverId: "server-1", execute },
+    } as never);
+
+    // Not on the manifest's list: refused.
+    const denied = await (wrapped as never as Record<string, { execute: Function }>)
+      .delete_page.execute({ page_id: "x" }, { toolCallId: "c1" });
+    expect(isToolPolicyBlockResult(denied)).toBe(true);
+
+    // On the list, but named outside this run's prefix: refused.
+    const misnamed = await (wrapped as never as Record<string, { execute: Function }>)
+      .create_page.execute({ page: { title: "the operator's page" } }, {
+        toolCallId: "c2",
+      });
+    expect(isToolPolicyBlockResult(misnamed)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("harvests ids on a guard-only gate, so the cleanup ledger is not empty", async () => {
+    const ledger = createBenchmarkArtifactLedger();
+    const sideEffectGate = {
+      sideEffects: MANIFEST,
+      benchmarkRunId: RUN_ID,
+      caseId: "case-1",
+      iteration: 0,
+      ledger,
+      requireManifest: true,
+    };
+    const gate = createToolPolicyGate({
+      policy: benchmarkEnforcementPolicy(sideEffectGate),
+      annotations: new Map(),
+      sideEffectGate,
+    });
+    const wrapped = gate.wrap({
+      create_page: {
+        _serverId: "server-1",
+        execute: vi
+          .fn()
+          .mockResolvedValue({ structuredContent: { id: "page-1" } }),
+      },
+    } as never);
+
+    await (wrapped as never as Record<string, { execute: Function }>)
+      .create_page.execute(
+        { page: { title: `mcpjam-benchmark-${RUN_ID}-0-notes` } },
+        { toolCallId: "c1" },
+      );
+
+    expect(ledger.entries()).toEqual([
+      expect.objectContaining({
+        createdId: "page-1",
+        caseId: "case-1",
+        iteration: 0,
+      }),
+    ]);
+  });
+
+  it("does not return a create's result until the id is durable", async () => {
+    // The next mutation cannot be issued before the model sees this result, so
+    // awaiting the flush here is what makes "recorded durably before the next
+    // mutation" true.
+    let release!: () => void;
+    const landed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ledger = createBenchmarkArtifactLedger({
+      persist: async () => {
+        await landed;
+      },
+    });
+    const sideEffectGate = {
+      sideEffects: MANIFEST,
+      benchmarkRunId: RUN_ID,
+      iteration: 0,
+      ledger,
+      requireManifest: true,
+    };
+    const gate = createToolPolicyGate({
+      policy: benchmarkEnforcementPolicy(sideEffectGate),
+      annotations: new Map(),
+      sideEffectGate,
+    });
+    const wrapped = gate.wrap({
+      create_page: {
+        _serverId: "server-1",
+        execute: vi
+          .fn()
+          .mockResolvedValue({ structuredContent: { id: "page-1" } }),
+      },
+    } as never);
+
+    let returned = false;
+    const call = (wrapped as never as Record<string, { execute: Function }>)
+      .create_page.execute(
+        { page: { title: `mcpjam-benchmark-${RUN_ID}-0-notes` } },
+        { toolCallId: "c1" },
+      )
+      .then((result: unknown) => {
+        returned = true;
+        return result;
+      });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(returned).toBe(false);
+
+    release();
+    await call;
+    expect(returned).toBe(true);
+  });
+});
+
+describe("resolveEnforcementGate", () => {
+  // THE FINDING THIS LOCKS, at the exact line it lived on: the gate was built
+  // as `toolPolicy ? createToolPolicyGate(…) : null`, and `defaultRunEvalCell`
+  // passes a `benchmarkWriteGuard` and never a `toolPolicy`.
+
+  function guard(sideEffects?: ResolvedCaseSideEffects) {
+    return {
+      benchmarkRunId: RUN_ID,
+      sideEffectsByCaseId: sideEffects ? { "case-1": sideEffects } : {},
+      requireManifest: true,
+      ledger: createBenchmarkArtifactLedger(),
+    };
+  }
+
+  it("stands up a gate for a write guard with no suite tool policy", async () => {
+    const gate = resolveEnforcementGate({
+      benchmarkWriteGuard: guard(MANIFEST),
+      testCaseId: "case-1",
+      runIndex: 0,
+      annotations: new Map(),
+    });
+
+    expect(gate).not.toBeNull();
+
+    // And the manifest is actually in force on it, not merely constructed.
+    const execute = vi.fn().mockResolvedValue({ content: [] });
+    const wrapped = gate!.wrap({
+      delete_page: { _serverId: "server-1", execute },
+    } as never);
+    const result = await (
+      wrapped as never as Record<string, { execute: Function }>
+    ).delete_page.execute({ page_id: "x" }, { toolCallId: "c1" });
+
+    expect(isToolPolicyBlockResult(result)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a write cell whose manifest never reached us", async () => {
+    const gate = resolveEnforcementGate({
+      benchmarkWriteGuard: guard(),
+      testCaseId: "case-1",
+      runIndex: 0,
+      annotations: new Map(),
+    });
+
+    expect(gate).not.toBeNull();
+    const execute = vi.fn().mockResolvedValue({ content: [] });
+    const wrapped = gate!.wrap({
+      create_page: { _serverId: "server-1", execute },
+    } as never);
+    const result = await (
+      wrapped as never as Record<string, { execute: Function }>
+    ).create_page.execute({ page: { title: "x" } }, { toolCallId: "c1" });
+
+    expect(isToolPolicyBlockResult(result)).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps the suite's own policy when it has one, with the manifest on top", async () => {
+    const gate = resolveEnforcementGate({
+      toolPolicy: { mode: "readOnly" },
+      benchmarkWriteGuard: guard(MANIFEST),
+      testCaseId: "case-1",
+      runIndex: 0,
+      annotations: new Map(),
+    });
+
+    expect(gate?.policy).toEqual({ mode: "readOnly" });
+    // An author who wrote `readOnly` meant it: the manifest adds a bound, it
+    // does not lift one.
+    const execute = vi.fn().mockResolvedValue({ content: [] });
+    const wrapped = gate!.wrap({
+      create_page: { _serverId: "server-1", execute },
+    } as never);
+    const result = await (
+      wrapped as never as Record<string, { execute: Function }>
+    ).create_page.execute(
+      { page: { title: `mcpjam-benchmark-${RUN_ID}-0-notes` } },
+      { toolCallId: "c1" },
+    );
+    expect(isToolPolicyBlockResult(result)).toBe(true);
+  });
+
+  it("is null when nothing restrains the iteration at all", () => {
+    expect(
+      resolveEnforcementGate({ runIndex: 0, annotations: new Map() }),
+    ).toBeNull();
   });
 });
 

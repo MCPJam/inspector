@@ -72,7 +72,9 @@ import {
 import { createConcurrencyLimiter } from "./evals-runner.js";
 import {
   cleanupBenchmarkArtifacts,
+  cleanupStepsFor,
   createBenchmarkArtifactLedger,
+  type ArtifactLedgerEntry,
   type ArtifactCleanupReport,
   type BenchmarkArtifactLedger,
   type BenchmarkWriteGuard,
@@ -80,6 +82,8 @@ import {
 import {
   assertCaseMetadataPinned,
   CaseMetadataPinMismatchError,
+  type CaseCleanupStep,
+  type ResolvedCaseSideEffects,
   type PinnedCaseSideEffects,
 } from "./evals/side-effect-manifest.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
@@ -149,19 +153,26 @@ const TERMINAL_RUN_STATUSES = new Set([
 ]);
 
 /**
- * How to launch one matrix cell, resolved BACKEND-SIDE from the pinned
- * definition.
+ * How to launch one matrix cell.
  *
- * The worker does not translate a definition into launch parameters, and that
- * is deliberate: the definition is what the run's hashes pin, so the mapping
- * from a cell to a model + client profile has to be reproducible from the pins
- * alone. Here it is data.
+ * NOT a wire type. The backend's claim roster carries `cellId` and
+ * `repetitions` and nothing else about how a cell runs, so this is ASSEMBLED
+ * by {@link resolveEvalCellSpec} out of the roster row and the claim's pins —
+ * and it is assembled strictly, because the fields it cannot fill are the ones
+ * that decide which exam actually runs.
  */
 export type BenchmarkEvalCell = {
   cellId: string;
-  /** The exam the definition pins. */
+  /** The exam the definition pins — `pins.suiteId` on the wire. */
   suiteId: string;
-  /** Project environment pinning the cell's model. */
+  /**
+   * Project environment pinning the cell's model.
+   *
+   * The backend validates the child's `effectiveModelId` against the cell's
+   * `requestedModel` when the evidence is attached, so a cell launched without
+   * this runs an exam nobody asked for, spends the payer's credits on it, and
+   * is then refused. There is no default worth guessing.
+   */
   environmentId?: string | null;
   /** Named host config pinning the cell's client profile (harness vs emulated). */
   namedHostId?: string | null;
@@ -188,20 +199,21 @@ export type BenchmarkEvalCell = {
 };
 
 /**
- * Where the auth-probe child dials, resolved BACKEND-SIDE from the pinned
- * target.
+ * Where the auth-probe child dials.
  *
- * The endpoint is data for the same reason a cell's model is: it is what the
- * run's hashes pin, and a worker that derived it would make the observation
- * un-reproducible from the pins.
+ * NOT a wire type. The claim carries the endpoint exactly once, at
+ * `target.serverUrl` — resolved backend-side from the saved server row,
+ * because a worker holding a bearer scoped to one server has no way to look it
+ * up. {@link resolveProbeSpec} reads it from there.
  */
 export type BenchmarkProbeSpec = {
   serverUrl: string;
 };
 
 /**
- * How to run the conformance child, resolved backend-side from the pinned
- * definition.
+ * How to run the conformance child.
+ *
+ * NOT a wire type; see {@link resolveConformanceSpec}.
  *
  * `oauth` is present only for a definition that pins an `oauth-headless` exam
  * scope. Its `headlessCheckIds` names, BY ID, exactly which checks that exam
@@ -237,42 +249,65 @@ export type BenchmarkConformanceSpec = {
 /**
  * One rostered piece of evidence and its current status, as of the claim.
  *
+ * MIRRORS `rosterFor()` in the backend's `benchmarkRuns.ts`. Everything here
+ * is a field that route actually sends; the launch parameters a child needs
+ * are NOT among them, which is what {@link resolveEvalCellSpec} exists to say
+ * out loud.
+ *
  * The roster is what makes resume possible: a partially executed matrix is
  * otherwise indistinguishable from a complete one, because in both cases the
  * only children that exist are the ones that ran.
  */
 export type BenchmarkRosterEntry = {
   evidenceKey: string;
-  kind:
-    | "auth_probe"
-    | "conformance_run"
-    | "claude_readiness"
-    | "openai_readiness"
-    | "eval_run";
-  status:
-    | "expected"
-    | "running"
-    | "completed"
-    | "failed"
-    | "unavailable"
-    | "not_applicable";
+  /**
+   * The child's idempotency key, DERIVED BACKEND-SIDE.
+   *
+   * Taken from the wire rather than recomputed here: two derivations of one
+   * string are two chances to disagree by a character, and the character they
+   * disagree by starts a second intrusive run against somebody else's server.
+   */
+  externalRunId?: string;
+  pillar?: string;
+  kind: string;
+  status: string;
   required: boolean;
+  cellId?: string;
   repetitions?: number;
+  /**
+   * The cell's pinned model and client profile, as project ids.
+   *
+   * NOT SENT TODAY. The backend reduces the definition's `matrix[]` to
+   * `pins.matrixHash` and puts no launch parameters on the roster, so these
+   * are read where the backend would naturally put them and refused when
+   * absent — see {@link resolveEvalCellSpec}. Declared rather than reached for
+   * with a cast so the shape the two repos have to agree on is written down.
+   */
+  environmentId?: string | null;
+  namedHostId?: string | null;
+  /**
+   * The conformance suite scope this exam pins, on a `conformance_run` row.
+   *
+   * NOT SENT TODAY either — it lives in the definition's
+   * `evidence.conformance.suites`, which the claim reduces to
+   * `pins.definitionHash`. The endpoint is deliberately NOT part of it: that
+   * comes from `target.serverUrl`, so there is exactly one statement of which
+   * host is under measurement. See {@link resolveConformanceSpec}.
+   */
+  conformance?: Omit<BenchmarkConformanceSpec, "serverUrl">;
   /** The child already bound to this row, on a resume. */
   testSuiteRunId?: string | null;
-  /** Present on `eval_run` rows only. */
-  evalCell?: BenchmarkEvalCell;
-  /** Present on `auth_probe` rows only. */
-  probeSpec?: BenchmarkProbeSpec;
-  /** Present on `conformance_run` rows only. */
-  conformanceSpec?: BenchmarkConformanceSpec;
+  conformanceRunId?: string | null;
+  readinessRunId?: string | null;
+  probeRunId?: string | null;
+  failureClass?: string;
 };
 
 /**
- * The claim payload, HAND-MIRRORED from the backend's claim httpAction. The
- * two repos share no types, so this shape IS the contract: adding a field is a
- * two-repo change, and unknown fields on the wire are ignored rather than
- * rejected.
+ * The claim payload, DECODED from the backend's claim httpAction — see
+ * {@link decodeClaimedJob}. The two repos share no types, so the decoder is
+ * the contract: unknown fields on the wire are ignored, and every field this
+ * worker acts on is read from the exact place the backend puts it.
  */
 export type ClaimedBenchmarkJob = {
   jobId: string;
@@ -283,46 +318,102 @@ export type ClaimedBenchmarkJob = {
   serverId: string;
   serverName?: string;
   /**
-   * The lease generation this claim won. Every write carries it; the backend
-   * refuses a stale one with 409 `lease_lost`.
+   * The lease generation this claim won. The backend reads it out of the GRANT
+   * rather than the body, so this is for logging and for the heartbeat's own
+   * bookkeeping — never for authorization.
    */
   leaseGeneration: number;
-  /** The definition hash the JOB was enqueued against. */
-  definitionHash: string;
-  /** The hashes the CLAIM resolved. Compared against the job's before anything runs. */
+  leaseExpiresAt?: number;
+  deadlineAt?: number;
+  heartbeatIntervalMs?: number;
+  attempt?: number;
+  maxAttempts?: number;
+  cancelRequested?: boolean;
+  /** The hashes the CLAIM resolved, straight off `body.pins`. */
   pins: {
     definitionHash: string;
     consentHash?: string;
     caseMetadataHash?: string;
+    matrixHash?: string;
+    suiteId?: string;
     suiteRevision?: string;
+    profileId?: string;
+    profileVersion?: string;
+    expectedEvidenceHash?: string;
+    scoringPolicyHash?: string;
+    taxonomyVersion?: string;
+    caseMetadata?: unknown;
   };
+  /** Straight off `body.target`. `serverUrl` is the endpoint the children dial. */
+  target: {
+    targetKind?: string;
+    targetKey?: string;
+    targetFingerprint?: string;
+    benchmarkTargetId?: string;
+    serverUrl?: string;
+  };
+  /** Straight off `body.consent`. What the payer agreed this run may do. */
+  consent: { authenticatedChecks: boolean; writeCases: boolean };
+  payerKind?: string;
   roster: BenchmarkRosterEntry[];
   /**
-   * The execution grant (`purpose: 'benchmark-execution'`), forwarded verbatim
-   * to `/stream`. NEVER parsed here for authorization — the worker is not the
-   * verifier, and a worker that reads claims out of a token it merely carries
-   * is one refactor away from trusting them.
+   * The execution grant (`purpose: 'benchmark-execution'`), from
+   * `body.credentials.grant`. Sent on EVERY post-claim route in
+   * `x-mcpjam-benchmark-grant` — the backend's `boundGrant()` reads the run,
+   * the job and the lease generation out of it and refuses the write without
+   * it — and forwarded verbatim to `/stream`. NEVER parsed here for
+   * authorization: the worker is not the verifier, and a worker that reads
+   * claims out of a token it merely carries is one refactor away from trusting
+   * them.
+   *
+   * MUTATED IN PLACE when a heartbeat reissues one; see `executeClaimedJob`.
    */
   grant: string;
   /**
-   * The benchmark-scoped bearer the children run as. Scoped to this run's
-   * project + server backend-side, so it is not an organization-wide
-   * credential even though it is used like one here.
+   * When the current grant expires, from `body.credentials.grantExpiresAt`.
+   *
+   * Sent back on every heartbeat, because that is what the backend compares
+   * against `BENCHMARK_GRANT_REISSUE_BEFORE_S` to decide whether to mint a
+   * replacement. Omitting it reads as `0`, which asks for a fresh grant on
+   * every single beat and churns the `jti` a billing seam tells grants apart by.
+   */
+  grantExpiresAt?: number;
+  /**
+   * The benchmark-scoped bearer the children run as, from
+   * `body.credentials.runnerBearer`. Scoped to this run's project + server
+   * backend-side, so it is not an organization-wide credential even though it
+   * is used like one here.
    */
   runnerBearer: string;
+  runnerBearerExpiresAt?: number;
+  /**
+   * What this run has already created in the target's tenant, on a resume.
+   *
+   * `claimNextBenchmarkJob` returns this; the claim ROUTE does not currently
+   * forward it. Decoded when present so a resumed worker inherits the previous
+   * attempt's cleanup the day it does — see {@link hydrateArtifactLedger}.
+   */
+  artifacts?: unknown[];
 };
 
 /** What a heartbeat answers. Three of the four fields are stop signals. */
 export type BenchmarkHeartbeat = {
   leaseOk: boolean;
   cancelRequested?: boolean;
-  budgetStatus?: "active" | "exhausted" | "settled";
+  budgetStatus?: "active" | "exhausted" | "settled" | "none";
   runStatus?: string;
+  leaseExpiresAt?: number;
+  deadlineAt?: number;
   /**
    * A reissued grant, when the current one is close enough to expiry that a
-   * long cell would outlive it. Adopted in place — see `grantHeaders` below.
+   * long cell would outlive it.
+   *
+   * The backend spells this `credentials: { grant, grantExpiresAt }`, spread
+   * alongside the beat rather than nested under a `result` — see the heartbeat
+   * route. Adopted in place, into the job AND the shared header object, so
+   * every post-claim write and every already-running child picks it up.
    */
-  grant?: string;
+  credentials?: { grant?: string; grantExpiresAt?: number };
 };
 
 /**
@@ -359,25 +450,114 @@ export function isBenchWorkerEnabled(): boolean {
   return process.env.BENCH_WORKER_ENABLED === "1";
 }
 
-function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
+/**
+ * The vetted backend origin, or a throw naming the misconfiguration.
+ *
+ * ── WHY THE SCHEME IS CHECKED HERE AND NOT LEFT TO `fetch` ────────────────
+ *
+ * Every call below carries `x-inspector-service-token`, the credential that
+ * authenticates this process AS the Inspector — it can claim jobs, heartbeat
+ * them and abort them. Sending it to an `http:` host puts it on the wire in
+ * cleartext for anyone on the path. Loopback is exempt because local dev
+ * legitimately runs Convex over http on 127.0.0.1.
+ *
+ * `http:` is exempted ONLY for loopback: `ftp://localhost` is a
+ * misconfiguration, and letting it reach `fetch` reports it as an unreachable
+ * upstream instead of the config error it is.
+ *
+ * This is the same policy `callBackend` applies in `routes/web/bench.ts`.
+ * Restated rather than imported: that helper is an HTTP-route collaborator —
+ * it throws `WebRouteError`, collapses 404 into a feature-disabled verdict and
+ * never surfaces the raw status — and this worker branches on the raw status
+ * of every route it calls. Sharing the transport would mean weakening one of
+ * the two; sharing the POLICY is what actually matters, so it is written out
+ * with the same exemptions and locked by its own test.
+ */
+function benchServiceConfig(): { convexUrl: string; serviceToken: string } {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexUrl || !serviceToken) return null;
-  return { convexUrl, serviceToken };
-}
-
-type ServiceRouteResponse = { status: number; body: any };
-
-async function postServiceRoute(
-  path: string,
-  body: Record<string, unknown>,
-): Promise<ServiceRouteResponse> {
-  const env = requiredEnv();
-  if (!env) {
+  if (!convexUrl || !serviceToken) {
     throw new Error(
       "Bench worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
     );
   }
+  let parsed: URL;
+  try {
+    parsed = new URL(convexUrl);
+  } catch {
+    throw new Error("Bench worker: CONVEX_HTTP_URL is not a valid URL");
+  }
+  const isLoopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1" ||
+    parsed.hostname === "[::1]";
+  if (
+    parsed.protocol !== "https:" &&
+    !(parsed.protocol === "http:" && isLoopback)
+  ) {
+    throw new Error(
+      "Bench worker: refusing to send the inspector service token to a " +
+        `non-HTTPS CONVEX_HTTP_URL (${parsed.protocol}//${parsed.hostname})`,
+    );
+  }
+  return { convexUrl: convexUrl.replace(/\/$/, ""), serviceToken };
+}
+
+/**
+ * EVERY `/internal/v1/bench/*` path this worker calls, spelled once.
+ *
+ * The worker family the backend's `registerBenchmarkJobRoutes` publishes, and
+ * the only reason it is a table rather than template literals at each call
+ * site: a path typo is a 404, a 404 on this surface reads as "the feature is
+ * switched off here", and the loop then parks on a slow poll forever instead
+ * of reporting anything. `bench-worker-routes.test.ts` locks this table
+ * against the backend's registration list.
+ */
+export const BENCH_SERVICE_ROUTES = {
+  claim: `${BENCH_SERVICE_BASE}/jobs/claim`,
+  heartbeat: `${BENCH_SERVICE_BASE}/jobs/heartbeat`,
+  complete: `${BENCH_SERVICE_BASE}/jobs/complete`,
+  abort: `${BENCH_SERVICE_BASE}/jobs/abort`,
+  evidenceAttach: `${BENCH_SERVICE_BASE}/evidence/attach`,
+  evidenceUnobtainable: `${BENCH_SERVICE_BASE}/evidence/unobtainable`,
+  evidenceClaimChild: `${BENCH_SERVICE_BASE}/evidence/claim-child`,
+  evidenceProbe: `${BENCH_SERVICE_BASE}/evidence/probe`,
+  artifacts: `${BENCH_SERVICE_BASE}/artifacts`,
+  roster: `${BENCH_SERVICE_BASE}/runs/roster`,
+  finalize: `${BENCH_SERVICE_BASE}/runs/finalize`,
+  /**
+   * `/runs/`, not `/jobs/`. The job stays leased across this call — it is the
+   * RUN that moves to `awaiting_evidence` — and the backend registers it with
+   * the other run-scoped routes accordingly.
+   */
+  executionComplete: `${BENCH_SERVICE_BASE}/runs/execution-complete`,
+} as const;
+
+type ServiceRouteResponse = { status: number; body: any };
+
+/**
+ * One POST at a `/internal/v1/bench/*` worker route.
+ *
+ * ── TWO CREDENTIALS, NOT ONE ──────────────────────────────────────────────
+ *
+ * The service token says this process is the Inspector. It is NOT permission
+ * to write to a particular run: every post-claim route calls `boundGrant()`
+ * and reads the run, the job and the lease generation out of
+ * `x-mcpjam-benchmark-grant`, answering 401 when the header is missing. So the
+ * grant is threaded through explicitly — a route that needs one and is called
+ * without one fails the same way a route called with a stale one does, which
+ * is exactly the confusion worth making impossible.
+ *
+ * `/jobs/claim` is the one route with no grant to send: it is the route that
+ * MINTS the grant.
+ */
+async function postServiceRoute(
+  path: string,
+  body: Record<string, unknown>,
+  options?: { grant?: string },
+): Promise<ServiceRouteResponse> {
+  const env = benchServiceConfig();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SERVICE_ROUTE_TIMEOUT_MS);
   // The deadline stays armed through the BODY read: a response that stalls
@@ -388,10 +568,25 @@ async function postServiceRoute(
       headers: {
         "Content-Type": "application/json",
         "x-inspector-service-token": env.serviceToken,
+        ...(options?.grant
+          ? { [BENCHMARK_GRANT_HEADER]: options.grant }
+          : {}),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
+      // The scheme check above vets the CONFIGURED host and nothing else.
+      // `fetch` follows redirects by default and replays request headers to
+      // wherever it lands, so a 3xx from a compromised or merely misconfigured
+      // deployment would hand the service token AND the execution grant to
+      // another origin — over http, even. Refuse to follow; the credentials
+      // stay confined to the host we vetted.
+      redirect: "manual",
     });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error(
+        `bench route ${path} redirected (${response.status}); refusing to forward the service token`,
+      );
+    }
     let parsed: any = null;
     try {
       parsed = await response.json();
@@ -440,18 +635,135 @@ function isLeaseLostResponse(status: number, body: any): boolean {
  * route anyway.
  */
 
+/** A trimmed, non-empty string, or `null`. Same rule the backend reads by. */
+function readString(source: any, key: string): string | null {
+  const value = source?.[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function readNumber(source: any, key: string): number | undefined {
+  const value = source?.[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * Turn the claim response into a job, or explain why it is not one.
+ *
+ * ── WHY THIS IS A DECODER AND NOT A CAST ──────────────────────────────────
+ *
+ * The backend answers `{ ok, claimed: true, job, pins, target, consent,
+ * payerKind, roster, credentials }` — `claimed` is the literal boolean, and
+ * everything the worker needs is a SIBLING of it. Casting `body.claimed` into
+ * this type produces `true`, whose every property is `undefined`: no job id,
+ * no grant, no bearer, no roster. Nothing downstream can tell that apart from
+ * a backend that answered badly, so it is read field by field here, from the
+ * exact place the route puts each one, and refused loudly when a required one
+ * is missing.
+ *
+ * Unknown fields are ignored rather than rejected — adding one backend-side
+ * must not stop this worker claiming.
+ */
+export function decodeClaimedJob(body: any): ClaimedBenchmarkJob | null {
+  if (body?.claimed !== true) return null;
+  const job = body.job ?? {};
+  const credentials = body.credentials ?? {};
+  const pins = body.pins ?? {};
+  const consent = body.consent ?? {};
+
+  const jobId = readString(job, "jobId");
+  const benchmarkRunId = readString(job, "benchmarkRunId");
+  const grant = readString(credentials, "grant");
+  const runnerBearer = readString(credentials, "runnerBearer");
+  // Named individually: "the claim was missing something" is not a diagnosis,
+  // and this message becomes the abort reason an operator reads.
+  const missing = [
+    jobId ? null : "job.jobId",
+    benchmarkRunId ? null : "job.benchmarkRunId",
+    readString(job, "projectId") ? null : "job.projectId",
+    readString(job, "serverId") ? null : "job.serverId",
+    grant ? null : "credentials.grant",
+    runnerBearer ? null : "credentials.runnerBearer",
+    readString(pins, "definitionHash") ? null : "pins.definitionHash",
+  ].filter((field): field is string => field !== null);
+  if (missing.length > 0) {
+    throw new JobUnexecutableError(
+      `the claim response is missing ${missing.join(", ")}`,
+    );
+  }
+
+  return {
+    jobId: jobId as string,
+    benchmarkRunId: benchmarkRunId as string,
+    organizationId: readString(job, "organizationId") ?? "",
+    projectId: readString(job, "projectId") as string,
+    serverId: readString(job, "serverId") as string,
+    leaseGeneration: readNumber(job, "leaseGeneration") ?? 0,
+    ...(readNumber(job, "leaseExpiresAt") !== undefined
+      ? { leaseExpiresAt: readNumber(job, "leaseExpiresAt") }
+      : {}),
+    ...(readNumber(job, "deadlineAt") !== undefined
+      ? { deadlineAt: readNumber(job, "deadlineAt") }
+      : {}),
+    ...(readNumber(job, "heartbeatIntervalMs") !== undefined
+      ? { heartbeatIntervalMs: readNumber(job, "heartbeatIntervalMs") }
+      : {}),
+    ...(readNumber(job, "attempt") !== undefined
+      ? { attempt: readNumber(job, "attempt") }
+      : {}),
+    ...(readNumber(job, "maxAttempts") !== undefined
+      ? { maxAttempts: readNumber(job, "maxAttempts") }
+      : {}),
+    cancelRequested: job.cancelRequested === true,
+    pins: {
+      ...(typeof pins === "object" && pins !== null ? pins : {}),
+      definitionHash: readString(pins, "definitionHash") as string,
+    },
+    target:
+      typeof body.target === "object" && body.target !== null
+        ? body.target
+        : {},
+    // Both default to FALSE, never to "the field was absent so assume yes".
+    // These two booleans are the whole of what the payer agreed to; an absent
+    // one is a backend that did not say, and "did not say" is not consent.
+    consent: {
+      authenticatedChecks: consent.authenticatedChecks === true,
+      writeCases: consent.writeCases === true,
+    },
+    ...(readString(body, "payerKind")
+      ? { payerKind: readString(body, "payerKind") as string }
+      : {}),
+    roster: Array.isArray(body.roster)
+      ? body.roster.filter(
+          (entry: any) => typeof entry === "object" && entry !== null,
+        )
+      : [],
+    grant: grant as string,
+    ...(readNumber(credentials, "grantExpiresAt") !== undefined
+      ? { grantExpiresAt: readNumber(credentials, "grantExpiresAt") }
+      : {}),
+    runnerBearer: runnerBearer as string,
+    ...(readNumber(credentials, "runnerBearerExpiresAt") !== undefined
+      ? { runnerBearerExpiresAt: readNumber(credentials, "runnerBearerExpiresAt") }
+      : {}),
+    ...(Array.isArray(body.artifacts) ? { artifacts: body.artifacts } : {}),
+  };
+}
+
 async function claimNext(
   claimedBy: string,
 ): Promise<ClaimedBenchmarkJob | null | "disabled"> {
-  const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/jobs/claim`,
-    { claimedBy },
-  );
+  const { status, body } = await postServiceRoute(BENCH_SERVICE_ROUTES.claim, {
+    claimedBy,
+  });
   if (isFeatureDisabled(status, body)) return "disabled";
   if (status !== 200 || !body?.ok) {
     throw new Error(`claim failed (${status})`);
   }
-  return (body.claimed as ClaimedBenchmarkJob | null) ?? null;
+  return decodeClaimedJob(body);
 }
 
 /**
@@ -471,13 +783,17 @@ async function sendHeartbeat(
   claimedBy: string,
 ): Promise<BenchmarkHeartbeat> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/jobs/heartbeat`,
+    BENCH_SERVICE_ROUTES.heartbeat,
     {
-      jobId: job.jobId,
       benchmarkRunId: job.benchmarkRunId,
-      gen: job.leaseGeneration,
       claimedBy,
+      // What the backend compares against its reissue window. Sent from the
+      // job so a grant already rotated once is not re-requested every beat.
+      ...(job.grantExpiresAt !== undefined
+        ? { grantExpiresAt: job.grantExpiresAt }
+        : {}),
     },
+    { grant: job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
     throw new LeaseLostError("heartbeat rejected the lease generation");
@@ -485,7 +801,9 @@ async function sendHeartbeat(
   if (status !== 200 || !body?.ok) {
     throw new Error(`heartbeat rejected (${status})`);
   }
-  return (body.result ?? body) as BenchmarkHeartbeat;
+  // The beat is spread into the envelope alongside `ok` — there is no `result`
+  // wrapper — and a reissued grant arrives under `credentials`.
+  return body as BenchmarkHeartbeat;
 }
 
 /**
@@ -495,6 +813,15 @@ async function sendHeartbeat(
  * the pointer, and the backend derives the terminal status from the child
  * itself. An unattached failure is invisible until a sweep notices it, which
  * turns a known failure into a coverage gap.
+ *
+ * ── THE PAYLOAD IS DISCRIMINATED ON `kind` ────────────────────────────────
+ *
+ * `parseEvidenceAttachment` switches on `kind` and reads only that variant's
+ * fields. An eval child is `{ kind: 'eval_cell', cellId, suiteRunId }` — the
+ * id field is `suiteRunId`, `evidenceKey` belongs to the `readiness` variant
+ * alone, and a payload with neither discriminator is answered 400 with
+ * `"kind" must be conformance, readiness, eval_cell or auth_probe`. The row is
+ * found from the CELL (`eval:{cellId}`), not from an evidence key we send.
  */
 async function attachEvalEvidence(args: {
   job: ClaimedBenchmarkJob;
@@ -503,15 +830,17 @@ async function attachEvalEvidence(args: {
   testSuiteRunId: string;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/evidence/attach`,
+    BENCH_SERVICE_ROUTES.evidenceAttach,
     {
-      jobId: args.job.jobId,
+      // Compared against the grant's claims rather than trusted: a worker
+      // writing to a run it does not think it is writing to has a bug, and the
+      // backend answers 409 rather than hiding it.
       benchmarkRunId: args.job.benchmarkRunId,
-      gen: args.job.leaseGeneration,
-      evidenceKey: args.evidenceKey,
+      kind: "eval_cell",
       cellId: args.cellId,
-      testSuiteRunId: args.testSuiteRunId,
+      suiteRunId: args.testSuiteRunId,
     },
+    { grant: args.job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
     throw new LeaseLostError("attach rejected the lease generation");
@@ -534,14 +863,16 @@ async function attachConformanceEvidence(args: {
   conformanceRunId: string;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/evidence/attach`,
+    BENCH_SERVICE_ROUTES.evidenceAttach,
     {
-      jobId: args.job.jobId,
       benchmarkRunId: args.job.benchmarkRunId,
-      gen: args.job.leaseGeneration,
-      evidenceKey: args.evidenceKey,
+      // WITHOUT THIS the payload has no discriminator at all and
+      // `parseEvidenceAttachment` answers 400 — the run then sits in the
+      // unattached/retry path with a conformance child that really ran.
+      kind: "conformance",
       conformanceRunId: args.conformanceRunId,
     },
+    { grant: args.job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
     throw new LeaseLostError("attach rejected the lease generation");
@@ -570,20 +901,63 @@ async function attachProbeEvidence(args: {
   evidence: BenchmarkProbeEvidence;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/evidence/probe`,
+    BENCH_SERVICE_ROUTES.evidenceProbe,
     {
-      jobId: args.job.jobId,
       benchmarkRunId: args.job.benchmarkRunId,
-      gen: args.job.leaseGeneration,
-      evidenceKey: args.evidenceKey,
+      // The route reads `status`, `checks`, `observedEndpoint`, `discovery`,
+      // `nonCompliantChallengeStatus`, `registrationStrategies` and
+      // `failureReason` off the body — which is exactly this shape.
       ...args.evidence,
     },
+    { grant: args.job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
     throw new LeaseLostError("probe attach rejected the lease generation");
   }
   if (status !== 200 || !body?.ok) {
     throw new Error(`probe evidence attach rejected (${status})`);
+  }
+}
+
+/**
+ * Write what a write case just created into the RUN's durable ledger.
+ *
+ * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────
+ *
+ * The in-process ledger dies with the process, and what dies with it is the
+ * list of rows this benchmark just created in a third party's account.
+ * Cleanup being idempotent and retried is worth nothing once the list of what
+ * to clean is gone — and a resumed worker that starts from an empty ledger
+ * reports a clean run over artifacts that are still there.
+ *
+ * Idempotent backend-side on `(run, tool, createdId)`, so a retried batch does
+ * not double-count the residue figure this table exists to produce.
+ */
+async function recordArtifacts(args: {
+  job: ClaimedBenchmarkJob;
+  artifacts: ReadonlyArray<{
+    caseId: string;
+    tool: string;
+    createdId: string;
+    evidenceKey?: string;
+    iteration?: number;
+    artifactName?: string;
+  }>;
+}): Promise<void> {
+  if (args.artifacts.length === 0) return;
+  const { status, body } = await postServiceRoute(
+    BENCH_SERVICE_ROUTES.artifacts,
+    {
+      benchmarkRunId: args.job.benchmarkRunId,
+      artifacts: args.artifacts,
+    },
+    { grant: args.job.grant },
+  );
+  if (isLeaseLostResponse(status, body)) {
+    throw new LeaseLostError("artifact record rejected the lease generation");
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`artifact record rejected (${status})`);
   }
 }
 
@@ -609,15 +983,14 @@ async function reportExecutionComplete(args: {
   cleanup?: ArtifactCleanupReport;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/jobs/execution-complete`,
+    BENCH_SERVICE_ROUTES.executionComplete,
     {
-      jobId: args.job.jobId,
       benchmarkRunId: args.job.benchmarkRunId,
-      gen: args.job.leaseGeneration,
       claimedBy: args.claimedBy,
       ...(args.stoppedReason ? { stoppedReason: args.stoppedReason } : {}),
       ...(args.cleanup ? { cleanup: args.cleanup } : {}),
     },
+    { grant: args.job.grant },
   );
   if (isLeaseLostResponse(status, body)) {
     throw new LeaseLostError("execution-complete rejected the lease generation");
@@ -720,15 +1093,17 @@ async function abortJob(args: {
   retryable: boolean;
 }): Promise<void> {
   const { status, body } = await postServiceRoute(
-    `${BENCH_SERVICE_BASE}/jobs/abort`,
+    BENCH_SERVICE_ROUTES.abort,
     {
-      jobId: args.job.jobId,
       benchmarkRunId: args.job.benchmarkRunId,
-      gen: args.job.leaseGeneration,
       claimedBy: args.claimedBy,
-      reason: args.reason.slice(0, 500),
+      // `failureMessage`, not `reason`: the abort mutation reads the former
+      // and drops anything else, so a run aborted under the wrong key ends
+      // with no explanation at all.
+      failureMessage: args.reason.slice(0, 500),
       retryable: args.retryable,
     },
+    { grant: args.job.grant },
   );
   if (status !== 200 || !body?.ok) {
     logger.warn("[bench] abort rejected", {
@@ -739,14 +1114,213 @@ async function abortJob(args: {
 }
 
 /**
+ * Assemble the launch spec for one rostered eval cell, or refuse the claim.
+ *
+ * ── WHAT THE BACKEND ACTUALLY SENDS, AND WHAT IT DOES NOT ─────────────────
+ *
+ * A claim roster row (`rosterFor` in `benchmarkRuns.ts`) carries
+ * `evidenceKey`, `externalRunId`, `pillar`, `kind`, `required`, `status`,
+ * `cellId`, `repetitions` and whatever child id it has already been bound to.
+ * The pins carry `suiteId` and `suiteRevision`. So the exam and the cell and
+ * the repetition count ARE resolvable, and they are resolved here.
+ *
+ * The cell's MODEL and CLIENT PROFILE are not. They live in the definition's
+ * `matrix[]` as `requestedModel` and `clientProfile`, which the claim reduces
+ * to `pins.matrixHash`; and `prepareEvalRun` has no model parameter at all —
+ * the model comes from a project `environmentId` this worker has no way to
+ * look up with a bearer scoped to one server.
+ *
+ * ── SO THIS FAILS THE CLAIM, LOUDLY ───────────────────────────────────────
+ *
+ * Not "skip the cell": a skipped cell is a coverage gap the payer is never
+ * told about. Not "launch it on the suite default and hope": the backend
+ * refuses the attach when `effectiveModelId` does not satisfy the cell's
+ * `requestedModel`, so guessing spends the payer's credits and a third party's
+ * capacity to produce evidence that is then thrown away — and on the run where
+ * the default happens to match, it silently scores a cell that never ran under
+ * the model it claims.
+ *
+ * The refusal is non-retryable, so the run ends with a reason an operator can
+ * read instead of cycling three attempts through the same gap. Closing it is a
+ * backend change: send the cell's launch parameters on the roster row.
+ */
+export function resolveEvalCellSpec(
+  job: ClaimedBenchmarkJob,
+  entry: BenchmarkRosterEntry,
+): BenchmarkEvalCell {
+  const cellId = typeof entry.cellId === "string" ? entry.cellId.trim() : "";
+  const suiteId =
+    typeof job.pins?.suiteId === "string" ? job.pins.suiteId.trim() : "";
+  // Forward-compatible: the day the backend puts these on the roster row this
+  // worker starts using them with no further change. Until then they are
+  // absent, and absent is refused rather than defaulted.
+  const environmentId =
+    typeof entry.environmentId === "string" && entry.environmentId.length > 0
+      ? entry.environmentId
+      : null;
+  const namedHostId =
+    typeof entry.namedHostId === "string" && entry.namedHostId.length > 0
+      ? entry.namedHostId
+      : null;
+
+  const missing = [
+    cellId ? null : "cellId (roster row)",
+    suiteId ? null : "suiteId (claim pins)",
+    environmentId || namedHostId
+      ? null
+      : "environmentId/namedHostId (the cell's pinned model and client profile)",
+  ].filter((field): field is string => field !== null);
+  if (missing.length > 0) {
+    throw new JobUnexecutableError(
+      `rostered cell "${entry.evidenceKey}" cannot be launched: the claim carries no ${missing.join(", no ")}`,
+    );
+  }
+
+  const caseSideEffects = pinnedCaseSideEffects(job);
+  const declaresWrite = caseSideEffects.some(
+    (entry) => entry.sideEffects.mode === "test_write",
+  );
+
+  return {
+    cellId,
+    suiteId,
+    environmentId,
+    namedHostId,
+    // ── EITHER SOURCE MAKES A CELL A WRITE CELL ───────────────────────────
+    //
+    // The pinned `caseMetadata` says whether the EXAM contains a write case;
+    // `consent.writeCases` says whether the payer agreed this run may write at
+    // all. Neither is a per-cell fact — the metadata is keyed by case, and the
+    // consent by run — so the honest answer for a cell is "read-only only when
+    // BOTH say so". Anything else stays serial; see `writeCases`.
+    writeCases: declaresWrite || job.consent?.writeCases === true,
+    ...(caseSideEffects.length > 0 ? { caseSideEffects } : {}),
+  };
+}
+
+/**
+ * The pinned per-case manifests, flattened out of `pins.caseMetadata`.
+ *
+ * The backend sends that section WHOLE — `{ suiteHash, cases: [{ caseId,
+ * sideEffects, … }] }` — precisely so the worker does not slice it per cell:
+ * "a derivation done here and re-derived by the worker is two chances to
+ * disagree about which case may write what". Every case of the pinned exam is
+ * therefore carried by every cell of it, and the `caseMetadataHash` stamp that
+ * ties the manifest to the definition is attached here so
+ * `assertCaseMetadataPinned` has something to check.
+ */
+function pinnedCaseSideEffects(
+  job: ClaimedBenchmarkJob,
+): PinnedCaseSideEffects[] {
+  const section = job.pins?.caseMetadata as
+    | { suiteHash?: unknown; cases?: unknown }
+    | undefined;
+  if (!section || !Array.isArray(section.cases)) return [];
+  const suiteHash =
+    typeof section.suiteHash === "string" ? section.suiteHash : "";
+  const caseMetadataHash =
+    typeof job.pins?.caseMetadataHash === "string"
+      ? job.pins.caseMetadataHash
+      : "";
+  const resolved: PinnedCaseSideEffects[] = [];
+  for (const entry of section.cases) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as { caseId?: unknown; sideEffects?: unknown };
+    const sideEffects = row.sideEffects as ResolvedCaseSideEffects | undefined;
+    if (typeof row.caseId !== "string" || !sideEffects?.mode) continue;
+    resolved.push({
+      suiteHash,
+      caseId: row.caseId,
+      caseMetadataHash,
+      sideEffects,
+    });
+  }
+  return resolved;
+}
+
+/**
+ * Where the auth probe dials, from the one place the claim names it.
+ *
+ * `target.serverUrl` is resolved backend-side from the saved server row and is
+ * the ONLY endpoint on the wire — there is no `probeSpec` on a roster row. A
+ * claim that carries no endpoint at all cannot be probed, and refusing says so
+ * rather than leaving the row `expected` for a sweep to reinterpret.
+ */
+export function resolveProbeSpec(
+  job: ClaimedBenchmarkJob,
+  entry: BenchmarkRosterEntry,
+): BenchmarkProbeSpec {
+  const serverUrl =
+    typeof job.target?.serverUrl === "string" ? job.target.serverUrl.trim() : "";
+  if (!serverUrl) {
+    throw new JobUnexecutableError(
+      `rostered probe "${entry.evidenceKey}" cannot be run: the claim carries no target.serverUrl`,
+    );
+  }
+  return { serverUrl };
+}
+
+/**
+ * How to run the conformance child — and why this one cannot be assembled.
+ *
+ * The endpoint comes from `target.serverUrl`, same as the probe. The SUITES do
+ * not: which conformance suites an exam grades lives in the definition's
+ * `evidence.conformance.suites`, it is part of the hashed manifest, and the
+ * claim reduces the whole definition to `pins.definitionHash`. Nothing on the
+ * wire names them.
+ *
+ * Guessing is not available. The suites in scope ARE the denominator a
+ * conformance section is scored against, so running a set we picked would
+ * report a percentage of a different exam under this profile's name — and it
+ * would do it after dialling a third party's server.
+ *
+ * So the claim is refused, by name. Closing this is a backend change: put the
+ * pinned suite scope on the conformance roster row.
+ */
+export function resolveConformanceSpec(
+  job: ClaimedBenchmarkJob,
+  entry: BenchmarkRosterEntry,
+): BenchmarkConformanceSpec {
+  const serverUrl =
+    typeof job.target?.serverUrl === "string" ? job.target.serverUrl.trim() : "";
+  // Forward-compatible, exactly like the cell's launch pins: read where the
+  // backend would naturally put it, refuse when it is not there.
+  const scope = entry.conformance;
+  const suites = Array.isArray(scope?.suites) ? scope.suites : [];
+  const missing = [
+    serverUrl ? null : "target.serverUrl",
+    suites.length > 0 ? null : "the pinned conformance suite scope",
+  ].filter((field): field is string => field !== null);
+  if (missing.length > 0) {
+    throw new JobUnexecutableError(
+      `rostered conformance "${entry.evidenceKey}" cannot be run: the claim carries no ${missing.join(", no ")}`,
+    );
+  }
+  // The endpoint always comes from the target, never from the scope: there is
+  // one server under measurement, and a second copy of its URL is a second
+  // chance to grade the wrong host.
+  return { ...scope, suites, serverUrl };
+}
+
+/**
  * Everything the claim has to satisfy before a single child is launched.
  *
- * The definition hash is the important one. A job carries the hash it was
- * enqueued against and the claim carries the hash the backend just resolved;
- * when they disagree, the definition was republished between admission and
- * execution, and the quote, the consent and the roster all describe a different
- * exam than the one that would run. Refusing is the only honest answer —
- * executing would publish a scorecard under a profile the payer never saw.
+ * ── THE DEFINITION HASH IS CHECKED BACKEND-SIDE, NOT HERE ─────────────────
+ *
+ * This function used to compare a job-level `definitionHash` against
+ * `pins.definitionHash` to catch a definition republished between admission
+ * and execution. The claim response carries ONE hash — `pins.definitionHash`,
+ * taken from `run.definitionHash` — so the comparison was between a field and
+ * itself, or between a field and `undefined`. The check it was reaching for
+ * genuinely lives in the backend: `loadDefinition` re-hashes the stored
+ * manifest on read and refuses on mismatch, and `claimNextBenchmarkJob` fails
+ * the job `DEFINITION_UNRESOLVABLE` rather than handing it out. What is left
+ * to assert here is that the pin arrived at all — a claim with no pinned
+ * definition hash names no exam.
+ *
+ * Every rostered row this worker owns must resolve to a launch spec BEFORE
+ * anything runs, so a gap ends the job with one reason rather than surfacing
+ * as a matrix that quietly ran nothing.
  */
 export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
   if (!job.grant) {
@@ -757,26 +1331,31 @@ export function assertClaimExecutable(job: ClaimedBenchmarkJob): void {
   }
   // The parent id is what LICENSES this job's children to carry the hidden
   // `benchmark` source — `startTestSuiteRun` refuses that source without it.
-  // The type says `string`, but the claim is hand-mirrored from the wire and
-  // unknown/absent fields are ignored rather than rejected, so a backend that
-  // stopped sending it would otherwise reach Convex as `undefined` and fail
-  // every cell with an opaque FORBIDDEN, one lease and one MCP session in.
   if (!job.benchmarkRunId) {
     throw new JobUnexecutableError("the claim carried no benchmark run id");
   }
-  if (job.pins?.definitionHash !== job.definitionHash) {
-    throw new JobUnexecutableError(
-      `definition hash changed between admission and claim (job ${job.definitionHash}, claim ${job.pins?.definitionHash})`,
-    );
+  if (!job.pins?.definitionHash) {
+    throw new JobUnexecutableError("the claim carried no pinned definition hash");
   }
   for (const entry of job.roster ?? []) {
-    if (entry.kind !== "eval_run") continue;
-    const cell = entry.evalCell;
-    if (!cell?.cellId || !cell?.suiteId) {
-      throw new JobUnexecutableError(
-        `rostered cell "${entry.evidenceKey}" carries no launch spec`,
-      );
+    // A row that already reached a terminal status owes no child, so it needs
+    // no launch spec — refusing the whole job over a cell that already ran
+    // would strand a run that is nearly finished.
+    if (TERMINAL_EVIDENCE_STATUSES.has(entry.status)) continue;
+    // EVERY lane, not just the matrix. A pillar whose spec cannot be resolved
+    // was previously logged and skipped, which leaves the row `expected` and
+    // reports a complete execution phase over a pillar that never ran — the
+    // scorecard is inserted once, so the gap is permanent and invisible.
+    if (entry.kind === "auth_probe") {
+      resolveProbeSpec(job, entry);
+      continue;
     }
+    if (entry.kind === "conformance_run") {
+      resolveConformanceSpec(job, entry);
+      continue;
+    }
+    if (entry.kind !== "eval_run") continue;
+    const cell = resolveEvalCellSpec(job, entry);
     // A write cell with no manifest has no enforceable bound on what it may
     // create or mutate on a third party's server. `publishDefinition` refuses
     // to publish one; a claim that produced one anyway is a contract breach,
@@ -1107,6 +1686,64 @@ export type RunAuthProbeArgs = {
   spec: BenchmarkProbeSpec;
 };
 
+/**
+ * The artifacts a previous attempt already created, read back off the claim.
+ *
+ * ── A HONEST NOTE ABOUT WHERE THIS COMES FROM ─────────────────────────────
+ *
+ * `claimNextBenchmarkJob` computes an artifact ledger and returns it, but the
+ * claim ROUTE does not currently forward it — the response is assembled field
+ * by field and `artifacts` is not among them. So on today's backend this
+ * hydrates nothing, and the durable half (write-through, above) is what
+ * actually protects a resumed run: the ids are in `benchmarkRunArtifacts`
+ * whether or not this worker can read them back. Read defensively from where
+ * the mutation already puts it, so the day the route forwards the field a
+ * resumed worker inherits the previous attempt's cleanup with no further
+ * change here.
+ *
+ * The cleanup STEPS are not on the wire either — the backend's row is
+ * `{ artifactId, caseId, tool, createdId, status, … }` — so they are
+ * re-derived from the pinned `caseMetadata` by `caseId`. That is the same
+ * manifest the create was licensed under, which is the only thing that could
+ * legitimately say how to remove it.
+ */
+export function hydrateArtifactLedger(
+  job: ClaimedBenchmarkJob,
+): Array<Omit<ArtifactLedgerEntry, "createdAt">> {
+  const rows = Array.isArray(job.artifacts) ? job.artifacts : [];
+  if (rows.length === 0) return [];
+  const stepsByCaseId = new Map<string, CaseCleanupStep[]>();
+  for (const pinned of pinnedCaseSideEffects(job)) {
+    stepsByCaseId.set(pinned.caseId, cleanupStepsFor(pinned.sideEffects));
+  }
+  const hydrated: Array<Omit<ArtifactLedgerEntry, "createdAt">> = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const entry = row as Record<string, unknown>;
+    // A row the backend already marked removed is not residue this run still
+    // owes; re-deleting it would be a second call against the target for
+    // nothing.
+    if (entry.status === "removed") continue;
+    const createdId =
+      typeof entry.createdId === "string" ? entry.createdId : "";
+    const tool = typeof entry.tool === "string" ? entry.tool : "";
+    if (!createdId || !tool) continue;
+    const caseId = typeof entry.caseId === "string" ? entry.caseId : undefined;
+    hydrated.push({
+      tool,
+      artifactName:
+        typeof entry.artifactName === "string" ? entry.artifactName : "",
+      createdId,
+      cleanupSteps: (caseId ? stepsByCaseId.get(caseId) : undefined) ?? [],
+      ...(caseId ? { caseId } : {}),
+      ...(typeof entry.iteration === "number"
+        ? { iteration: entry.iteration }
+        : {}),
+    });
+  }
+  return hydrated;
+}
+
 export type CleanupArtifactsArgs = {
   job: ClaimedBenchmarkJob;
   ledger: BenchmarkArtifactLedger;
@@ -1202,6 +1839,12 @@ async function defaultRunAuthProbe(
 export const claimNextForTests = claimNext;
 
 /**
+ * Test seam: the heartbeat is the one route that both SENDS the grant and
+ * receives a replacement for it, so its wire shape is the contract.
+ */
+export const sendHeartbeatForTests = sendHeartbeat;
+
+/**
  * Injectable collaborators. Every external effect the executor performs is one
  * of these, so the orchestration tests drive real control flow — the heartbeat
  * lifecycle, the concurrency split, the resume path — without a Convex
@@ -1212,6 +1855,8 @@ export type BenchExecutionDeps = {
   runConformanceChild: typeof defaultRunConformanceChild;
   runAuthProbe: typeof defaultRunAuthProbe;
   cleanupArtifacts: typeof defaultCleanupArtifacts;
+  /** The durable half of the artifact ledger; see `recordArtifacts`. */
+  recordArtifacts: typeof recordArtifacts;
   attachEvidence: typeof attachEvalEvidence;
   attachConformance: typeof attachConformanceEvidence;
   attachProbe: typeof attachProbeEvidence;
@@ -1233,6 +1878,7 @@ function defaultDeps(): BenchExecutionDeps {
     runConformanceChild: defaultRunConformanceChild,
     runAuthProbe: defaultRunAuthProbe,
     cleanupArtifacts: defaultCleanupArtifacts,
+    recordArtifacts,
     attachEvidence: attachEvalEvidence,
     attachConformance: attachConformanceEvidence,
     attachProbe: attachProbeEvidence,
@@ -1285,8 +1931,30 @@ export async function executeClaimedJob(
    * ONE ledger for the whole job, written by every write case and read by the
    * cleanup below. Per-run rather than per-cell because an artifact created by
    * the first cell has to be removable after the last one has finished.
+   *
+   * HYDRATED from the claim and WRITTEN THROUGH to the backend. A worker that
+   * dies after a create call, or loses its lease before cleanup, would
+   * otherwise take the ids with it and the resumed worker would report a clean
+   * empty ledger while the artifacts stayed in the target's tenant.
    */
-  const ledger = createBenchmarkArtifactLedger();
+  const ledger = createBenchmarkArtifactLedger({
+    initial: hydrateArtifactLedger(claimed),
+    persist: (entries) =>
+      deps.recordArtifacts({
+        job: claimed,
+        artifacts: entries.map((entry) => ({
+          // `caseId`, `tool` and `createdId` are the three the backend
+          // requires; a row missing any of them is refused outright.
+          caseId: entry.caseId ?? "unknown",
+          tool: entry.tool,
+          createdId: entry.createdId,
+          ...(entry.artifactName ? { artifactName: entry.artifactName } : {}),
+          ...(entry.iteration !== undefined
+            ? { iteration: entry.iteration }
+            : {}),
+        })),
+      }),
+  });
   let cleanupReport: ArtifactCleanupReport | undefined;
 
   const heartbeat = setInterval(() => {
@@ -1301,7 +1969,18 @@ export async function executeClaimedJob(
             "the backend no longer holds this claim for us",
           );
         }
-        if (result?.grant) grantHeaders[BENCHMARK_GRANT_HEADER] = result.grant;
+        // ROTATION LANDS IN BOTH PLACES, because two different consumers read
+        // the grant: `claimed.grant` is what every post-claim write sends in
+        // `x-mcpjam-benchmark-grant`, and `grantHeaders` is the object the eval
+        // engine re-reads per step, so writing it there reaches children that
+        // are ALREADY running. Updating one and not the other would leave half
+        // the job authenticating with a grant that has expired.
+        const reissued = result?.credentials?.grant;
+        if (reissued) {
+          claimed.grant = reissued;
+          claimed.grantExpiresAt = result.credentials?.grantExpiresAt;
+          grantHeaders[BENCHMARK_GRANT_HEADER] = reissued;
+        }
         // None of these is a lease loss: the job is still ours, there is just
         // nothing left worth starting.
         const reason = result?.cancelRequested
@@ -1391,7 +2070,7 @@ export async function executeClaimedJob(
      * Terminal rows owe nothing. Launching one would pay a second time for
      * evidence the run already holds.
      */
-    const owing = (kind: BenchmarkRosterEntry["kind"]) =>
+    const owing = (kind: string) =>
       claimed.roster
         .filter(
           (entry) =>
@@ -1400,19 +2079,23 @@ export async function executeClaimedJob(
         )
         .sort((a, b) => (a.evidenceKey < b.evidenceKey ? -1 : 1));
 
-    const cells = owing("eval_run").filter((entry) => entry.evalCell);
+    // Resolved UP FRONT, and never filtered on success. A row that cannot be
+    // launched has already thrown out of `assertClaimExecutable` above; a row
+    // dropped here instead would be a rostered cell the run silently never
+    // ran, which is the one outcome that must not be possible.
+    const cells: Array<{ entry: BenchmarkRosterEntry; cell: BenchmarkEvalCell }> =
+      owing("eval_run").map((entry) => ({
+        entry,
+        cell: resolveEvalCellSpec(claimed, entry),
+      }));
 
     // READ-ONLY FIRST, deliberately. A cancellation or an exhausted budget
     // stops launching wherever it lands, and the cells worth losing to that are
     // the ones that would have written to somebody else's server.
     //
     // Read-only is the EXPLICIT `false`, never the absence — see `writeCases`.
-    const readOnly = cells.filter(
-      (entry) => entry.evalCell?.writeCases === false,
-    );
-    const writing = cells.filter(
-      (entry) => entry.evalCell?.writeCases !== false,
-    );
+    const readOnly = cells.filter((item) => item.cell.writeCases === false);
+    const writing = cells.filter((item) => item.cell.writeCases !== false);
 
     /**
      * Evidence that was PRODUCED and could not be bound to its row:
@@ -1454,9 +2137,12 @@ export async function executeClaimedJob(
       }
     };
 
-    const runCell = async (entry: BenchmarkRosterEntry): Promise<void> => {
+    const runCell = async (item: {
+      entry: BenchmarkRosterEntry;
+      cell: BenchmarkEvalCell;
+    }): Promise<void> => {
       if (windDown.reason || leaseLost) return;
-      const cell = entry.evalCell!;
+      const { entry, cell } = item;
       let runId: string | null = null;
       try {
         assertLeaseHeld();
@@ -1522,24 +2208,12 @@ export async function executeClaimedJob(
      * unavailable — writing nothing would leave it `expected`, which reads as
      * a probe still to come rather than one that was refused.
      */
-    const runAuthProbeRow = async (
-      entry: BenchmarkRosterEntry,
-    ): Promise<void> => {
+    const runAuthProbeRow = async (item: {
+      entry: BenchmarkRosterEntry;
+      spec: BenchmarkProbeSpec;
+    }): Promise<void> => {
       if (windDown.reason || leaseLost) return;
-      const spec = entry.probeSpec;
-      if (!spec?.serverUrl) {
-        // Left `expected` for the backend's roster sweep to degrade into a
-        // coverage gap. Not fatal to the job: losing one pillar is not a
-        // reason to refuse the exam the payer bought.
-        logger.error(
-          "[bench] rostered auth probe carries no endpoint",
-          new JobUnexecutableError(
-            `rostered probe "${entry.evidenceKey}" carries no endpoint`,
-          ),
-          { ...logContext, evidenceKey: entry.evidenceKey },
-        );
-        return;
-      }
+      const { entry, spec } = item;
       assertLeaseHeld();
       let evidence: BenchmarkProbeEvidence;
       try {
@@ -1585,21 +2259,12 @@ export async function executeClaimedJob(
     };
 
     /** Run the pinned conformance suites and bind the persisted run. */
-    const runConformanceRow = async (
-      entry: BenchmarkRosterEntry,
-    ): Promise<void> => {
+    const runConformanceRow = async (item: {
+      entry: BenchmarkRosterEntry;
+      spec: BenchmarkConformanceSpec;
+    }): Promise<void> => {
       if (windDown.reason || leaseLost) return;
-      const spec = entry.conformanceSpec;
-      if (!spec?.serverUrl || !(spec.suites?.length > 0)) {
-        logger.error(
-          "[bench] rostered conformance child carries no launch spec",
-          new JobUnexecutableError(
-            `rostered conformance "${entry.evidenceKey}" carries no launch spec`,
-          ),
-          { ...logContext, evidenceKey: entry.evidenceKey },
-        );
-        return;
-      }
+      const { entry, spec } = item;
       let runId: string | null = null;
       try {
         assertLeaseHeld();
@@ -1641,12 +2306,12 @@ export async function executeClaimedJob(
     };
 
     /** Collect one child's failure without letting it abandon its siblings. */
-    const settle = async (
-      entry: BenchmarkRosterEntry,
-      run: (entry: BenchmarkRosterEntry) => Promise<void>,
+    const settle = async <T extends { entry: BenchmarkRosterEntry }>(
+      item: T,
+      run: (item: T) => Promise<void>,
     ): Promise<void> => {
       try {
-        await run(entry);
+        await run(item);
       } catch (error) {
         if (error instanceof LeaseLostError) {
           leaseLost ??= error;
@@ -1654,7 +2319,7 @@ export async function executeClaimedJob(
         }
         logger.error("[bench] child aborted", error, {
           ...logContext,
-          evidenceKey: entry.evidenceKey,
+          evidenceKey: item.entry.evidenceKey,
         });
       }
     };
@@ -1666,18 +2331,24 @@ export async function executeClaimedJob(
       // unauthenticated conversations on a target that did not ask for either.
       for (const entry of owing("auth_probe")) {
         assertLeaseHeld();
-        await settle(entry, runAuthProbeRow);
+        await settle(
+          { entry, spec: resolveProbeSpec(claimed, entry) },
+          runAuthProbeRow,
+        );
       }
       for (const entry of owing("conformance_run")) {
         assertLeaseHeld();
-        await settle(entry, runConformanceRow);
+        await settle(
+          { entry, spec: resolveConformanceSpec(claimed, entry) },
+          runConformanceRow,
+        );
       }
 
       assertLeaseHeld();
 
       const limit = createConcurrencyLimiter(MAX_CONCURRENT_READ_ONLY_CELLS);
       await Promise.all(
-        readOnly.map((entry) => limit(() => settle(entry, runCell))),
+        readOnly.map((item) => limit(() => settle(item, runCell))),
       );
 
       assertLeaseHeld();
@@ -1686,9 +2357,9 @@ export async function executeClaimedJob(
       // settled. A write case creates artifacts named for this run and then
       // asserts over what it can see; a sibling writing concurrently is
       // indistinguishable from the target leaking another tenant's data.
-      for (const entry of writing) {
+      for (const item of writing) {
         assertLeaseHeld();
-        await settle(entry, runCell);
+        await settle(item, runCell);
       }
     } finally {
       // After every cell has disconnected, and before anything is reported:
@@ -1707,6 +2378,22 @@ export async function executeClaimedJob(
     // coverage gap that never existed. Handing the job back instead costs one
     // more attempt, and the re-attempt adopts the same children rather than
     // re-running them.
+    // AN ARTIFACT CREATED BUT NEVER DURABLY RECORDED IS THE SAME LOSS.
+    //
+    // The row exists on somebody else's server and the only thing that knows
+    // its id is this process. Reporting the phase over it hands the run to a
+    // backend that has no record of what to clean up, so the job goes back for
+    // another attempt instead — the artifacts route is idempotent on
+    // `(run, tool, createdId)`, so the retry does not double-count.
+    const unrecorded = ledger.unpersisted();
+    if (unrecorded.length > 0) {
+      throw new Error(
+        `${unrecorded.length} artifact(s) were created but could not be recorded durably: ${unrecorded
+          .slice(0, 20)
+          .join(", ")}`,
+      );
+    }
+
     if (unattached.size > 0) {
       throw new Error(
         `${unattached.size} piece(s) of evidence were produced but could not be attached: ${[
@@ -1821,10 +2508,16 @@ export function startBenchWorker(options?: {
     ((claimed: ClaimedBenchmarkJob, by: string) =>
       executeClaimedJob(claimed, by));
 
-  if (!requiredEnv()) {
-    logger.warn(
-      "[bench] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
-    );
+  // Checked BEFORE the loop, not on the first claim: an unset or unsafe
+  // CONVEX_HTTP_URL is a deployment mistake, and a worker that starts anyway
+  // spends every poll cycle throwing the same configuration error into the
+  // backoff path where nobody reads it.
+  try {
+    benchServiceConfig();
+  } catch (error) {
+    logger.warn("[bench] worker enabled but not startable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { stop: async () => {} };
   }
 

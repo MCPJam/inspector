@@ -25,45 +25,48 @@ import type { ArtifactCleanupReport } from "../evals/artifact-ledger";
 const CLAIMED_BY = "inspector-bench-test";
 const CASE_METADATA_HASH = "cases-1";
 
+/**
+ * The pinned manifest, in the shape the claim sends it: the definition's whole
+ * `caseMetadata` section, keyed by case rather than by cell.
+ */
+const CASE_METADATA = {
+  suiteHash: "suite-1",
+  cases: [
+    {
+      caseId: "case-1",
+      sideEffects: {
+        mode: "test_write" as const,
+        summary: "creates one page",
+        allowedTools: ["create_page"],
+        createRules: [
+          {
+            tool: "create_page",
+            artifactNamePath: "name",
+            requiredPrefix: "mcpjam-benchmark-",
+            createdIdResultPaths: ["id"],
+          },
+        ],
+        mutationTargetPaths: [],
+        cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+      },
+    },
+  ],
+};
+
 const WRITE_CELL: BenchmarkRosterEntry = {
   evidenceKey: "eval:w",
   kind: "eval_run",
   status: "expected",
   required: true,
-  evalCell: {
-    cellId: "w",
-    suiteId: "suite-1",
-    writeCases: true,
-    caseSideEffects: [
-      {
-        suiteHash: "suite-1",
-        caseId: "case-1",
-        caseMetadataHash: CASE_METADATA_HASH,
-        sideEffects: {
-          mode: "test_write",
-          summary: "creates one page",
-          allowedTools: ["create_page"],
-          createRules: [
-            {
-              tool: "create_page",
-              artifactNamePath: "name",
-              requiredPrefix: "mcpjam-benchmark-",
-              createdIdResultPaths: ["id"],
-            },
-          ],
-          mutationTargetPaths: [],
-          cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
-        },
-      },
-    ],
-  },
+  cellId: "w",
+  environmentId: "env-w",
 };
 
 function writeCell(cellId: string): BenchmarkRosterEntry {
   return {
     ...WRITE_CELL,
     evidenceKey: `eval:${cellId}`,
-    evalCell: { ...WRITE_CELL.evalCell!, cellId },
+    cellId,
   };
 }
 
@@ -83,8 +86,14 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
     projectId: "proj-1",
     serverId: "srv-1",
     leaseGeneration: 4,
-    definitionHash: "def-1",
-    pins: { definitionHash: "def-1", caseMetadataHash: CASE_METADATA_HASH },
+    pins: {
+      definitionHash: "def-1",
+      suiteId: "suite-1",
+      caseMetadataHash: CASE_METADATA_HASH,
+      caseMetadata: CASE_METADATA,
+    },
+    target: { targetKind: "server", targetKey: "srv-1" },
+    consent: { authenticatedChecks: false, writeCases: true },
     roster: [WRITE_CELL],
     grant: "grant-token",
     runnerBearer: "runner-bearer",
@@ -107,6 +116,7 @@ function harness(options?: {
   heartbeat?: BenchExecutionDeps["heartbeat"];
   finalizeThrows?: unknown;
   analyzeThrows?: unknown;
+  recordArtifacts?: BenchExecutionDeps["recordArtifacts"];
 }) {
   const order: string[] = [];
   const reported: Array<ArtifactCleanupReport | undefined> = [];
@@ -148,6 +158,7 @@ function harness(options?: {
     abort: async () => {
       order.push("abort");
     },
+    recordArtifacts: options?.recordArtifacts ?? (async () => {}),
     heartbeat: options?.heartbeat ?? (async () => ({ leaseOk: true })),
     heartbeatIntervalMs: 20_000,
   };
@@ -304,15 +315,18 @@ describe("bench worker cleanup and the terminal sequence", () => {
   });
 
   it("refuses a write cell that carries no manifest at all", async () => {
+    // The payer consented to write cases, but the pinned definition declares
+    // no side-effect manifest — so there is no enforceable bound on what the
+    // cell may create on a third party's server. `publishDefinition` refuses
+    // to publish that; a claim that produced it anyway is a contract breach.
     const { deps, order } = harness();
     await executeClaimedJob(
       job({
-        roster: [
-          {
-            ...WRITE_CELL,
-            evalCell: { cellId: "w", suiteId: "suite-1", writeCases: true },
-          },
-        ],
+        pins: {
+          definitionHash: "def-1",
+          suiteId: "suite-1",
+          caseMetadataHash: CASE_METADATA_HASH,
+        },
       }),
       CLAIMED_BY,
       deps,

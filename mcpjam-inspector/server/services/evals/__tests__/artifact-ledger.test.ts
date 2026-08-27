@@ -31,6 +31,130 @@ describe("createBenchmarkArtifactLedger", () => {
   });
 });
 
+describe("the ledger's durable half", () => {
+  // THE FINDING THESE LOCK: the ledger was a bare in-process `Map`. Nothing
+  // was ever written to `/internal/v1/bench/artifacts`, so a worker that died
+  // after a create call took the ids with it — and the resumed worker reported
+  // a clean empty ledger while the artifacts stayed in the target's tenant.
+
+  it("writes every recorded id through to the sink", async () => {
+    const written: string[][] = [];
+    const ledger = createBenchmarkArtifactLedger({
+      persist: async (entries) => {
+        written.push(entries.map((entry) => entry.createdId));
+      },
+    });
+
+    ledger.record({
+      tool: "create_page",
+      artifactName: "mcpjam-benchmark-run-0-a",
+      createdId: "a",
+      caseId: "case-1",
+      iteration: 0,
+      cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+    });
+    await ledger.flush();
+
+    expect(written.flat()).toEqual(["a"]);
+    expect(ledger.unpersisted()).toEqual([]);
+  });
+
+  it("does not resolve flush until the write has landed", async () => {
+    let release!: () => void;
+    const landed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ledger = createBenchmarkArtifactLedger({
+      persist: async () => {
+        await landed;
+      },
+    });
+    ledger.record({
+      tool: "create_page",
+      artifactName: "n",
+      createdId: "a",
+      cleanupSteps: [],
+    });
+
+    let flushed = false;
+    void ledger.flush().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    // The whole point: the next mutation must not be allowed to start yet.
+    expect(flushed).toBe(false);
+
+    release();
+    await ledger.flush();
+    expect(flushed).toBe(true);
+  });
+
+  it("names the ids a failed write left undurable, and keeps them locally", async () => {
+    const ledger = createBenchmarkArtifactLedger({
+      persist: async () => {
+        throw new Error("convex unreachable");
+      },
+    });
+    ledger.record({
+      tool: "create_page",
+      artifactName: "n",
+      createdId: "a",
+      cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+    });
+    // Never rethrown: `flush` is awaited on the hot path, and a durable-write
+    // blip must not turn into a failed tool call against the target.
+    await expect(ledger.flush()).resolves.toBeUndefined();
+
+    expect(ledger.unpersisted()).toEqual(["a"]);
+    // Still cleanable by THIS process, which is the only mitigation left.
+    expect(ledger.has("a")).toBe(true);
+  });
+
+  it("hydrates a resumed run's artifacts, so cleanup reconciles against them", async () => {
+    const ledger = createBenchmarkArtifactLedger({
+      initial: [
+        {
+          tool: "create_page",
+          artifactName: "mcpjam-benchmark-run-0-old",
+          createdId: "old",
+          caseId: "case-1",
+          cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+        },
+      ],
+    });
+
+    // A mutation aimed at the previous attempt's artifact is OURS, and the
+    // gate must be able to tell.
+    expect(ledger.has("old")).toBe(true);
+
+    const calls: string[] = [];
+    const report = await cleanupBenchmarkArtifacts({
+      ledger,
+      callTool: async ({ args }) => {
+        calls.push(String(args.page_id));
+        return { content: [] };
+      },
+    });
+
+    expect(calls).toEqual(["old"]);
+    expect(report).toMatchObject({ status: "clean", attempted: 1, removed: 1 });
+  });
+
+  it("does not re-write a hydrated row it did not create", async () => {
+    const written: string[] = [];
+    const ledger = createBenchmarkArtifactLedger({
+      initial: [
+        { tool: "t", artifactName: "n", createdId: "old", cleanupSteps: [] },
+      ],
+      persist: async (entries) => {
+        written.push(...entries.map((entry) => entry.createdId));
+      },
+    });
+    await ledger.flush();
+    expect(written).toEqual([]);
+  });
+});
+
 describe("buildCleanupArgs", () => {
   it("places the id at its pinned path", () => {
     expect(buildCleanupArgs("page_id", "p1")).toEqual({ page_id: "p1" });
@@ -125,6 +249,58 @@ describe("cleanupBenchmarkArtifacts", () => {
       "delete_folder",
     ]);
     expect(report.status).toBe("clean");
+  });
+
+  it("counts a REFUSED delete as residue, not as a removal", async () => {
+    // THE FINDING THIS LOCKS: `executeTool` resolves normally with
+    // `{ isError: true }` — it does not reject — so every resolved call was
+    // counted as done. A refused delete was reported as a successful cleanup:
+    // the scorecard said `clean` while the artifact stayed in the operator's
+    // tenant.
+    const errors: string[] = [];
+    const report = await cleanupBenchmarkArtifacts({
+      ledger: ledgerWith(["p1"]),
+      // RESOLVED, not thrown. A test that only threw would pass against the
+      // defect.
+      callTool: async () => ({
+        isError: true,
+        content: [{ type: "text", text: "permission denied" }],
+      }),
+      attempts: 2,
+      onStepError: (error) =>
+        errors.push(error instanceof Error ? error.message : String(error)),
+    });
+
+    expect(report).toMatchObject({
+      status: "residual",
+      attempted: 1,
+      removed: 0,
+      residue: 1,
+      residualIds: ["p1"],
+    });
+    // Retried like any other failure before being called residue.
+    expect(errors).toHaveLength(2);
+  });
+
+  it("counts a call that resolves without isError as removed", async () => {
+    const report = await cleanupBenchmarkArtifacts({
+      ledger: ledgerWith(["p1"]),
+      callTool: async () => ({ isError: false, content: [] }),
+    });
+    expect(report).toMatchObject({ status: "clean", removed: 1, residue: 0 });
+  });
+
+  it("recovers when a later attempt is accepted after a refusal", async () => {
+    let call = 0;
+    const report = await cleanupBenchmarkArtifacts({
+      ledger: ledgerWith(["p1"]),
+      callTool: async () => {
+        call += 1;
+        return call === 1 ? { isError: true, content: [] } : { content: [] };
+      },
+    });
+    expect(report).toMatchObject({ status: "clean", removed: 1 });
+    expect(call).toBe(2);
   });
 
   it("is a no-op for a run that created nothing", async () => {

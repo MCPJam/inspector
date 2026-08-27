@@ -139,11 +139,13 @@ import type {
 } from "@mcpjam/sdk/contract";
 import {
   buildHarnessToolPolicySnapshots,
+  benchmarkEnforcementPolicy,
   createToolPolicyGate,
   toolAnnotationsKey,
   UnmatchedToolPolicyNameError,
   validateToolPolicyNames,
   type ToolAnnotationsLookup,
+  type ToolPolicyGate,
   type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
@@ -199,10 +201,61 @@ function resolveSideEffectGate(
   return {
     sideEffects: caseId ? guard.sideEffectsByCaseId[caseId] : undefined,
     benchmarkRunId: guard.benchmarkRunId,
+    ...(caseId ? { caseId } : {}),
     iteration,
     ledger: guard.ledger,
     requireManifest: guard.requireManifest === true,
   };
+}
+
+/**
+ * The execution-layer gate for one iteration, or `null` when nothing restrains
+ * it.
+ *
+ * ── A WRITE GUARD FORCES A GATE ON ITS OWN ────────────────────────────────
+ *
+ * `toolPolicy` is SUITE-authored; `benchmarkWriteGuard` comes from the
+ * benchmark claim. They are unrelated fields, and a benchmark write cell
+ * normally arrives with the second and not the first — nothing in the claim
+ * supplies a `toolPolicy`. Building the gate as `toolPolicy ? … : null`
+ * therefore left benchmark write cells with NO gate: no allowed-tool check, no
+ * argument or prefix validation, no mutation-target check, and no id
+ * harvesting, which also meant nothing to clean up afterwards. The entire
+ * write-safety story was switched off by the absence of an unrelated optional
+ * field.
+ *
+ * Extracted and exported so that stays true: this is the one decision that
+ * says whether anything at all bounds what a benchmark case writes to somebody
+ * else's server, and it is worth being able to assert on directly.
+ */
+export function resolveEnforcementGate(args: {
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
+  testCaseId?: string;
+  runIndex: number;
+  annotations: ToolAnnotationsLookup;
+  warnings?: ReadonlyArray<string>;
+}): ToolPolicyGate | null {
+  const sideEffectGate = args.benchmarkWriteGuard
+    ? resolveSideEffectGate(
+        args.benchmarkWriteGuard,
+        args.testCaseId,
+        args.runIndex,
+      )
+    : undefined;
+  // The suite's own policy wins when it has one — an author who wrote
+  // `readOnly` meant it, and the manifest is an additional bound rather than a
+  // replacement. With no suite policy, the guard supplies the baseline.
+  const policy =
+    args.toolPolicy ??
+    (sideEffectGate ? benchmarkEnforcementPolicy(sideEffectGate) : undefined);
+  if (!policy) return null;
+  return createToolPolicyGate({
+    policy,
+    annotations: args.annotations,
+    ...(args.warnings ? { warnings: args.warnings } : {}),
+    ...(sideEffectGate ? { sideEffectGate } : {}),
+  });
 }
 
 /**
@@ -3097,22 +3150,16 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  const toolPolicyGate = toolPolicy
-    ? createToolPolicyGate({
-        policy: toolPolicy,
-        annotations: toolAnnotations ?? new Map(),
-        warnings: toolPolicyWarnings,
-        ...(benchmarkWriteGuard
-          ? {
-              sideEffectGate: resolveSideEffectGate(
-                benchmarkWriteGuard,
-                testCaseId ?? test.testCaseId,
-                runIndex,
-              ),
-            }
-          : {}),
-      })
-    : null;
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...(testCaseId ?? test.testCaseId
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -4193,22 +4240,16 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  const toolPolicyGate = toolPolicy
-    ? createToolPolicyGate({
-        policy: toolPolicy,
-        annotations: toolAnnotations ?? new Map(),
-        warnings: toolPolicyWarnings,
-        ...(benchmarkWriteGuard
-          ? {
-              sideEffectGate: resolveSideEffectGate(
-                benchmarkWriteGuard,
-                testCaseId ?? test.testCaseId,
-                runIndex,
-              ),
-            }
-          : {}),
-      })
-    : null;
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...(testCaseId ?? test.testCaseId
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
