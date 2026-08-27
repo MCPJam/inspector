@@ -7,6 +7,11 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { ToolsPanel } from "./ToolsPanel";
 import { ToolInvokePane } from "./ToolInvokePane";
 import { ActivityTimeline } from "./ActivityTimeline";
+import {
+  buildOtlpExport,
+  buildSessionExport,
+  exportFilename,
+} from "@/lib/webmcp-inspector/session-export";
 import type {
   WebMcpActivityEntry,
   WebMcpSessionStatus,
@@ -76,6 +81,34 @@ export function WebmcpInspectorTab() {
 
   const live = Boolean(session) && session?.status !== "closed";
 
+  /**
+   * Hand the session's evidence to the developer as a file.
+   *
+   * A download rather than a copy button: these run to hundreds of kilobytes
+   * with screenshots, and the usual destination is a bug report or a trace
+   * ingester, not a clipboard.
+   */
+  const exportAs = (kind: "json" | "otlp") => {
+    const input = {
+      session,
+      tools,
+      activity,
+      includeScreenshots: kind === "json",
+      exportedAt: Date.now(),
+    };
+    const payload =
+      kind === "otlp" ? buildOtlpExport(input) : buildSessionExport(input);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = exportFilename(session?.sessionId, kind);
+    anchor.click();
+    URL.revokeObjectURL(href);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -125,7 +158,28 @@ export function WebmcpInspectorTab() {
               Close browser
             </Button>
           </>
-        ) : (
+        ) : null}
+        {/* Available after the browser closes too: the timeline is the point
+            of the session, and it is most wanted once something went wrong. */}
+        {activity.length > 0 ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => exportAs("json")}
+            >
+              Export JSON
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => exportAs("otlp")}
+            >
+              Export OTLP
+            </Button>
+          </>
+        ) : null}
+        {!live ? (
           <Button
             size="sm"
             onClick={() => void startSession(url)}
@@ -133,7 +187,7 @@ export function WebmcpInspectorTab() {
           >
             {starting ? "Opening…" : "Open browser"}
           </Button>
-        )}
+        ) : null}
         {session ? <StatusBadge status={session.status} /> : null}
       </header>
 
