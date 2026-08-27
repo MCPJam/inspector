@@ -42,8 +42,10 @@ import {
 import {
   allEffectiveSkills,
   type EffectiveCapabilitySet,
+  type RuntimeLocalSkill,
   type RuntimePluginSkill,
   type RuntimeServerSkill,
+  type RuntimeSkillFile,
   type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities.js";
 import {
@@ -55,7 +57,27 @@ import {
 type EffectiveSkill =
   | RuntimePluginSkill
   | RuntimeStandaloneSkill
-  | RuntimeServerSkill;
+  | RuntimeServerSkill
+  | RuntimeLocalSkill;
+
+/**
+ * The body, whether it was carried inline or has to be fetched.
+ *
+ * A captured set holds the bytes; a live one holds a thunk, so a project with
+ * 200 skills costs one fetch for the skill the model actually loads rather than
+ * 200 for a catalog it mostly ignores.
+ */
+async function readContent(skill: EffectiveSkill): Promise<string> {
+  return typeof skill.content === "string"
+    ? skill.content
+    : await skill.content();
+}
+
+/** The supporting-file list, fetching it once if the origin is lazy. */
+async function readFiles(skill: EffectiveSkill): Promise<RuntimeSkillFile[]> {
+  if (skill.files.length > 0 || !skill.listFiles) return skill.files;
+  return skill.listFiles();
+}
 
 /** Bare standalone name, or a `<plugin>/<skill>` namespaced plugin ref. */
 const REF_RE = /^[a-z0-9-]+(?:\/[a-z0-9-]+(?:~[a-f0-9]{8,64})?)?$/;
@@ -66,6 +88,10 @@ function pluginOf(skill: EffectiveSkill): RuntimePluginSkill["plugin"] {
 
 function serverOf(skill: EffectiveSkill): RuntimeServerSkill | undefined {
   return "serverId" in skill ? skill : undefined;
+}
+
+function localOf(skill: EffectiveSkill): RuntimeLocalSkill | undefined {
+  return "directory" in skill ? (skill as RuntimeLocalSkill) : undefined;
 }
 
 /**
@@ -81,6 +107,10 @@ function originLabel(
   isPlugin: boolean,
   isServer: boolean
 ): string {
+  const local = localOf(skill);
+  // Named with its directory, because "which code-review is this?" is exactly
+  // the question a merged catalog raises and the answer is where it lives.
+  if (local) return `local ${local.directory}`;
   if (isServer) {
     const server = serverOf(skill)!;
     return `MCP server ${server.serverLabel}@v${server.versionNumber}`;
@@ -149,13 +179,6 @@ function resolveRef(lookup: SkillLookup, raw: string): Resolution {
   return { ok: false, error: `Error: Skill "${raw}" not found.` };
 }
 
-function findFile(
-  skill: EffectiveSkill,
-  path: string
-): { path: string; size: number; url: string | null } | undefined {
-  return skill.files.find((file) => file.path === path);
-}
-
 /**
  * Build the inlined discovery listing under the metadata budget, plus the
  * refs that had to be dropped. Computed ONCE at prompt-build time so the
@@ -212,7 +235,13 @@ export function createEffectiveSkillTools(args: {
           const resolved = resolveRef(lookup, name);
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
-          return `# Skill: ${skill.ref}\n\n${skill.content}`;
+          try {
+            return `# Skill: ${skill.ref}\n\n${await readContent(skill)}`;
+          } catch (error) {
+            return `Error loading "${skill.ref}": ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`;
+          }
         },
       }),
       needsApproval: ({ name }: { name: string }) => {
@@ -231,12 +260,20 @@ export function createEffectiveSkillTools(args: {
         const resolved = resolveRef(lookup, name);
         if (!resolved.ok) return resolved.error;
         const { skill } = resolved;
-        if (skill.files.length === 0) {
+        let files: RuntimeSkillFile[];
+        try {
+          files = await readFiles(skill);
+        } catch (error) {
+          return `Error listing files for "${skill.ref}": ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`;
+        }
+        if (files.length === 0) {
           return `Skill "${skill.ref}" has no supporting files.`;
         }
         return (
           `Supporting files for "${skill.ref}":\n\n` +
-          skill.files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
+          files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
           `\n\nUse \`readSkillFile\` to read one.`
         );
       },
@@ -258,12 +295,17 @@ export function createEffectiveSkillTools(args: {
           const resolved = resolveRef(lookup, name);
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
-          const file = findFile(skill, path);
+          let files: RuntimeSkillFile[];
+          try {
+            files = await readFiles(skill);
+          } catch (error) {
+            return `Error reading "${path}" from "${skill.ref}": ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`;
+          }
+          const file = files.find((entry) => entry.path === path);
           if (!file) {
             return `Error: "${path}" is not a supporting file of "${skill.ref}".`;
-          }
-          if (!file.url) {
-            return `Error: "${path}" could not be read (no download URL was issued for it).`;
           }
           // Guard on the SERVER-verified size before fetching, mirroring
           // `readCloudSkillFile` — a large blob must not be buffered to discover
@@ -272,15 +314,23 @@ export function createEffectiveSkillTools(args: {
             return `Error: "${path}" is too large to read (${file.size} bytes).`;
           }
           try {
-            const timeout = AbortSignal.timeout(30_000);
-            const signal = args.signal
-              ? AbortSignal.any([args.signal, timeout])
-              : timeout;
-            const res = await fetch(file.url, { signal });
-            if (!res.ok) {
-              return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
+            let bytes: Uint8Array;
+            if (file.read) {
+              // A local file has no URL to sign — it is on this machine's disk.
+              bytes = await file.read();
+            } else if (file.url) {
+              const timeout = AbortSignal.timeout(30_000);
+              const signal = args.signal
+                ? AbortSignal.any([args.signal, timeout])
+                : timeout;
+              const res = await fetch(file.url, { signal });
+              if (!res.ok) {
+                return `Error reading "${path}" from "${skill.ref}" (${res.status}).`;
+              }
+              bytes = new Uint8Array(await res.arrayBuffer());
+            } else {
+              return `Error: "${path}" could not be read (no download URL was issued for it).`;
             }
-            const bytes = new Uint8Array(await res.arrayBuffer());
             const mimeType = getMimeType(path);
             if (
               !isTextMimeType(mimeType) ||
@@ -356,7 +406,13 @@ export function getEffectiveSkillToolsAndPrompt(
       }
     );
   }
-  const hasFiles = skills.some((skill) => skill.files.length > 0);
+  // A lazy origin has not listed its files yet, so `files.length` cannot
+  // answer this. Advertising on the possibility is the right way round:
+  // withholding the tools would hide files that do exist, while offering
+  // them for a skill with none costs one refusal the model can read.
+  const hasFiles = skills.some(
+    (skill) => skill.files.length > 0 || skill.listFiles !== undefined
+  );
   const parts = [
     "## Skills",
     "",

@@ -18,6 +18,10 @@ import {
   isPathWithinDirectory,
 } from "./skill-parser";
 import type { Skill, SkillListItem, SkillFile } from "../../shared/skill-types";
+import type {
+  RuntimeLocalSkill,
+  RuntimeSkillFile,
+} from "../services/environments/effective-capabilities.js";
 
 /**
  * Get all skills directories
@@ -190,6 +194,133 @@ function flattenFiles(files: SkillFile[]): SkillFile[] {
     }
   }
   return result;
+}
+
+/**
+ * The local filesystem as one origin of an `EffectiveCapabilitySet`.
+ *
+ * This is what lets a desktop turn offer local files and project skills through
+ * ONE ref-addressed catalog, instead of the exclusive either/or the chat
+ * orchestrator used to pick between.
+ *
+ * Bodies are read eagerly — local disk is cheap and a skill without its body is
+ * not a skill — but supporting FILES stay lazy: enumerating every skill's tree
+ * on every turn would walk directories the model never asks about. The `read`
+ * thunk keeps the traversal guard and the text/size caps that
+ * `createSkillTools` already applies, so a local read through the effective
+ * surface is bounded exactly like a local read through the bare one.
+ */
+export async function listLocalRuntimeSkills(): Promise<RuntimeLocalSkill[]> {
+  const skills: RuntimeLocalSkill[] = [];
+  const seenNames = new Set<string>();
+
+  for (const skillsDir of getSkillsDirs()) {
+    if (!(await directoryExists(skillsDir))) continue;
+
+    let entries;
+    try {
+      entries = await fs.readdir(skillsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillDir = path.join(skillsDir, entry.name);
+      try {
+        const raw = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8");
+        const parsed = parseSkillFile(raw, formatDisplayPath(skillDir));
+        // First-wins across the search path, matching `listSkillsMetadata` —
+        // two directories offering the same name is a shadowing question the
+        // search order already answers, not a ref collision.
+        if (!parsed || seenNames.has(parsed.name)) continue;
+        seenNames.add(parsed.name);
+
+        skills.push({
+          skillId: `local:${skillDir}`,
+          // Namespaced, so a local `code-review` and a project `code-review`
+          // are separately addressable and a bare `code-review` is refused as
+          // ambiguous rather than silently resolved to one of them.
+          ref: `local/${parsed.name}`,
+          name: parsed.name,
+          description: parsed.description,
+          content: parsed.content,
+          aggregateHash: await localSkillAggregateHash(skillDir, parsed.content),
+          directory: formatDisplayPath(skillDir),
+          files: [],
+          listFiles: () => listLocalRuntimeSkillFiles(skillDir),
+        });
+      } catch {
+        // Not a readable skill directory; the bare surface skips these too.
+      }
+    }
+  }
+
+  return skills;
+}
+
+/**
+ * Supporting files of one local skill, flattened to skill-relative paths.
+ *
+ * `SKILL.md` is excluded: it is the body, already delivered by `loadSkill`, and
+ * listing it invites the model to spend a second read on what it just read.
+ */
+async function listLocalRuntimeSkillFiles(
+  skillDir: string
+): Promise<RuntimeSkillFile[]> {
+  const tree = await listFilesRecursive(skillDir);
+  return flattenFiles(tree)
+    .filter((file) => file.type === "file" && file.path !== "SKILL.md")
+    .map((file) => ({
+      path: file.path,
+      size: file.size ?? 0,
+      url: null,
+      read: async () => {
+        const absolute = path.join(skillDir, file.path);
+        // The same containment check the bare local surface applies. A skill
+        // directory can contain a symlink, and "it came from our own listing"
+        // is not a containment proof.
+        if (!isPathWithinDirectory(skillDir, absolute)) {
+          throw new Error(`"${file.path}" resolves outside the skill directory.`);
+        }
+        return new Uint8Array(await fs.readFile(absolute));
+      },
+    }));
+}
+
+/**
+ * A content-plus-files hash, so the field means the same thing here as it does
+ * for a cloud skill.
+ *
+ * Cloud skills fold their supporting files into `aggregateHash`; hashing only
+ * the body under the same field name would make two origins disagree about what
+ * the value covers, and any cross-origin comparison silently wrong. File
+ * CONTENTS are deliberately not read — path and size are enough to notice a
+ * file appearing, vanishing, or changing length, without a full directory read
+ * per turn.
+ */
+async function localSkillAggregateHash(
+  skillDir: string,
+  content: string
+): Promise<string> {
+  let manifest = "";
+  try {
+    const tree = await listFilesRecursive(skillDir);
+    manifest = flattenFiles(tree)
+      .filter((file) => file.type === "file" && file.path !== "SKILL.md")
+      .map((file) => `${file.path}:${file.size ?? 0}`)
+      .sort()
+      .join("\n");
+  } catch {
+    // An unreadable tree hashes as "no files" rather than failing the skill.
+  }
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${content}\n--\n${manifest}`)
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
