@@ -92,6 +92,8 @@ so results respect the caller's project access.
 | `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
+| `list_project_skills` | List the Cloud Skills visible to you in a project, with the IDs that environments and eval runs pin. Each row reports whether it is eligible to be pinned, and why not if it isn't. | — |
+| `get_project_skill` | Show one Cloud Skill including its SKILL.md body. | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |

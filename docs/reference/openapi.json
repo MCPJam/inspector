@@ -34,6 +34,10 @@
       "description": "Agent Plugins imported into a project — read-only inventory and version detail."
     },
     {
+      "name": "Skills",
+      "description": "Cloud Skills: authored SKILL.md files stored in a project. Read-only here. Environments pin skills by id (`skillSelection.skillIds`) and eval runs pin them with `--compose-skill`, so this surface exists to give an unattended caller those ids; authoring is an app flow behind a beta gate."
+    },
+    {
       "name": "Sandbox images",
       "description": "Custom Computer images: a digest-pinned Dockerfile built into an immutable image your project's computers boot from."
     },
@@ -4930,6 +4934,93 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PluginVersion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/skills": {
+      "get": {
+        "operationId": "listProjectSkills",
+        "tags": ["Skills"],
+        "summary": "List a project's skills",
+        "description": "The Cloud Skills visible to the caller in this project: the project-shared ones plus the caller's own drafts. Each row reports `pinnability`, which is what decides whether its id is usable in an environment's `skillSelection`.",
+        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "responses": {
+          "200": {
+            "description": "The project's skills.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/skills/{skillId}": {
+      "get": {
+        "operationId": "getProjectSkill",
+        "tags": ["Skills"],
+        "summary": "Get a skill",
+        "description": "One skill, including its SKILL.md body. The body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which content this read returned.",
+        "parameters": [
+          { "$ref": "#/components/parameters/projectId" },
+          {
+            "name": "skillId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Skill ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The skill.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
                 }
               }
             }
@@ -16595,6 +16686,98 @@
           },
           "readyAt": {
             "type": "number"
+          }
+        }
+      },
+      "Skill": {
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "sharing",
+          "isOwner",
+          "aggregateHash",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Load-bearing identity: the on-box directory name and the `loadSkill` argument. Immutable — renames are rejected."
+          },
+          "description": {
+            "type": "string"
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "description": "`project` skills are shared with the organization and are the only ones an environment may pin. `user` skills are the caller's own drafts."
+          },
+          "isOwner": {
+            "type": "boolean"
+          },
+          "aggregateHash": {
+            "type": "string",
+            "description": "Drift key over the body and any supporting files. A skill body is mutable and an edit overwrites it in place, so this is the only handle on WHICH content a given pin resolved to."
+          },
+          "provenance": {
+            "type": "string",
+            "description": "How the row came to exist (`authored`, `computer-adopted`, …). Absent on older records; treat an unknown value as `authored`."
+          },
+          "pinnability": {
+            "type": "object",
+            "description": "Whether this skill may be pinned into an environment. ABSENT means unknown (an older backend), which is not the same as eligible.",
+            "required": ["ok"],
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why not, when `ok` is false — e.g. the skill is personal, carries supporting files, or carries extra frontmatter."
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "SkillDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Skill" },
+          {
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+              "content": {
+                "type": "string",
+                "description": "The SKILL.md body, with frontmatter stripped."
+              }
+            }
+          }
+        ]
+      },
+      "SkillPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Skill"
+            }
           }
         }
       },

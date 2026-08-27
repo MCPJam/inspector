@@ -465,6 +465,36 @@ function patchClaudeCodeBridgeContent(content: string): string {
   return patched;
 }
 
+/**
+ * The `.npmrc` written beside the adapter's bundled manifest, so its
+ * `pnpm install` is allowed to run dependency build scripts.
+ *
+ * WHY THIS EXISTS. `@anthropic-ai/claude-code` ships a `postinstall`
+ * (`node install.cjs`) that fetches its platform-native binary; without it the
+ * CLI starts and immediately reports `claude native binary not installed`.
+ * pnpm 10 stopped running dependency build scripts by default, and the
+ * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so the
+ * behaviour of a rebuilt image changes with whatever pnpm is current.
+ *
+ * The adapter's own recipe already anticipates the skip: after `pnpm install`
+ * it re-runs `install.cjs` by hand. That rescue only fires when the install
+ * step EXITS ZERO. Where the skip is a hard error rather than a warning —
+ * `ERR_PNPM_IGNORED_BUILDS`, which is what a strict or newer pnpm produces —
+ * the install step aborts the whole recipe and the rescue never runs. That is
+ * the failure this file prevents, and it is why a warning-only pnpm looks fine.
+ *
+ * WHY A FILE AND NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower,
+ * but pnpm reads it only from `package.json` / `pnpm-workspace.yaml` — never
+ * from `.npmrc` — and the manifest here is a bundled asset of
+ * `@ai-sdk/harness-claude-code`, not ours to amend. Editing it would also
+ * invalidate the `--frozen-lockfile` the adapter installs with. A sibling
+ * `.npmrc` changes neither, and `--dir` makes pnpm read it.
+ *
+ * The permissiveness is bounded by where it lands: one directory inside a
+ * disposable sandbox that already runs an agent with full shell access.
+ */
+const CLAUDE_CODE_BOOTSTRAP_NPMRC = "dangerously-allow-all-builds=true\n";
+
 export function patchClaudeCodeHarnessBootstrap(
   harness: HarnessAgentAdapter
 ): HarnessAgentAdapter {
@@ -482,11 +512,20 @@ export function patchClaudeCodeHarnessBootstrap(
       const bootstrap = await originalGetBootstrap(...args);
       cachedPatchedBootstrap = {
         ...bootstrap,
-        files: bootstrap.files.map((file) =>
-          file.path.endsWith("/bridge.mjs")
-            ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
-            : file
-        ),
+        // Appended rather than merged over an existing entry: the adapter
+        // ships no `.npmrc` today, and if a future version starts shipping one
+        // we want the duplicate to surface instead of silently winning.
+        files: [
+          ...bootstrap.files.map((file) =>
+            file.path.endsWith("/bridge.mjs")
+              ? { ...file, content: patchClaudeCodeBridgeContent(file.content) }
+              : file
+          ),
+          {
+            path: `${bootstrap.bootstrapDir}/.npmrc`,
+            content: CLAUDE_CODE_BOOTSTRAP_NPMRC,
+          },
+        ],
       };
       return cachedPatchedBootstrap;
     },

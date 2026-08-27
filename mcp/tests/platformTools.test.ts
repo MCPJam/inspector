@@ -179,6 +179,8 @@ const PLAIN_TOOLS = [
   // Agent Plugins reads: agent-oriented payloads, no widget view.
   "list_project_plugins",
   "get_plugin_version",
+  "list_project_skills",
+  "get_project_skill",
   "get_eval_iteration_trace",
   "compare_eval_run",
   // The gate-waiver read: an agent-oriented payload, no widget view.
@@ -434,6 +436,8 @@ describe("platform tool registration", () => {
       "get_sandbox_image",
       "list_project_plugins",
       "get_plugin_version",
+      "list_project_skills",
+      "get_project_skill",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",

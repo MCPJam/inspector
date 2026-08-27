@@ -47,6 +47,22 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
   If you have no skills installed, run `npx skills` to get started quickly.
 </Tip>
 
+## Finding skill IDs
+
+Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of the project-shared skills in your project:
+
+```bash
+mcpjam cloud skills list --project my-project
+```
+
+Each row includes a `pinnability` field that says whether the skill can be pinned into an environment or eval run, and why not if it can't. To see a skill's full SKILL.md body:
+
+```bash
+mcpjam cloud skills get --skill <id> --project my-project
+```
+
+Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
+
 ## Uploading Skills
 
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
