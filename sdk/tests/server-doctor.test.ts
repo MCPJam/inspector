@@ -148,6 +148,81 @@ describe("the skills check", () => {
     });
   }
 
+  const markdownFor = (name: string) =>
+    `---\nname: ${name}\ndescription: Skill ${name}.\n---\n# ${name}\n`;
+
+  /** A server serving `count` distinct, individually verifiable skills. */
+  async function manySkillsManager(count: number) {
+    const entries = await Promise.all(
+      Array.from({ length: count }, async (_unused, index) => {
+        const name = `skill-${index + 1}`;
+        const uri = `skill://demo/${name}/SKILL.md`;
+        const markdown = markdownFor(name);
+        return {
+          uri,
+          frontmatter: { name, description: `Skill ${name}.` },
+          resources: [
+            {
+              uri,
+              digest: `sha256:${await sha256(markdown)}`,
+              size: new TextEncoder().encode(markdown).byteLength,
+            },
+          ],
+        };
+      })
+    );
+    const byUri = new Map(entries.map((entry) => [entry.uri, entry]));
+    return createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest.fn().mockResolvedValue({ skills: entries }),
+      getServerSkill: jest
+        .fn()
+        .mockImplementation(async (_serverId: string, uri: string) =>
+          byUri.get(uri)
+        ),
+      readResource: jest
+        .fn()
+        .mockImplementation(
+          async (_serverId: string, params: { uri: string }) => ({
+            contents: [
+              {
+                uri: params.uri,
+                text: markdownFor(params.uri.split("/").at(-2) as string),
+                mimeType: "text/markdown",
+              },
+            ],
+          })
+        ),
+    });
+  }
+
+  it("says how much of the catalog it actually sampled", async () => {
+    // The cap is deliberate, so it has to be visible. "8 skills discovered. 5
+    // verified" reads as "only 5 of them check out" — a far worse claim about
+    // the server than the true one, which is that the doctor stopped at 5.
+    const manager = await manySkillsManager(8);
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("ok");
+    expect(result.checks.skills.detail).toContain("5 of 8 sampled and verified");
+    expect(result.skills).toHaveLength(8);
+  });
+
+  it("does not claim a sample when it verified the whole catalog", async () => {
+    const manager = await manySkillsManager(2);
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.detail).toContain("2 verified");
+    expect(result.checks.skills.detail).not.toContain("sampled");
+  });
+
   it("skips when the extension was never negotiated", async () => {
     // Most servers serve no skills. Reporting that as a failure would make the
     // doctor cry wolf on almost every run.
@@ -163,7 +238,31 @@ describe("the skills check", () => {
     const result = await collectConnectedServerDoctorState(manager, "srv");
 
     expect(result.checks.skills.status).toBe("skipped");
+    expect(result.checks.skills.detail).toContain("does not declare");
     expect(result.skills).toEqual([]);
+  });
+
+  it("blames the capability pin, not the server, when we were the ones who did not ask", async () => {
+    // `active` is the AND of two declarations, so a single message for both
+    // sides reports our own omission as a fact about the server. A server
+    // author running the doctor behind `--host cursor` against a server that
+    // serves skills perfectly well must not read "not active" as their bug.
+    const manager = createMockManager({
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: false,
+        directoryRead: false,
+        active: false,
+      }),
+    });
+
+    const result = await collectConnectedServerDoctorState(manager, "srv");
+
+    expect(result.checks.skills.status).toBe("skipped");
+    expect(result.checks.skills.detail).toContain("DOES declare");
+    expect(result.checks.skills.detail).toContain("pinned for this run");
+    // The failure this guards against is the detail reading as a server defect.
+    expect(result.checks.skills.detail).not.toContain("does not declare");
   });
 
   it("verifies the skills it lists, rather than counting them", async () => {
