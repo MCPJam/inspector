@@ -243,6 +243,48 @@ const toUserMessage = (text) => ({
     );
   });
 
+  it("writes an .npmrc that lets the bootstrap's pnpm run build scripts", async () => {
+    const harness = patchClaudeCodeHarnessBootstrap(
+      createClaudeCode({
+        model: "haiku",
+        auth: {
+          gateway: {
+            apiKey: "test",
+            baseUrl: "https://ai-gateway.vercel.sh/v1",
+          },
+        },
+      }) as any
+    );
+
+    const bootstrap = await harness.getBootstrap?.();
+    const npmrc = bootstrap?.files.find((file) =>
+      file.path.endsWith("/.npmrc")
+    );
+
+    // Without this, pnpm skips `@anthropic-ai/claude-code`'s postinstall. On a
+    // pnpm that treats the skip as an error the install step aborts the whole
+    // recipe, so the adapter's own `install.cjs` rescue never runs and the CLI
+    // never exists — the bootstrap dies before a single turn.
+    expect(npmrc?.path).toBe(`${bootstrap?.bootstrapDir}/.npmrc`);
+    expect(npmrc?.content).toContain("dangerously-allow-all-builds=true");
+
+    // It has to sit BESIDE the adapter's manifest, not inside it: the install
+    // runs `--frozen-lockfile`, so amending `package.json` to carry
+    // `onlyBuiltDependencies` would fail the lockfile check. Both halves of
+    // that reasoning are pinned here so a future edit cannot quietly break one.
+    const manifest = bootstrap?.files.find((file) =>
+      file.path.endsWith("/package.json")
+    );
+    if (manifest) {
+      expect(JSON.parse(manifest.content).pnpm).toBeUndefined();
+    }
+    expect(
+      bootstrap?.commands.some((command) =>
+        command.command.includes("--frozen-lockfile")
+      )
+    ).toBe(true);
+  });
+
   it("Claude Code attributes mcp__ tool names", () => {
     const keyToServerId = { weather: "srv_123" };
     expect(
