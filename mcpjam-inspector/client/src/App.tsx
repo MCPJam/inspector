@@ -299,6 +299,7 @@ import {
   scopeNavigationTarget,
   type OrganizationRouteSection,
   useCurrentLocationParts,
+  useCurrentSearchParam,
   useActiveTab,
   useAppNavigate,
   useCurrentOrgRoute,
@@ -1838,10 +1839,28 @@ export function SessionsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
 
+  /**
+   * A permalink names ONE exact session, and this feed is the only screen that
+   * opens one: every `/v1/sessions` item carries `/sessions?session=<id>` as
+   * its link, which the backend mints as the universal target for sessions
+   * whose surface-native page does not exist (an eval Quick Run, a session
+   * whose parent run was deleted). Nothing else in the app can render it.
+   *
+   * So the ROLLOUT flag must not swallow that link. It gates who DISCOVERS the
+   * feed — the sidebar item, an unaddressed `/sessions` visit — not who may
+   * read a session they were handed the id of, and bouncing a permalink to
+   * Connect drops the id on the floor and lands the recipient on a screen they
+   * never asked for, with nothing to say what happened. Row-level visibility
+   * is entirely server-side (`canViewSessionInProject`), so honouring the link
+   * exposes nothing the flag was protecting, and the dark-ship ErrorBoundary
+   * below still covers a deployment whose feed queries are not live yet.
+   */
+  const permalinkSessionId = useCurrentSearchParam("session");
+
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /sessions directly. (Same tradeoff as SwarmsRoute.)
-  if (unifiedSessionsEnabled === false) {
+  if (unifiedSessionsEnabled === false && !permalinkSessionId) {
     return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (unifiedSessionsEnabled === undefined) {
