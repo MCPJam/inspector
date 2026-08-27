@@ -41,6 +41,13 @@ import {
   classifyTurnFailure,
 } from "../resolve-turn-runtime.js";
 import type { UnifiedTurnResult } from "../turn-execution.js";
+import {
+  THINK_DELTAS,
+  collectStreamParts,
+  reasoningOf,
+  textOf,
+  thinkStreamModel,
+} from "./helpers/think-model";
 
 const MCPJAM_MODEL: ModelDefinition = {
   id: "anthropic/claude-haiku-4.5",
@@ -231,6 +238,30 @@ describe("resolveTurnRuntime — runtime shape", () => {
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("wraps the local BYOK model so an inlined <think> block is extracted", async () => {
+    // The build is mocked, so asserting the call alone would still pass with
+    // the wrap removed. Drive the returned model instead. BB-136.
+    const provider = { providerKey: "openai" } as never;
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: { runtimeLocation: "local", provider },
+    });
+    buildOrgModelFromResolvedConfigMock.mockReturnValue(
+      thinkStreamModel(THINK_DELTAS),
+    );
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({ modelDefinition: LOCAL_MODEL }),
+    );
+    const parts = await collectStreamParts(
+      (rt.runtime as { llmModel: Parameters<typeof collectStreamParts>[0] })
+        .llmModel,
+    );
+
+    expect(reasoningOf(parts)).toContain("2 plus 2.");
+    expect(textOf(parts)).toBe("It is 4.");
   });
 });
 
