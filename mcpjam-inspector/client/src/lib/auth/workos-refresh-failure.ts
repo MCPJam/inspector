@@ -1,4 +1,5 @@
 import { reportCaught } from "@/lib/error-reporting";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 /**
  * Handler for `<AuthKitProvider onRefreshFailure>`.
@@ -31,6 +32,10 @@ export function handleWorkosRefreshFailure({
     source: "workos_refresh_failure",
     level: "warning",
   });
+  // Set BEFORE navigating. On success the page unloads and this never renders;
+  // if the navigation is blocked or fails, the banner is already up offering a
+  // sign-in, instead of leaving signed-in chrome over a dead session.
+  useSessionRefreshStore.getState().notifyFailure("signed_out");
   // Fire-and-forget, but wrapped: `signIn` is async and a failure to build the
   // authorization URL would otherwise surface as an unhandled rejection inside
   // authkit's callback. The report above already recorded the dead session.

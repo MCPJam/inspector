@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUnifiedConvexAuth } from "../unified-convex-auth";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const mockState = vi.hoisted(() => ({
   workos: {
@@ -37,6 +38,11 @@ describe("useUnifiedConvexAuth", () => {
     mockState.workos.isLoading = false;
     mockState.workos.user = null;
     mockState.getCachedGuestSession.mockReturnValue(null);
+    useSessionRefreshStore.setState({
+      status: "idle",
+      kind: null,
+      retryNonce: 0,
+    });
   });
 
   afterEach(() => {
@@ -202,6 +208,10 @@ describe("useUnifiedConvexAuth", () => {
           level: "warning",
         }),
       );
+      // Convex is about to clearAuth() on this null — the banner is what makes
+      // that recoverable without a reload.
+      expect(useSessionRefreshStore.getState().status).toBe("failed");
+      expect(useSessionRefreshStore.getState().kind).toBe("transient");
     });
 
     it("still honors the explicit force-refresh path", async () => {
@@ -262,6 +272,46 @@ describe("useUnifiedConvexAuth", () => {
       expect(token).toBeNull();
       expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(1);
       expect(mockState.reportCaught).not.toHaveBeenCalled();
+      // Retrying cannot help here, so the banner must offer sign-in instead.
+      expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+    });
+
+    it("clears the banner once a token is recovered", async () => {
+      useSessionRefreshStore.setState({
+        status: "failed",
+        kind: "transient",
+      });
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockResolvedValue("workos-token");
+
+      const result = await mountGuest();
+
+      await act(async () => {
+        await result.current.getAccessToken();
+      });
+
+      expect(useSessionRefreshStore.getState().status).toBe("idle");
+      expect(useSessionRefreshStore.getState().kind).toBeNull();
+    });
+
+    it("hands Convex a new token getter when the user retries", async () => {
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockResolvedValue("workos-token");
+
+      const { result } = renderHook(() => useUnifiedConvexAuth());
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const before = result.current.getAccessToken;
+
+      // A fresh identity is the whole retry lever: @convex-dev/workos keys its
+      // fetchAccessToken on it, and ConvexAuthState re-runs setAuth when that
+      // changes. Same function object would mean nothing happens.
+      await act(async () => {
+        useSessionRefreshStore.getState().retry();
+      });
+
+      expect(result.current.getAccessToken).not.toBe(before);
     });
 
     it("reports once when the WorkOS ladder is exhausted", async () => {

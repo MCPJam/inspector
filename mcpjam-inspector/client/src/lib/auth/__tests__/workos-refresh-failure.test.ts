@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleWorkosRefreshFailure } from "../workos-refresh-failure";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const mockState = vi.hoisted(() => ({
   reportCaught: vi.fn(),
@@ -12,6 +13,20 @@ vi.mock("@/lib/error-reporting", () => ({
 describe("handleWorkosRefreshFailure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSessionRefreshStore.setState({
+      status: "idle",
+      kind: null,
+      retryNonce: 0,
+    });
+  });
+
+  it("raises the signed-out banner before navigating away", () => {
+    // If the redirect is blocked, this is the only thing standing between the
+    // user and signed-in chrome over a dead session.
+    handleWorkosRefreshFailure({ signIn: vi.fn() });
+
+    expect(useSessionRefreshStore.getState().status).toBe("failed");
+    expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
   });
 
   it("reports one warning and sends the user to sign in", () => {

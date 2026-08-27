@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
 import { NON_PROD_LOCKDOWN } from "@/lib/config";
 import { reportCaught } from "@/lib/error-reporting";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   forceRefreshGuestSession,
   getCachedGuestSession,
@@ -77,10 +78,17 @@ async function fetchTokenWithRetry(
   ) {
     try {
       const token = await fetchOnce();
-      if (token) return token;
+      if (token) {
+        // Whatever went wrong before is over — take any banner down.
+        useSessionRefreshStore.getState().clear();
+        return token;
+      }
       lastError = undefined;
     } catch (error) {
-      if (opts.isTerminalError?.(error)) return null;
+      if (opts.isTerminalError?.(error)) {
+        useSessionRefreshStore.getState().notifyFailure("signed_out");
+        return null;
+      }
       lastError = error;
     }
 
@@ -93,6 +101,10 @@ async function fetchTokenWithRetry(
     level: "warning",
     extra: { attempts: AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS.length + 1 },
   });
+  // Convex is about to clearAuth() on this null. Surface a banner offering an
+  // in-place retry, rather than letting the page crash into an error boundary
+  // whose "Try again" cannot work while Convex sits in `noAuth`.
+  useSessionRefreshStore.getState().notifyFailure("transient");
   return null;
 }
 
@@ -106,6 +118,12 @@ function markActiveGuest(): void {
 
 export function useUnifiedConvexAuth() {
   const workos = useWorkOSAuth();
+  // Bumped when the user presses Retry on the session-refresh banner. It feeds
+  // both the memo below (new `getAccessToken` identity → Convex re-runs
+  // `setAuth`) and the guest bootstrap effect (a fully-lapsed guest has
+  // `user: null`, and the adapter only installs auth once `user` is truthy, so
+  // the guest must be re-minted before a re-auth can happen at all).
+  const retryNonce = useSessionRefreshStore((s) => s.retryNonce);
   const [guestToken, setGuestToken] = useState<string | null>(
     () => getCachedGuestSession()?.token ?? null,
   );
@@ -174,7 +192,7 @@ export function useUnifiedConvexAuth() {
     return () => {
       cancelled = true;
     };
-  }, [workos.isLoading, workos.user]);
+  }, [workos.isLoading, workos.user, retryNonce]);
 
   return useMemo(() => {
     if (workos.user) {
@@ -252,5 +270,6 @@ export function useUnifiedConvexAuth() {
     workos.getAccessToken,
     guestToken,
     guestLoading,
+    retryNonce,
   ]);
 }
