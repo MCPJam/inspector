@@ -6,6 +6,7 @@ import test from "node:test";
 import { Command } from "commander";
 import {
   addSharedServerOptions,
+  getGlobalOptions,
   parseNonNegativeInteger,
   parseJsonRecord,
   parseRetryPolicy,
@@ -570,4 +571,30 @@ test("resolveAliasedStringOption rejects missing and conflicting aliases", () =>
       error instanceof CliError &&
       error.message.includes("Specify only one of --tool-name or --name"),
   );
+});
+
+// ── The `--timeout` default ────────────────────────────────────────────────
+//
+// The 30s program default is sized for an MCP probe. Commands that drive a
+// model turn pass their own, larger default; an explicit `--timeout` must
+// still win over both, or a caller could not shorten a long-running command.
+
+function timeoutCommand(argv: string[]): Command {
+  const command = new Command("send").exitOverride();
+  command.option("--timeout <ms>", "Request timeout in milliseconds", Number);
+  command.parse(argv, { from: "user" });
+  return command;
+}
+
+test("getGlobalOptions uses the 30s program default when none is given", () => {
+  assert.equal(getGlobalOptions(timeoutCommand([])).timeout, 30_000);
+});
+
+test("getGlobalOptions honours a per-command default when --timeout is absent", () => {
+  assert.equal(getGlobalOptions(timeoutCommand([]), 300_000).timeout, 300_000);
+});
+
+test("an explicit --timeout still beats the per-command default", () => {
+  const command = timeoutCommand(["--timeout", "5000"]);
+  assert.equal(getGlobalOptions(command, 300_000).timeout, 5_000);
 });

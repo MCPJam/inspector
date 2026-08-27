@@ -757,6 +757,74 @@ describe("v1 client routes", () => {
     });
   });
 
+  describe("the read/write round-trip", () => {
+    // The `get` → edit one field → `update` loop is what every CLI and agent
+    // caller does. It used to fail: the GET projection carries the config row's
+    // `id` and `schemaVersion`, the backend's input validator is a strict
+    // `v.object` that accepts neither, and its argument-validation error is
+    // deliberately not forwarded — so the caller got a bare 500 naming no field
+    // for a body this same API had just emitted.
+    it("strips the read-only projection keys on PATCH", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: {
+          expectedConfigId: "hc1",
+          config: {
+            id: "hc1",
+            schemaVersion: 2,
+            modelId: "openai/gpt-5",
+            systemPrompt: "edited",
+          },
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHost",
+        expect.objectContaining({
+          input: { modelId: "openai/gpt-5", systemPrompt: "edited" },
+        })
+      );
+    });
+
+    it("strips them on create too", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("POST", "/api/v1/projects/p1/clients", {
+        body: {
+          name: "Alpha",
+          config: { id: "hc1", schemaVersion: 2, modelId: "gpt-4o-mini" },
+        },
+      });
+      expect(res.status).toBe(201);
+      expect(convexMutationMock).toHaveBeenCalledWith("hosts:createHost", {
+        projectId: "p1",
+        name: "Alpha",
+        input: { modelId: "gpt-4o-mini" },
+      });
+    });
+
+    // Only the two derived keys are dropped. Anything else the caller invents
+    // still reaches the backend validator and still fails closed there.
+    it("leaves an unrecognized key alone", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request("PATCH", "/api/v1/projects/p1/clients/h1", {
+        body: {
+          expectedConfigId: "hc1",
+          config: { modelId: "openai/gpt-5", typodField: 1 },
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "hosts:updateHost",
+        expect.objectContaining({
+          input: { modelId: "openai/gpt-5", typodField: 1 },
+        })
+      );
+    });
+  });
+
   describe("POST servers", () => {
     it("forwards the config token to updateHostServers", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
