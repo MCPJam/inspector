@@ -10,6 +10,7 @@ import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { withInlineReasoningExtracted } from "./inline-reasoning";
 import {
   isChatGPTAppTool,
   isMcpAppTool,
@@ -37,7 +38,7 @@ export interface CustomProviderConfig {
   apiKey?: string;
 }
 
-export const createLlmModel = (
+const createProviderModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
   baseUrls?: BaseUrls,
@@ -137,6 +138,20 @@ export const createLlmModel = (
       );
   }
 };
+
+/**
+ * Every model the chat and eval runners use comes from here, so this is where
+ * inline `<think>` reasoning gets moved onto the reasoning channel. BB-136.
+ */
+export const createLlmModel = (
+  modelDefinition: ModelDefinition,
+  apiKey: string,
+  baseUrls?: BaseUrls,
+  customProviders?: CustomProviderConfig[],
+) =>
+  withInlineReasoningExtracted(
+    createProviderModel(modelDefinition, apiKey, baseUrls, customProviders),
+  );
 
 const ANTHROPIC_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
