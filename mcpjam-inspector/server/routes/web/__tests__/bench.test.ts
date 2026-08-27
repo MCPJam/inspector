@@ -48,15 +48,17 @@ const connectBodies: Array<Record<string, unknown>> = [];
  */
 async function freshApp() {
   vi.resetModules();
-  const [{ default: benchRoutes }, { mapRuntimeError, webError }] =
+  const [{ default: benchRoutes }, { mapRuntimeError, webErrorFromRoute }] =
     await Promise.all([import("../bench"), import("../errors")]);
 
   const app = new Hono();
   app.route("/api/web/bench", benchRoutes);
-  app.onError((error, c) => {
-    const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
-  });
+  // `webErrorFromRoute`, matching how `routes/web/index.ts` actually mounts
+  // this router. A hand-rolled `webError(status, code, message)` here drops
+  // `details`, which is where the specific backend verdict rides — so the
+  // harness would report a passing relay that strips the one field the client
+  // needs to tell two conflicts apart.
+  app.onError((error, c) => webErrorFromRoute(c, mapRuntimeError(error)));
   return app;
 }
 
@@ -554,6 +556,41 @@ describe("backend verdict passthrough", () => {
     const body = await res.json();
     expect(body.code).toBe(code);
     expect(body.message).toBe("backend says no");
+  });
+
+  /**
+   * `CONFLICT` cannot distinguish "the exam moved under your quote" — which
+   * the score site recovers from by re-quoting and re-consenting — from "this
+   * run is already finished", which it cannot. Only the backend's own code
+   * says which, so the envelope has to survive the relay.
+   */
+  it("forwards the backend's own conflict code, not just CONFLICT", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json(
+        {
+          ok: false,
+          code: "DEFINITION_CHANGED",
+          error: "This exam was republished while your quote was open.",
+        },
+        { status: 409 },
+      ),
+    ) as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/runs", {
+      method: "POST",
+      headers: AUTHED,
+      body: JSON.stringify({
+        projectId: "p",
+        serverId: "s",
+        receiptId: "r",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("CONFLICT");
+    expect(body.details?.code).toBe("DEFINITION_CHANGED");
   });
 
   it("502s a 200 that is not the ok envelope", async () => {

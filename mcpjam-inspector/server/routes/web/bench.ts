@@ -392,10 +392,15 @@ async function callBackend(
         backendMessage(body, "You do not have access to this benchmark."),
       );
     case 409:
+      // The envelope rides along, as it does on 402. `CONFLICT` cannot
+      // distinguish "the exam moved under your quote" — which the score site
+      // recovers from by re-quoting — from "this run is already finished",
+      // which it cannot, and only the backend's own code says which.
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
         backendMessage(body, "This benchmark run is no longer in that state."),
+        body ? (body as Record<string, unknown>) : undefined,
       );
     case 429:
       throw new WebRouteError(
