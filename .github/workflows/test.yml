@@ -2,7 +2,13 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    # `branches` filters on the PR's BASE. A stacked PR is based on the branch
+    # below it rather than on main, so with `main` alone every PR above the
+    # root of a stack merges without these tests having run against it once.
+    # Drop the second pattern once the Connector Bench stack has landed.
+    branches:
+      - main
+      - "claude/mcp-benchmarks-v2-b0tw4b-**"
   push:
     branches: [main]
 
