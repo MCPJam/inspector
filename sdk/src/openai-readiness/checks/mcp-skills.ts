@@ -25,6 +25,7 @@
 import { openaiPolicySource } from "../manifest.js";
 import { OPENAI_MCP_SKILL_LIMITS } from "../profile.js";
 import { openaiPortalIssue, type OpenAIPortalIssue } from "../portal-errors.js";
+import { checkFrontmatterDrift } from "../../mcp-client-manager/skills-integrity.js";
 import {
   OPENAI_READINESS_INPUTS,
   OPENAI_SUBMISSION_MODE_SHAPES,
@@ -104,6 +105,16 @@ const ALL: OpenAICheckDefinition[] = [
   FRONTMATTER_AGREES,
   SNAPSHOT_SEMANTICS,
 ];
+
+function comparableDigest(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  // `lower` in BOTH branches. Returning the original in the fallback meant a
+  // server declaring a bare uppercase hex digest never matched the
+  // always-lowercase `observedDigest`, and was reported as a mismatch for a
+  // difference in case alone.
+  const lower = value.toLowerCase();
+  return lower.startsWith("sha256:") ? lower.slice("sha256:".length) : lower;
+}
 
 export interface OpenAISkillsCheckInput {
   mode: OpenAISubmissionMode;
@@ -352,7 +363,8 @@ export function runOpenAIMcpSkillChecks(
     (skill) =>
       skill.declaredDigest !== undefined &&
       skill.observedDigest !== undefined &&
-      skill.declaredDigest !== skill.observedDigest,
+      comparableDigest(skill.declaredDigest) !==
+        comparableDigest(skill.observedDigest),
   );
 
   findings.push(
@@ -401,6 +413,12 @@ export function runOpenAIMcpSkillChecks(
   // differ is telling two different stories about the same skill.
   const disagreeing = evidence.skills.filter((skill) => {
     if (!skill.frontmatter) return false;
+    if (skill.declaredFrontmatter) {
+      return !checkFrontmatterDrift(
+        skill.declaredFrontmatter,
+        skill.frontmatter,
+      ).ok;
+    }
     const name = skill.frontmatter.name;
     const description = skill.frontmatter.description;
     return (

@@ -37,6 +37,12 @@ export type CellTrendPoint = {
   runLabel: string;
   timestamp: number;
   result: "passed" | "failed" | "pending" | "partial";
+  /** Passed iterations for this run in the cell. */
+  passed: number;
+  /** Failed iterations for this run in the cell. */
+  failed: number;
+  /** Total iterations for this run in the cell. */
+  total: number;
   /** Median (p50) latency for this run in the cell. */
   latencyMs: number | null;
   /** 95th percentile latency for this run in the cell. */
@@ -230,6 +236,9 @@ export function buildCellTrendSeries(
         pendingCount,
         totalCount,
       ),
+      passed: passCount,
+      failed: failCount,
+      total: totalCount,
       latencyMs: median(latencySamples),
       latencyP95Ms: percentile(latencySamples, 95),
       tokens:

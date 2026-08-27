@@ -24,41 +24,43 @@
  * and letting a server claim one would be a shadowing channel. Anything the
  * wrapper does not recognise is delegated to the base tool unchanged.
  *
- * ## Approval
+ * ## Consent
  *
- * Loading a server skill is ALWAYS approval-gated — even when the host's
- * `requireToolApproval` is false. The content is untrusted instructions
- * fetched from a third party mid-turn, so the user has to see WHICH skill they
- * are admitting; the approval card carries the tool name and its input, which
- * is the skill ref or URI.
+ * SEP-2640 does NOT require approval to read a skill's text. Its consent
+ * obligations are narrower than that: host-side code execution (#2),
+ * `allowed-tools` (#5 — ignored outright here), activating a NESTED skill
+ * (#6 — never done here), and CROSS-ORIGIN reads (#3 — impossible, since the
+ * manifest is an allowlist confined to the skill's own directory). What the
+ * spec asks for a plain load is ORIGIN TAGGING: mark the content as untrusted
+ * third-party input. That is the banner, and it is unconditional.
  *
- * SEP-2640 binds host trust to a specific DIGEST SET, and {@link
- * manifestApprovalHash} computes that binding. The binding is ENFORCED: the
- * `needsApproval` gate resolves the target and records the digest set before
- * the prompt is shown, and `execute` recomputes it afterwards and refuses when
- * it moved. So an approval covers a specific manifest, and a server that
- * republishes between the prompt and the load gets a refusal rather than a
- * pass.
+ * So a server-origin load follows the HOST's approval policy, exactly like any
+ * other tool on the turn. This used to force a prompt regardless — MCPJam
+ * policy, not conformance — and that choice made the feature unusable on every
+ * surface that is not one long-lived process: the gate recorded its digest-set
+ * binding in a Map inside this closure, `prepareChatV2` rebuilds the closure
+ * per request, and `execute` therefore looked for the binding in a different
+ * request's empty Map and refused every load.
  *
- * What it is NOT is VISIBLE. The approval payload carries `toolName`, `input`
- * and `telemetryScope` — there is no field for the hash, and the card renders
- * as "Run <tool>". So the user sees which skill they are admitting, not which
- * manifest version; two loads of the same ref across a republish look
- * identical to them even though the second is refused. Closing that needs a
- * field on the shared approval payload and a change to the renderer every tool
- * uses, which is a wider change than this PR should make.
+ * Where a prompt DOES fire and the closure survives to `execute` (local mode),
+ * the binding is still recorded and still compared, so the SEP's
+ * content-binding rule (#7) holds for the persistent-approval case it governs.
  *
- * The distinction is worth stating precisely: the digest set is a real gate,
- * and it is not a disclosure. A security property the code does not have is
- * worse than one it never promised.
+ * What is unconditional, on every surface: size and digest verification,
+ * frontmatter drift, URI/name identity, the manifest as a read allowlist, and
+ * the origin banner.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
 import { tool } from "ai";
 import { z } from "zod";
 import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
-import { sha256HexOfText, canonicalSkillJson } from "@mcpjam/sdk";
+import {
+  sha256HexOfText,
+  canonicalSkillJson,
+  enumeratedResources,
+} from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
@@ -138,6 +140,46 @@ export async function manifestApprovalHash(
  * two copies of the text would drift the moment one is edited.
  */
 export const serverSkillBanner = buildServerSkillBanner;
+
+/**
+ * The cap on skill content this wrapper will put into a MODEL TURN.
+ *
+ * Distinct from the verification cap in `server-skills.ts`, and deliberately
+ * so. That one had to rise to the SEP's 16 MiB per-skill budget, because a host
+ * MUST be able to verify a conforming skill of that size. This one governs
+ * something else entirely: how many bytes are pasted into a prompt.
+ *
+ * Without it, raising the verification cap silently raised the prompt cap with
+ * it — a server serving a 16 MiB SKILL.md would have had it digest-verified and
+ * then injected wholesale into a chat turn (roughly four million tokens). 128
+ * KiB is the limit that applied before the re-sync, so this restores the
+ * previous prompt-facing behaviour rather than inventing a new one.
+ *
+ * REFUSED, never truncated. A silently clipped skill is a skill whose
+ * instructions end mid-sentence, and the model cannot tell that from a skill
+ * that simply said less.
+ */
+export const MAX_SERVER_SKILL_PROMPT_BYTES = 128 * 1024;
+
+/**
+ * Returns the text, or a refusal naming both numbers when it is too large for
+ * a turn.
+ */
+function withinPromptBudget(
+  text: string,
+  what: string
+): { ok: true; text: string } | { ok: false; error: string } {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= MAX_SERVER_SKILL_PROMPT_BYTES) return { ok: true, text };
+  return {
+    ok: false,
+    error:
+      `Error (too_large_for_prompt): ${what} is ${bytes} bytes, over the ` +
+      `${MAX_SERVER_SKILL_PROMPT_BYTES}-byte limit for content placed in a ` +
+      `model turn. It verified correctly; MCPJam declines to inject it rather ` +
+      `than truncate it into instructions that end mid-sentence.`,
+  };
+}
 
 /** Renders a refusal as a tool result the model (and the user) can act on. */
 function refusalText(error: unknown): string {
@@ -315,7 +357,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
         resources: target.entry.resources,
       };
       return {
-        hash: await manifestApprovalHash(entry.resources ?? []),
+        hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
         entry,
       };
     }
@@ -328,7 +370,13 @@ export function withServerSkills<T extends Record<string, unknown>>(
         target.uri
       );
       return {
-        hash: await manifestApprovalHash(entry.resources ?? []),
+        // `enumeratedResources`, NOT `entry.resources ?? []`. This is the one
+        // call site holding a RAW `SkillEntry`, whose `resources` may be the
+        // string `"dynamic"` — which `??` does not filter, so it would spread
+        // into seven characters and hash a constant, meaningless digest set for
+        // every dynamic skill. The load is refused downstream either way, but
+        // an approval must never bind to a hash that means nothing.
+        hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
         entry,
       };
     } catch {
@@ -365,7 +413,11 @@ export function withServerSkills<T extends Record<string, unknown>>(
       // Never block the prompt on a discovery failure; recorded as UNRESOLVED.
     }
     approvedManifests.set(approvalKey(input), binding ?? UNRESOLVED);
-    return true;
+    // The binding is still recorded above, so where a prompt DOES fire and the
+    // closure survives to `execute` (local mode), the content-binding check
+    // still runs. What changed is that we no longer manufacture a prompt the
+    // spec does not ask for.
+    return hostWantsApproval("loadSkill", input);
   }
 
   /**
@@ -390,17 +442,27 @@ export function withServerSkills<T extends Record<string, unknown>>(
     input: LoadSkillInput,
     target: Target
   ): Promise<{ binding?: ManifestBinding; error?: string }> {
-    // An unloadable skill is refused by `execute` a few lines later with the
-    // specific `no_resources` reason, which is more useful than this one.
+    // An unloadable skill is refused by `execute` a few lines later with its
+    // specific reason (`no_resources` or `dynamic_resources`), which is more
+    // useful than this one.
     if (target.kind === "server-ref" && target.entry.unloadable) {
       return {};
     }
     const approved = approvedManifests.get(approvalKey(input));
     if (approved === undefined) {
-      return {
-        error:
-          "Error (manifest_unbound): this server skill reached execution without a bound approval. Request it again.",
-      };
+      // NO ENTRY — the gate never ran for this input in THIS closure. That is
+      // now the NORMAL case, not a violation: a load only prompts when the
+      // host's policy asks for one, and `prepareChatV2` rebuilds this closure
+      // per request, so a binding written before an approval round trip is
+      // gone by the time `execute` runs anyway.
+      //
+      // Proceeding loses nothing the spec asks for. The load still verifies
+      // size, digest, frontmatter drift and URI identity, still refuses any
+      // URI outside the manifest, and still arrives wrapped in the origin
+      // banner — which is what SEP-2640 actually requires for reading a
+      // skill's text. Content-BINDING (#7) governs a persistent approval, and
+      // there is no persistent approval to bind.
+      return {};
     }
     if (approved === UNRESOLVED) {
       return {
@@ -539,10 +601,39 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // rejects the unlisted URI before a resource read, but returning that
     // integrity error is more useful than pretending no approval was bound.
     approvedFileManifests.set(fileApprovalKey(input), {
-      hash: await manifestApprovalHash(entry.resources ?? []),
+      hash: await manifestApprovalHash(enumeratedResources(entry) ?? []),
       entry,
     });
-    return true;
+    // Origin-scoped by construction: `readVerifiedServerSkillFile` refuses any
+    // URI outside this skill's own manifest, so obligation #3's cross-origin
+    // case cannot arise and needs no prompt of its own.
+    return hostWantsApproval("readSkillFile", input);
+  }
+
+  /**
+   * Whether the HOST's approval policy wants a prompt for this tool.
+   *
+   * SEP-2640 does not require approval to read a skill's text. Its consent
+   * obligations are narrower: host-side code execution (#2), `allowed-tools`
+   * (#5, which we ignore outright), activating a NESTED skill (#6, which we
+   * never do), and CROSS-ORIGIN reads (#3, which the manifest allowlist makes
+   * impossible). What the spec asks for a plain load is ORIGIN TAGGING — mark
+   * the content as untrusted third-party input — and that is the banner.
+   *
+   * So a server-origin load follows the same rule as any other tool on the
+   * turn instead of forcing its own prompt. Forcing one was MCPJam policy, not
+   * conformance, and it made the feature unusable on every surface that is not
+   * a single long-lived process: the gate wrote its binding into a per-request
+   * closure that `execute` — running in the NEXT request — could never see.
+   */
+  async function hostWantsApproval(
+    toolName: "loadSkill" | "readSkillFile",
+    input: unknown
+  ): Promise<boolean> {
+    const baseNeedsApproval = baseTool(toolName)?.needsApproval;
+    return typeof baseNeedsApproval === "function"
+      ? Boolean(await baseNeedsApproval(input))
+      : Boolean(baseNeedsApproval);
   }
 
   const baseTool = (name: string): Record<string, unknown> | undefined =>
@@ -661,16 +752,26 @@ export function withServerSkills<T extends Record<string, unknown>>(
 
         if (target.kind === "server-ref") {
           if (target.entry.unloadable) {
-            return `Error (no_resources): ${target.entry.unloadable.message}`;
+            // The REASON, not a hardcoded `no_resources`. A server declaring
+            // `"resources": "dynamic"` otherwise surfaced as
+            // `Error (no_resources): This skill generates its content per
+            // request…` — the exact collapse the separate kind exists to
+            // prevent.
+            return `Error (${target.entry.unloadable.reason}): ${target.entry.unloadable.message}`;
           }
           const loaded = await loadEntry(target.entry);
           if (typeof loaded === "string") return loaded;
+          const budgeted = withinPromptBudget(
+            loaded.content,
+            `Skill "${target.entry.ref}"`
+          );
+          if (!budgeted.ok) return budgeted.error;
           return (
             serverSkillBanner({
               ref: target.entry.ref,
               serverLabel: target.entry.serverLabel,
               skillUri: target.entry.skillUri,
-            }) + loaded.content
+            }) + budgeted.text
           );
         }
 
@@ -683,12 +784,17 @@ export function withServerSkills<T extends Record<string, unknown>>(
             uri: target.uri,
             entry: approval.binding?.entry,
           });
+          const budgeted = withinPromptBudget(
+            loaded.content,
+            `Skill "${loaded.skillUri}"`
+          );
+          if (!budgeted.ok) return budgeted.error;
           return (
             serverSkillBanner({
               ref: `${provider?.serverSlug ?? target.serverId}/${loaded.name}`,
               serverLabel: provider?.serverLabel ?? target.serverId,
               skillUri: loaded.skillUri,
-            }) + loaded.content
+            }) + budgeted.text
           );
         } catch (error) {
           return refusalText(error);
@@ -753,12 +859,20 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
         const { entry } = target;
         const approved = approvedFileManifests.get(fileApprovalKey(input));
-        if (approved === undefined || approved === UNRESOLVED) {
-          return "Error (manifest_unbound): this server skill file was not bound to an approval. Request it again.";
+        // UNRESOLVED still fails closed: the gate RAN, a prompt was shown, and
+        // no manifest stood behind it. NO ENTRY is the ordinary no-prompt case
+        // and falls back to the entry resolved for this call.
+        if (approved === UNRESOLVED) {
+          return "Error (manifest_unbound): this skill's file manifest could not be resolved before the approval, so the approval did not cover its contents. Request it again.";
         }
-        // Use the exact manifest that was bound before approval. A resource
-        // read may only use that allowlist, never a later listing result.
-        const approvedEntry = approved.entry;
+        // Prefer the manifest bound at approval time; otherwise this call's.
+        // Either way the read is confined to the skill's OWN manifest —
+        // `readVerifiedServerSkillFile` refuses anything absent from it — so an
+        // unlisted file stays unreadable.
+        const approvedEntry = approved?.entry ?? {
+          uri: entry.skillUri,
+          resources: entry.resources,
+        };
         const resourceUri = resourceUriFor(entry, input.path);
         try {
           const file = await readVerifiedServerSkillFile(args.manager, {
@@ -766,7 +880,9 @@ export function withServerSkills<T extends Record<string, unknown>>(
             entry: approvedEntry,
             resourceUri,
           });
-          return `# ${file.uri}\n\n${file.text}`;
+          const budgeted = withinPromptBudget(file.text, `"${file.uri}"`);
+          if (!budgeted.ok) return budgeted.error;
+          return `# ${file.uri}\n\n${budgeted.text}`;
         } catch (error) {
           return refusalText(error);
         }

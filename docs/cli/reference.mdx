@@ -875,6 +875,38 @@ Permanently delete a sandbox image from a project.
 
 ---
 
+## `cloud skills` commands
+
+List and read the Cloud Skills in your hosted MCPJam projects. These commands exist to close a gap: three flags across the CLI take a skill ID (`eval run --compose-skill`, `eval cases run --compose-skill`, `environments ensure-adhoc --skill`) and until now there was no way to discover those IDs without opening the web app. Authoring stays in the app — these commands are read-only.
+
+All `skills` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `cloud skills list`
+
+List the skills visible to you in a project — the project-shared ones plus your own personal drafts. Each row includes a `pinnability` field that says whether the skill's ID is usable with `--compose-skill` and environment `skillSelection`, and why not if it isn't.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud skills get`
+
+Show one skill, including its SKILL.md body.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--skill <id>` | Yes | Skill ID, from `cloud skills list` |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `inspector` commands
 
 ### `inspector open`
@@ -1211,9 +1243,83 @@ Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
 (`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
 `--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
-`--refresh-snapshot`, and compose flags). Repeating the same file with the
-same knobs returns the run it already started; changing a knob starts a new
-one. `--notes` is not part of the key.
+`--refresh-snapshot`, compose flags, and the normalized
+`--allow-approximated` set with its `--approval-reason`). Repeating the same
+file with the same knobs returns the run it already started; changing a knob
+starts a new one. The approval set is sorted and keyed by AUTHORED case id, so
+`--allow-approximated a b` and `--allow-approximated b a` are the same run
+while approving nothing is a different one. `--notes` is not part of the key.
+
+##### Imported cases: live tool resolution, and per-run approval
+
+Every file run performs the same live check `eval validate --project` performs,
+**before it writes anything**. It is not opt-in and there is no flag to skip
+it. A file with no deterministic `toolCall` steps asks no question and pays no
+round trip.
+
+What happens when a deterministic reference does not resolve depends on the
+case:
+
+| Case | Outcome |
+|------|---------|
+| Selected (enabled, and named by `--case` if you used it) | The launch **refuses before the suite is synced** — nothing is written and nothing is billed |
+| Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
+| Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
+
+Each target is checked on **its own** server set. `--host` is checked against
+that host's configured servers rather than the file's, because that is the set
+the run connects — validating `target.servers` would approve a tool the host
+cannot reach. A host the FILE declares uses its own `servers` list when it
+declares one (those are attached to the host before launch) and the host's
+configured set when the field is omitted. An explicitly empty `servers: []`
+is a real, empty set — it clears the attachment before launch — and is
+validated as such, never as an omitted field. A step that pins `serverId` is resolved by id;
+`serverName` is a display fallback and never overrides it.
+
+If the run's target set cannot be enumerated before the suite exists
+(`--all-targets`, `--compose-*`), or a host does not report a server set, or a
+host pins a server the project no longer has, the launch refuses rather than
+assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
+
+A selected `approximated` case refuses unless this invocation approves it:
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--allow-approximated <case...>` | No | Approve an `approximated` imported case for **this run only**, by AUTHORED case id (`cases[].id`). Repeatable. `--file` runs only |
+| `--approval-reason <text>` | With the above | Why the approximations are acceptable for this run. 1–500 characters after trimming; one reason covers every approval in the invocation |
+
+```bash
+mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+```
+
+Checked before anything is billed, each with its own message: approving a
+**native** case (nothing to approve), a **claimed-exact** one (needs no
+approval), an **unsupported** or **unresolved** one (approval covers a case
+whose behaviour was approximated, not one whose behaviour is missing), a
+**disabled** or **unselected** one (the run will not execute it), an unknown
+id, or the same id twice. The flags are refused outright with `--suite`: a
+hosted suite's cases are not the ones this invocation authored, so an
+authored-id selector has nothing to resolve against.
+
+**The approval belongs to the run, never to the case.** You supply an id and a
+reason and nothing else — the approver and the timestamp are derived by the
+server and frozen into that run's own snapshot, because a caller-supplied
+approver would file one person's approval under another's name and a
+caller-supplied timestamp could be backdated past the edit that invalidated the
+claim. Nothing persists: edit the suite, re-sync, or launch again, and the flags
+are required again.
+
+Scheduled runs and GitHub-App runs cannot approve anything. A scheduled suite
+containing a selected approximation is refused by platform policy, which is the
+intended behaviour — an unattended job is exactly the caller that must not be
+able to wave one through.
 
 `--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
 that names `eval create --file`. The converse is also true: `eval create --file`
@@ -1368,7 +1474,33 @@ that maps a verdict onto an exit code. It keeps four:
 | `0` | Every requested gate passed, **or** a failed gate was waived |
 | `1` | An eval **verdict** failed. Reserved for exactly that |
 | `2` | Usage error — an unknown scorer, or a threshold out of range |
-| `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable (its score evidence did not verify) |
+| `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable — its score evidence did not verify, or its **import evidence is incomplete** |
+
+**Incomplete import evidence is exit `3`, decided first.** When the platform
+reports the run's `importEligibility` as `incomplete` (or `gateable: false`
+under any status), `eval gate` returns `3` **before** any verdict is computed
+and before a waiver is considered. That ordering is the point: import
+completeness is evidence ELIGIBILITY, not a measurement of the server, so it is
+never exit `1` — the run has not said the server regressed, it has said its own
+evidence cannot be relied on. A waiver cannot override it either, for the same
+reason it cannot override a cancelled run: a waiver granted because the evals
+regressed is not consent to ship on evidence nobody finished reviewing. Fix it
+by re-running with the approvals the cases need, or with the unsupported cases
+excluded.
+
+**The baseline is checked too.** A `--baseline` / `--baseline-sha` gate rests
+on two runs, so `eval gate` reads the resolved baseline run's own
+`importEligibility` and returns `3` when the baseline cannot gate — the compare
+response reports counters, not provenance, so the baseline is fetched by id
+rather than assumed sound. Without that, a baseline whose own approximations
+were never approved could still produce a confident "no regression". A baseline
+run that cannot be read at all is also `3`: "we could not look" is not "it is
+fine".
+
+A run whose eligibility is `legacy` (no imported cases at all — every native
+run) or `eligible` goes through the ordinary verdict logic unchanged. A server
+that reports no eligibility at all behaves exactly as it did before the field
+existed.
 
 No infrastructure condition ever maps to `1`. A job that fails a release because
 a network call flaked, and reports it as a regression, teaches people to ignore
@@ -1464,12 +1596,16 @@ Validate a local eval **suite file** — the versioned declarative document that
 describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
 canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
 
-Offline: this command takes **no `--project`**, builds no API client and reads
-no API key. It never touches the network.
+Offline by default: without `--project` this command builds no API client, reads
+no API key and never touches the network. Passing `--project` is the only thing
+that changes that, and it is keyed off the FLAG — a linked directory or an
+`MCPJAM_PROJECT` in the environment never turns the offline command into a
+networked one.
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+| `--project <id-or-name>` | No | Also resolve the file's deterministic tool references against this project's live servers. Opt-in; authenticates and makes network calls |
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -1517,11 +1653,63 @@ An unreadable or missing path is a usage error and goes to stderr in the CLI's
 standard error envelope rather than as findings — nothing was read, so there is
 nothing to report about.
 
-**What "valid" does not mean.** This command checks the file against the
-suite-file contract. It does **not** re-resolve tool names, server references or
-fixtures against a project's live discovery — that is project-aware validation,
-it needs a network round trip, and it is deliberately deferred. A file that
+**What "valid" does not mean, without `--project`.** The offline check judges
+the file against the suite-file contract. It does **not** re-resolve tool names,
+server references or fixtures against a project's live discovery, so a file that
 validates here can still fail to run.
+
+#### `--project`: resolving the names against a real project
+
+With `--project`, the command authenticates, resolves the named project, and
+checks every deterministic `toolCall` step against the live tool inventory of
+the targets the file would run on. Structural findings are unchanged and the
+live half is additive, under its own key:
+
+```jsonc
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": [],
+  "projectValidation": {
+    "project": { "id": "proj_123", "name": "Alpha" },
+    "targets": ["environment prod"],
+    "valid": false,
+    "findings": [
+      {
+        "code": "TOOL_REFERENCE_UNRESOLVED",   // or TOOL_DISCOVERY_UNAVAILABLE
+        "path": ["cases", 1, "steps", 0, "toolName"],
+        "pointer": "cases[1].steps[0].toolName",
+        "caseId": "c_render_legacy",
+        "caseTitle": "Renders the legacy receipt",
+        "toolName": "render_gone",
+        "serverName": "billing",
+        "targetLabel": "environment prod",
+        "disabled": true,
+        "imported": true,
+        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+      }
+    ]
+  }
+}
+```
+
+Three properties of the live check are worth knowing before you rely on it:
+
+- **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+  model may or may not act on, and an `assert` step is an expectation a case may
+  legitimately fail at run time. Treating either as a deterministic reference
+  would make a negative test unwritable.
+- **Per target, never over their union.** A file that runs against several
+  targets must resolve in all of them; a union would green-light a case that
+  fails on two targets out of three.
+- **Auth and network failures are command errors, not findings.** "Your file
+  names a tool that does not exist" and "we could not look" send you to two
+  different places, so they are never reported as the same thing.
+
+A completed live check with unresolved references is a **verdict on the file**
+and exits `1`, like any other contract failure. A failure to authenticate,
+reach the project, or list a server's tools is a command error on stderr.
 
 ### `cloud eval export`
 

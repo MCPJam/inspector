@@ -259,7 +259,16 @@ test("CLI test runner discovers every tests/**/*.test.ts file", () => {
 
   const pkg = JSON.parse(
     readFileSync(path.join(CLI_ROOT, "package.json"), "utf8")
-  ) as { scripts?: { test?: string } };
-  assert.equal(pkg.scripts?.test, "node scripts/run-tests.mjs");
+  ) as { scripts?: { test?: string; "test:fast"?: string } };
+  // `test:fast` is the runner itself — the lane `test:parallel:rest` runs, and
+  // the only script allowed to name a file list. `test` adds the SDK build the
+  // suite needs when the workspace is run on its own, then delegates. Neither
+  // may reach for a shell glob: `**` is not expanded by every shell.
+  assert.equal(pkg.scripts?.["test:fast"], "node scripts/run-tests.mjs");
+  assert.equal(
+    pkg.scripts?.test,
+    "npm run build -w @mcpjam/sdk && npm run test:fast"
+  );
   assert.doesNotMatch(pkg.scripts?.test ?? "", /\*\*/);
+  assert.doesNotMatch(pkg.scripts?.["test:fast"] ?? "", /\*\*/);
 });

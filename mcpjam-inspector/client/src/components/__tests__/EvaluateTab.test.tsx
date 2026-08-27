@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   createTestSuiteMutation: vi.fn(),
   createSuitePage: vi.fn(() => null),
   suiteIterationsView: vi.fn(),
+  projectRunsTable: vi.fn(),
+  evaluateFlag: { enabled: undefined as boolean | undefined },
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
   handleRerun: vi.fn(),
@@ -64,6 +66,12 @@ vi.mock("convex/react", () => ({
 
 vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
+}));
+
+// `useEvaluateEnabled` resolves `evaluate-enabled` here. The canonical
+// decision-summary read rides that same flag, so these specs can flip it.
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -191,7 +199,10 @@ vi.mock("../evals/suite-iterations-view", () => ({
 }));
 
 vi.mock("../evals/project-runs-table", () => ({
-  ProjectRunsTable: () => <div data-testid="project-runs-table" />,
+  ProjectRunsTable: (props: Record<string, unknown>) => {
+    mocks.projectRunsTable(props);
+    return <div data-testid="project-runs-table" />;
+  },
 }));
 
 vi.mock("../evals/use-eval-mutations", () => ({
@@ -301,6 +312,9 @@ describe("EvaluateTab", () => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
     mocks.isAuthenticated = true;
+    // Default OFF, matching `useFeatureFlagEnabled`'s own "still loading"
+    // value. Specs that care about the redesign flag opt in explicitly.
+    mocks.evaluateFlag.enabled = undefined;
     mocks.evalIterationQuota = undefined;
     mocks.getEffectiveSuiteServers.mockImplementation(() => []);
     mocks.useQuery.mockImplementation((name: unknown) =>
@@ -368,6 +382,57 @@ describe("EvaluateTab", () => {
       "page",
     );
     expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+  });
+
+  /**
+   * The canonical run decision summary rides `evaluate-enabled` and is
+   * threaded down as a prop, so a flag-off render reaches the shared
+   * `/evals` components with the read switched off — which is what keeps
+   * those components' behaviour on the shipped tab unchanged.
+   */
+  describe("canonical decision summary flag", () => {
+    it("is off for both surfaces while the flag is off", async () => {
+      mocks.route.current = { type: "list" };
+      const user = userEvent.setup();
+      render(<EvaluateTab projectId="ws-1" />);
+      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+
+      expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
+        decisionSummaryEnabled: false,
+      });
+    });
+
+    it("is on for both surfaces once the flag is on", async () => {
+      mocks.evaluateFlag.enabled = true;
+      mocks.route.current = { type: "list" };
+      const user = userEvent.setup();
+      render(<EvaluateTab projectId="ws-1" />);
+      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+
+      expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
+        projectId: "ws-1",
+        decisionSummaryEnabled: true,
+      });
+    });
+
+    it("threads the flag and the project id into the suite surface", () => {
+      mocks.evaluateFlag.enabled = true;
+      render(<EvaluateTab projectId="ws-1" />);
+
+      expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+        // Never resolved in the browser — the tab already has it.
+        projectId: "ws-1",
+        evaluateDecisionSummary: true,
+      });
+    });
+
+    it("leaves the suite surface's read off while the flag is off", () => {
+      render(<EvaluateTab projectId="ws-1" />);
+
+      expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+        evaluateDecisionSummary: false,
+      });
+    });
   });
 
   it("switches the list landing to the runs table via the header tabs", async () => {

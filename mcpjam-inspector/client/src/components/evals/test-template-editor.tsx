@@ -140,6 +140,7 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { ImportClaimDetails } from "./import-claim-badge";
 import { QuickCaseRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { useHost } from "@/hooks/useClients";
 import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
@@ -2946,6 +2947,24 @@ export function TestTemplateEditor({
                     edits.
                   </p>
                 ) : null}
+                {/*
+                  The converter's claim and mapping note, READ-ONLY.
+
+                  A record of what a converter did, not a field a reviewer
+                  edits: making it editable here would let somebody rewrite the
+                  justification for a claim without changing the claim, which is
+                  the one edit that makes the record actively misleading.
+                */}
+                <ImportClaimDetails
+                  claim={
+                    (
+                      currentTestCase as {
+                        import?: import("./types").EvalCaseImportClaim;
+                      }
+                    )?.import
+                  }
+                  className="mt-2"
+                />
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft ? (
