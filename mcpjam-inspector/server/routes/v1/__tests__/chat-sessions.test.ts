@@ -563,6 +563,28 @@ describe("computeExcludedToolNames", () => {
       ),
     ).rejects.toThrow(/tool policy cannot be applied/);
   });
+
+  it("fails CLOSED, and in bounded time, when tools/list never answers", async () => {
+    // The failure this exists for: a server that answers `initialize` and then
+    // hangs on `tools/list`. Connecting was already bounded; listing was not,
+    // so the turn sat on a promise that never settled until the edge proxy
+    // killed the request and returned a 502 with no body — no code, no
+    // message, nothing naming the server. Now it is this route's own 502.
+    vi.useFakeTimers();
+    try {
+      const hangs = { getTools: () => new Promise(() => {}) } as never;
+      const pending = computeExcludedToolNames(hangs, ["srv"], {
+        toolMode: "read_only",
+      });
+      const assertion = expect(pending).rejects.toThrow(
+        /did not answer tools\/list/,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── Target narrowing ────────────────────────────────────────────────────────
