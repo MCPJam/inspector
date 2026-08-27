@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import type {
   SessionOutcome,
@@ -314,6 +314,69 @@ function scopeIdentity(scope: InsightsScope): string {
   }
 }
 
+/**
+ * The benchmark analyzer's own state, as `getBenchmarkUsageBreakdown` reports
+ * it. Its statuses are its own (`generating | ready | failed`) and its counts
+ * are traces rather than sessions.
+ */
+type InferredExperienceState = {
+  status: "generating" | "ready" | "failed";
+  traceCount?: number;
+  failureCode?: string | null;
+  generatedAt?: number;
+  /**
+   * False when the stored pass read a different set of traces than the query
+   * just scanned. The backend WITHHOLDS the inferred columns in that case, so
+   * the honest state is "not analyzed" — offering another pass is right, and
+   * showing a stale reading as current would not be.
+   */
+  current?: boolean;
+};
+
+/**
+ * Present a benchmark's `inferredExperience` as the `latestRun` every consumer
+ * already reads. Any other scope is returned untouched.
+ *
+ * `signalsVersion` and `tuning` are deliberately left absent: they belong to
+ * the clustering pipeline the other two scopes tune, and the themes-rebuild
+ * prompt keyed on `signalsVersion` must stay off for a benchmark rather than
+ * offering a knob that does nothing here.
+ */
+export function adaptBenchmarkAnalysisState(
+  breakdown: UsageBreakdown | null | undefined
+): UsageBreakdown | null | undefined {
+  if (!breakdown) return breakdown;
+  const analysis = (
+    breakdown as unknown as { inferredExperience?: InferredExperienceState | null }
+  ).inferredExperience;
+  // Only the benchmark scope carries this key at all.
+  if (analysis === undefined) return breakdown;
+  if (analysis === null || analysis.current === false) {
+    return { ...breakdown, latestRun: null } as UsageBreakdown;
+  }
+  const status: ClusterRunStatus =
+    analysis.status === "generating"
+      ? "running"
+      : analysis.status === "failed"
+        ? "failed"
+        : "done";
+  return {
+    ...breakdown,
+    latestRun: {
+      _id: `benchmark-flow-${analysis.generatedAt ?? 0}`,
+      status,
+      startedAt: analysis.generatedAt ?? 0,
+      finishedAt: status === "running" ? null : (analysis.generatedAt ?? null),
+      sessionCount: analysis.traceCount ?? 0,
+      clusterCount: 0,
+      errorMessage: analysis.failureCode ?? null,
+      // A stale pass was already mapped to `null` above, so anything that
+      // reaches here read the traces this query scanned.
+      isStale: false,
+    } satisfies ClusterRunState,
+  } as UsageBreakdown;
+}
+
 /** The breakdown query each scope reads. Same substrate, three cohorts. */
 const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
   scenario: "chatSessions:getUsageBreakdown",
@@ -381,10 +444,26 @@ export function useUsageInsights({
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
   // subscribe to `listClustersByScenario` — the themes chips, the freshness
   // chip, and the rebuild button all read what they need from `breakdown`.
-  const breakdown = useQuery(
+  const rawBreakdown = useQuery(
     BREAKDOWN_QUERIES[effectiveScope?.kind ?? "scenario"] as any,
     breakdownArgs
   ) as UsageBreakdown | null | undefined;
+
+  /**
+   * The benchmark scope reports its analysis state as `inferredExperience`;
+   * the scenario and swarm scopes report theirs as `latestRun`, and every
+   * component downstream reads `latestRun`. Left unadapted, a benchmark looks
+   * permanently un-analyzed: it never shows the in-flight pass and keeps
+   * offering to pay for another one after the columns are already drawn.
+   *
+   * Adapted HERE rather than in the chart, so "same substrate, scope-blind"
+   * stays true of everything below this hook — a benchmark-only prop on the
+   * shared Sankey would make every future consumer handle two shapes.
+   */
+  const breakdown = useMemo(
+    () => adaptBenchmarkAnalysisState(rawBreakdown),
+    [rawBreakdown]
+  );
 
   const rebuildScenario = useMutation(
     "chatSessions:rebuildScenarioInsights" as any

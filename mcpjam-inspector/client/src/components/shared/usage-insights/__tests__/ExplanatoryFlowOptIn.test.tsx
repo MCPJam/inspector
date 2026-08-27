@@ -72,3 +72,62 @@ describe("a surface with no cohort makes no offer", () => {
     expect(mockUseQuery).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The affirmative click and the spend have to be the same act.
+ *
+ * The panel says "Analyze these traces" and names the cost. If that click only
+ * reveals a second control asking the same question, the primary one looks
+ * broken and one consent is split across two clicks — the visitor who clicks
+ * once and walks away has paid for nothing and seen nothing.
+ */
+describe("saying yes starts the pass", () => {
+  it("runs the analyzer on the click, without waiting for a second one", async () => {
+    const generate = vi.fn().mockResolvedValue({});
+    mockUseAction.mockReturnValue(generate);
+    // No prior pass: this cohort has nothing to show and nothing in flight.
+    mockUseQuery.mockReturnValue({ inferredExperience: null });
+
+    render(<ExplanatoryFlowOptIn scope={BENCHMARK_SCOPE} />);
+    await userEvent.click(screen.getByText("Analyze these traces"));
+
+    expect(generate).toHaveBeenCalledWith({ benchmarkRunId: "run_1" });
+  });
+
+  /**
+   * Consent to analyze is not consent to re-analyze. A finished pass is
+   * already visible and a running one is already paid for; charging again for
+   * either is the failure mode that matters here, since this is the only
+   * control on the surface that spends.
+   */
+  it.each([
+    ["ready", { status: "ready", traceCount: 4, current: true }],
+    ["generating", { status: "generating", traceCount: 4, current: true }],
+  ])("does not re-run when a pass is already %s", async (_label, inferred) => {
+    const generate = vi.fn().mockResolvedValue({});
+    mockUseAction.mockReturnValue(generate);
+    mockUseQuery.mockReturnValue({ inferredExperience: inferred });
+
+    render(<ExplanatoryFlowOptIn scope={BENCHMARK_SCOPE} />);
+    await userEvent.click(screen.getByText("Analyze these traces"));
+
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A pass that read a DIFFERENT set of traces is withheld by the backend, so
+   * the columns are not on screen and the visitor is owed a real one.
+   */
+  it("runs again when the stored pass read other traces", async () => {
+    const generate = vi.fn().mockResolvedValue({});
+    mockUseAction.mockReturnValue(generate);
+    mockUseQuery.mockReturnValue({
+      inferredExperience: { status: "ready", traceCount: 4, current: false },
+    });
+
+    render(<ExplanatoryFlowOptIn scope={BENCHMARK_SCOPE} />);
+    await userEvent.click(screen.getByText("Analyze these traces"));
+
+    expect(generate).toHaveBeenCalledWith({ benchmarkRunId: "run_1" });
+  });
+});

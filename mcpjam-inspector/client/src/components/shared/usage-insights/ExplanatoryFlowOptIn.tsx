@@ -21,7 +21,7 @@
  * runs leaves every reported result exactly as it was.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Sparkles } from "lucide-react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -71,9 +71,14 @@ export function ExplanatoryFlowOptIn({
       </div>
       {accepted ? (
         // The subscription starts HERE and not one render earlier: mounting
-        // the reader is the spend.
+        // the reader is the spend. `autoStart` carries the affirmative click
+        // through to the pass itself — see the note on FlowBody.
         <ErrorBoundary fallback={null}>
-          <FlowBody scope={scope} {...(stageTitles ? { stageTitles } : {})} />
+          <FlowBody
+            scope={scope}
+            autoStart
+            {...(stageTitles ? { stageTitles } : {})}
+          />
         </ErrorBoundary>
       ) : (
         <div className="space-y-2 px-4 py-3">
@@ -95,9 +100,20 @@ export function ExplanatoryFlowOptIn({
 
 function FlowBody({
   scope,
+  autoStart = false,
   stageTitles,
 }: {
   scope: InsightsScope;
+  /**
+   * Start the pass on the click that mounted this, rather than waiting for a
+   * second one inside the chart.
+   *
+   * The opt-in above says "Analyze these traces" and states the cost; a
+   * control that only reveals another control asking the same question makes
+   * the primary one look broken, and splits one consent across two clicks.
+   * Firing here keeps the affirmative click and the spend the same act.
+   */
+  autoStart?: boolean;
   stageTitles?: Partial<Record<SankeyStage, string>>;
 }) {
   const { breakdown, rebuild } = useUsageInsights({
@@ -124,6 +140,28 @@ function FlowBody({
       })
       .finally(() => setBusy(false));
   }, [rebuild]);
+
+  /**
+   * Fire once, and only into an un-analyzed cohort.
+   *
+   * `latestRun` is the analysis state for every scope (the benchmark scope's
+   * `inferredExperience` is adapted to it in `useUsageInsights`). A non-null
+   * one means a pass is already running or its result is already here, and
+   * re-running it would be a second charge for something the visitor can
+   * already see — so consent to analyze is not consent to re-analyze.
+   */
+  const started = useRef(false);
+  useEffect(() => {
+    if (!autoStart || started.current) return;
+    if (breakdown === undefined) return;
+    if (breakdown?.latestRun) {
+      // Already analyzed or in flight: nothing to buy. Do not arm again.
+      started.current = true;
+      return;
+    }
+    started.current = true;
+    run();
+  }, [autoStart, breakdown, run]);
 
   if (breakdown === undefined) {
     return (
