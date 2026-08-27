@@ -1415,6 +1415,8 @@ export interface PlatformEvalCase {
    */
   declaredId?: string;
   title: string;
+  /** Optional authored analytics grouping label; absent is unlabelled. */
+  intent?: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;

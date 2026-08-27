@@ -11214,6 +11214,13 @@
           "scenario": {
             "type": "string"
           },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; absent means unlabelled."
+          },
           "models": {
             "type": "array",
             "items": {
@@ -11430,6 +11437,13 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed."
           },
           "models": {
             "type": "array",
@@ -11784,6 +11798,13 @@
           },
           "scenario": {
             "type": "string"
+          },
+          "intent": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
           },
           "models": {
             "type": "array",
