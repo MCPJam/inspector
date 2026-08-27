@@ -671,6 +671,51 @@ describe("allowedServerIds narrowing", () => {
   });
 });
 
+// ── Server-skill namespacing ────────────────────────────────────────────────
+
+describe("serverLabels on the agent turn", () => {
+  const { narrowTarget, serverLabelsFor } = __testing;
+
+  it("namespaces skill refs by the user-assigned name, not the raw id", () => {
+    // The bug this pins: the hosted turn called `prepareChatV2` without
+    // `serverLabels`, so every SEP-2640 ref fell back to the server id and the
+    // model (and the user) saw `p176vpy587jn4v51vd9bm5g3rx8d8yry/run-evals`
+    // instead of `mcpjam-staging-skills/run-evals` — in the `listSkills`
+    // catalog AND in the origin banner on loaded skill content.
+    const { selected } = narrowTarget(
+      {
+        serverIds: ["p176vpy587jn4v51vd9bm5g3rx8d8yry"],
+        serverNames: ["mcpjam-staging-skills"],
+      },
+      undefined,
+    );
+    expect(serverLabelsFor(selected)).toEqual({
+      p176vpy587jn4v51vd9bm5g3rx8d8yry: "mcpjam-staging-skills",
+    });
+  });
+
+  it("keys by id, so a missing name only costs that one server its label", () => {
+    // Keyed rather than positional precisely BECAUSE `narrowTarget().names` is
+    // all-or-nothing: reusing that array would let one unnamed server strip
+    // the labels off every named one. An entry with no name is simply absent
+    // here and falls back to the id in `prepareChatV2` — never to a neighbor's
+    // name, which would be confidently wrong.
+    const { selected, names } = narrowTarget(
+      { serverIds: ["a", "b", "c"], serverNames: ["Alpha"] },
+      undefined,
+    );
+    expect(names).toBeUndefined();
+    expect(serverLabelsFor(selected)).toEqual({ a: "Alpha" });
+  });
+
+  it("returns undefined when nothing is labelled", () => {
+    // So the call site can keep to spread-only-when-present and leave the
+    // option off entirely rather than passing an empty map.
+    const { selected } = narrowTarget({ serverIds: ["a", "b"] }, undefined);
+    expect(serverLabelsFor(selected)).toBeUndefined();
+  });
+});
+
 // ── Skills extension declaration ────────────────────────────────────────────
 
 describe("skills capability on the agent turn", () => {
