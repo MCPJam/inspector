@@ -10674,6 +10674,223 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/servers/{serverId}/skills": {
+      "post": {
+        "operationId": "listServerSkills",
+        "tags": ["Primitives"],
+        "summary": "List server skills",
+        "description": "Returns the Agent Skills a connected server serves over the MCP skills extension (SEP-2640), including skills it advertises that MCPJam declines to load. Not paginated: the catalog is drained server-side, because duplicate detection spans the whole listing.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server's skill catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSkillCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/FeatureNotSupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/skills/get": {
+      "post": {
+        "operationId": "getServerSkill",
+        "tags": ["Primitives"],
+        "summary": "Get a server skill",
+        "description": "Fetches one skill by URI and verifies it before returning a byte: the SKILL.md digest against the manifest, the fetched frontmatter against what the listing advertised, and the name against the URI. Reaches skills a partial listing never mentioned. When a check fails the response carries a `refusal` naming it, not an error.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["uri"],
+                "properties": {
+                  "uri": {
+                    "type": "string",
+                    "description": "The skill URI, as returned by the skills list.",
+                    "example": "skill://acme/refunds/SKILL.md"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The verified skill, or the refusal that stopped it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSkillResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/FeatureNotSupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/skills/read-file": {
+      "post": {
+        "operationId": "readServerSkillFile",
+        "tags": ["Primitives"],
+        "summary": "Read a server skill's supporting file",
+        "description": "Reads one supporting file belonging to a skill, checking its byte length and digest against the skill's own manifest. The manifest is the read allowlist and is re-fetched here rather than accepted from the caller, so a request cannot authorize its own read.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["skillUri", "resourceUri"],
+                "properties": {
+                  "skillUri": {
+                    "type": "string",
+                    "description": "The owning skill's URI.",
+                    "example": "skill://acme/refunds/SKILL.md"
+                  },
+                  "resourceUri": {
+                    "type": "string",
+                    "description": "The file's URI, which must appear in that skill's manifest.",
+                    "example": "skill://acme/refunds/scripts/run.py"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The verified file, or the refusal that stopped it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSkillFileResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/FeatureNotSupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -22322,6 +22539,254 @@
           },
           "diagnostics": {
             "$ref": "#/components/schemas/EvalRunDecisionDiagnostics"
+          }
+        }
+      },
+      "ServerSkillRefusal": {
+        "type": "object",
+        "description": "Why MCPJam declined to load a skill or file. A refusal is a RESULT, not an error: the request succeeded, and this names the specific check that failed so a server author can act on it.",
+        "required": ["kind", "message"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "no_resources",
+              "dynamic_resources",
+              "unlisted_resource",
+              "digest_mismatch",
+              "unsupported_digest",
+              "size_mismatch",
+              "too_many_resources",
+              "frontmatter_drift",
+              "identity_mismatch",
+              "not_found",
+              "too_large",
+              "fetch_failed",
+              "extension_inactive"
+            ],
+            "description": "The check that refused."
+          },
+          "message": {
+            "type": "string"
+          },
+          "skillUri": {
+            "type": "string"
+          },
+          "resourceUri": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "actual": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string",
+            "description": "The frontmatter field, when the refusal is field-scoped."
+          }
+        }
+      },
+      "ServerSkillsSupport": {
+        "type": "object",
+        "description": "Mutual-declaration state of the skills extension on this connection. `active` false means the extension was never negotiated — a capability state, not a failure.",
+        "properties": {
+          "declared": {
+            "type": "boolean",
+            "description": "The server declared the extension."
+          },
+          "advertised": {
+            "type": "boolean",
+            "description": "The client advertised the extension."
+          },
+          "directoryRead": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServerSkillResourceRef": {
+        "type": "object",
+        "description": "One manifest entry. The manifest is also the read allowlist.",
+        "required": ["uri", "digest"],
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "example": "sha256:e3b0c44298fc1c149afbf4c8996fb924..."
+          },
+          "size": {
+            "type": "integer",
+            "description": "Declared byte length, when the server provides one."
+          }
+        }
+      },
+      "ServerSkillSummary": {
+        "type": "object",
+        "description": "One skill as the server advertises it, before any content is fetched.",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "skillUri": {
+            "type": "string",
+            "description": "IDENTITY. `name` is a label; two skills may share one."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "frontmatter": {
+            "description": "The advertised frontmatter, verbatim."
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerSkillResourceRef"
+            }
+          },
+          "unloadable": {
+            "type": "object",
+            "description": "Present when the skill is real and visible but cannot be loaded — an unverifiable manifest, or one past the SEP's per-skill limits. It stays in the catalog so you can see what was advertised.",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "no_resources",
+                  "dynamic_resources",
+                  "too_many_resources",
+                  "too_large"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "ServerSkillCatalog": {
+        "type": "object",
+        "description": "The server's skill catalog, drained across every page of `skills/list`.",
+        "properties": {
+          "support": {
+            "$ref": "#/components/schemas/ServerSkillsSupport"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerSkillSummary"
+            }
+          },
+          "duplicateUris": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "URIs the server listed more than once. Every copy is rejected rather than resolved."
+          },
+          "rejected": {
+            "type": "array",
+            "description": "Entries whose manifest could not be made sense of at all, with the reason.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "skillUri": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "ttlMs": {
+            "type": "integer"
+          },
+          "cacheScope": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifiedServerSkill": {
+        "type": "object",
+        "description": "A skill whose SKILL.md was fetched and checked against its manifest digest, its advertised frontmatter, and its URI identity before any byte was returned.",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "skillUri": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "description": "SKILL.md body, frontmatter stripped."
+          },
+          "contentSha256": {
+            "type": "string"
+          },
+          "frontmatter": {},
+          "resources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerSkillResourceRef"
+            }
+          }
+        }
+      },
+      "ServerSkillResult": {
+        "type": "object",
+        "description": "Either the verified skill, or the refusal that stopped it. Never both.",
+        "properties": {
+          "support": {
+            "$ref": "#/components/schemas/ServerSkillsSupport"
+          },
+          "skill": {
+            "$ref": "#/components/schemas/VerifiedServerSkill"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/ServerSkillRefusal"
+          }
+        }
+      },
+      "ServerSkillFileResult": {
+        "type": "object",
+        "description": "Either the verified file contents, or the refusal that stopped it.",
+        "properties": {
+          "support": {
+            "$ref": "#/components/schemas/ServerSkillsSupport"
+          },
+          "file": {
+            "type": "object",
+            "properties": {
+              "uri": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              }
+            }
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/ServerSkillRefusal"
           }
         }
       }

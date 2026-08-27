@@ -154,6 +154,64 @@ Together with the inlined catalog, these tools let the LLM progressively load sk
 
 When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and shows them in the catalog alongside local and hosted skills. Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
 
+### Inspecting a server's skills from the CLI
+
+`mcpjam skills` asks a server what it serves and verifies the answer. It
+connects directly, so it needs no MCPJam project and no API key:
+
+```bash
+mcpjam skills list --url https://example.com/mcp
+mcpjam skills get --url https://example.com/mcp --uri "skill://acme/refunds/SKILL.md"
+mcpjam skills read --url https://example.com/mcp \
+  --skill-uri "skill://acme/refunds/SKILL.md" \
+  --resource-uri "skill://acme/refunds/scripts/run.py"
+```
+
+`mcpjam resources list` will also show `skill://` URIs, because they are
+resources — but it shows them as bytes with no manifest, no digest check, and
+no reason when something is wrong. These commands run the same verified read
+path the Playground uses, so what you get back is either verified content or a
+**refusal** naming the check that failed (see the table below). A refusal is a
+result, not an error: it prints to stdout and exits 0, because "this skill
+cannot be verified, and here is why" is the answer you asked for.
+
+<Note>
+`mcpjam skills` reads a **connected server's** skills. `mcpjam cloud skills`
+lists the Cloud Skills in your own MCPJam project. Same word, opposite
+direction.
+</Note>
+
+The skills extension is mutually declared, so these commands advertise it on
+connect. If you pin a host persona that does not — `--host cursor`, say — the
+command refuses rather than quietly advertising anyway, since the answer to
+"what would Cursor see here?" is *nothing*:
+
+```
+$ mcpjam skills list --url https://example.com/mcp --host cursor
+`skills` requires the advertised client capabilities to include the
+`io.modelcontextprotocol/skills` extension ... That host would not see this
+server's skills at all.
+```
+
+Agents driving MCPJam reach the same three operations as `list_server_skills`,
+`get_server_skill` and `read_server_skill_file` — over `/api/v1`, the hosted
+MCP server, and the in-app assistant.
+
+### Checking that your own server serves skills correctly
+
+`mcpjam server doctor` includes a **skills** check. Unlike the tool, resource
+and prompt checks it verifies rather than counts, fetching a sample of skills
+and checking each against its manifest:
+
+```
+- skills: ok (4 skills discovered. 4 verified against their manifests.)
+- skills: error (1 of 2 sampled skills failed verification:
+  skill://demo/tampered/SKILL.md (digest_mismatch).)
+```
+
+It reports `skipped` when the extension is not active on the connection, which
+is the normal state for a server that serves no skills.
+
 ### Unloadable skills
 
 A server skill can appear in the catalog but be refused for loading. MCPJam shows the skill so you can see what the server advertises, but declines to inject unverifiable content into a model turn. The reason is always shown:
