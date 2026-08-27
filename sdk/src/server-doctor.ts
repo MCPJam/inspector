@@ -1,4 +1,10 @@
 import { probeMcpServer } from "./server-probe.js";
+import { withSkillsExtensionCapability } from "./mcp-client-manager/index.js";
+import {
+  getVerifiedServerSkill,
+  isServerSkillRefusalError,
+  listServerSkillCatalog,
+} from "./server-skills.js";
 import {
   listAllPrompts,
   listAllResourceTemplates,
@@ -31,6 +37,7 @@ import type {
   DoctorPromptsCollectionResult,
   DoctorResourceTemplatesCollectionResult,
   DoctorResourcesCollectionResult,
+  DoctorSkillsCollectionResult,
   DoctorToolsCollectionResult,
   ServerDoctorResult,
 } from "./server-doctor-core.js";
@@ -147,7 +154,19 @@ export async function runServerDoctor<TTarget = unknown>(
 
   try {
     const collected = await withManager(
-      input.config,
+      // Declare the skills extension for this connection, or `skills/*` is
+      // correctly refused and the doctor could only ever report `skipped` —
+      // it would be reporting its own omission as a fact about the server.
+      // Merged into the legacy capabilities bag, so a caller that pinned an
+      // exact `clientCapabilities` set still wins and still gets an honest
+      // `skipped`.
+      {
+        ...input.config,
+        capabilities: withSkillsExtensionCapability(
+          (input.config as { capabilities?: Record<string, unknown> })
+            .capabilities ?? {}
+        ),
+      },
       (manager, serverId) =>
         collectConnectedServerDoctorState(manager, serverId),
       {
@@ -183,13 +202,19 @@ export async function collectConnectedServerDoctorState(
   const initInfo = manager.getInitializationInfo(serverId) ?? null;
   const capabilities = manager.getServerCapabilities(serverId) ?? null;
 
-  const [toolsResult, resourcesResult, promptsResult, resourceTemplatesResult] =
-    await Promise.all([
-      collectTools(manager, serverId),
-      collectResources(manager, serverId),
-      collectPrompts(manager, serverId),
-      collectResourceTemplates(manager, serverId),
-    ]);
+  const [
+    toolsResult,
+    resourcesResult,
+    promptsResult,
+    resourceTemplatesResult,
+    skillsResult,
+  ] = await Promise.all([
+    collectTools(manager, serverId),
+    collectResources(manager, serverId),
+    collectPrompts(manager, serverId),
+    collectResourceTemplates(manager, serverId),
+    collectSkills(manager, serverId),
+  ]);
 
   return buildConnectedServerDoctorState({
     initInfo,
@@ -198,7 +223,110 @@ export async function collectConnectedServerDoctorState(
     resourcesResult,
     promptsResult,
     resourceTemplatesResult,
+    skillsResult,
   });
+}
+
+/**
+ * How many skills the doctor actually FETCHES.
+ *
+ * Every other doctor check lists; this one verifies, and verification costs a
+ * `resources/read` per skill. A server with 200 skills should not turn
+ * `mcpjam server doctor` into a bulk download, and a manifest that disagrees
+ * with its bytes is almost never wrong for one skill alone — a sample answers
+ * "does this server's skill serving work" without pretending to be an audit.
+ */
+const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
+
+/**
+ * Skills over MCP (SEP-2640), verified rather than counted.
+ *
+ * Three outcomes, deliberately distinct:
+ *   - extension inactive -> `skipped`, because most servers serve no skills and
+ *     that is not a fault;
+ *   - listing works and the sample verifies -> `ok`;
+ *   - a skill fails verification -> `error` naming the refusal KIND, since
+ *     `digest_mismatch` and `frontmatter_drift` send a server author to
+ *     completely different code.
+ *
+ * A skill the server itself marks unloadable (`dynamic`, no manifest, over the
+ * SEP's per-skill limits) is reported but is NOT an error: the server is
+ * telling the truth about what it serves.
+ */
+async function collectSkills(
+  manager: MCPClientManager,
+  serverId: string
+): Promise<DoctorSkillsCollectionResult> {
+  let support: { active?: boolean } | undefined;
+  try {
+    support = manager.getSkillsSupport(serverId);
+  } catch {
+    support = undefined;
+  }
+  if (!support?.active) {
+    return {
+      skills: [],
+      check: skippedCheck(
+        "Skills over MCP is not active on this connection (the server must declare the extension and the client must advertise it)."
+      ),
+    };
+  }
+
+  try {
+    const listing = await listServerSkillCatalog(manager, serverId);
+    const sample = listing.skills
+      .filter((skill) => !skill.unloadable)
+      .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE);
+
+    const failures: string[] = [];
+    for (const skill of sample) {
+      try {
+        await getVerifiedServerSkill(manager, {
+          serverId,
+          uri: skill.skillUri,
+        });
+      } catch (error) {
+        if (isServerSkillRefusalError(error)) {
+          failures.push(`${skill.skillUri} (${error.refusal.kind})`);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const unloadable = listing.skills.filter((skill) => skill.unloadable).length;
+    const parts = [describeCount(listing.skills.length, "skill")];
+    if (sample.length > 0) {
+      parts.push(
+        `${sample.length} verified against ${sample.length === 1 ? "its manifest" : "their manifests"}.`
+      );
+    }
+    if (unloadable > 0) {
+      parts.push(
+        `${unloadable} advertised but not loadable (the server says so itself).`
+      );
+    }
+    if (listing.rejected.length > 0) {
+      parts.push(`${listing.rejected.length} rejected as malformed.`);
+    }
+
+    if (failures.length > 0) {
+      return {
+        skills: listing.skills,
+        check: errorCheck(
+          `${failures.length} of ${sample.length} sampled skills failed verification: ${failures.join(", ")}.`
+        ),
+      };
+    }
+    return { skills: listing.skills, check: okCheck(parts.join(" ")) };
+  } catch (error) {
+    const structured = normalizeServerDoctorError(error);
+    return {
+      skills: [],
+      check: errorCheck(structured.message),
+      error: structured,
+    };
+  }
 }
 
 async function collectTools(
