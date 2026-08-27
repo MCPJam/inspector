@@ -1267,11 +1267,18 @@ export async function prepareChatV2(
   // live-fetch skills" — that stopped being true when on-box pinned delivery
   // landed, and the stale wording cost real debugging time. `run-harness-turn`
   // does not call `fetchRuntimeSkills` at all in pinned mode.)
-  if (harness && skillsArePinned) {
+  if (harness && skillsSource !== undefined && skillsSource.kind !== "none") {
+    // Generalized from "pinned" to ANY in-memory source. The rule was always
+    // about DOUBLE DELIVERY; `pinned` was merely the only shape a harness
+    // caller could reach when it was written. Once `resolved` became the shape
+    // every live surface passes, a harness turn carrying one would have been
+    // handed the same skill twice — as SKILL.md on the box AND as a `loadSkill`
+    // tool — with nothing to catch it, because callers guard this themselves
+    // and a forgotten guard is silent.
     throw new Error(
-      "Harness turns receive pinned skills on box via `pinnedHarnessSkills`, " +
-        "not via `skillsSource`. Pass `skillsSource: { kind: 'none' }` for a " +
-        "harness turn — the two delivery channels are deliberately disjoint.",
+      "Harness turns receive skills on box via `pinnedHarnessSkills`, not via " +
+        "`skillsSource`. Pass `skillsSource: { kind: 'none' }` for a harness " +
+        "turn — the two delivery channels are deliberately disjoint.",
     );
   }
   const modelContextTokens =

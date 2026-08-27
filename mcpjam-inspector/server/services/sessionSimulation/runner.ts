@@ -681,7 +681,10 @@ export async function runSyntheticHostSession(
     // failing the run — a simulation that loses its skills is still a
     // simulation, and `prepared.skillsFetchFailed` telemetry below records it.
     let liveCapabilities: EffectiveCapabilitySet | undefined;
-    if (cloudSkillsEnabled && authHeader && projectId) {
+    // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
+    // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
+    // model would otherwise build a live set and hit the disjointness refusal.
+    if (!harness && cloudSkillsEnabled && authHeader && projectId) {
       try {
         liveCapabilities = buildLiveEffectiveCapabilities({
           standaloneSkills: await listCloudRuntimeSkills({

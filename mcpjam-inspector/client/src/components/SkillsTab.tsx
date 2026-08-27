@@ -61,10 +61,8 @@ import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 interface SkillsTabProps {
-  /** Convex project id — required to address the cloud (computer) skill store. */
+  /** Convex project id — required to address the project skill store. */
   projectId?: string;
-  /** Whether the Computer feature is enabled for this user (PostHog gate). */
-  computersEnabled?: boolean;
   /**
    * Connected MCP servers, for the SEP-2640 "From MCP servers" section. Read
    * LIVE per connection (never from a cache), so a disconnected server simply
@@ -90,13 +88,23 @@ interface SkillsTabProps {
 
 export function SkillsTab({
   projectId,
-  computersEnabled,
   mcpServers,
   cloudSkillsEnabled = true,
 }: SkillsTabProps = {}) {
-  // Skills data source. Hosted mode has no local FS, so it's always cloud.
-  // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
-  const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
+  // Which store the tab BROWSES. Hosted mode has no local filesystem, so it is
+  // always the project store; locally the user can switch.
+  //
+  // Gated on the project store's own release flag, not on `computers-enabled`.
+  // The two were conflated when cloud skills lived on a Computer's filesystem,
+  // and that stopped being true when Convex became the source of truth — so a
+  // user with Skills released and Computers not had no way to reach their own
+  // project skills, while a user with the reverse got a toggle to a store they
+  // could not write to.
+  //
+  // Note this is a BROWSING choice only. It no longer decides what a chat turn
+  // can use: a turn merges local files and project skills into one catalog
+  // regardless of what this tab is showing.
+  const showSourceToggle = !HOSTED_MODE && !!cloudSkillsEnabled && !!projectId;
   const [source, setSource] = useState<"local" | "cloud">(
     HOSTED_MODE ? "cloud" : "local"
   );

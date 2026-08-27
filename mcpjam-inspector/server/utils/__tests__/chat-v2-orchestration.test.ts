@@ -1528,29 +1528,29 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
           ],
         },
       })
-    ).rejects.toThrow(/receive pinned skills on box via `pinnedHarnessSkills`/);
+    ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
   });
 
-  it("never composes LIVE server skills onto a harness turn, flag or no flag", async () => {
+  it("REFUSES a live resolved source on a harness turn, flag or no flag", async () => {
     // The flag says "this surface is live"; the harness says "skills arrive on
-    // box". A harness turn that also merged live server skills would deliver
-    // the same skill twice by two mechanisms — the exact double-delivery the
-    // disjointness rule exists to prevent — so harness wins unconditionally.
+    // box". Serving both would deliver the same skill twice by two mechanisms,
+    // so the turn refuses rather than silently picking one — the same rule that
+    // has always covered pinned sources, now covering every in-memory shape.
     const manager = mockManager({});
-    const result = await prepareChatV2({
-      mcpClientManager: manager,
-      selectedServers: ["srv-1"],
-      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
-      systemPrompt: "Base prompt.",
-      harness: "claude-code" as any,
-      skillsSource: {
-        kind: "resolved",
-        capabilities: emptyCapabilities(),
-        composeLiveServerSkills: true,
-      },
-    });
-    expect(Object.keys(result.allTools)).not.toContain("listSkills");
-    expect(Object.keys(result.allTools)).not.toContain("loadSkill");
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: ["srv-1"],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "resolved",
+          capabilities: emptyCapabilities(),
+          composeLiveServerSkills: true,
+        },
+      })
+    ).rejects.toThrow(/deliberately disjoint/);
   });
 
   it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
