@@ -52,6 +52,21 @@ vi.mock("../components/SkillsTab", () => ({
   SkillsTab: () => <div data-testid="skills-view" />,
 }));
 
+// SkillsRoute resolves hosted server ids through this hook. Local mode keys by
+// name and never reads the map, but the hook still runs — stub it so it does
+// not reach a real Convex query under jsdom.
+vi.mock("../hooks/useViews", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../hooks/useViews")>();
+  return {
+    ...actual,
+    useProjectServers: () => ({
+      serversByName: new Map<string, string>(),
+      serversById: new Map<string, string>(),
+      isLoading: false,
+    }),
+  };
+});
+
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
   ConnectViewHeader: () => <div data-testid="connect-header" />,
 }));
