@@ -96,6 +96,45 @@ To update every installed skill at once:
 npx skills update
 ```
 
+## Where a turn's skills come from
+
+A chat turn builds **one catalog** from every origin available to it, rather
+than picking a single source:
+
+| Origin | Reference | Available on |
+|---|---|---|
+| Your project (Cloud Skills) | `code-review` | anywhere you're signed in with a project |
+| A local file | `local/code-review` | the desktop and npm app |
+| A connected MCP server | `<server>/code-review` | anywhere that server is connected |
+| A plugin | `<plugin>/code-review` | wherever the plugin is installed |
+
+This is why the Skills tab's Local/Cloud switch only changes what you are
+**browsing**. It no longer decides what the model can use: a desktop turn signed
+into a project offers your local files *and* your project skills, so a skill you
+author in the tab is usable in the very next message.
+
+Signed out, or with no project selected, a desktop turn simply has no project
+family — it offers local files, exactly as before.
+
+### Two skills with the same name
+
+Local and project skills are namespaced apart on purpose, so nothing is hidden
+and nothing is silently preferred. If you have a local `code-review` and a
+project `code-review`, both appear and both load:
+
+```
+loadSkill("local/code-review")  → your file
+loadSkill("code-review")        → the project's
+```
+
+Ask for a bare name that more than one origin answers to and the tool refuses,
+naming the alternatives rather than guessing:
+
+```
+"code-review" is ambiguous — it matches "code-review" and "local/code-review".
+Use the full reference.
+```
+
 ## Skills an agent writes for itself
 
 Harness runs (Claude Code, Codex) execute in a sandbox with a real filesystem, so
