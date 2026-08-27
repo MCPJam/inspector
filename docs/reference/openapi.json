@@ -17467,7 +17467,7 @@
       "ProjectServerCreateRequest": {
         "type": "object",
         "description": "Creates a saved server in the project. Server names are unique per workspace — a clash responds `409`. Scope comes from the path: `projectId`, `serverId` and `workspaceId` are rejected in the body.",
-        "required": ["name", "enabled", "transportType"],
+        "required": ["name", "transportType"],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -17475,7 +17475,9 @@
             "minLength": 1
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "default": true,
+            "description": "Whether the server is enabled. Defaults to `true` when omitted."
           },
           "transportType": {
             "type": "string",
