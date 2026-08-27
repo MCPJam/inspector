@@ -904,7 +904,17 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(selectedServerNames ? { serverNames: selectedServerNames } : {}),
       },
       connectionSchema,
-      { timeoutMs: CONNECT_TIMEOUT_MS },
+      {
+        timeoutMs: CONNECT_TIMEOUT_MS,
+        // This surface emulates no host persona — it is MCPJam's own agent —
+        // and it ships the fulfiller, since `prepareChatV2` merges
+        // `withServerSkills`, which loads only through the verified read path
+        // in `server-skills.ts`. Without the declaration the extension can
+        // never be active: the model is handed no `listSkills` / `loadSkill`
+        // at all, so a server that serves skills is indistinguishable from one
+        // that does not.
+        advertiseSkillsExtension: true,
+      },
     );
     manager = connection.manager;
 
