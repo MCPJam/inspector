@@ -1011,7 +1011,20 @@ bench.get("/results/:secret", async (c) => {
     );
   }
 
-  cacheResult(secret, result);
+  // Cache the FINISHED document only.
+  //
+  // `internalHostedBenchmarkResult` answers a live run with `ready: false` and
+  // no scorecard — a placeholder, deliberately, because its own docblock says
+  // "reporting a partial one would be cached and served as final". Caching it
+  // here does exactly that: a poll that lands one second after the start would
+  // pin "not ready" in front of every reader of that link for the next minute,
+  // including the run's own owner watching it finish.
+  //
+  // `=== true` rather than a truthiness check, so a backend that stops sending
+  // the field is treated as not-cacheable rather than as ready.
+  if ((result as { ready?: unknown }).ready === true) {
+    cacheResult(secret, result);
+  }
   return c.json({ success: true, result });
 });
 
