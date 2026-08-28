@@ -31,7 +31,9 @@ import {
   isWaitingHandoffStatus,
   matchHandoffRoute,
   readCallbackParams,
+  readClaimedHandoff,
   readPendingAuthorization,
+  rememberClaimedHandoff,
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
@@ -330,6 +332,10 @@ export function ServerConnectionHandoff() {
             // with the continuation cookie, which is scoped to this request.
             await bestEffortAccessToken(getAccessToken),
           );
+          // Record what this token became, so a later reopen of THIS link can
+          // tell the continuation cookie is describing the same request rather
+          // than whichever one this browser claimed most recently.
+          rememberClaimedHandoff(route.handoffToken, result.requestId);
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
           window.history.replaceState(
@@ -374,9 +380,20 @@ export function ServerConnectionHandoff() {
         //
         // A browser that never claimed has no cookie and gets the used-link
         // screen exactly as before.
+        //
+        // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
+        // describes the last link this browser claimed, so a browser that
+        // claimed A and then B would answer a reopened A with B — a different
+        // server quietly swapped in behind the URL the user opened. The claim
+        // recorded which request each token became; only that request may be
+        // resumed here. When they disagree, the session behind this link really
+        // is gone, and the used-link screen is the honest answer.
         if (route?.kind === "claim" && isUsedLinkError(cause)) {
-          const resumed = await call<HandoffState>("/state").catch(() => null);
-          if (resumed) {
+          const claimedRequestId = readClaimedHandoff(route.handoffToken);
+          const resumed = claimedRequestId
+            ? await call<HandoffState>("/state").catch(() => null)
+            : null;
+          if (resumed && resumed.requestId === claimedRequestId) {
             window.history.replaceState(
               {},
               "",

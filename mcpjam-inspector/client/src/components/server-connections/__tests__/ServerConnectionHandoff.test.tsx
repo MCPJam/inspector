@@ -47,6 +47,7 @@ import { ServerConnectionHandoff } from "../ServerConnectionHandoff";
 import {
   clearPendingAuthorization,
   readPendingAuthorization,
+  rememberClaimedHandoff,
   rememberPendingAuthorization,
   takeHandoffSignInReturn,
 } from "@/lib/server-connection-handoff";
@@ -114,6 +115,9 @@ function goTo(path: string, search = "") {
 
 afterEach(() => {
   clearPendingAuthorization();
+  // The claimed-handoff record is deliberately localStorage, so it outlives a
+  // tab — and would outlive a test too.
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   goTo("/");
@@ -195,6 +199,7 @@ describe("the claim", () => {
         ),
       "/state": () => stateBody(),
     });
+    rememberClaimedHandoff("spent-token", "scr_1");
     goTo("/connect/server/spent-token");
 
     render(<ServerConnectionHandoff />);
@@ -209,6 +214,60 @@ describe("the claim", () => {
     expect(window.location.href).not.toContain("spent-token");
   });
 
+  it("refuses to resume a link the cookie no longer belongs to", async () => {
+    // Claimed link A, then link B: the cookie has one name, so it now
+    // describes B. Reopening A must NOT quietly hand the user B's server —
+    // A's session is genuinely gone, and saying so is the honest answer.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody({ requestId: "scr_2" }),
+    });
+    rememberClaimedHandoff("token-a", "scr_1");
+    rememberClaimedHandoff("token-b", "scr_2");
+    goTo("/connect/server/token-a");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link has already been used"),
+    ).toBeInTheDocument();
+    // Not swapped onto the other request behind the same URL.
+    expect(window.location.pathname).not.toContain("scr_2");
+    expect(calls.some((call) => call.path === "/state")).toBe(false);
+  });
+
+  it("still reports a spent link in a browser that never claimed it", async () => {
+    // No record for this token — someone else's browser, or a fresh one. The
+    // cookie is not asked about at all, because nothing here can show the link
+    // was ever this browser's.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody(),
+    });
+    goTo("/connect/server/someone-elses-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link has already been used"),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/state")).toBe(false);
+  });
+
   it("still reports a spent link in a browser that has no cookie", async () => {
     mockApi({
       "/claim": () =>
@@ -219,12 +278,14 @@ describe("the claim", () => {
           }),
           { status: 404 },
         ),
-      // No continuation cookie — someone else's browser, or a fresh one.
+      // This browser claimed the link, but the cookie has since lapsed — an
+      // hour passed, or site data was cleared.
       "/state": () =>
         new Response(JSON.stringify({ message: "Not authorized" }), {
           status: 401,
         }),
     });
+    rememberClaimedHandoff("spent-token", "scr_1");
     goTo("/connect/server/spent-token");
 
     render(<ServerConnectionHandoff />);
