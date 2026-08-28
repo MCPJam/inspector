@@ -1275,18 +1275,28 @@ chatV2.post("/", async (c) => {
     //
     // Signed out, or with no project: local-only, which is exactly what this
     // route did before. What is new is that signing IN no longer means choosing.
-    const localRuntimeSkills = await listLocalRuntimeSkills().catch((error) => {
-      logger.warn(
-        "[chat-v2] local skill scan failed; continuing without them",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return [];
-    });
+    //
+    // A HARNESS turn gathers nothing here. It is handed `{ kind: "none" }`
+    // below — the two delivery channels are deliberately disjoint — and
+    // `runHarnessTurn` fetches the project catalog itself for its native
+    // delivery. Gathering anyway would mean a second catalog request whose
+    // result is thrown away, and on a slow failure the whole fetch timeout
+    // charged to a turn that never wanted it.
+    const gathersInMemorySkills = !resolvedExecution.harness;
+    const localRuntimeSkills = gathersInMemorySkills
+      ? await listLocalRuntimeSkills().catch((error) => {
+          logger.warn(
+            "[chat-v2] local skill scan failed; continuing without them",
+            {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          return [];
+        })
+      : [];
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
     let skillsFetchFailed: SkillsFetchFailure | undefined;
-    if (requestAuthHeader && body.projectId) {
+    if (gathersInMemorySkills && requestAuthHeader && body.projectId) {
       const startedAt = Date.now();
       try {
         cloudRuntimeSkills = await listCloudRuntimeSkills({

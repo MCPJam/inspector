@@ -23,6 +23,7 @@ import type {
   RuntimeSkillFile,
 } from "../services/environments/effective-capabilities.js";
 import { LOCAL_SKILL_REF_NAMESPACE } from "../../shared/server-skill-refs";
+import { SKILL_FILE_MAX_READ_BYTES } from "./computers/cloud-skills.js";
 
 /**
  * Get all skills directories
@@ -338,6 +339,17 @@ async function listLocalRuntimeSkillFiles(
         if (!absolute) {
           throw new Error(
             `"${file.path}" is not readable within the skill directory.`
+          );
+        }
+        // The size the CALLER checked came from the listing, which is taken
+        // once per turn and then reused — so a file that grows between the
+        // listing and the read would be buffered whole under a cap it no
+        // longer satisfies. On disk the current size is one `stat` away, and
+        // the only size that bounds this read is the one it has right now.
+        const stat = await fs.stat(absolute);
+        if (stat.size > SKILL_FILE_MAX_READ_BYTES) {
+          throw new Error(
+            `"${file.path}" is too large to read (${stat.size} bytes).`
           );
         }
         return new Uint8Array(await fs.readFile(absolute));

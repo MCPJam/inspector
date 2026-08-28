@@ -122,6 +122,38 @@ describe("listCloudRuntimeSkills", () => {
     expect(new TextDecoder().decode(bytes)).toContain("print('hi')");
   });
 
+  it("returns an empty family for a project with no skills", async () => {
+    // The other half of the distinction below: an empty project is an answer,
+    // and it must reach the caller as one rather than as a failure.
+    vi.mocked(listCloudSkills).mockResolvedValue([] as never);
+
+    await expect(listCloudRuntimeSkills(ctx)).resolves.toEqual([]);
+  });
+
+  it("returns a binary file's exact bytes, not a text round-trip", async () => {
+    // Binary arrives base64 on a different field. Decoding it as text would
+    // corrupt every byte outside ASCII, silently — the file would read as a
+    // file, just not the one on the other end.
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe]);
+    vi.mocked(listCloudSkills).mockResolvedValue([CATALOG_ROW] as never);
+    vi.mocked(listCloudSkillFiles).mockResolvedValue([
+      { path: "assets/logo.png", size: 7, contentHash: "c", updatedAt: 1 },
+    ] as never);
+    vi.mocked(readCloudSkillFile).mockResolvedValue({
+      path: "assets/logo.png",
+      name: "logo.png",
+      base64: Buffer.from(bytes).toString("base64"),
+      mimeType: "image/png",
+      size: 7,
+      isText: false,
+    } as never);
+
+    const skills = await listCloudRuntimeSkills(ctx);
+    const files = await skills[0]!.listFiles!();
+
+    expect(await files[0]!.read!()).toEqual(bytes);
+  });
+
   it("throws on a catalog failure, so a caller can tell it from an empty project", async () => {
     // The distinction the route needs: "this user has no skills" and "we lost
     // this user's skills this turn" must not look identical.

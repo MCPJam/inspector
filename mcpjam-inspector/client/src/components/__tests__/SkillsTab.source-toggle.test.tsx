@@ -61,4 +61,13 @@ describe("SkillsTab — the Local/Cloud browse toggle", () => {
 
     expect(screen.queryByText("Cloud")).not.toBeInTheDocument();
   });
+
+  it("treats an empty project id as no project, not as one named \"\"", () => {
+    // The gate is `!!projectId`, so this is the boundary between "absent" and
+    // "present but unusable" — and a store keyed on an empty id addresses
+    // nothing the backend would accept.
+    render(<SkillsTab projectId="" cloudSkillsEnabled />);
+
+    expect(screen.queryByText("Cloud")).not.toBeInTheDocument();
+  });
 });

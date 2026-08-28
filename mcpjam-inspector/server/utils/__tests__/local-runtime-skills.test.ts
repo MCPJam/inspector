@@ -105,6 +105,51 @@ describe("listLocalRuntimeSkills", () => {
     expect(await listLocalRuntimeSkills()).toEqual([]);
   });
 
+  it("takes the first of two skills sharing a name, in search order", async () => {
+    // Global before project is the search order `getSkillsDirs` fixes; two
+    // directories offering the same name is a shadowing question that order
+    // already answers, not a ref collision for `buildLiveEffectiveCapabilities`
+    // to reject.
+    await writeSkill(
+      path.join(home, ".claude", "skills"),
+      "code-review",
+      "From home."
+    );
+    await writeSkill(
+      path.join(cwd, ".claude", "skills"),
+      "code-review",
+      "From the project."
+    );
+
+    const skills = await listLocalRuntimeSkills();
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]!.content).toContain("From home.");
+  });
+
+  it("skips a directory with no SKILL.md, and one whose SKILL.md is malformed", async () => {
+    const skillsRoot = path.join(cwd, ".claude", "skills");
+    await fs.mkdir(path.join(skillsRoot, "empty-dir"), { recursive: true });
+    await fs.mkdir(path.join(skillsRoot, "malformed"), { recursive: true });
+    await fs.writeFile(
+      path.join(skillsRoot, "malformed", "SKILL.md"),
+      "no frontmatter at all\n",
+      "utf-8"
+    );
+    await writeSkill(skillsRoot, "code-review");
+
+    // One unreadable neighbour must not cost the readable skill beside it.
+    expect((await listLocalRuntimeSkills()).map((skill) => skill.name)).toEqual([
+      "code-review",
+    ]);
+  });
+
+  it("returns nothing when no skills directory exists at all", async () => {
+    await fs.rm(path.join(cwd, ".claude"), { recursive: true, force: true });
+
+    expect(await listLocalRuntimeSkills()).toEqual([]);
+  });
+
   it("lists a real supporting file and no symlinked one", async () => {
     const secret = path.join(root, "secret.txt");
     await fs.writeFile(secret, "PRIVATE", "utf-8");
@@ -124,4 +169,24 @@ describe("listLocalRuntimeSkills", () => {
     ).toBe("public");
   });
 
+  it("re-checks the size at read time, not the one the listing recorded", async () => {
+    // The listing is taken once per turn and reused, so the size the caller
+    // validated can be arbitrarily stale by the time the read happens — a
+    // script or an editor writing to the file in between is enough.
+    const skillDir = await writeSkill(
+      path.join(cwd, ".claude", "skills"),
+      "code-review"
+    );
+    const notes = path.join(skillDir, "notes.txt");
+    await fs.writeFile(notes, "small", "utf-8");
+
+    const [skill] = await listLocalRuntimeSkills();
+    const files = await skill!.listFiles!();
+    expect(files[0]!.size).toBe(5);
+
+    // Grows past the 2 MB cap after the listing recorded 5 bytes.
+    await fs.writeFile(notes, "x".repeat(2 * 1024 * 1024 + 1), "utf-8");
+
+    await expect(files[0]!.read!()).rejects.toThrow(/too large to read/);
+  });
 });
