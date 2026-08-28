@@ -246,7 +246,7 @@ describe("useDetectedOllamaModels", () => {
       () =>
         new Promise((resolve) => {
           release = resolve;
-        })
+        }),
     );
 
     mount();

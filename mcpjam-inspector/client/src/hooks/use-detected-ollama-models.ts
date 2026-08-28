@@ -57,7 +57,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
         ? OLLAMA_POLL_INTERVAL_MS
         : Math.min(
             OLLAMA_POLL_INTERVAL_MS * 2 ** (consecutiveFailures - 1),
-            OLLAMA_POLL_MAX_INTERVAL_MS
+            OLLAMA_POLL_MAX_INTERVAL_MS,
           );
 
     // Arm a timer for whatever is left until nextDueAt. Does nothing while the
@@ -87,7 +87,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
       let daemonAnswered = false;
       try {
         const { isRunning, availableModels } = await detectOllamaModels(
-          getOllamaBaseUrl()
+          getOllamaBaseUrl(),
         );
         if (cancelled) return;
         daemonAnswered = isRunning;
@@ -109,7 +109,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
             disabledReason: toolCapableSet.has(modelName)
               ? undefined
               : "Model does not support tool calling",
-          }))
+          })),
         );
       } catch (error) {
         if (!cancelled) {
