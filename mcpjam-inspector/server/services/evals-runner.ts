@@ -515,6 +515,18 @@ export type RunEvalSuiteOptions = {
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
+  /**
+   * Extra headers stamped on every per-step Convex request of this run.
+   *
+   * The bench worker's carrier for `x-mcpjam-benchmark-grant`. Forwarded to
+   * BOTH backend iteration paths even though a benchmark cell only ever runs an
+   * MCPJam-paid model (`/stream`): one option on one type is what keeps the two
+   * paths from drifting into "the header is attached on one of them".
+   *
+   * Never copied on the way down — the caller may rotate a credential inside
+   * the object between steps.
+   */
+  extraHeaders?: Record<string, string>;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1684,6 +1696,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -2042,6 +2056,8 @@ const executeTestCase = async (params: {
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 }) => {
   const {
     test,
@@ -2077,6 +2093,7 @@ const executeTestCase = async (params: {
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
+    extraHeaders,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -2277,6 +2294,7 @@ const executeTestCase = async (params: {
         modelId: resolvedModelId,
         modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2337,6 +2355,7 @@ const executeTestCase = async (params: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
         },
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2460,6 +2479,7 @@ export const runEvalSuiteWithAiSdk = async ({
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
+  extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2702,6 +2722,7 @@ export const runEvalSuiteWithAiSdk = async ({
         // Never re-resolved downstream: its `await` driver is bound to THIS
         // run's abort signal.
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -4084,6 +4105,7 @@ const runHostedIterationWithBrowser = async (
     orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
+    extraHeaders,
     convexClient,
     runId,
     abortSignal,
@@ -4575,6 +4597,7 @@ const runHostedIterationWithBrowser = async (
     evalAuthContext,
     endpointPath,
     extraBodyFields,
+    ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,
     abortSignal,
