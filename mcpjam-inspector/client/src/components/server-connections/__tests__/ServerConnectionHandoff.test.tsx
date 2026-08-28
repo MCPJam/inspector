@@ -90,7 +90,12 @@ function mockApi(handlers: Record<string, () => unknown>) {
           status: 500,
         });
       }
-      return new Response(JSON.stringify(handler()), { status: 200 });
+      // A handler may return its own `Response` when the status is the point of
+      // the test; anything else is the 200 body.
+      const result = handler();
+      return result instanceof Response
+        ? result
+        : new Response(JSON.stringify(result), { status: 200 });
     },
   );
   vi.stubGlobal("fetch", fetchMock);
@@ -173,6 +178,59 @@ describe("the claim", () => {
       screen.getByText(
         "Connection links work only once. Create a new link from the CLI to connect again.",
       ),
+    ).toBeInTheDocument();
+  });
+
+  it("resumes from the continuation cookie when the owner reopens their link", async () => {
+    // The claim is spent, but this browser is the one that spent it: the cookie
+    // it set still answers /state. Burning the retry here is the bug.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody(),
+    });
+    goTo("/connect/server/spent-token");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    expect(
+      screen.queryByText("This link has already been used"),
+    ).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/state")).toBe(true);
+    // The spent token leaves the address bar exactly as a fresh claim's does.
+    expect(window.location.pathname).toBe("/connect/server/request/scr_1");
+    expect(window.location.href).not.toContain("spent-token");
+  });
+
+  it("still reports a spent link in a browser that has no cookie", async () => {
+    mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      // No continuation cookie — someone else's browser, or a fresh one.
+      "/state": () =>
+        new Response(JSON.stringify({ message: "Not authorized" }), {
+          status: 401,
+        }),
+    });
+    goTo("/connect/server/spent-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link has already been used"),
     ).toBeInTheDocument();
   });
 

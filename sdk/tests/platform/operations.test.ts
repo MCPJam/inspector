@@ -1847,6 +1847,7 @@ describe("operation catalog consistency", () => {
     show_servers: {},
     connect_project_server: { url: "https://example.com/mcp" },
     get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -2141,6 +2142,8 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
       "request_eval_run_judge",
       "connect_eval_check_repo",
       "create_eval_suite",

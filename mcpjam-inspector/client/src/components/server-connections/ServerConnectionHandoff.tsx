@@ -360,11 +360,34 @@ export function ServerConnectionHandoff() {
           cause instanceof HandoffCallError
             ? readClaimRefusal(cause.details)
             : null;
-        if (claimRefusal) setRefusal(claimRefusal);
-        else {
-          setUsedLink(route?.kind === "claim" && isUsedLinkError(cause));
-          setError(cause instanceof Error ? cause.message : String(cause));
+        if (claimRefusal) {
+          setRefusal(claimRefusal);
+          return;
         }
+        // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
+        // is what turned a re-opened link into a burned retry. The first claim
+        // cleared the handoff digest, but it also set the continuation cookie —
+        // the credential every later step of the flow already authenticates
+        // with. If that cookie still resolves to a request, this is the same
+        // browser coming back to its own link, and the honest answer is to put
+        // the user back in the flow rather than tell them it is gone.
+        //
+        // A browser that never claimed has no cookie and gets the used-link
+        // screen exactly as before.
+        if (route?.kind === "claim" && isUsedLinkError(cause)) {
+          const resumed = await call<HandoffState>("/state").catch(() => null);
+          if (resumed) {
+            window.history.replaceState(
+              {},
+              "",
+              handoffRequestPath(resumed.requestId),
+            );
+            setState(resumed);
+            return;
+          }
+          setUsedLink(true);
+        }
+        setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
       await refresh();

@@ -12763,6 +12763,49 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+/**
+ * Stop one connection request.
+ *
+ * The counterpart the flow was missing. A request holds one of the owner's
+ * concurrent-connection slots for its full hour, so an attempt the user has
+ * abandoned — a link opened in the wrong browser, a consent screen they closed
+ * — is not merely untidy: enough of them and the owner cannot start the next
+ * one. Cancelling is idempotent, so a caller that is unsure may simply call it.
+ */
+export const cancelProjectServerConnectionOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "cancel_project_server_connection",
+  title: "Cancel a server connection",
+  description:
+    "Cancel a pending server connection request started by connect_project_server, releasing the concurrent-connection slot it holds. Already-finished requests are left as they are. Use this when an authorization was abandoned and the user wants to start over.",
+  // Same reading as `cancel_readiness_run`: a write, so it declares its risk,
+  // but one that STOPS work. It spends nothing and destroys no record — the
+  // request it ends is an authorization nobody completed.
+  readOnly: false,
+  risk: "none",
+  permalink: derivePermalinks((result) =>
+    result.server
+      ? [
+          {
+            type: "project_server" as const,
+            id: result.server.id,
+            ...(result.projectId ? { projectId: result.projectId } : {}),
+            label: `Open ${result.server.name}`,
+          },
+        ]
+      : []
+  ),
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.cancelServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal }
+    );
+  },
+};
+
 const shareResourceSelectorInput = z.object({
   project: z
     .string()
@@ -13344,6 +13387,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   showServersOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,

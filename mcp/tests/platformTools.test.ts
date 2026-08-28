@@ -126,6 +126,7 @@ const PLAIN_TOOLS = [
   // Server live operations are agent-oriented payloads with no widget view.
   "connect_project_server",
   "get_project_server_connection_status",
+  "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -387,6 +388,7 @@ describe("platform tool registration", () => {
       "delete_project_server",
       "connect_project_server",
       "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -567,6 +569,9 @@ describe("platform tool registration", () => {
       "start_openai_readiness_run",
       "start_conformance_run",
       "cancel_readiness_run",
+      // Same reading for a connection request: cancelling ends an
+      // authorization nobody completed and frees the slot it held.
+      "cancel_project_server_connection",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",

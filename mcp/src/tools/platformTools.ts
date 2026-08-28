@@ -52,6 +52,7 @@ import {
   ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -204,6 +205,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // do with it is produce a private link for the requester to open.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,

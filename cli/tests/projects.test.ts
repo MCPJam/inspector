@@ -635,10 +635,12 @@ async function startConnectionFixture(options: {
 }): Promise<{
   baseUrl: string;
   createBodies: unknown[];
+  cancelPaths: string[];
   polls: number;
   close: () => Promise<void>;
 }> {
   const createBodies: unknown[] = [];
+  const cancelPaths: string[] = [];
   const remaining = [...(options.statuses ?? [])];
   let polls = 0;
 
@@ -673,6 +675,14 @@ async function startConnectionFixture(options: {
       res.end(JSON.stringify(options.created));
       return;
     }
+    if (
+      url.pathname.startsWith("/api/v1/server-connections/") &&
+      url.pathname.endsWith("/cancel")
+    ) {
+      cancelPaths.push(url.pathname);
+      res.end(JSON.stringify({ ...options.created, status: "cancelled" }));
+      return;
+    }
     if (url.pathname.startsWith("/api/v1/server-connections/")) {
       polls += 1;
       res.end(JSON.stringify(remaining.shift() ?? options.created));
@@ -694,6 +704,7 @@ async function startConnectionFixture(options: {
   return {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     createBodies,
+    cancelPaths,
     get polls() {
       return polls;
     },
@@ -766,8 +777,10 @@ test("server connect prints the authorization link even with --no-browser", asyn
     // A browser that fails to launch, or launches on the wrong machine over
     // SSH, otherwise leaves the user with a request they cannot finish.
     assert.match(run.stderr, /connect\/server\/tok/);
-    // `--no-wait` hands back a request id, so it must also say how to follow it.
+    // `--no-wait` hands back a request id, so it must also say how to follow it
+    // — and how to stop it, because a request nobody finishes holds a slot.
     assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.match(run.stderr, /connect-cancel --request scr_1/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();
@@ -885,6 +898,40 @@ test("server connect-status reads an existing request", async () => {
   }
 });
 
+test("server connect-cancel stops a pending request", async () => {
+  // Without this command the only way out of an abandoned request was to wait
+  // out its hour, and five of them locked the account out of connecting at all.
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "servers",
+            "connect-cancel",
+            "--request",
+            "scr_1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).status, "cancelled");
+    assert.deepEqual(fixture.cancelPaths, [
+      "/api/v1/server-connections/scr_1/cancel",
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("server connect stops watching once the request settles", async () => {
   const fixture = await startConnectionFixture({
     created: {
@@ -958,6 +1005,7 @@ test("server connect exits non-zero when it gave up rather than finished", async
     assert.equal(run.result.exitCode, 1);
     assert.match(run.stderr, /Stopped waiting/);
     assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.match(run.stderr, /connect-cancel --request scr_1/);
   } finally {
     process.exitCode = 0;
     await fixture.close();
