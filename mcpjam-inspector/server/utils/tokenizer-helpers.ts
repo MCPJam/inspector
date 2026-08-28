@@ -48,9 +48,7 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "gpt-5.1-codex-mini": "openai/gpt-5.1-codex-mini",
   "gpt-5.5": "openai/gpt-5",
   "openai/gpt-5.5": "openai/gpt-5",
-  // ai-tokenizer has no 5.6 entry; GPT-5 is the closest id it knows, and an
-  // approximate count beats dropping to the character-based fallback.
-  "gpt-5.6-luna": "openai/gpt-5",
+  "gpt-5.6-luna": "openai/gpt-5", // Map to closest available
   "gpt-5.6-sol": "openai/gpt-5",
   "gpt-5.6-terra": "openai/gpt-5",
 

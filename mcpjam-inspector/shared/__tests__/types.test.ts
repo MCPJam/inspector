@@ -154,11 +154,9 @@ describe("MCPJam-provided model classification", () => {
   });
 
   it("offers the current OpenAI models to BYOK keys", () => {
-    // The BYOK OpenAI rows are hand-maintained too, and had drifted to 5.1
-    // while the hosted catalog was already serving the 5.6 family, so a user
-    // with their own key could not select the newest model. See BACK2-714.
+    // BYOK rows are hand-maintained and had drifted to 5.1. See BACK2-714.
     const openaiIds = SUPPORTED_MODELS.filter(
-      (m) => m.provider === "openai"
+      (m) => m.provider === "openai",
     ).map((m) => String(m.id));
 
     for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
