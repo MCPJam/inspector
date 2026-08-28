@@ -36,6 +36,21 @@ function mockManager(tools: Record<string, unknown> = {}) {
   } as never;
 }
 
+/** A manager whose one connection has the skills extension mutually active. */
+function liveSkillsManager() {
+  return {
+    getToolsForAiSdk: vi.fn(async () => ({})),
+    listTools: vi.fn(async () => ({ tools: [] })),
+    hasServer: vi.fn(() => true),
+    getSkillsSupport: vi.fn(() => ({
+      declared: true,
+      advertised: true,
+      directoryRead: false,
+      active: true,
+    })),
+  } as never;
+}
+
 function capabilities(
   overrides: Partial<EffectiveCapabilitySet> = {}
 ): EffectiveCapabilitySet {
@@ -131,6 +146,45 @@ describe("the origin matrix", () => {
     });
     expect(text).toContain("**code-review**");
     expect(text).not.toContain("local/");
+  });
+
+  it("an environment turn: its captured set, and NO live server composition", async () => {
+    // An environment is a DECISION about what runs. Its server skills were
+    // captured with the rest of the spec, so reaching back to the live
+    // connection for more would falsify the claim that the set describes the
+    // turn — the exact thing `composeLiveServerSkills` is opt-in to prevent.
+    // Asserted here because the flag's absence is invisible: a set that quietly
+    // gained live skills would still look like a working environment turn.
+    const result = await prepareChatV2({
+      ...base,
+      selectedServers: ["srv"],
+      mcpClientManager: liveSkillsManager(),
+      skillsSource: {
+        kind: "resolved",
+        capabilities: capabilities({ standaloneSkills: [PROJECT_SKILL] }),
+      },
+    } as never);
+
+    expect(result.enhancedSystemPrompt).toContain("**code-review**");
+    expect(Object.keys(result.allTools)).not.toContain("listSkills");
+  });
+
+  it("a live turn against the same server DOES compose it", async () => {
+    // The control for the case above: same manager, same selection, and the
+    // only difference is the flag. Without this pair, the assertion above
+    // would also pass if `withServerSkills` had simply stopped working.
+    const result = await prepareChatV2({
+      ...base,
+      selectedServers: ["srv"],
+      mcpClientManager: liveSkillsManager(),
+      skillsSource: {
+        kind: "resolved",
+        capabilities: capabilities({ standaloneSkills: [PROJECT_SKILL] }),
+        composeLiveServerSkills: true,
+      },
+    } as never);
+
+    expect(Object.keys(result.allTools)).toContain("listSkills");
   });
 
   it("an eval run: pinned content only, and never under approval", async () => {
