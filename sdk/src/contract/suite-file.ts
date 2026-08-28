@@ -58,6 +58,7 @@ import { z } from "zod";
 import { predicateSchema } from "../predicates/types.js";
 import { importMappingStatusSchema } from "./chain.js";
 import { opaqueIdSchema } from "./identity.js";
+import { caseIntentUpdateSchema } from "./stage-intent.js";
 import { stepsSchema } from "./steps.js";
 
 /** The only `schemaVersion` this validator accepts. */
@@ -425,6 +426,8 @@ export const evalSuiteFileCaseSchema = z
   .object({
     id: opaqueIdSchema,
     title: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+    /** Optional analytics grouping label. `null` explicitly clears it. */
+    intent: caseIntentUpdateSchema.optional(),
     /**
      * The authored steps, reused VERBATIM from the canonical step union — this
      * is not a suite-file dialect of steps. Step `id`s are therefore required

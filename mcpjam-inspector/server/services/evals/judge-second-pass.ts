@@ -410,6 +410,9 @@ function stageFields(stage: Record<string, unknown>) {
     ...(typeof stage.failureCategory === "string"
       ? { failureCategory: stage.failureCategory }
       : {}),
+    ...(stage.stageMeasurements !== undefined
+      ? { stageMeasurements: stage.stageMeasurements }
+      : {}),
     stageAnalyzerVersion:
       typeof stage.stageAnalyzerVersion === "number"
         ? stage.stageAnalyzerVersion

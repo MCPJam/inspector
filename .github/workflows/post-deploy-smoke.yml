@@ -119,7 +119,7 @@ jobs:
     # library, so we skip `playwright install --with-deps` — that apt-driven step
     # was costing 15+ min of variable, sometimes-stalling wall-clock time.
     # When bumping @playwright/test, bump this tag in lockstep.
-    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
     # Drives a deployed URL; never launches Electron, so skip its binary download.
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"

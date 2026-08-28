@@ -195,31 +195,31 @@ describe("POST /api/web/bench/preflight", () => {
   it.each([
     ["x-forwarded-for", "198.51.100.9"],
     ["x-real-ip", "198.51.100.9"],
-  ])("sends no spend key when the address is only claimed via %s", async (
-    header,
-    value,
-  ) => {
-    const fetchMock = jsonOk({ receiptId: "rcpt_1", categories: [] });
-    global.fetch = fetchMock as any;
+  ])(
+    "sends no spend key when the address is only claimed via %s",
+    async (header, value) => {
+      const fetchMock = jsonOk({ receiptId: "rcpt_1", categories: [] });
+      global.fetch = fetchMock as any;
 
-    const app = await freshApp();
-    const res = await app.request("/api/web/bench/preflight", {
-      method: "POST",
-      headers: { ...AUTHED, [header]: value },
-      body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
-    });
+      const app = await freshApp();
+      const res = await app.request("/api/web/bench/preflight", {
+        method: "POST",
+        headers: { ...AUTHED, [header]: value },
+        body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
+      });
 
-    expect(res.status).toBe(200);
-    const headers = classifyCall(fetchMock)[1].headers as Record<
-      string,
-      string
-    >;
-    // Absent, NOT a shared placeholder: the backend buckets daily runs on this
-    // key, so pooling every unattested guest under one value would let the
-    // first of them spend the whole deployment's allowance. Absent falls back
-    // to the backend's cookie-only bucket.
-    expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
-  });
+      expect(res.status).toBe(200);
+      const headers = classifyCall(fetchMock)[1].headers as Record<
+        string,
+        string
+      >;
+      // Absent, NOT a shared placeholder: the backend buckets daily runs on this
+      // key, so pooling every unattested guest under one value would let the
+      // first of them spend the whole deployment's allowance. Absent falls back
+      // to the backend's cookie-only bucket.
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
+    },
+  );
 
   it("prefers the attested address when a spoofed header sits beside it", async () => {
     const fetchMock = jsonOk({ receiptId: "rcpt_1", categories: [] });
@@ -232,9 +232,9 @@ describe("POST /api/web/bench/preflight", () => {
       body: JSON.stringify({ projectId: "proj_1", serverId: "srv_1" }),
     });
     expect(attested.status).toBe(200);
-    const alone = (classifyCall(fetchMock)[1].headers as Record<string, string>)[
-      "x-mcpjam-guest-ip-hash"
-    ];
+    const alone = (
+      classifyCall(fetchMock)[1].headers as Record<string, string>
+    )["x-mcpjam-guest-ip-hash"];
 
     const fetchMock2 = jsonOk({ receiptId: "rcpt_1", categories: [] });
     global.fetch = fetchMock2 as any;
@@ -351,6 +351,32 @@ describe("POST /api/web/bench/preflight", () => {
     });
     const [, init] = classifyCall(fetchMock);
     expect(Buffer.byteLength(init.body as string, "utf8")).toBeLessThan(
+      512 * 1024,
+    );
+  });
+
+  it("counts the snapshot array brackets at the exact byte boundary", async () => {
+    // `{"name":"..."}` is 11 bytes plus the name. With the two array
+    // brackets, this lands exactly on SNAPSHOT_MAX_BYTES and must be retained.
+    const name = "x".repeat(512 * 1024 - 2 - 11);
+    listAllToolsMock.mockResolvedValue({
+      tools: [{ name }],
+      toolsMetadata: {},
+    });
+    const fetchMock = jsonOk({ receiptId: "rcpt_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await postPreflight(app);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      toolCount: 1,
+      toolSnapshotTruncated: false,
+    });
+    const [, init] = classifyCall(fetchMock);
+    const sent = JSON.parse(init.body as string);
+    expect(Buffer.byteLength(JSON.stringify(sent.toolSnapshot.tools), "utf8")).toBe(
       512 * 1024,
     );
   });
@@ -673,6 +699,46 @@ describe("POST /api/web/bench/runs preferences", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * Null and empty are not the same answer, and neither is either of them the
+   * same as omitting the field.
+   *
+   * `null` is not a record and must be refused here rather than forwarded for
+   * the backend to trip over. `{}` is a legitimate value — "I have no
+   * preferences" — and the relay must forward it verbatim rather than
+   * quietly turning it into absence: this whole surface distinguishes
+   * "declares nothing" from "declares an empty set", and a relay that
+   * collapsed one into the other would be inventing meaning it was not given.
+   */
+  it("refuses a null prefill instead of relaying it as a record", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await runWith(app, null as unknown as Record<string, unknown>);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("relays an empty prefill as itself, not as no prefill at all", async () => {
+    const fetchMock = jsonOk({ runId: "run_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await runWith(app, {});
+
+    expect(res.status).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const relayed = JSON.parse(init.body as string);
+    expect(relayed.preferences).toEqual({});
+    // The distinction the assertion above cannot make on its own: `{}` and a
+    // missing key both satisfy `toEqual({})` under a loose read, so pin that
+    // the key is genuinely present.
+    expect(Object.hasOwn(relayed, "preferences")).toBe(true);
+  });
+
   it("still relays prefill of an ordinary size", async () => {
     const fetchMock = jsonOk({ runId: "run_1" });
     global.fetch = fetchMock as any;
@@ -992,29 +1058,29 @@ describe("backend request contract", () => {
   it.each([
     ["benchmarkTargetId", { profileId: "connector-bench/crm/standard" }],
     ["profileId", { benchmarkTargetId: "tgt_1" }],
-  ])("refuses a quote missing %s instead of letting the backend 400", async (
-    _missing,
-    rest,
-  ) => {
-    const fetchMock = jsonOk({ quoteId: "quote_1" });
-    global.fetch = fetchMock as any;
+  ])(
+    "refuses a quote missing %s instead of letting the backend 400",
+    async (_missing, rest) => {
+      const fetchMock = jsonOk({ quoteId: "quote_1" });
+      global.fetch = fetchMock as any;
 
-    const app = await freshApp();
-    const res = await app.request("/api/web/bench/quotes", {
-      method: "POST",
-      headers: AUTHED,
-      body: JSON.stringify({
-        projectId: "proj_1",
-        serverId: "srv_1",
-        ...rest,
-      }),
-    });
+      const app = await freshApp();
+      const res = await app.request("/api/web/bench/quotes", {
+        method: "POST",
+        headers: AUTHED,
+        body: JSON.stringify({
+          projectId: "proj_1",
+          serverId: "srv_1",
+          ...rest,
+        }),
+      });
 
-    expect(res.status).toBe(400);
-    // Refused here, so no credit-bearing call is made on a request that could
-    // only have been rejected.
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(400);
+      // Refused here, so no credit-bearing call is made on a request that could
+      // only have been rejected.
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("carries the quote being accepted into the start call", async () => {
     const fetchMock = jsonOk({ benchmarkRunId: "brun_1", status: "queued" });

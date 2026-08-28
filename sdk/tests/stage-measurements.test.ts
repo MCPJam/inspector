@@ -18,6 +18,7 @@ import {
   STAGE_LATENCY_ELIGIBLE_STAGES,
   STAGE_MEASUREMENTS_SCHEMA_VERSION,
   USER_VALUE_STAGES,
+  attachStageMeasurements,
   deriveStageMeasurements,
   reachForStageState,
   reachIsConsistentWithState,
@@ -211,6 +212,33 @@ describe("latency", () => {
 });
 
 describe("shape", () => {
+  test("attaches measurements only when stage rows are present", () => {
+    const untouched = { retryCount: 1 };
+    expect(attachStageMeasurements(untouched)).toBe(untouched);
+
+    const metadata = {
+      stageResults: [
+        ...chain("passed").map((stageRow, index) =>
+          index === 2 ? { ...stageRow, evidence: { spanIds: ["sel"] } } : stageRow
+        ),
+      ],
+      stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+    };
+    const attached = attachStageMeasurements(metadata, [
+      { id: "sel", startMs: 10, endMs: 40 },
+    ]);
+    expect(attached.stageMeasurements).toMatchObject({
+      schemaVersion: STAGE_MEASUREMENTS_SCHEMA_VERSION,
+      rows: expect.arrayContaining([
+        expect.objectContaining({
+          stage: "selection",
+          reach: "reached",
+          latency: expect.objectContaining({ value: 30 }),
+        }),
+      ]),
+    });
+  });
+
   test("always six rows in canonical order, whatever the input", () => {
     for (const input of [
       { stageResults: [] },

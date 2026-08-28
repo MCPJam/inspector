@@ -78,7 +78,6 @@ jobs:
       # it is provisioned; fall back to duplicating staging — secrets and
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
@@ -166,11 +165,8 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
@@ -387,7 +383,6 @@ jobs:
       # it is provisioned; fall back to duplicating staging — secrets and
       # all — until then.
       RAILWAY_PREVIEW_SOURCE_ENVIRONMENT: ${{ vars.RAILWAY_PREVIEW_TEMPLATE_ENVIRONMENT || vars.RAILWAY_STAGING_ENVIRONMENT }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # Default Convex backend for previews when no per-PR backend preview
@@ -454,11 +449,8 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
@@ -796,7 +788,6 @@ jobs:
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      MCPJAM_EMPLOYEE_EMAIL_DOMAINS: ${{ vars.MCPJAM_EMPLOYEE_EMAIL_DOMAINS }}
       STAGING_WORKOS_CLIENT_ID: ${{ vars.STAGING_WORKOS_CLIENT_ID }}
       STAGING_WORKOS_API_HOSTNAME: ${{ vars.STAGING_WORKOS_API_HOSTNAME || 'api.workos.com' }}
       # See upsert-preview: shared preview deployment when provisioned,
@@ -856,11 +847,8 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
-            MCPJAM_NONPROD_LOCKDOWN=true \
-            MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
-            VITE_MCPJAM_NONPROD_LOCKDOWN=true \
-            VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS="$MCPJAM_EMPLOYEE_EMAIL_DOMAINS" \
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \

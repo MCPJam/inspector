@@ -2661,6 +2661,46 @@ export class PlatformApiClient {
   }
 
   /**
+   * `POST /projects/{p}/servers/{s}/skills` — the server's Agent Skills
+   * catalog (SEP-2640).
+   *
+   * Not a page: the catalog is drained server-side, because duplicate-URI
+   * detection spans the whole listing and a page boundary would make a
+   * contradiction depend on where the caller stopped reading.
+   */
+  listServerSkills(
+    params: ServerScope & { body?: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/get` — one verified skill by uri.
+   *
+   * Reaches skills a partial listing never mentioned, which is the reason
+   * `skills/get` exists in the SEP at all. Answers with `{ skill }` or with a
+   * `{ refusal }` naming the check that failed.
+   */
+  getServerSkill(
+    params: ServerScope & { body: { uri: string } },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/get", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/read-file` — one verified
+   * supporting file, checked against the skill's own manifest.
+   */
+  readServerSkillFile(
+    params: ServerScope & { body: { skillUri: string; resourceUri: string } },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/read-file", options);
+  }
+
+  /**
    * `POST /projects/{p}/tunnels` — register (or revive) a relay tunnel for a
    * named project server and return the grant the caller hosts the tunnel
    * WebSocket with. Each call rotates the tunnel secret and revokes any
