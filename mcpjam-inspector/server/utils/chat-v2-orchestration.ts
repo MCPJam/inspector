@@ -42,6 +42,7 @@ import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-too
 import {
   withServerSkills,
 } from "./server-skill-tools.js";
+import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
@@ -1378,8 +1379,22 @@ export async function prepareChatV2(
   // model can decide which skill fits, and only bodies are fetched on demand.
   // Drained here, sharing ONE `skills/list` with any `loadSkill` later in the
   // same turn.
+  //
+  // The metadata budget is SHARED, not per-catalog. Both stanzas are always in
+  // context, so giving each the full allowance would let discovery metadata
+  // take twice the share the cap exists to hold it to. The other catalog is
+  // already built, so what it spent comes off the top — measured on the
+  // rendered string, which over-counts by its framing and therefore errs
+  // toward leaving the model MORE room, never less.
   const serverSkillsPromptSection = serverSkills.buildPromptSection
-    ? await serverSkills.buildPromptSection(modelContextTokens)
+    ? await serverSkills.buildPromptSection({
+        ...modelContextTokens,
+        budgetChars: Math.max(
+          0,
+          skillMetadataBudgetChars(modelContextTokens.modelContextTokens) -
+            (skillsPromptSection?.length ?? 0)
+        ),
+      })
     : "";
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies

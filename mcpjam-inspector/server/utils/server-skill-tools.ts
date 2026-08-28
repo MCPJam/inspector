@@ -250,7 +250,11 @@ export function withServerSkills<T extends Record<string, unknown>>(
    * `loadSkill` in the same turn cost ONE `skills/list` drain between them.
    */
   buildPromptSection:
-    | ((options?: { modelContextTokens?: number }) => Promise<string>)
+    | ((options?: {
+        modelContextTokens?: number;
+        /** Chars this catalog may spend of the SHARED metadata budget. */
+        budgetChars?: number;
+      }) => Promise<string>)
     | null;
 } {
   // Slugs are assigned over EVERY candidate server, then filtered — not the
@@ -287,17 +291,33 @@ export function withServerSkills<T extends Record<string, unknown>>(
   }
 
   async function drainCatalog(): Promise<void> {
-    for (const provider of providers) {
-      let listing;
-      try {
-        listing = await listServerSkillCatalog(args.manager, provider.serverId);
-      } catch (error) {
-        logger.warn("[server-skills] discovery failed", {
-          serverId: provider.serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        continue;
-      }
+    // Fetched CONCURRENTLY, applied IN PROVIDER ORDER.
+    //
+    // Sequential fetching made one slow server delay every server behind it,
+    // and the prompt catalog now waits on this — so a single unresponsive
+    // provider could add its whole request timeout to a turn, then the next
+    // one's. Applying the settled results in order keeps ref assignment and
+    // ambiguity marking deterministic: which of two servers claims a
+    // duplicated URI first must not depend on which one answered faster.
+    const listings = await Promise.all(
+      providers.map(async (provider) => {
+        try {
+          return await listServerSkillCatalog(args.manager, provider.serverId);
+        } catch (error) {
+          logger.warn("[server-skills] discovery failed", {
+            serverId: provider.serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // One broken server must not remove another's skills from the
+          // catalog.
+          return undefined;
+        }
+      })
+    );
+
+    for (const [index, provider] of providers.entries()) {
+      const listing = listings[index];
+      if (listing === undefined) continue;
       // Refs come from the SHARED assigner, which disambiguates EVERY member of
       // a duplicated name rather than only the ones after the first — so the
       // ref a skill gets does not depend on where the server placed it in the
@@ -944,8 +964,36 @@ export function withServerSkills<T extends Record<string, unknown>>(
    */
   async function buildPromptSection(options?: {
     modelContextTokens?: number;
+    /**
+     * Chars this catalog may spend, when another catalog has already spent
+     * part of the shared allowance. Falls back to the full budget.
+     */
+    budgetChars?: number;
   }): Promise<string> {
-    await ensureCatalog();
+    // BOUNDED, and it does not cancel the drain.
+    //
+    // Every turn now waits for this, including turns that never touch a skill
+    // — so an unresponsive server must not be able to spend its whole request
+    // timeout (60s by default) of a user's turn on an optional feature. On the
+    // deadline we give up on the PROMPT and carry on: the drain keeps running
+    // behind the memoized `state.loading`, so an explicit `listSkills` or
+    // `loadSkill` later in the same turn still gets the catalog it was always
+    // going to wait for. Mirrors the Cloud path's `raceWithTimeout`.
+    const started = Date.now();
+    try {
+      await raceWithDeadline(ensureCatalog(), CATALOG_PROMPT_DEADLINE_MS);
+    } catch {
+      logger.warn(
+        "[server-skills] catalog discovery exceeded the prompt deadline; " +
+          "continuing without the prompt catalog for this turn",
+        { deadlineMs: CATALOG_PROMPT_DEADLINE_MS, providers: providers.length }
+      );
+      return "";
+    }
+    logger.info("[server-skills] prompt catalog built", {
+      latencyMs: Date.now() - started,
+      providers: providers.length,
+    });
     const entries = [...state.byRef.values()];
     if (entries.length === 0) return "";
     const { lines, omittedRefs } = renderBudgetedSkillCatalog(
@@ -961,7 +1009,8 @@ export function withServerSkills<T extends Record<string, unknown>>(
             ? `${entry.description} [unverifiable — MCPJam declines to load this skill]`
             : entry.description,
         })),
-      skillMetadataBudgetChars(options?.modelContextTokens)
+      options?.budgetChars ??
+        skillMetadataBudgetChars(options?.modelContextTokens)
     );
     if (omittedRefs.length > 0) {
       logger.warn(
@@ -1000,6 +1049,30 @@ export function withServerSkills<T extends Record<string, unknown>>(
  * the bytes are consistent with what the server advertised, which is not the
  * same as the content being trustworthy.
  */
+/**
+ * How long a turn will wait on catalog discovery before giving up on the
+ * PROMPT half of it.
+ *
+ * Matches `CLOUD_SKILLS_FETCH_TIMEOUT_MS`: the two catalogs are built at the
+ * same point for the same reason, and a user should not be able to tell which
+ * one a slow turn was waiting on.
+ */
+const CATALOG_PROMPT_DEADLINE_MS = 3_000;
+
+/** Rejects when `promise` has not settled within `ms`. Never cancels it. */
+function raceWithDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("server-skills catalog deadline exceeded")),
+      ms
+    );
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 const SERVER_SKILLS_TRIGGER =
   `The following skills are provided by connected MCP servers, addressed as ` +
   `\`<server>/<skill>\`. When a task clearly matches one's purpose, load it ` +

@@ -278,6 +278,47 @@ describe("the catalog is in the prompt, not behind a tool call", () => {
     expect(manager.calls.filter((c) => c === "skills/list")).toHaveLength(1);
   });
 
+  it("gives up on the prompt rather than stalling the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = await makeManager();
+      // A server that never answers. Every turn waits on the prompt catalog
+      // now, so an unresponsive provider must not be able to spend its whole
+      // request timeout of a user's turn on an optional feature.
+      (manager as unknown as { listServerSkills: unknown }).listServerSkills =
+        vi.fn(() => new Promise(() => {}));
+
+      const { buildPromptSection } = withServerSkills(baseTools(), {
+        manager,
+        servers: SERVERS,
+      });
+      const pending = buildPromptSection!();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Empty section, turn proceeds — not a rejection the caller must handle.
+      await expect(pending).resolves.toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("spends only the budget it is given", async () => {
+    const manager = await makeManager();
+    const { buildPromptSection } = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+
+    // The budget is SHARED with the other always-present catalog, so a caller
+    // that has already spent most of it can hand over what is left. Zero is a
+    // real answer: nothing may be named rather than the cap being exceeded.
+    const starved = await buildPromptSection!({ budgetChars: 0 });
+    expect(starved).not.toContain("Handle refunds.");
+
+    const full = await buildPromptSection!();
+    expect(full).toContain("Handle refunds.");
+  });
+
   it("has no builder at all when no server declares the extension", async () => {
     const manager = await makeManager({ inactiveServers: ["srv1"] });
     const result = withServerSkills(baseTools(), { manager, servers: SERVERS });
