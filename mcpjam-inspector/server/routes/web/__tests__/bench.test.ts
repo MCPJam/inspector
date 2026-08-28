@@ -710,7 +710,12 @@ describe("GET /api/web/bench/results/:secret", () => {
   });
 
   it("caches a repeat read instead of re-hitting the backend", async () => {
-    const fetchMock = jsonOk({ result: { runId: "run_1" } });
+    // `ready: true` is part of the real payload, not decoration: the cache
+    // now keys on it, and a fixture without it was asserting caching of a
+    // document the backend never sends.
+    const fetchMock = jsonOk({
+      result: { benchmarkRunId: "brun_1", ready: true, status: "completed" },
+    });
     global.fetch = fetchMock as any;
 
     const app = await freshApp();
@@ -718,6 +723,47 @@ describe("GET /api/web/bench/results/:secret", () => {
     await app.request("/api/web/bench/results/sec_abc");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A live run's document is a PLACEHOLDER — `ready: false`, no scorecard.
+   * `internalHostedBenchmarkResult`'s own docblock says reporting a partial
+   * result "would be cached and served as final", and caching it here is
+   * precisely that: one poll a second after the start would pin "not ready"
+   * in front of every reader of that link for the next minute, the run's own
+   * owner included, with nothing to invalidate it when the run finishes.
+   */
+  it("does not cache a run that has not finished yet", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        ok: true,
+        result: { benchmarkRunId: "brun_1", ready: false, status: "running" },
+      }),
+    );
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    expect((await app.request("/api/web/bench/results/sec_abc")).status).toBe(
+      200,
+    );
+    expect((await app.request("/api/web/bench/results/sec_abc")).status).toBe(
+      200,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a missing ready flag as not cacheable, rather than as ready", async () => {
+    // Fail closed on a backend that stops sending the field: serving a stale
+    // unknown document for a minute is worse than one extra round trip.
+    const fetchMock = jsonOk({ result: { benchmarkRunId: "brun_1" } });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    await app.request("/api/web/bench/results/sec_abc");
+    await app.request("/api/web/bench/results/sec_abc");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("charges only cache MISSES, and 429s a secret guesser", async () => {

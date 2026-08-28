@@ -347,10 +347,44 @@ export interface BenchRunBudget {
  * any model call, so budget exhaustion never skips it, and a visitor who let
  * us write into their tenant is owed the answer either way.
  */
+/**
+ * The artifact ledger, exactly as `internalHostedBenchmarkRunStatus` reports
+ * it. Three counts and no status word — the status is a reading of the counts,
+ * which is what `benchCleanupState` below is for.
+ *
+ * OMITTED by the backend when the ledger is empty, deliberately: a run that
+ * created nothing has no cleanup to report, and `{recorded: 0, …}` would be a
+ * claim it never made. Absence is therefore "no ledger yet", NOT "clean".
+ */
 export interface BenchRunCleanup {
-  status?: "pending" | "running" | "complete" | "residue" | "not_applicable";
-  residueCount?: number;
-  detail?: string;
+  recorded: number;
+  removed: number;
+  residue: number;
+}
+
+/**
+ * What the counts allow us to say — and, more to the point, what they do not.
+ *
+ * `removed === recorded && residue === 0` is the ONLY combination that earns
+ * "everything was removed". Cancellation marks a run terminal immediately
+ * while the worker may still be cleaning up, so a terminal status is not
+ * evidence of a finished cleanup, and an unconditional reassurance there is a
+ * promise about somebody else's tenant that nothing checked.
+ */
+export type BenchCleanupState =
+  | { kind: "unreported" }
+  | { kind: "clean"; removed: number }
+  | { kind: "residual"; residue: number; recorded: number }
+  | { kind: "in_progress"; removed: number; recorded: number };
+
+export function benchCleanupState(
+  cleanup: BenchRunCleanup | undefined,
+): BenchCleanupState {
+  if (!cleanup) return { kind: "unreported" };
+  const { recorded, removed, residue } = cleanup;
+  if (residue > 0) return { kind: "residual", residue, recorded };
+  if (removed >= recorded) return { kind: "clean", removed };
+  return { kind: "in_progress", removed, recorded };
 }
 
 export interface BenchRun {
@@ -382,13 +416,7 @@ export interface BenchRun {
 }
 
 export const BENCH_TERMINAL_RUN_STATUSES: ReadonlySet<BenchRunStatus> = new Set(
-  [
-    "completed",
-    "provisional",
-    "insufficient_evidence",
-    "failed",
-    "cancelled",
-  ],
+  ["completed", "provisional", "insufficient_evidence", "failed", "cancelled"],
 );
 
 export function isTerminalBenchRunStatus(status: BenchRunStatus): boolean {
@@ -519,6 +547,7 @@ export interface BenchResult extends Record<string, unknown> {
 
 export class BenchNotEnabledError extends Error {}
 export class BenchResultNotFoundError extends Error {}
+export class BenchResultNotReadyError extends Error {}
 
 /**
  * The exam moved between the quote and the start.
@@ -672,5 +701,82 @@ export async function fetchBenchResult(secret: string): Promise<BenchResult> {
   }
   const body = (await response.json()) as { result?: BenchResult };
   if (!body.result) throw new Error("Could not load this benchmark result.");
-  return body.result;
+  const envelope = body.result as BenchResult & {
+    ready?: boolean;
+    benchmarkRunId?: string;
+    status?: string;
+    profile?: { id: string; version: string; definitionHash: string };
+    completedAt?: number;
+    scorecard?: BenchResult["scorecard"] & {
+      reportUrl?: string | null;
+      provisionalReasons?: string[];
+    };
+    cleanup?: BenchRunCleanup;
+  };
+  if (envelope.ready === false) {
+    throw new BenchResultNotReadyError(
+      "This benchmark is still being scored. Try again shortly.",
+    );
+  }
+
+  // The backend keeps the compact scorecard row in the result envelope and
+  // stores the rich report (sections, slices and provisional reasons) in an
+  // immutable blob. Hydrate that blob when available; if a storage URL is
+  // temporarily unavailable, retain the compact row rather than rendering an
+  // empty report.
+  let report: Record<string, any> | null = null;
+  const reportUrl = envelope.scorecard?.reportUrl;
+  if (reportUrl) {
+    try {
+      const reportResponse = await fetch(reportUrl);
+      if (reportResponse.ok) {
+        const parsed = await reportResponse.json();
+        if (parsed && typeof parsed === "object") report = parsed;
+      }
+    } catch {
+      // The signed blob URL is an enrichment path; the immutable row remains
+      // sufficient for a headline result.
+    }
+  }
+
+  if (!envelope.benchmarkRunId && !envelope.ready) return body.result;
+  const compactScorecard = envelope.scorecard;
+  const reportPublication = report?.publication;
+  const scorecard = compactScorecard
+    ? {
+        ...compactScorecard,
+        ...(report?.scores ? { scores: report.scores } : {}),
+        ...(report?.sections ? { sections: report.sections } : {}),
+        ...(report?.slices ? { slices: report.slices } : {}),
+        ...(report?.provisionalReasons
+          ? { provisionalReasons: report.provisionalReasons }
+          : {}),
+        ...(report?.provenance?.evidenceDigest
+          ? { evidenceDigest: report.provenance.evidenceDigest }
+          : {}),
+        ...(typeof report?.publication?.publicEligible === "boolean"
+          ? { publicEligible: report.publication.publicEligible }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    runId: envelope.benchmarkRunId,
+    finishedAt: envelope.completedAt,
+    definition: envelope.profile
+      ? {
+          profileId: envelope.profile.id,
+          version: envelope.profile.version,
+          definitionHash: envelope.profile.definitionHash,
+        }
+      : undefined,
+    ...(scorecard ? { scorecard } : {}),
+    ...(envelope.cleanup ? { cleanup: envelope.cleanup } : {}),
+    ...(compactScorecard?.publication
+      ? { publication: compactScorecard.publication }
+      : {}),
+    ...(reportPublication?.publicEligible !== undefined
+      ? { publicEligible: reportPublication.publicEligible }
+      : {}),
+  };
 }

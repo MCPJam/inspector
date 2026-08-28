@@ -17,6 +17,7 @@ import {
   cancelBenchRun,
   fetchBenchResult,
   fetchBenchRun,
+  isTerminalBenchRunStatus,
   preflightBench,
   quoteBench,
   startBenchRun,
@@ -36,6 +37,12 @@ import { BenchQuoteScreen } from "./BenchQuoteScreen";
 import { BenchReport } from "./BenchReport";
 import { BenchRunProgress } from "./BenchRunProgress";
 import { benchPhaseForRun, shouldPollBenchRun } from "./bench-run-phase";
+import { benchCancelledCleanupMessage } from "./bench-cleanup-message";
+import {
+  forgetBenchResultSecret,
+  readBenchResultSecret,
+  rememberBenchResultSecret,
+} from "./bench-result-secret";
 
 /** How often a live run is re-read. */
 const POLL_INTERVAL_MS = 3000;
@@ -255,9 +262,7 @@ export function BenchRunnerPage({
           null;
         setCategoryId(prefilledCategory);
         setTrackId(
-          receipt.preferences?.trackSlug ??
-            receipt.tracks[0]?.id ??
-            null,
+          receipt.preferences?.trackSlug ?? receipt.tracks[0]?.id ?? null,
         );
         setSetup("idle");
       } catch (err) {
@@ -349,6 +354,13 @@ export function BenchRunnerPage({
         },
       });
       setRun(started);
+      // THE only moment the plaintext secret exists. The backend keeps a
+      // digest and `/runs/:id` cannot return it, so a poll response — which is
+      // seconds away — would otherwise overwrite the one copy of the
+      // capability that loads the report this run was just paid for.
+      if (started.resultSecret) {
+        rememberBenchResultSecret(started.benchmarkRunId, started.resultSecret);
+      }
       // The run id in the URL is what makes refresh and resume free — this is
       // the only place it is minted, and nothing else is stored.
       navigate(`${routePaths.embedBench}/${started.benchmarkRunId}`, {
@@ -426,24 +438,45 @@ export function BenchRunnerPage({
     };
   }, [reportError, routeRunId]);
 
-  /** The report document, once the run points at one. */
-  const loadedSecretRef = useRef<string | null>(null);
+  /**
+   * The report document, once the run has actually finished.
+   *
+   * Gated on TERMINAL status rather than on holding a secret. The secret is
+   * available the instant the run starts, and fetching then answers
+   * `ready: false` — a placeholder the relay would once have cached in front
+   * of the real report, and which this effect would have recorded as the
+   * final answer with no retry.
+   *
+   * The secret comes from `bench-result-secret`, not from `run`: polling
+   * replaces the run row with a shape that has no `resultSecret` in it at all.
+   */
+  const loadedRunRef = useRef<string | null>(null);
   useEffect(() => {
-    const secret = run?.resultSecret;
-    if (!secret || loadedSecretRef.current === secret) return;
-    loadedSecretRef.current = secret;
+    if (!routeRunId || !run || !isTerminalBenchRunStatus(run.status)) return;
+    if (loadedRunRef.current === routeRunId) return;
+    const secret = readBenchResultSecret(routeRunId);
+    if (!secret) return;
+    loadedRunRef.current = routeRunId;
     let cancelled = false;
     void fetchBenchResult(secret)
       .then((loaded) => {
-        if (!cancelled) setResult(loaded);
+        if (cancelled) return;
+        setResult(loaded);
+        // Spent. Holding a capability past the document it opens is a
+        // liability, and the report is in memory now.
+        forgetBenchResultSecret(routeRunId);
       })
       .catch((err) => {
-        if (!cancelled) reportError(err);
+        if (cancelled) return;
+        // Released so a reload can try again: the secret is still the only
+        // copy, and a transient failure must not be the thing that loses it.
+        loadedRunRef.current = null;
+        reportError(err);
       });
     return () => {
       cancelled = true;
     };
-  }, [reportError, run?.resultSecret]);
+  }, [reportError, routeRunId, run]);
 
   // Coming back from a connect-OAuth redirect: the hosted marker restored the
   // server's authorization, but only this record knows a preflight was in
@@ -650,7 +683,7 @@ export function BenchRunnerPage({
                   every check produces a completed run holding a bad score. */}
               {run.failureMessage ??
                 (run.status === "cancelled"
-                  ? "Anything it wrote to your connector was still cleaned up."
+                  ? benchCancelledCleanupMessage(run.cleanup)
                   : "This says nothing about your connector — it means we could not interpret what came back.")}
             </p>
           </div>

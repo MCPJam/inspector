@@ -157,6 +157,83 @@ describe("fetchBenchResult", () => {
       score: 71,
     });
   });
+
+  it("does not treat a not-ready backend response as a report", async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, {
+        success: true,
+        result: { benchmarkRunId: "run_1", ready: false, status: "running" },
+      }),
+    );
+
+    await expect(fetchBenchResult("sec_abc")).rejects.toThrow(
+      /still being scored/,
+    );
+  });
+
+  it("hydrates the immutable rich report when the backend provides its blob URL", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        reply(200, {
+          success: true,
+          result: {
+            benchmarkRunId: "run_1",
+            ready: true,
+            completedAt: 42,
+            profile: { id: "bench", version: "1", definitionHash: "h" },
+            scorecard: {
+              status: "scored",
+              verification: "mcpjam_verified",
+              scores: { core: 80, category: 70, composite: 75 },
+              reportUrl: "https://storage.test/report.json",
+              publicEligible: true,
+              publication: { status: "active" },
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        reply(200, {
+          status: "scored",
+          scores: { core: 81, category: 71, composite: 76 },
+          sections: {
+            coreProtocol: {
+              section: "coreProtocol",
+              coverage: "eligible",
+              score: 81,
+            },
+            protocolExtensions: {
+              section: "protocolExtensions",
+              coverage: "not_applicable",
+              score: null,
+            },
+            workflowReliability: {
+              section: "workflowReliability",
+              coverage: "eligible",
+              score: 71,
+            },
+            overall: 76,
+          },
+          slices: [],
+          provisionalReasons: [],
+          publication: { publicEligible: true, reasons: [] },
+          provenance: { evidenceDigest: "digest" },
+        }),
+      );
+
+    await expect(fetchBenchResult("sec_abc")).resolves.toMatchObject({
+      runId: "run_1",
+      finishedAt: 42,
+      scorecard: {
+        sections: expect.objectContaining({ overall: 76 }),
+        evidenceDigest: "digest",
+      },
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://storage.test/report.json",
+    );
+  });
 });
 
 describe("an error body that is not JSON at all", () => {

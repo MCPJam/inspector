@@ -51,6 +51,7 @@ import type {
   BenchSectionKey,
   BenchSlice,
 } from "@/lib/apis/bench-api";
+import { benchCleanupState } from "@/lib/apis/bench-api";
 import { cn } from "@/lib/utils";
 
 /**
@@ -174,8 +175,8 @@ function LegacyScores({
       </ul>
       <p className="px-4 py-2 text-[11px] text-muted-foreground">
         Scored by an earlier version of the scorer, which reported these three
-        pooled numbers and no sections. They are not comparable with a
-        sectioned result&apos;s Overall.
+        pooled numbers and no sections. They are not comparable with a sectioned
+        result&apos;s Overall.
       </p>
     </Panel>
   );
@@ -199,7 +200,9 @@ function SliceGroup({
             className="flex items-baseline justify-between gap-3 text-[11px]"
             data-slice={slice.slug}
           >
-            <span className="min-w-0 truncate">{slice.label ?? slice.slug}</span>
+            <span className="min-w-0 truncate">
+              {slice.label ?? slice.slug}
+            </span>
             {slice.score === null ? (
               // Rule 3. Never a zero: no case measured this persona.
               <span className="shrink-0 text-muted-foreground">
@@ -269,6 +272,7 @@ export function BenchReport({
   onRerunSameExam?: () => void;
   onRerunLatestExam?: () => void;
 }) {
+  const cleanupState = benchCleanupState(result.cleanup);
   const scorecard = result.scorecard;
   const sections = scorecard?.sections;
   // On the SCORECARD, not the result. The backend nests lifecycle state with
@@ -458,25 +462,40 @@ export function BenchReport({
         />
       )}
 
-      {result.cleanup ? (
+      {/*
+        Read from the counts, because counts are all there are: the ledger is
+        `{recorded, removed, residue}` and carries no status word. The previous
+        block branched on a `status`/`residueCount`/`detail` shape that nothing
+        produces, so `"Everything this run created was removed"` was the
+        rendered default for a document that had told it nothing.
+
+        Nothing renders when the ledger is absent — "no cleanup reported" is
+        not the same claim as "nothing was left behind", and this panel exists
+        to make exactly that distinction.
+      */}
+      {cleanupState.kind !== "unreported" ? (
         <div className="flex items-start gap-2 rounded-md border border-border/50 px-3 py-2 text-[11px]">
           <Trash2 className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <div>
             <div className="font-medium">
-              {result.cleanup.status === "complete"
-                ? "Everything this run created was removed."
-                : result.cleanup.status === "residue"
-                  ? "Some of what this run created could not be removed."
-                  : result.cleanup.status === "not_applicable"
-                    ? "This run wrote nothing."
-                    : "Cleanup has not finished."}
+              {cleanupState.kind === "clean"
+                ? cleanupState.removed === 0
+                  ? "This run created nothing on the connector."
+                  : "Everything this run created was removed."
+                : cleanupState.kind === "residual"
+                ? "Some of what this run created could not be removed."
+                : "Cleanup had not finished when this was written."}
             </div>
-            {typeof result.cleanup.residueCount === "number" &&
-            result.cleanup.residueCount > 0 ? (
+            {cleanupState.kind === "residual" ? (
               <p className="text-amber-600 dark:text-amber-400">
-                {result.cleanup.residueCount} item
-                {result.cleanup.residueCount === 1 ? "" : "s"} left behind.
-                {result.cleanup.detail ? ` ${result.cleanup.detail}` : ""}
+                {cleanupState.residue} of {cleanupState.recorded} item
+                {cleanupState.recorded === 1 ? "" : "s"} left behind, and may
+                still be on the connector.
+              </p>
+            ) : null}
+            {cleanupState.kind === "in_progress" ? (
+              <p className="text-muted-foreground">
+                {cleanupState.removed} of {cleanupState.recorded} removed.
               </p>
             ) : null}
           </div>

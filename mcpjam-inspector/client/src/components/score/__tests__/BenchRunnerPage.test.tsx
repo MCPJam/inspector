@@ -3,15 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 import type { BenchRun } from "@/lib/apis/bench-api";
 
-const {
-  mockCancelBenchRun,
-  mockFetchBenchResult,
-  mockFetchBenchRun,
-} = vi.hoisted(() => ({
-  mockCancelBenchRun: vi.fn(),
-  mockFetchBenchResult: vi.fn(),
-  mockFetchBenchRun: vi.fn(),
-}));
+const { mockCancelBenchRun, mockFetchBenchResult, mockFetchBenchRun } =
+  vi.hoisted(() => ({
+    mockCancelBenchRun: vi.fn(),
+    mockFetchBenchResult: vi.fn(),
+    mockFetchBenchRun: vi.fn(),
+  }));
 
 vi.mock("@/lib/apis/bench-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/apis/bench-api")>();
@@ -45,9 +42,25 @@ vi.mock("@/lib/apis/web/servers-api", () => ({
 }));
 
 import { BenchRunnerPage } from "../BenchRunnerPage";
+import {
+  readBenchResultSecret,
+  rememberBenchResultSecret,
+} from "../bench-result-secret";
 
+/**
+ * A POLL response, in the shape `GET /runs/:runId` actually returns.
+ *
+ * `benchmarkRunId`, not `runId` — the latter is not a field on `BenchRun` and
+ * the `satisfies` above it only ever passed because client tests are excluded
+ * from `typecheck:client`.
+ *
+ * And deliberately NO `resultSecret`: the backend stores a digest, so the
+ * plaintext exists in the start response and nowhere else. A fixture that put
+ * it on a poll made the old result test green against code that read it from
+ * there.
+ */
 function run(overrides: Partial<BenchRun> & { status: BenchRun["status"] }) {
-  return { runId: "run_1", ...overrides } satisfies BenchRun;
+  return { benchmarkRunId: "run_1", ...overrides } satisfies BenchRun;
 }
 
 function renderAtRun() {
@@ -68,6 +81,7 @@ beforeEach(() => {
   mockCancelBenchRun.mockReset();
   mockFetchBenchResult.mockReset();
   mockFetchBenchRun.mockReset();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -97,18 +111,23 @@ describe("the phase is whatever GET /runs/:runId last said", () => {
   });
 
   it("moves to the report the poll after the run settles", async () => {
+    // The secret is held from the start, exactly as the page does it — NOT
+    // read off a poll, which never carries one.
+    rememberBenchResultSecret("run_1", "sec_1");
     mockFetchBenchRun
       .mockResolvedValueOnce(run({ status: "running" }))
-      .mockResolvedValue(
-        run({ status: "completed", resultSecret: "sec_1" }),
-      );
+      .mockResolvedValue(run({ status: "completed" }));
     mockFetchBenchResult.mockResolvedValue({
       runId: "run_1",
       scorecard: {
         status: "scored",
         scores: { core: 90, category: 70, composite: 80 },
         sections: {
-          coreProtocol: { section: "coreProtocol", coverage: "eligible", score: 90 },
+          coreProtocol: {
+            section: "coreProtocol",
+            coverage: "eligible",
+            score: 90,
+          },
           protocolExtensions: {
             section: "protocolExtensions",
             coverage: "not_applicable",
@@ -137,6 +156,75 @@ describe("the phase is whatever GET /runs/:runId last said", () => {
     });
     expect(mockFetchBenchResult).toHaveBeenCalledWith("sec_1");
     expect(screen.queryByText("Running the exam")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The capability the whole report depends on.
+   *
+   * `POST /runs` is the only response that carries `resultSecret`; the backend
+   * keeps a digest and `GET /runs/:id` cannot hand it back. So anything that
+   * reads the secret off the run row loses it on the first poll — seconds
+   * after the start — and a refresh cannot recover it, because there is
+   * nowhere left to recover it from.
+   */
+  it("keeps the result secret across polls that do not carry one", async () => {
+    rememberBenchResultSecret("run_1", "sec_1");
+    mockFetchBenchRun
+      .mockResolvedValueOnce(run({ status: "queued" }))
+      .mockResolvedValueOnce(run({ status: "running" }))
+      .mockResolvedValue(run({ status: "completed" }));
+    mockFetchBenchResult.mockResolvedValue({ benchmarkRunId: "run_1" });
+
+    renderAtRun();
+    await vi.advanceTimersByTimeAsync(9000);
+
+    await waitFor(() => {
+      expect(mockFetchBenchResult).toHaveBeenCalledWith("sec_1");
+    });
+  });
+
+  it("does not spend the secret on a run that is still going", async () => {
+    // Fetching early is not merely wasteful: the backend answers a live run
+    // with `ready: false`, and recording that as the report would show a
+    // finished-looking page with nothing in it.
+    rememberBenchResultSecret("run_1", "sec_1");
+    mockFetchBenchRun.mockResolvedValue(run({ status: "running" }));
+
+    renderAtRun();
+    await vi.advanceTimersByTimeAsync(9000);
+
+    expect(mockFetchBenchResult).not.toHaveBeenCalled();
+  });
+
+  it("releases the secret once the report is in hand", async () => {
+    rememberBenchResultSecret("run_1", "sec_1");
+    mockFetchBenchRun.mockResolvedValue(run({ status: "completed" }));
+    mockFetchBenchResult.mockResolvedValue({ benchmarkRunId: "run_1" });
+
+    renderAtRun();
+
+    await waitFor(() => {
+      expect(mockFetchBenchResult).toHaveBeenCalledWith("sec_1");
+    });
+    // Holding a capability past the document it opens is a liability, and the
+    // report is in memory by now.
+    await waitFor(() => {
+      expect(readBenchResultSecret("run_1")).toBeNull();
+    });
+  });
+
+  it("keeps the secret when the fetch fails, so a reload can retry", async () => {
+    // The one copy of the capability must not be spent by a transient error.
+    rememberBenchResultSecret("run_1", "sec_1");
+    mockFetchBenchRun.mockResolvedValue(run({ status: "completed" }));
+    mockFetchBenchResult.mockRejectedValue(new Error("network"));
+
+    renderAtRun();
+
+    await waitFor(() => {
+      expect(mockFetchBenchResult).toHaveBeenCalledWith("sec_1");
+    });
+    expect(readBenchResultSecret("run_1")).toBe("sec_1");
   });
 
   it("stops polling once the run is terminal", async () => {
