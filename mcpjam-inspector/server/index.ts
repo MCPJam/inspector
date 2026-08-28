@@ -182,6 +182,11 @@ import {
   type ProductionChecksWorkerHandle,
 } from "./services/production-checks-worker";
 import {
+  isBenchWorkerEnabled,
+  startBenchWorker,
+  type BenchWorkerHandle,
+} from "./services/bench-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -877,6 +882,15 @@ if (isGithubChecksWorkerEnabled()) {
   githubChecksWorker = startGithubChecksWorker();
 }
 
+// Hosted Connector Bench runs: claim a benchmark job, run one eval child per
+// matrix cell against the run's pinned server, attach the evidence. Env-gated;
+// the backend has its own BENCHMARK_RUNS_ENABLED gate and 404s the routes when
+// it is off, which parks this loop on a slow poll.
+let benchWorker: BenchWorkerHandle | undefined;
+if (isBenchWorkerEnabled()) {
+  benchWorker = startBenchWorker();
+}
+
 // Production scoring: claim-and-grade polling loop for real User Testing
 // sessions. Started unconditionally and deliberately flagless — it self-gates
 // on the service-token env (a non-peer deployment gets an inert handle), and
@@ -941,6 +955,7 @@ async function shutdown() {
     // shutdown rather than skipping straight to the force-exit deadline.
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
+    await benchWorker?.stop();
     await productionChecksWorker.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
