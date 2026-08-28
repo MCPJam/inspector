@@ -18,7 +18,7 @@ const { mockFlagValue, mockListEnvironments, mockConsumers } = vi.hoisted(
         scenarioCount: number | null;
       },
     },
-  }),
+  })
 );
 
 vi.mock("posthog-js/react", () => ({
@@ -77,7 +77,7 @@ function renderAndOpenArchiveConfirm() {
           }
         />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
   // List → detail → archive confirm.
   fireEvent.click(screen.getByText("Prod-like"));
@@ -105,7 +105,7 @@ describe("archive-confirm consumer counts", () => {
     renderAndOpenArchiveConfirm();
 
     expect(
-      screen.getByText(/no referencing suites or journeys found/i),
+      screen.getByText(/no referencing suites or journeys found/i)
     ).toBeInTheDocument();
     expect(screen.queryByText(/aren't scanned/i)).not.toBeInTheDocument();
   });
@@ -119,22 +119,14 @@ describe("archive-confirm consumer counts", () => {
   });
 
   it("shows a checking state until both scans settle", () => {
-    mockConsumers.value = {
-      suiteCount: 2,
-      journeyCount: null,
-      scenarioCount: 0,
-    };
+    mockConsumers.value = { suiteCount: 2, journeyCount: null, scenarioCount: 0 };
     renderAndOpenArchiveConfirm();
 
     expect(screen.getByText(/checking references/i)).toBeInTheDocument();
   });
 
   it("holds the checking state until the scenario scan settles too (Phase 5)", () => {
-    mockConsumers.value = {
-      suiteCount: 2,
-      journeyCount: 3,
-      scenarioCount: null,
-    };
+    mockConsumers.value = { suiteCount: 2, journeyCount: 3, scenarioCount: null };
     renderAndOpenArchiveConfirm();
 
     expect(screen.getByText(/checking references/i)).toBeInTheDocument();
@@ -145,7 +137,7 @@ describe("archive-confirm consumer counts", () => {
     renderAndOpenArchiveConfirm();
 
     expect(
-      screen.getByText(/tester link stops working immediately/i),
+      screen.getByText(/tester link stops working immediately/i)
     ).toBeInTheDocument();
   });
 });

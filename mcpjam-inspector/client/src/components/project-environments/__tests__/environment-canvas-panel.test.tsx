@@ -45,7 +45,7 @@ vi.mock("@/hooks/use-environment-preview", () => ({
   useEnvironmentPreview: (
     projectId: string | null,
     environmentId: string | null,
-    revision?: number | null,
+    revision?: number | null
   ) => {
     mockPreviewArgs({ projectId, environmentId, revision });
     return { ...mockPreview.value, refresh: mockRefresh };
@@ -76,7 +76,7 @@ const HOST_CONFIG = {
 const HOST = { hostId: "host-1", name: "Claude Code", config: HOST_CONFIG };
 
 function previewWith(
-  servers: Array<{ serverId: string; name: string; source: string | null }>,
+  servers: Array<{ serverId: string; name: string; source: string | null }>
 ): EnvironmentPreview {
   return {
     specVersion: 1,
@@ -118,7 +118,7 @@ function renderPanel(overrides: Partial<{ isArchived: boolean }> = {}) {
         isArchived={overrides.isArchived ?? false}
         isAuthenticated
       />
-    </div>,
+    </div>
   );
 }
 
@@ -148,13 +148,13 @@ describe("EnvironmentCanvasPanel — preview → canvas wiring", () => {
     const { container } = renderPanel();
 
     const joined = container.querySelector(
-      `.react-flow__node[data-id="server-card:s1"]`,
+      `.react-flow__node[data-id="server-card:s1"]`
     ) as HTMLElement | null;
     expect(joined).not.toBeNull();
     expect(joined!.textContent).toContain("https://bench.example.com");
 
     const nameOnly = container.querySelector(
-      `.react-flow__node[data-id="server-card:p1"]`,
+      `.react-flow__node[data-id="server-card:p1"]`
     ) as HTMLElement | null;
     expect(nameOnly).not.toBeNull();
     expect(nameOnly!.textContent).toContain("plugin-server");
@@ -177,10 +177,10 @@ describe("EnvironmentCanvasPanel — preview → canvas wiring", () => {
     const { container } = renderPanel();
 
     expect(
-      container.querySelector(`.react-flow__node[data-id="server-card:s1"]`),
+      container.querySelector(`.react-flow__node[data-id="server-card:s1"]`)
     ).not.toBeNull();
     expect(
-      container.querySelector(`.react-flow__node[data-id="server-card:s9"]`),
+      container.querySelector(`.react-flow__node[data-id="server-card:s9"]`)
     ).toBeNull();
   });
 
@@ -258,7 +258,7 @@ describe("EnvironmentCanvasPanel — non-canvas states", () => {
     const { container } = renderPanel();
 
     expect(
-      screen.getByText("This environment couldn't be resolved."),
+      screen.getByText("This environment couldn't be resolved.")
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(mockRefresh).toHaveBeenCalledTimes(1);
@@ -286,7 +286,7 @@ describe("EnvironmentCanvasPanel — non-canvas states", () => {
     expect(screen.getByText(/archived/i)).toBeInTheDocument();
     expect(container.querySelector(".react-flow")).toBeNull();
     expect(mockPreviewArgs).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: null }),
+      expect.objectContaining({ environmentId: null })
     );
   });
 
@@ -300,9 +300,7 @@ describe("EnvironmentCanvasPanel — non-canvas states", () => {
     const { container } = renderPanel();
 
     expect(
-      screen.getByText(
-        /client behind this environment is no longer available/i,
-      ),
+      screen.getByText(/client behind this environment is no longer available/i)
     ).toBeInTheDocument();
     expect(container.querySelector(".animate-spin")).toBeNull();
     expect(container.querySelector(".react-flow")).toBeNull();

@@ -46,12 +46,7 @@ describe("EnvironmentPicker — controlled contract", () => {
   it("reports selection to the caller and persists nothing itself", () => {
     const onChange = vi.fn();
     render(
-      <EnvironmentPicker
-        projectId="p_1"
-        value={[]}
-        onChange={onChange}
-        multi
-      />,
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={onChange} multi />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -69,7 +64,7 @@ describe("EnvironmentPicker — controlled contract", () => {
         value={["env_2"]}
         onChange={onChange}
         multi
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -85,7 +80,7 @@ describe("EnvironmentPicker — controlled contract", () => {
         onChange={onChange}
         multi
         max={1}
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -102,7 +97,7 @@ describe("EnvironmentPicker — single-select mode", () => {
         value={null}
         onChange={onChange}
         multi={false}
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -117,7 +112,7 @@ describe("EnvironmentPicker — single-select mode", () => {
         value={"env_2"}
         onChange={onChange}
         multi={false}
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -132,7 +127,7 @@ describe("EnvironmentPicker — single-select mode", () => {
         value={"env_1"}
         onChange={onChange}
         multi={false}
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Staging"));
@@ -146,7 +141,7 @@ describe("EnvironmentPicker — single-select mode", () => {
         value={"env_1"}
         onChange={vi.fn()}
         multi={false}
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(screen.queryByText("1")).toBeNull();
@@ -163,12 +158,7 @@ describe("EnvironmentPicker — archived rows stay detach-only", () => {
     ];
     const onChange = vi.fn();
     render(
-      <EnvironmentPicker
-        projectId="p_1"
-        value={[]}
-        onChange={onChange}
-        multi
-      />,
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={onChange} multi />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(screen.queryByLabelText("Retired")).toBeNull();
@@ -187,7 +177,7 @@ describe("EnvironmentPicker — archived rows stay detach-only", () => {
         value={["env_arch"]}
         onChange={onChange}
         multi
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     fireEvent.click(screen.getByLabelText("Retired (archived)"));
@@ -208,7 +198,7 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
   it("never offers an ad-hoc row for selection", () => {
     mockEnvironments.value = [env("env_1", "Staging"), adhoc("env_adhoc")];
     render(
-      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />,
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
     );
     fireEvent.click(screen.getByRole("button"));
 
@@ -227,12 +217,12 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
         onChange={vi.fn()}
         multi
         triggerTestId="picker"
-      />,
+      />
     );
     // "…" is reserved for an id NO row resolves. An ad-hoc row resolves — it
     // just has no name — so it must read as a real thing.
     expect(screen.getByTestId("picker")).toHaveTextContent(
-      "Automatic environment",
+      "Automatic environment"
     );
     expect(screen.getByTestId("picker")).not.toHaveTextContent("…");
   });
@@ -244,7 +234,7 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
       env("env_1", "Staging"),
     ];
     render(
-      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />,
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByLabelText("Staging")).toBeInTheDocument();
@@ -263,7 +253,7 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
             Save as environment
           </button>
         }
-      />,
+      />
     );
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByTestId("picker-footer-action")).toBeInTheDocument();
@@ -295,7 +285,7 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
             Save as environment
           </button>
         }
-      />,
+      />
     );
     fireEvent.click(screen.getByTestId("picker"));
 
@@ -308,8 +298,8 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
     // has to dismiss the popover exactly like a pointer click does.
     await waitFor(() =>
       expect(
-        screen.queryByTestId("picker-footer-action"),
-      ).not.toBeInTheDocument(),
+        screen.queryByTestId("picker-footer-action")
+      ).not.toBeInTheDocument()
     );
   });
 });

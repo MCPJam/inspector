@@ -57,7 +57,7 @@ function renderAtEnvironments(projectId = "proj-1") {
         />
         <Route path="/servers" element={<div>Servers Screen</div>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 }
 
@@ -85,7 +85,7 @@ describe("ProjectEnvironmentsRoute flag gate", () => {
     mockFlagValue.value = true;
     renderAtEnvironments();
     expect(
-      screen.getByRole("heading", { name: "Environments" }),
+      screen.getByRole("heading", { name: "Environments" })
     ).toBeInTheDocument();
     expect(screen.queryByText("Servers Screen")).not.toBeInTheDocument();
   });
@@ -126,12 +126,12 @@ describe("ProjectEnvironmentsRoute project switch", () => {
           />
           <Route path="/servers" element={<div>Servers Screen</div>} />
         </Routes>
-      </MemoryRouter>,
+      </MemoryRouter>
     );
 
     expect(screen.queryByText("Environment Editor")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Environments" }),
+      screen.getByRole("heading", { name: "Environments" })
     ).toBeInTheDocument();
   });
 });
