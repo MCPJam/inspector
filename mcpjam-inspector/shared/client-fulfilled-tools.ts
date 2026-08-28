@@ -211,3 +211,31 @@ export function classifyUiToolApprovals(
   }
   return { requiredNames, freeNames };
 }
+
+/**
+ * Per-turn approval classification for a turn's WebMCP `page_*` tools.
+ *
+ * Page tools are client-fulfilled (the browser runs them) and ALWAYS gate — see
+ * `pageToolCallNeedsApproval`. The hosted engines classify by name via
+ * `toolCallNeedsApproval` and never read a tool's own `needsApproval`, so a turn
+ * that advertises page tools MUST hand them this classification. Without it,
+ * every page alias falls through to the `requireToolApproval` default (off by
+ * default), the server emits no approval request, and the turn strands: the
+ * client has already deferred the call awaiting an approval pill that never
+ * comes. (The BYOK `streamText` path is unaffected — it honors the per-tool
+ * `needsApproval` that `buildPageTools` bakes in.)
+ *
+ * Page aliases are collision-free by construction, so the advertised names are
+ * exactly the turn's validated aliases. Routing through `pageToolCallNeedsApproval`
+ * keeps this the single source of truth rather than hard-coding "always gate".
+ */
+export function classifyPageToolApprovals(
+  aliases: readonly string[] | undefined,
+): UiToolApprovalClassification {
+  const requiredNames = new Set<string>();
+  const freeNames = new Set<string>();
+  for (const alias of aliases ?? []) {
+    (pageToolCallNeedsApproval() ? requiredNames : freeNames).add(alias);
+  }
+  return { requiredNames, freeNames };
+}

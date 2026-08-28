@@ -125,6 +125,7 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import { classifyPageToolApprovals } from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1389,6 +1390,18 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
     } = prepared;
+    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
+    // NAME and never read a tool's own `needsApproval`, so page tools reach them
+    // approval-less unless we hand over their classification here. Page tools
+    // always gate; an empty set (no page tools, incl. every hosted-mode turn
+    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
+    // existing `requireToolApproval` path unchanged. Without this the turn
+    // strands — the client defers the call awaiting an approval pill the server
+    // never sends. `uiTools` are ignored on this route (see above), so the page
+    // classification is the whole of this turn's `uiToolApprovals`.
+    const pageToolApprovals = classifyPageToolApprovals(
+      validatedPageTools.map((entry) => entry.alias),
+    );
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1536,6 +1549,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        uiToolApprovals: pageToolApprovals,
         modelVisibleMcpToolResults,
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
@@ -1803,6 +1817,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
+        uiToolApprovals: pageToolApprovals,
         modelVisibleMcpToolResults,
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
