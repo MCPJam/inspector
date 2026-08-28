@@ -19,6 +19,7 @@ import {
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
+import { hydrateTurnTraceSpans } from "@/components/evals/turn-trace-spans";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -216,28 +217,6 @@ interface ShareUsageThreadDetailProps {
  */
 const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
-/**
- * Fetch span blobs from turn trace URLs and flatten into a single span array.
- */
-async function hydrateSpans(
-  traces: SharedChatTurnTrace[]
-): Promise<EvalTraceSpan[]> {
-  const results = await Promise.all(
-    traces.map(async (trace) => {
-      if (!trace.spansBlobUrl) return [];
-      try {
-        const response = await fetch(trace.spansBlobUrl);
-        if (!response.ok) return [];
-        const parsed = await response.json();
-        return Array.isArray(parsed) ? (parsed as EvalTraceSpan[]) : [];
-      } catch {
-        return [];
-      }
-    })
-  );
-  return results.flat();
-}
-
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
@@ -312,7 +291,7 @@ export function ShareUsageThreadDetail({
     }
 
     let isActive = true;
-    void hydrateSpans(turnTraces).then((spans) => {
+    void hydrateTurnTraceSpans(turnTraces).then((spans) => {
       if (isActive) setHydratedSpans(spans);
     });
     return () => {

@@ -4,12 +4,12 @@ import {
   useSharedChatThread,
   useSharedChatTurnTraces,
   useSharedChatWidgetSnapshots,
-  type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import {
   snapshotsToTraceWidgetSnapshots,
   type TraceEnvelope,
 } from "@/components/evals/trace-viewer-adapter";
+import { hydrateTurnTraceSpans } from "@/components/evals/turn-trace-spans";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
@@ -19,29 +19,6 @@ export type SessionPluginVersion = {
   name: string;
   bundleHash: string;
 };
-
-/**
- * Fetch span blobs from turn trace URLs and flatten into a single span array.
- * Same contract as ShareUsageThreadDetail's hydrateSpans.
- */
-async function hydrateSpans(
-  traces: SharedChatTurnTrace[],
-): Promise<EvalTraceSpan[]> {
-  const results = await Promise.all(
-    traces.map(async (trace) => {
-      if (!trace.spansBlobUrl) return [];
-      try {
-        const response = await fetch(trace.spansBlobUrl);
-        if (!response.ok) return [];
-        const parsed = await response.json();
-        return Array.isArray(parsed) ? (parsed as EvalTraceSpan[]) : [];
-      } catch {
-        return [];
-      }
-    }),
-  );
-  return results.flat();
-}
 
 function extractMessages(data: unknown): unknown[] | null {
   if (Array.isArray(data)) return data;
@@ -171,7 +148,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
 
     let active = true;
     setLoadingSpans(true);
-    void hydrateSpans(turnTraces).then((hydrated) => {
+    void hydrateTurnTraceSpans(turnTraces).then((hydrated) => {
       if (!active) return;
       setSpans(hydrated);
       setLoadingSpans(false);
