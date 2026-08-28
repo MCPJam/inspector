@@ -247,6 +247,27 @@ describe("GET …/eval-suites/:suiteId/stage-analytics", () => {
       );
     });
 
+    it("treats blank query values as absent, not as a bound of zero", async () => {
+      // `?from=` must not become `from: 0`. Any `from` bound excludes runs that
+      // never recorded a completion stamp, so a coerced blank would silently
+      // narrow the reported population while the request looked unfiltered.
+      stub({});
+      const res = await request(`${PATH}?from=&to=&runGroupId=&cursor=&limit=`);
+      expect(res.status).toBe(200);
+      expect(analyticsArgs()).toEqual({
+        projectId: PROJECT_ID,
+        suiteId: SUITE_ID,
+        paginationOpts: { numItems: 25, cursor: null },
+      });
+    });
+
+    it("keeps a genuine zero lower bound", async () => {
+      // The blank is dropped; an explicit `0` is a real bound and is forwarded.
+      stub({});
+      await request(`${PATH}?from=0`);
+      expect(analyticsArgs()).toMatchObject({ from: 0 });
+    });
+
     it("maps the backend's own INVALID_ARGUMENT throw to a 400", async () => {
       // Unreachable while the edge schema holds. Mapped anyway so the contract
       // cannot drift into answering a caller error with a 500.

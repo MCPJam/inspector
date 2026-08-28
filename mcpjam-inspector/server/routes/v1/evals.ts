@@ -4718,17 +4718,30 @@ evals.get(
   async (c) => {
     const projectId = c.req.param("projectId");
     const suiteId = c.req.param("suiteId");
+    // An EMPTY query value means "not supplied", not "supplied as empty".
+    // Without this, `?from=` coerces to `0` — a real lower bound, which
+    // excludes every run that never recorded a completion stamp — so a request
+    // that looks unfiltered would quietly narrow the population it reports on.
+    // That is the one failure this whole contract is built against, so the
+    // blank is dropped here rather than being given a meaning.
+    const optionalQuery = (name: string): string | undefined => {
+      const raw = c.req.query(name);
+      if (raw === undefined) return undefined;
+      return raw.trim() === "" ? undefined : raw;
+    };
     const query = parseWithSchema(stageAnalyticsQuerySchema, {
-      ...(c.req.query("from") !== undefined ? { from: c.req.query("from") } : {}),
-      ...(c.req.query("to") !== undefined ? { to: c.req.query("to") } : {}),
-      ...(c.req.query("runGroupId") !== undefined
-        ? { runGroupId: c.req.query("runGroupId") }
+      ...(optionalQuery("from") !== undefined
+        ? { from: optionalQuery("from") }
         : {}),
-      ...(c.req.query("cursor") !== undefined
-        ? { cursor: c.req.query("cursor") }
+      ...(optionalQuery("to") !== undefined ? { to: optionalQuery("to") } : {}),
+      ...(optionalQuery("runGroupId") !== undefined
+        ? { runGroupId: optionalQuery("runGroupId") }
         : {}),
-      ...(c.req.query("limit") !== undefined
-        ? { limit: c.req.query("limit") }
+      ...(optionalQuery("cursor") !== undefined
+        ? { cursor: optionalQuery("cursor") }
+        : {}),
+      ...(optionalQuery("limit") !== undefined
+        ? { limit: optionalQuery("limit") }
         : {}),
     });
     const limit = query.limit ?? 25;
