@@ -628,29 +628,31 @@ export function ServerDetailModal({
                       )}
                 </span>
               </span>
+              {/* Stays ENABLED for a transport this deployment cannot
+                  reach, matching the server card: a disabled switch would
+                  swallow the click and explain nothing, and — worse here —
+                  it would also block the DISCONNECT direction, stranding a
+                  server that is somehow already connected with no way to
+                  turn it off. Only the connect direction is impossible, so
+                  only that direction is guarded. */}
               <Switch
                 checked={isConnected}
-                // Also off for a transport this deployment cannot reach at
-                // all — hosted stdio, hosted `http://`. Auto-connect skips
-                // those; this switch is the other way to start the same
-                // impossible attempt, and it used to be wide open.
                 disabled={
                   isReconnecting ||
                   server.connectionStatus === "connecting" ||
-                  server.connectionStatus === "oauth-flow" ||
-                  hostedUnsupportedReason !== null
-                }
-                title={
-                  hostedUnsupportedReason
-                    ? hostedUnsupportedExplanation(hostedUnsupportedReason)
-                    : undefined
+                  server.connectionStatus === "oauth-flow"
                 }
                 onCheckedChange={(checked) => {
                   if (!checked) {
                     handleDisconnect();
                     return;
                   }
-                  if (hostedUnsupportedReason) return;
+                  if (hostedUnsupportedReason) {
+                    toast.error(
+                      hostedUnsupportedExplanation(hostedUnsupportedReason)
+                    );
+                    return;
+                  }
                   void handleConnect(getSwitchReconnectOptions());
                 }}
                 className="cursor-pointer scale-75"

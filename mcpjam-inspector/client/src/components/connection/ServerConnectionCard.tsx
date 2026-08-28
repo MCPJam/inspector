@@ -972,22 +972,30 @@ export function ServerConnectionCard({
                           track("server_auto_connect_opt_out_toggled", {
                             location: "server_connection_card",
                           });
-                          // `Promise.resolve` because the prop is allowed
-                          // to be synchronous. A bare `void` would drop a
-                          // rejection: the menu would close as if the
-                          // opt-out had been saved, the next config read
-                          // would show it unchanged, and the failure would
-                          // surface only as an unhandled rejection.
-                          void Promise.resolve(
-                            onSetAutoConnectDisabled(
-                              server.name,
-                              !autoConnectDisabled
+                          // Called INSIDE the `.then` so a synchronous
+                          // throw lands in the same `.catch` as a rejected
+                          // promise — the prop is `Promise<void> | void`,
+                          // and `Promise.resolve(fn())` would evaluate
+                          // `fn()` first, letting a sync throw escape the
+                          // handler entirely.
+                          //
+                          // Either way it must be caught: a bare `void`
+                          // would close the menu as if the opt-out had
+                          // saved, the next config read would show it
+                          // unchanged, and the failure would surface only
+                          // as an unhandled rejection.
+                          void Promise.resolve()
+                            .then(() =>
+                              onSetAutoConnectDisabled(
+                                server.name,
+                                !autoConnectDisabled
+                              )
                             )
-                          ).catch(() => {
-                            toast.error(
-                              "Couldn't update auto-connect for this server. Please try again."
-                            );
-                          });
+                            .catch(() => {
+                              toast.error(
+                                "Couldn't update auto-connect for this server. Please try again."
+                              );
+                            });
                         }}
                       >
                         {autoConnectDisabled ? (

@@ -723,9 +723,14 @@ describe("ServerConnectionCard", () => {
       const item = await screen.findByText("Skip on auto-connect");
       fireEvent.click(item);
 
-      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
-        "test-server",
-        true
+      // `waitFor` because the handler is invoked inside a `.then`, so it
+      // runs a microtask after the click. See the component comment: that
+      // is what makes a synchronous throw reach the error toast.
+      await waitFor(() =>
+        expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+          "test-server",
+          true
+        )
       );
     });
 
@@ -743,9 +748,11 @@ describe("ServerConnectionCard", () => {
       openMenu();
       fireEvent.click(await screen.findByText("Include in auto-connect"));
 
-      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
-        "test-server",
-        false
+      await waitFor(() =>
+        expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+          "test-server",
+          false
+        )
       );
     });
 
@@ -757,6 +764,35 @@ describe("ServerConnectionCard", () => {
       const onSetAutoConnectDisabled = vi
         .fn()
         .mockRejectedValue(new Error("mutation failed"));
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          onSetAutoConnectDisabled={onSetAutoConnectDisabled}
+        />
+      );
+
+      openMenu();
+      fireEvent.click(await screen.findByText("Skip on auto-connect"));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          errorToastMessage(
+            "Couldn't update auto-connect for this server. Please try again."
+          ),
+          { duration: 8000 }
+        );
+      });
+    });
+
+    it("catches a handler that throws synchronously", async () => {
+      // `Promise.resolve(fn())` would evaluate `fn()` BEFORE the promise
+      // existed, so a synchronous throw escaped the `.catch` entirely and
+      // blew up the click handler instead of showing the toast. The call
+      // is made inside the `.then` for exactly this case.
+      const onSetAutoConnectDisabled = vi.fn(() => {
+        throw new Error("sync boom");
+      });
       render(
         <ServerConnectionCard
           server={createServer()}
@@ -794,11 +830,13 @@ describe("ServerConnectionCard", () => {
       openMenu();
       fireEvent.click(await screen.findByText("Skip on auto-connect"));
 
-      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
-        "test-server",
-        true
+      await waitFor(() =>
+        expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+          "test-server",
+          true
+        )
       );
-      await waitFor(() => expect(toast.error).not.toHaveBeenCalled());
+      expect(toast.error).not.toHaveBeenCalled();
     });
 
     it("hides the option on surfaces with no project config to write", async () => {

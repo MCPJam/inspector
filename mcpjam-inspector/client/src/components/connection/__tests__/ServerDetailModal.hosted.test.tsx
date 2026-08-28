@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockFetchHostedOAuthTokens = vi.hoisted(() => vi.fn());
@@ -137,12 +138,37 @@ describe("ServerDetailModal hosted reconnect", () => {
         />,
       );
 
-      const toggle = screen.getByRole("switch");
-      expect(toggle).toBeDisabled();
-      fireEvent.click(toggle);
+      // Enabled, not disabled — see the component comment. A disabled
+      // switch swallows the click and explains nothing; this one explains.
+      fireEvent.click(screen.getByRole("switch"));
       expect(onReconnect).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
       unmount();
+      vi.clearAllMocks();
     }
+  });
+
+  it("still disconnects an unsupported server that is somehow connected", () => {
+    // The reason the guard cannot simply disable the switch. Blocking the
+    // control blocks BOTH directions, and a connected server with no way
+    // to turn it off is a worse state than the one the guard prevents.
+    // Only connecting is impossible here; disconnecting always works.
+    const onDisconnect = vi.fn();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          name: "legacy-stdio",
+          connectionStatus: "connected",
+          config: { command: "npx", args: ["-y", "some-server"] } as any,
+        })}
+        onDisconnect={onDisconnect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(onDisconnect).toHaveBeenCalledWith("legacy-stdio");
   });
 
   it("shows the retry count, matching the card", () => {
