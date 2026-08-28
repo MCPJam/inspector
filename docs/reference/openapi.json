@@ -4965,7 +4965,11 @@
         "tags": ["Skills"],
         "summary": "List a project's skills",
         "description": "The Cloud Skills visible to the caller in this project: the project-shared ones plus the caller's own drafts. Each row reports `pinnability`, which is what decides whether its id is usable in an environment's `skillSelection`.",
-        "parameters": [{ "$ref": "#/components/parameters/projectId" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The project's skills.",
@@ -5005,12 +5009,16 @@
         "summary": "Get a skill",
         "description": "One skill, including its SKILL.md body. The body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which content this read returned.",
         "parameters": [
-          { "$ref": "#/components/parameters/projectId" },
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
           {
             "name": "skillId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" },
+            "schema": {
+              "type": "string"
+            },
             "description": "Skill ID."
           }
         ],
@@ -6514,6 +6522,233 @@
           },
           "400": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        }
+      ],
+      "get": {
+        "operationId": "listSecrets",
+        "tags": ["Secrets"],
+        "summary": "List secrets",
+        "description": "The project's credentials as METADATA ONLY — no value is returned by this or any other route. Shows the project-shared secrets plus the caller's own personal ones; another member's personal secret does not appear at all, not even its name.",
+        "responses": {
+          "200": {
+            "description": "A page of secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSecret",
+        "tags": ["Secrets"],
+        "summary": "Create a secret",
+        "description": "Store a credential so environments can grant it to runs. THE VALUE TRAVELS IN THE REQUEST BODY and becomes visible to whatever makes the call. The response is metadata only. Creating a project-shared secret requires project admin; a personal one does not.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Retry-safe create key. Replaying the SAME key with the SAME body returns the original resource instead of creating a second one; reusing it with a DIFFERENT body is a 409. Worth passing: a retried create without one fails as a name conflict with the row the first attempt already made.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The secret to create.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/secrets/{secretId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/secretId"
+        }
+      ],
+      "get": {
+        "operationId": "getSecret",
+        "tags": ["Secrets"],
+        "summary": "Get a secret",
+        "description": "One secret's metadata: delivery mode, host binding, sharing, and when it was last handed to a run. Never its value. A secret from another project — and another member's personal secret — both read as 404.",
+        "responses": {
+          "200": {
+            "description": "The secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateSecret",
+        "tags": ["Secrets"],
+        "summary": "Rotate or re-bind a secret",
+        "description": "Rotate the value and/or change how it is delivered. A rotation reaches NEW RUNS ONLY: a session already running holds the old value — materialized in its box's environment, or inside an egress policy that cannot be read back — and there is no safe way to replace it mid-run.",
+        "requestBody": {
+          "required": true,
+          "description": "The fields to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated secret, as metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSecret",
+        "tags": ["Secrets"],
+        "summary": "Delete a secret",
+        "description": "Revoke a credential. HARD — the row and the encrypted value both go. Deliberately NOT blocked when an environment still selects it: refusing would make a leaked credential un-revokable until someone edited every environment naming it, and revocation must never wait on cleanup.",
+        "responses": {
+          "200": {
+            "description": "The secret was revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretDeleted"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -11090,6 +11325,15 @@
           "type": "string"
         },
         "description": "Gate waiver ID, as returned when the waiver was granted or read."
+      },
+      "secretId": {
+        "name": "secretId",
+        "in": "path",
+        "required": true,
+        "description": "Secret ID, as returned by the project's secret list.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "requestBodies": {
@@ -16766,6 +17010,25 @@
           }
         }
       },
+      "EnvironmentSecretSelection": {
+        "type": "object",
+        "description": "Which PROJECT SECRETS a run launched from this environment receives — ids only. The environment is the GRANT BOUNDARY: absent means no secrets, and there is no \"all of them\" mode. Cannot be empty; clear the field instead (send `null` on update) to revoke the grant.\n\nMembership is not delivery. A `sharing: user` secret selected here reaches ONLY sessions its owner started; every other member's run of this environment silently does not receive it, and that rule is re-checked live at launch rather than baked into the selection.",
+        "required": ["mode", "secretIds"],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["explicit"]
+          },
+          "secretIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Secret IDs, as returned by the project's secret list."
+          }
+        }
+      },
       "ProjectEnvironment": {
         "type": "object",
         "description": "A project environment: a named, live-editable execution bundle that eval suites and journeys run against.",
@@ -16807,6 +17070,9 @@
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
           },
           "pluginVersionIds": {
             "type": "array",
@@ -17113,7 +17379,9 @@
       },
       "SkillDetail": {
         "allOf": [
-          { "$ref": "#/components/schemas/Skill" },
+          {
+            "$ref": "#/components/schemas/Skill"
+          },
           {
             "type": "object",
             "required": ["content"],
@@ -17184,6 +17452,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "items": {
@@ -17245,6 +17516,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17305,6 +17579,9 @@
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
           },
+          "secretSelection": {
+            "$ref": "#/components/schemas/EnvironmentSecretSelection"
+          },
           "pluginVersionIds": {
             "type": "array",
             "minItems": 1,
@@ -17363,6 +17640,15 @@
             ],
             "nullable": true,
             "description": "`null` clears the pinned skill selection."
+          },
+          "secretSelection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentSecretSelection"
+              }
+            ],
+            "nullable": true,
+            "description": "`null` REVOKES the environment's credential grant; a value replaces it; omission leaves it unchanged. `[]` is rejected — an accidental empty array that read as \"remove every credential\" would break a workflow with no error to look at."
           },
           "pluginVersionIds": {
             "type": "array",
@@ -18911,6 +19197,213 @@
           },
           "notes": {
             "type": "string"
+          }
+        }
+      },
+      "Secret": {
+        "type": "object",
+        "description": "A project credential — METADATA ONLY, always. There is no `value` field on this schema and no route that returns one: a secret is written and delivered into a run, never read back.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "description",
+          "delivery",
+          "sharing",
+          "lastDeliveredAt",
+          "createdAt",
+          "updatedAt",
+          "createdByUserId",
+          "updatedByUserId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The environment-variable name (`^[A-Z_][A-Z0-9_]*$`). This IS the secret's identity: what a materialized delivery exports, what a workflow references, and what stays stable across a rotation. Immutable."
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "`brokered` — the sandbox's egress proxy injects the value as a request header OUTSIDE the VM, so the box never holds it. Prevents EXTRACTION, not USE: any process in the box can call the bound host while the policy is live, and it works for HTTPS APIs only (domain rules bind on ports 80/443). `materialized` — a real environment variable inside the box, which is the only thing a CLI can read; EXTRACTABLE BY DESIGN."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Brokered only: the exact hostnames the header is injected on."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "description": "Brokered only: the header name."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "description": "Brokered only: the header value, with `{}` where the secret goes."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "description": "`project` — admin-managed, delivered to every member's sessions. `user` — personal, delivered ONLY in sessions its owner starts and silently absent from anyone else's run of the same environment. Immutable."
+          },
+          "ownerUserId": {
+            "type": "string",
+            "description": "Personal secrets only. Project-shared rows have no owner."
+          },
+          "lastDeliveredAt": {
+            "type": ["integer", "null"],
+            "description": "When this secret was last HANDED TO a run — not when it was last used. Brokered use is unobservable by construction (the proxy injects the header; the request is never seen here), so `used` would be a number nobody can honestly produce. `null` means nothing has been recorded, which is not the same as never delivered."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "createdByUserId": {
+            "type": "string"
+          },
+          "updatedByUserId": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Secret"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists. Opaque — do not parse it."
+          }
+        }
+      },
+      "SecretCreateRequest": {
+        "type": "object",
+        "description": "THE VALUE TRAVELS IN THIS BODY and becomes visible to whatever makes the call — its process, its logs, its shell history. Supply it from a file or an environment variable rather than pasting it into a command.",
+        "required": ["name", "value", "delivery"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Z_][A-Z0-9_]*$",
+            "description": "Environment-variable name. Immutable — renaming is delete-and-recreate."
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The credential. Stored encrypted; no route ever returns it. NOT trimmed — a trailing newline is meaningful in a PEM block, and rewriting what you sent would present as 'the key is wrong' with nothing to look at."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Required, with no default: a caller who has not said whether the value ends up inside the sandbox has not made the decision this field exists for. See `Secret.delivery`."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "default": "project",
+            "description": "Defaults to `project`. A non-admin asking for it is refused rather than downgraded to personal — a silent downgrade looks like success and then reaches nobody else's sessions."
+          }
+        }
+      },
+      "SecretUpdateRequest": {
+        "type": "object",
+        "description": "At least one field. `name` and `sharing` are absent because both are IMMUTABLE: renaming would break the workflows referencing the environment variable, and re-sharing would change who has already been handed the value. Delete and recreate for either. A rotation reaches NEW RUNS ONLY — a session already running holds the old value and cannot be reached.",
+        "minProperties": 1,
+        "properties": {
+          "value": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "The new credential. Same exposure as on create: it travels in this body."
+          },
+          "description": {
+            "type": ["string", "null"],
+            "maxLength": 500,
+            "description": "`null` clears it; omit to leave it unchanged."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["brokered", "materialized"],
+            "description": "Switching to `brokered` requires the host binding in the same call; switching to `materialized` clears it."
+          },
+          "brokerHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Required for `brokered`, forbidden for `materialized`. Exact hostnames — no scheme, no port, no wildcard: the proxy matches a host, and a URL installs a rule that silently never fires."
+          },
+          "brokerHeader": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required for `brokered`, forbidden for `materialized`. e.g. `Authorization`."
+          },
+          "brokerTemplate": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Required for `brokered`, forbidden for `materialized`. The header value with `{}` where the secret goes, e.g. `Bearer {}`. A template without `{}` is rejected: it installs a constant header that never carries the credential."
+          }
+        }
+      },
+      "SecretDeleted": {
+        "type": "object",
+        "description": "A HARD delete: the row and the encrypted value both go. This is the revoke button, so it is not soft.",
+        "required": ["id", "projectId", "name", "deleted"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Echoed so a caller logging the revoke needs no prior read."
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [true]
           }
         }
       },

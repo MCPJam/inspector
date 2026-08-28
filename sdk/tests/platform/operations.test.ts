@@ -586,9 +586,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
         {
           id: "scenario-1",
           environmentId,
-          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          name: created ? (requestBody.name as string) ?? "Checkout" : "Kept",
           mode: created
-            ? ((requestBody.mode as string) ?? "project_members")
+            ? (requestBody.mode as string) ?? "project_members"
             : "anyone_with_link",
           accessVersion: 1,
           link: "https://app.mcpjam.com/s/checkout?t=abc",
@@ -1251,9 +1251,9 @@ describe("createEvalSuiteOperation", () => {
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) return;
-    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
-      true
-    );
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1948,6 +1948,18 @@ describe("operation catalog consistency", () => {
     create_persona: { name: "Ada", role: "buyer" },
     update_persona: { persona: "pe", name: "Ada" },
     delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
     generate_personas: { environmentId: "e" },
     get_journey: { journey: "j" },
     create_journey: {
@@ -2197,6 +2209,11 @@ describe("operation catalog consistency", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
       "create_journey",
       "update_journey",
       "archive_journey",
@@ -2431,14 +2448,18 @@ describe("registry operations", () => {
       if (path === "/api/v1/projects") {
         return Response.json({ items: PROJECTS });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
         return Response.json({
           serverId: "server-installed",
           serverName: "Installed",
           outcome: options?.outcome ?? "created",
         });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
         return Response.json({
           id: "server-installed",
           projectId: "project-new",

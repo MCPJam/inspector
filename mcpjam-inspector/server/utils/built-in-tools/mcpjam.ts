@@ -83,6 +83,8 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -199,6 +201,24 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+
+  // ── Project secrets: the METADATA READS only ────────────────────────────
+  //
+  // This list has no drift test — it is hand-maintained — so the omission is
+  // stated rather than left to be noticed. `list_secrets` and `get_secret` are
+  // here because a workspace chat needs to answer "does this project already
+  // have a STRIPE_API_KEY, and is it brokered?"; both return metadata and are
+  // structurally incapable of returning a value.
+  //
+  // The three WRITES are deliberately absent. `create_secret` and
+  // `update_secret` carry the plaintext as an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it; `delete_secret` hard-revokes a credential and belongs on
+  // a surface where the person meant it. All three stay on REST, the SDK and
+  // the CLI.
+  listSecretsOperation,
+  getSecretOperation,
+
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
