@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import {
+  PreferencesStoreProvider,
+  usePreferencesStore,
+} from "@/stores/preferences/preferences-provider";
 import { AppStateProvider } from "@/state/app-state-context";
 import { ServerActionsProvider } from "@/state/server-actions-context";
 import {
@@ -393,6 +396,125 @@ describe("useAutoConnectProjectServers", () => {
 
       expect(ensureServersReady).toHaveBeenCalledTimes(2);
       expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["alpha"]);
+    });
+
+    it("stops retrying when auto-connect is switched off mid-backoff", async () => {
+      // A backoff window is up to ten seconds of wall time, and the user
+      // can act inside it. Flipping the per-device switch off does not
+      // change the project or host scope, so the abandonment token does
+      // not fire — without an explicit re-check the loop would finish its
+      // wait and dial anyway, overriding what the user just did.
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValue(failResult(["alpha"]));
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      let setEnabled: ((next: boolean) => void) | null = null;
+      function PreferenceHandle() {
+        setEnabled = usePreferencesStore((s) => s.setAutoConnectServersEnabled);
+        return null;
+      }
+
+      renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-disabled-midflight",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children: (
+                <>
+                  <PreferenceHandle />
+                  {children}
+                </>
+              ),
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      // Let the first attempt fail and the first retry be scheduled.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      act(() => {
+        setEnabled?.(false);
+      });
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops a server the host stopped requiring mid-backoff", async () => {
+      // Same window, different user action: the host's required set can
+      // change while we wait. Retrying a server the host no longer wants
+      // connects something nobody asked for.
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValue(failResult(["alpha", "beta"]));
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/a" },
+            lastError: "fetch failed",
+          },
+          beta: {
+            name: "beta",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/b" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      let required = ["alpha", "beta"];
+      const { rerender } = renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-dropped-midflight",
+            hostScopeKey: "host-a",
+            requiredServerNames: required,
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      required = ["alpha"];
+      rerender();
+      await runBackoff();
+
+      // Every retry round is alpha-only; beta is never dialed again.
+      const retryCalls = ensureServersReady.mock.calls.slice(1);
+      expect(retryCalls.length).toBeGreaterThan(0);
+      for (const [names] of retryCalls) {
+        expect(names).toEqual(["alpha"]);
+      }
     });
 
     it("stops retrying when the surface unmounts mid-backoff", async () => {

@@ -209,6 +209,23 @@ export function useAutoConnectProjectServers({
   const scopeKey = hostScopeKey ?? "-";
 
   /**
+   * Live view of "should we still be auto-connecting, and to what".
+   *
+   * A backoff window is up to ten seconds of wall time, and the user can
+   * act during it: flip the per-device auto-connect switch off, or change
+   * which servers the host requires. Neither of those bumps
+   * `attemptTokenRef` — that token is for scope changes — so without these
+   * the loop would finish its wait and dial anyway, contradicting an
+   * explicit action the user took while it slept.
+   *
+   * Refs rather than effect dependencies for the same reason as
+   * `latestServersRef`: reading them through the deps would re-fire the
+   * batch on every unrelated preference or host edit.
+   */
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+
+  /**
    * Lifetime token for an in-flight attempt, bumped ONLY when the work
    * genuinely no longer applies: the project or host scope changed, or the
    * surface unmounted.
@@ -240,6 +257,10 @@ export function useAutoConnectProjectServers({
     () => (requiredNamesKey ? requiredNamesKey.split("\0") : []),
     [requiredNamesKey]
   );
+
+  /** Companion to `enabledRef` — see the note there. */
+  const requiredNamesRef = useRef(requiredNames);
+  requiredNamesRef.current = requiredNames;
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
@@ -424,13 +445,25 @@ export function useAutoConnectProjectServers({
         await sleep(backoffMs);
         if (isAbandoned()) return result;
 
-        const retryResult = await ensureServersReady(retriable);
+        // Re-check eligibility on the far side of the wait. The scope token
+        // covers project and host changes, but the user can also turn
+        // auto-connect off or change what the host requires during those
+        // seconds — and dialing anyway would override an explicit action
+        // they took while we slept.
+        if (!enabledRef.current) return result;
+        const stillRequired = new Set(requiredNamesRef.current);
+        const stillRetriable = retriable.filter((name) =>
+          stillRequired.has(name)
+        );
+        if (stillRetriable.length === 0) return result;
+
+        const retryResult = await ensureServersReady(stillRetriable);
         if (isAbandoned()) return retryResult;
 
         // Fold the retry's outcome back into the batch result: servers not
         // in this round keep whatever the previous round decided, and the
         // ones we retried take their new answer.
-        const retriedSet = new Set(retriable);
+        const retriedSet = new Set(stillRetriable);
         const keep = <T extends string>(names: T[]) =>
           names.filter((name) => !retriedSet.has(name));
         result = {
