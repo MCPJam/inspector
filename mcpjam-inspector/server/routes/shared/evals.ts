@@ -1,7 +1,10 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentSchema,
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
@@ -209,6 +212,10 @@ export const RunEvalsRequestSchema = z.object({
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
         expectedOutput: z.string().optional(),
+        // Optional analytics label. This authoring/run shape only creates or
+        // updates from a complete test definition, so it carries the stored
+        // string form; only the authoritative PATCH wire accepts `null`.
+        intent: caseIntentSchema.optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
         // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
@@ -408,6 +415,37 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   skillsOverride: z.literal("exclude").optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
+   *
+   * Claim-only in both directions: the caller supplies an id and a reason, and
+   * the backend derives the approver from the authenticated launcher, stamps
+   * the time, and FREEZES the resulting decision into the run's own case
+   * snapshot. A caller-supplied approver would file one person's approval
+   * under another's name and a caller-supplied timestamp could be backdated
+   * past the edit that invalidated the claim, so neither is representable
+   * here.
+   *
+   * Nothing about this persists on the case. The next run of the same
+   * approximation needs a new approval — that is the difference between
+   * approving a RUN and accepting a CASE, and the whole reason there is no
+   * second concept.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently, and a silently-stripped approval
+   * would be reported to the caller as a backend policy refusal.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict()
+    )
+    .min(1)
+    .optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -1150,6 +1188,7 @@ function toCaseBatchItem(
     isNegativeTest?: boolean;
     scenario?: string;
     expectedOutput?: string;
+    intent?: string;
     steps?: TestStep[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
@@ -1168,6 +1207,9 @@ function toCaseBatchItem(
     isNegativeTest: testCaseData.isNegativeTest,
     scenario: testCaseData.scenario,
     expectedOutput: testCaseData.expectedOutput,
+    ...(testCaseData.intent !== undefined
+      ? { intent: testCaseData.intent }
+      : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
@@ -1396,6 +1438,7 @@ export async function authorEvalSuite(args: {
       isNegativeTest?: boolean;
       scenario?: string;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       judgeRequirement?: string;
       advancedConfig?: any;
@@ -1417,6 +1460,7 @@ export async function authorEvalSuite(args: {
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
         expectedOutput: test.expectedOutput,
+        intent: test.intent,
         steps: authoringSteps,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
@@ -1524,6 +1568,12 @@ export async function authorEvalSuite(args: {
             const expectedOutputChanged =
               normalize(existingTestCase.expectedOutput) !==
               normalize(testCaseData.expectedOutput);
+            // Omitted intent is a preserve, not an implicit clear. Only a
+            // caller that supplied the label may make an existing row differ.
+            const intentChanged =
+              testCaseData.intent !== undefined &&
+              normalize(existingTestCase.intent) !==
+                normalize(testCaseData.intent);
             const stepsChanged =
               JSON.stringify(
                 normalizeForComparison(existingTestCase.steps || [])
@@ -1556,6 +1606,7 @@ export async function authorEvalSuite(args: {
               isNegativeTestChanged ||
               scenarioChanged ||
               expectedOutputChanged ||
+              intentChanged ||
               stepsChanged ||
               judgeRequirementChanged ||
               advancedConfigChanged ||
@@ -1573,6 +1624,9 @@ export async function authorEvalSuite(args: {
                 isNegativeTest: testCaseData.isNegativeTest,
                 scenario: testCaseData.scenario,
                 expectedOutput: testCaseData.expectedOutput,
+                ...(testCaseData.intent !== undefined
+                  ? { intent: testCaseData.intent }
+                  : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig
@@ -1896,6 +1950,7 @@ export async function prepareEvalRun(
     skillsOverride,
     ephemeralEnvironment,
     toolPolicy,
+    importApprovals,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2092,6 +2147,12 @@ export async function prepareEvalRun(
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+    // Named explicitly, like every other field in this call: `startSuiteRun-
+    // WithRecorder` reconstructs the mutation args from its own parameters,
+    // so a field nobody destructures here is a field the backend never sees —
+    // and an approval that never arrives is reported to the caller as the
+    // backend refusing a run they did approve.
+    ...(importApprovals?.length ? { importApprovals } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -2607,6 +2668,10 @@ export async function runEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -3032,6 +3097,9 @@ export async function streamEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Keep quick and streamed single-case runs identical to suite runs: the
+    // label is authored metadata, but it must be frozen at iteration create.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:

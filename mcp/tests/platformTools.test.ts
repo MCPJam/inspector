@@ -137,6 +137,12 @@ const PLAIN_TOOLS = [
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Skills over MCP: a catalog, a verified skill body, and a verified file.
+  // All three can answer with a refusal naming the integrity check that
+  // failed, which is structured evidence to read rather than a card to render.
+  "list_server_skills",
+  "get_server_skill",
+  "read_server_skill_file",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
   // Directory readiness: receipts and run rows are agent-oriented payloads,
@@ -179,6 +185,8 @@ const PLAIN_TOOLS = [
   // Agent Plugins reads: agent-oriented payloads, no widget view.
   "list_project_plugins",
   "get_plugin_version",
+  "list_project_skills",
+  "get_project_skill",
   "get_eval_iteration_trace",
   "compare_eval_run",
   // The gate-waiver read: an agent-oriented payload, no widget view.
@@ -387,6 +395,9 @@ describe("platform tool registration", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "check_host_compatibility",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
@@ -434,6 +445,8 @@ describe("platform tool registration", () => {
       "get_sandbox_image",
       "list_project_plugins",
       "get_plugin_version",
+      "list_project_skills",
+      "get_project_skill",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",

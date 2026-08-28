@@ -226,6 +226,8 @@ export type EvalTestCase = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   expectedOutput?: string;
+  /** Authored analytics grouping label, frozen into each iteration snapshot. */
+  intent?: string;
   promptTurns?: PromptTurn[];
   /**
    * Unified `TestStep[]` model (Phase 3). When present this is the source of
@@ -357,6 +359,34 @@ export function runFrozenSkillOptions(run: {
       ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
       : {}),
   };
+}
+
+/**
+ * Which skills source an ITERATION hands `prepareChatV2` — the second half of
+ * the two-channel decision `runFrozenSkillOptions` bundles.
+ *
+ * Eval runs never use local-FS skills (decision 10), so the answer is always
+ * explicit. The part that is not obvious: a HARNESS iteration takes
+ * `{ kind: "none" }` EVEN WHEN THE RUN HAS PINS. Its pins are already travelling
+ * on the other channel (`pinnedHarnessSkills` → SKILL.md on the box), and
+ * `prepareChatV2` THROWS on harness+pinned because delivering both would hand
+ * the model the same skill twice by two mechanisms — an in-memory `loadSkill`
+ * tool AND an on-box copy.
+ *
+ * This is a seam guard, in the same spirit as `runFrozenSkillOptions` and for a
+ * bug of the same family. #4146 wired a run's pins into `pinnedSkillSource`
+ * without teaching the two iteration paths that a harness must not receive
+ * them, so every harness run whose environment carried a skill died at
+ * `prepareChatV2` with `tokensUsed: 0` — while runs with no skills stayed green,
+ * which is why it shipped. Both call sites now ask this one function, so the
+ * two paths cannot drift apart again.
+ */
+export function resolveIterationSkillsSource(args: {
+  harness?: string | undefined;
+  pinnedSkillSource?: EvalPinnedSkillSource;
+}): EvalPinnedSkillSource | { kind: "none" } {
+  if (args.harness) return { kind: "none" };
+  return args.pinnedSkillSource ?? { kind: "none" };
 }
 
 /**
@@ -1298,6 +1328,7 @@ async function createIterationDirectly(
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
@@ -2203,6 +2234,7 @@ const executeTestCase = async (params: {
             expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            ...(test.intent !== undefined ? { intent: test.intent } : {}),
             steps: resolvedStepsForPrecreate,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
@@ -2997,8 +3029,6 @@ const runLocalIteration = async ({
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
   const toolPolicyGate = toolPolicy
     ? createToolPolicyGate({
         policy: toolPolicy,
@@ -3095,6 +3125,10 @@ const runLocalIteration = async ({
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
@@ -3146,6 +3180,7 @@ const runLocalIteration = async ({
     expectedToolCalls,
     isNegativeTest: test.isNegativeTest,
     expectedOutput,
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     steps: resolvedSteps,
     advancedConfig,
     matchOptions: test.matchOptions,
@@ -4080,8 +4115,6 @@ const runHostedIterationWithBrowser = async (
   browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
   const toolPolicyGate = toolPolicy
     ? createToolPolicyGate({
         policy: toolPolicy,
@@ -4165,6 +4198,10 @@ const runHostedIterationWithBrowser = async (
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
     test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
@@ -4195,6 +4232,7 @@ const runHostedIterationWithBrowser = async (
       expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
       expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       steps: resolvedSteps,
       advancedConfig,
       matchOptions: test.matchOptions,

@@ -11,7 +11,14 @@ import {
   GATE_WAIVER_MAX_REASON_LENGTH,
   GATE_WAIVER_REASON_NOTICE,
 } from "../gates.js";
-import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
+import {
+  MAX_BATCH_CREATE_CASES,
+  evalSuiteFileCaseImportSchema,
+} from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -135,6 +142,8 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
@@ -1510,6 +1519,185 @@ export const readServerResourceOperation: PlatformOperation<
   },
 };
 
+// ── Server-served Agent Skills (SEP-2640) ────────────────────────────
+//
+// Three operations rather than the resource family's two. Resources need
+// `list` + `read`; skills need `list` + `get` + `read file`, because
+// `skills/get` reaches a skill a partial listing never mentioned — a URI can
+// arrive from the server's own `instructions`, from another skill's body, or
+// from a user — and that is the reason the SEP has `skills/get` at all.
+//
+// Every one of these answers with EITHER content or a `refusal` naming the
+// integrity check that failed. The refusals are the product: a debugger's user
+// asking "why won't this skill load" is asking exactly which digest, which
+// field, which URI.
+
+export type ListServerSkillsResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const listServerSkillsOperation: PlatformOperation<
+  ServerScopedInput,
+  ListServerSkillsResult
+> = {
+  name: "list_server_skills",
+  title: "List MCPJam server skills",
+  description:
+    "List the Agent Skills a saved MCP server serves over the skills extension (SEP-2640). Includes skills the server advertises that MCPJam declines to load, each with the reason. Not paginated: the catalog is drained server-side because duplicate detection spans the whole listing.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.listServerSkills(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const getServerSkillInput = serverScopedInput.extend({
+  uri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Exact skill uri. Usually from list_server_skills, but any uri works — a skill absent from a partial listing may still be served."
+    ),
+});
+
+export type GetServerSkillInput = z.infer<typeof getServerSkillInput>;
+
+export type GetServerSkillResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const getServerSkillOperation: PlatformOperation<
+  GetServerSkillInput,
+  GetServerSkillResult
+> = {
+  name: "get_server_skill",
+  title: "Get MCPJam server skill",
+  description:
+    "Fetch one skill from a saved MCP server by uri, verified before any content is returned: the SKILL.md digest against the manifest, the fetched frontmatter against what the listing advertised, and the name against the uri. Answers with the skill, or with a refusal naming the check that failed.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill content."
+  ),
+  inputSchema: getServerSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.getServerSkill(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: { uri: input.uri },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const readServerSkillFileInput = serverScopedInput.extend({
+  skillUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Uri of the skill that owns the file."),
+  resourceUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Uri of the supporting file, which must appear in that skill's manifest — the manifest is the read allowlist."
+    ),
+});
+
+export type ReadServerSkillFileInput = z.infer<typeof readServerSkillFileInput>;
+
+export type ReadServerSkillFileResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const readServerSkillFileOperation: PlatformOperation<
+  ReadServerSkillFileInput,
+  ReadServerSkillFileResult
+> = {
+  name: "read_server_skill_file",
+  title: "Read MCPJam server skill file",
+  description:
+    "Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. Get both uris from list_server_skills or get_server_skill first.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill file content."
+  ),
+  inputSchema: readServerSkillFileInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.readServerSkillFile(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          skillUri: input.skillUri,
+          resourceUri: input.resourceUri,
+        },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
 // ── Host compatibility ───────────────────────────────────────────────
 
 export type HostCompatibilityVerdict = {
@@ -2622,6 +2810,7 @@ function runKnobBody(
     excludeSkills?: boolean;
     idempotencyKey?: string;
     sourceHash?: string;
+    importApprovals?: Array<{ testCaseId: string; reason: string }>;
   },
   caseIds: string[] | undefined
 ): Record<string, unknown> {
@@ -2638,6 +2827,13 @@ function runKnobBody(
       : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+    // Forwarded UNCHANGED to every target of a grouped launch. A case's
+    // approximation is approximated the same way on each of them, so an
+    // approval that covered only the first target would refuse the rest of a
+    // launch the caller approved once and meant once.
+    ...(input.importApprovals?.length
+      ? { importApprovals: input.importApprovals }
+      : {}),
   };
 }
 
@@ -3215,6 +3411,37 @@ const composeRunTargetInput = z
     "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
 
+/**
+ * One per-run approval of an approximated import.
+ *
+ * The caller supplies the id and the reason and NOTHING ELSE. A
+ * caller-supplied approver would file one person's approval under another's
+ * name, and a caller-supplied timestamp could be backdated past the edit that
+ * invalidated the claim — so both are derived server-side, and this object has
+ * no field for either.
+ */
+const importApprovalsSchema = z
+  .array(
+    z
+      .object({
+        testCaseId: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Hosted test-case id (not the authored/declared case id)."),
+        reason: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500)
+          .describe(
+            "Why this approximation is acceptable for this run. An override with no stated reason is indistinguishable from an accident."
+          ),
+      })
+      .strict()
+  )
+  .min(1);
+
 const RUN_KNOB_FIELDS = {
   repetitions: z
     .number()
@@ -3277,6 +3504,11 @@ const RUN_KNOB_FIELDS = {
     .optional()
     .describe(
       "SHA-256 hex of the suite-file bytes that launched this run. Set by `eval run --file`; a UI or API launch that did not come from a file omits it."
+    ),
+  importApprovals: importApprovalsSchema
+    .optional()
+    .describe(
+      "Approve `approximated` imported cases for THIS RUN ONLY. Each entry names a hosted test-case id and a reason (1-500 characters). The approver's identity and the approval time are derived by the server and frozen into the run's own snapshot — never supplied here. Approval does not persist: the next run of the same case needs a new one."
     ),
 } as const;
 
@@ -3949,6 +4181,13 @@ const runEvalCaseInput = z
     repetitions: RUN_KNOB_FIELDS.repetitions,
     iterations: RUN_KNOB_FIELDS.iterations,
     idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
+    // A single-case run of an APPROXIMATED case needs the same per-run
+    // approval a suite run does. Without it this operation could never launch
+    // one — the platform refuses a selected approximation that carries no
+    // approval — while `run_eval_suite` with `cases: [thatCase]` launches the
+    // very same case. Two ways to run one case should not disagree about
+    // whether it may run.
+    importApprovals: RUN_KNOB_FIELDS.importApprovals,
   })
   .superRefine((input, ctx) => {
     if (input.repetitions !== undefined && input.iterations !== undefined) {
@@ -4110,6 +4349,9 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(input.idempotencyKey
               ? { idempotencyKey: input.idempotencyKey }
               : {}),
+            ...(input.importApprovals?.length
+              ? { importApprovals: input.importApprovals }
+              : {}),
           },
         },
         { signal }
@@ -4198,6 +4440,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4404,6 +4651,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -4441,6 +4693,26 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
+  // THE CONVERTER'S CLAIM, on the operation surface too.
+  //
+  // Without it Zod strips the key and `buildCaseBody` never sees it, so a
+  // converter writing through `create_eval_case` / `update_eval_case` (or
+  // `cloud eval cases create/update --json`) stores an APPROXIMATED case as a
+  // native one — and a native case needs no approval, so it runs and gates on
+  // provenance that was silently discarded on the way in. Losing the claim is
+  // strictly worse than rejecting the write.
+  //
+  // NOT nullable here, unlike `matchOptions` above. Clearing a claim is
+  // meaningful only on an update, and the route agrees: the REST create schema
+  // takes the claim or nothing while only PATCH accepts `null`. Sharing a
+  // nullable schema across both would have the SDK advertise `import: null` on
+  // a create as valid and the server answer 400 — a contract that lies to the
+  // caller about its own inputs. `updateEvalCaseInput` widens it.
+  import: evalSuiteFileCaseImportSchema
+    .optional()
+    .describe(
+      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule."
+    ),
 } as const;
 
 /** Build the public case body forwarded to the route (drops undefined keys). */
@@ -5310,6 +5582,24 @@ const updateEvalCaseInput = z.object({
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
   ...caseFieldsShape,
+  // UPDATE-only nullability, matching the route: PATCH accepts `null` to clear
+  // the claim, create does not. `buildCaseBody` keeps `null` and drops
+  // `undefined`, so clearing and leaving-alone stay distinguishable.
+  import: caseFieldsShape.import
+    .unwrap()
+    .nullable()
+    .optional()
+    .describe(
+      "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
+    ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
 
@@ -8445,8 +8735,47 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
       ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
   })
   .describe(
     "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
@@ -8986,6 +9315,109 @@ export const restoreEnvironmentOperation: PlatformOperation<
       },
       { signal }
     );
+  },
+};
+
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// Read-only, for the same reason as plugins: authoring is a project-admin app
+// flow. These exist because skill IDs are load-bearing on this very surface —
+// `set_eval_suite_environments`, an environment's `skillSelection`, and the
+// CLI's `--compose-skill` all demand one — and before this there was no
+// programmatic way to obtain one. The answer was "open the web app", which is
+// not an answer an unattended caller can act on.
+
+const listProjectSkillsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListProjectSkillsInput = z.infer<typeof listProjectSkillsInput>;
+
+export type ListProjectSkillsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformProjectSkill[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listProjectSkillsOperation: PlatformOperation<
+  ListProjectSkillsInput,
+  ListProjectSkillsResult
+> = {
+  name: "list_project_skills",
+  title: "List MCPJam project skills",
+  description:
+    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open one of these rows at."
+  ),
+  inputSchema: listProjectSkillsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listProjectSkills(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getProjectSkillInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  skillId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Skill ID, from list_project_skills."),
+});
+export type GetProjectSkillInput = z.infer<typeof getProjectSkillInput>;
+
+export type GetProjectSkillResult = {
+  project: SelectedProjectInfo;
+  skill: PlatformProjectSkillDetail;
+};
+
+export const getProjectSkillOperation: PlatformOperation<
+  GetProjectSkillInput,
+  GetProjectSkillResult
+> = {
+  name: "get_project_skill",
+  title: "Get an MCPJam project skill",
+  description:
+    "Read one Cloud Skill, including its SKILL.md body. Useful for confirming which body a skill currently holds before pinning it into a run — the body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which version you are looking at.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open this row at."
+  ),
+  inputSchema: getProjectSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const skill = await client.getProjectSkill(
+      { projectId: project.id, skillId: input.skillId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), skill };
   },
 };
 
@@ -12922,6 +13354,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   renderServerWidgetOperation,
   getServerPromptOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -13003,6 +13438,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   restoreEnvironmentOperation,
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listImagesOperation,
   getImageOperation,
   createImageOperation,

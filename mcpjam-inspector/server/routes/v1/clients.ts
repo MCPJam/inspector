@@ -441,7 +441,26 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
 }
 
 /**
- * Return `config` with `modelId` TRIMMED.
+ * The keys a config READ adds that a config WRITE cannot accept.
+ *
+ * `GET /clients/:id` projects the stored row, which carries the config's own
+ * row id and its schema version. Neither is in `hostConfigInputV2Validator`,
+ * and that validator is a strict `v.object`, so handing a freshly-read config
+ * straight back — the obvious `get`, edit one field, `update` loop, and what
+ * every CLI/agent caller actually does — was rejected. Convex's
+ * argument-validation error is deliberately not forwarded (it echoes the
+ * arguments), so the caller got only "Client write rejected by the platform"
+ * with no field named: a 500 for a body the API had just emitted.
+ *
+ * Stripped rather than named in a 400, because these are OUR derived fields,
+ * not the caller's mistake. A genuinely unknown key still fails closed and
+ * still logs, which is the behaviour the write translator documents.
+ */
+const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
+
+/**
+ * Return `config` ready for the Convex write: `modelId` TRIMMED, and the
+ * read-only projection keys dropped so `get` output round-trips into `update`.
  *
  * The rest of the config is passed through opaquely, but the model cannot be:
  * it is stored verbatim and compared verbatim downstream, so a padded
@@ -450,12 +469,15 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
  * `normalizeModelId`, which is the other write boundary this value reaches.
  * Only ever a trim; the id itself is never rewritten.
  */
-function withTrimmedModelId(
+function normalizeConfigForWrite(
   config: Record<string, unknown>
 ): Record<string, unknown> {
-  return typeof config.modelId === "string"
-    ? { ...config, modelId: config.modelId.trim() }
-    : config;
+  const normalized: Record<string, unknown> = { ...config };
+  for (const key of READ_ONLY_CONFIG_KEYS) delete normalized[key];
+  if (typeof normalized.modelId === "string") {
+    normalized.modelId = normalized.modelId.trim();
+  }
+  return normalized;
 }
 
 const createClientSchema = z
@@ -747,7 +769,7 @@ async function createHandler(c: Context, surface: Surface) {
   // to one of the two ways of reaching it. A template is authored data too, and
   // one carrying a padded `modelId` would otherwise persist an id that no
   // downstream verbatim comparison recognizes.
-  const input = withTrimmedModelId(
+  const input = normalizeConfigForWrite(
     body.template
       ? await resolveHostTemplateInput(body.template, body.theme)
       : body.config!
@@ -838,7 +860,7 @@ async function updateClientHandler(c: Context) {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          input: withTrimmedModelId(body.config),
+          input: normalizeConfigForWrite(body.config),
           ...tokens,
         } as any
       );
@@ -880,7 +902,7 @@ async function updateHostAliasHandler(c: Context) {
       await readHostDetail(token, projectId, hostId),
       body.config
     );
-    updateArgs.input = withTrimmedModelId(body.config);
+    updateArgs.input = normalizeConfigForWrite(body.config);
   }
   const convexClient = createConvexClient(token);
   try {

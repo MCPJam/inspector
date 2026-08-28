@@ -1088,6 +1088,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -1127,6 +1128,7 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
@@ -1854,6 +1856,9 @@ describe("operation catalog consistency", () => {
     call_server_tool: { server: "s", toolName: "t" },
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
+    list_server_skills: { server: "s" },
+    get_server_skill: { server: "s", uri: "u" },
+    read_server_skill_file: { server: "s", skillUri: "u", resourceUri: "r" },
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
@@ -2025,6 +2030,8 @@ describe("operation catalog consistency", () => {
     get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },

@@ -41,6 +41,7 @@ import App, {
   TasksRoute,
   ToolsRoute,
   TracingRoute,
+  WebmcpInspectorRoute,
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
@@ -166,6 +167,7 @@ const ROUTE_ELEMENTS: Record<
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },
+  webmcp: { element: <WebmcpInspectorRoute /> },
   chat: { element: <ChatAliasRoute /> },
   // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
   // Playground instead of the router's `*` catch-all (now an explicit

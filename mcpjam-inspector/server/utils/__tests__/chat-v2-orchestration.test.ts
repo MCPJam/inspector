@@ -1312,7 +1312,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
       })
-    ).rejects.toThrow(/collides with an existing app, UI, or skill tool/);
+    ).rejects.toThrow(/collides with an existing app, UI, page, or skill tool/);
   });
 
   it("exempts UI tools from progressive discovery (never cataloged, always advertised)", async () => {
@@ -1475,6 +1475,11 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
     expect(result.allTools).not.toHaveProperty("loadSkill");
   });
 
+  // The throw is a CALLER contract (the two delivery channels are disjoint), not
+  // a claim that a harness cannot take pinned skills — it can, and does, as
+  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and pass
+  // `{ kind: "none" }` here; `resolveIterationSkillsSource` is the eval side of
+  // that, and `sessionSimulation/runner.ts` the swarm side.
   it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
@@ -1491,7 +1496,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
           ],
         },
       })
-    ).rejects.toThrow(/Pinned skills are not supported on harness/);
+    ).rejects.toThrow(/receive pinned skills on box via `pinnedHarnessSkills`/);
   });
 
   it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {

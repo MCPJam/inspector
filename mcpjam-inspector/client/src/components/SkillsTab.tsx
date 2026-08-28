@@ -71,12 +71,28 @@ interface SkillsTabProps {
    * has no catalog rather than a stale one.
    */
   mcpServers?: ServerSkillsSectionServer[];
+  /**
+   * Whether the project's own (Cloud) skill store is released to this user —
+   * the `skills-enabled` PostHog gate.
+   *
+   * Skills over MCP ships on its own schedule: it is a PROTOCOL capability
+   * served by whatever the user connected, gated only by mutual declaration,
+   * and its routes carry no product flag. Cloud Skills are an MCPJam feature
+   * whose authoring the backend gates separately. So `false` here hides the
+   * project store entirely — tree, count, and upload — and leaves the tab
+   * showing only what connected servers serve. It does NOT hide the tab.
+   *
+   * Defaults to true so local mode, which reads a real filesystem and carries
+   * no such gate, is unaffected.
+   */
+  cloudSkillsEnabled?: boolean;
 }
 
 export function SkillsTab({
   projectId,
   computersEnabled,
   mcpServers,
+  cloudSkillsEnabled = true,
 }: SkillsTabProps = {}) {
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
@@ -90,6 +106,17 @@ export function SkillsTab({
   // page would silently list empty "local" skills and uploads/deletes would
   // 404. Treat cloud-without-project as an explicit not-ready state instead.
   const cloudNotReady = isCloudMode && !projectId;
+  /**
+   * The project store is not on this surface at all.
+   *
+   * Folds the two reasons together deliberately: whether cloud skills are
+   * unaddressable (no project) or unreleased (`skills-enabled` off), the
+   * consequence is identical — never call the project-store API, and never
+   * offer authoring. Keeping them apart would mean auditing every call site
+   * twice for one rule.
+   */
+  const cloudStoreHidden = isCloudMode && !cloudSkillsEnabled;
+  const cloudUnavailable = cloudNotReady || cloudStoreHidden;
   const skillsSource: SkillsSource = useMemo(
     () =>
       isCloudMode && projectId
@@ -107,6 +134,15 @@ export function SkillsTab({
   const [isDeleting, setIsDeleting] = useState(false);
 
   // File browsing state - now stores files per skill
+  /**
+   * Bumped by the header's refresh control.
+   *
+   * The server-skills rows have no refresh of their own — they sit in the list
+   * without a group header to hang one on — so the tab's single control has to
+   * reach both halves. It is a counter rather than a callback because the
+   * section owns its own per-connection fetch state.
+   */
+  const [refreshToken, setRefreshToken] = useState(0);
   const [skillFiles, setSkillFiles] = useState<Record<string, SkillFile[]>>({});
   const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
@@ -196,9 +232,10 @@ export function SkillsTab({
       setSelectedSkill(null);
       setFileContent(null);
     }
-    // Never call the skills API in cloud mode without a project — see
-    // `cloudNotReady`. Show an empty, explicit state rather than a local fallback.
-    if (cloudNotReady) {
+    // Never call the skills API in cloud mode without a project, or when the
+    // project store is unreleased — see `cloudUnavailable`. Show an empty,
+    // explicit state rather than a local fallback.
+    if (cloudUnavailable) {
       setSkills([]);
       setSelectedSkillName("");
       setSelectedSkill(null);
@@ -453,37 +490,55 @@ export function SkillsTab({
                 <h2 className="text-xs font-semibold text-foreground">
                   Skills
                 </h2>
-                <Badge variant="secondary" className="text-xs font-mono">
-                  {skills.length}
-                </Badge>
+                {/* Counts the PROJECT store only. Server skills are counted
+                    per origin inside their own section, because one number
+                    spanning both would imply a single namespace they do not
+                    share — a name here, a URI there. */}
+                {!cloudStoreHidden && (
+                  <Badge variant="secondary" className="text-xs font-mono">
+                    {skills.length}
+                  </Badge>
+                )}
               </div>
+              {/* Upload and the Local/Cloud toggle act on the project store,
+                  so they go with it. Refresh does NOT: it re-reads the server
+                  skills too, and those are exactly what is on screen when the
+                  project store is hidden. */}
               <div className="flex items-center gap-1">
-                {showSourceToggle && (
-                  <ViewModeSelector
-                    value={source}
-                    ariaLabel="Skills source"
-                    indicatorId="skills-source"
-                    onChange={(next) => setSource(next)}
-                    options={[
-                      { value: "local", label: "Local" },
-                      { value: "cloud", label: "Cloud" },
-                    ]}
-                    className="mr-1"
-                  />
+                {!cloudStoreHidden && (
+                  <>
+                    {showSourceToggle && (
+                      <ViewModeSelector
+                        value={source}
+                        ariaLabel="Skills source"
+                        indicatorId="skills-source"
+                        onChange={(next) => setSource(next)}
+                        options={[
+                          { value: "local", label: "Local" },
+                          { value: "cloud", label: "Cloud" },
+                        ]}
+                        className="mr-1"
+                      />
+                    )}
+                    <Button
+                      onClick={() => setIsUploadDialogOpen(true)}
+                      variant="ghost"
+                      size="sm"
+                      title="Upload skill"
+                      disabled={cloudUnavailable}
+                    >
+                      <Plus className="h-3 w-3 cursor-pointer" />
+                    </Button>
+                  </>
                 )}
                 <Button
-                  onClick={() => setIsUploadDialogOpen(true)}
+                  onClick={() => {
+                    void fetchSkills();
+                    setRefreshToken((n) => n + 1);
+                  }}
                   variant="ghost"
                   size="sm"
-                  title="Upload skill"
-                  disabled={cloudNotReady}
-                >
-                  <Plus className="h-3 w-3 cursor-pointer" />
-                </Button>
-                <Button
-                  onClick={() => fetchSkills()}
-                  variant="ghost"
-                  size="sm"
+                  title="Refresh skills"
                   disabled={fetchingSkills}
                 >
                   <RefreshCw
@@ -499,7 +554,7 @@ export function SkillsTab({
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
                 <div className="p-2">
-                  {fetchingSkills ? (
+                  {cloudStoreHidden ? null : fetchingSkills ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
                         <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
@@ -517,7 +572,7 @@ export function SkillsTab({
                         variant="outline"
                         size="sm"
                         onClick={() => setIsUploadDialogOpen(true)}
-                        disabled={cloudNotReady}
+                        disabled={cloudUnavailable}
                       >
                         <Plus className="h-3 w-3 mr-2" />
                         Upload your first skill
@@ -536,12 +591,16 @@ export function SkillsTab({
                       onExpandSkill={handleExpandSkill}
                     />
                   )}
-                  {/* Skills over MCP (SEP-2640). Rendered outside the tree:
+                  {/* Skills over MCP (SEP-2640). Rendered outside the tree —
                       these are identified by URI rather than by name and carry
-                      a verification state the tree has no vocabulary for. */}
+                      a verification state the tree has no vocabulary for — but
+                      NOT under a heading of their own: each row carries its
+                      origin server instead, so provenance travels with the
+                      skill rather than with the reader's scroll position. */}
                   <ServerSkillsSection
                     servers={mcpServers ?? []}
                     {...(projectId ? { projectId } : {})}
+                    refreshToken={refreshToken}
                     onOpenSkill={handleOpenServerSkill}
                   />
                 </div>
