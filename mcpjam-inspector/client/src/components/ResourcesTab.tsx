@@ -203,13 +203,6 @@ export function ResourcesTab({
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
-  /**
-   * Every pagination cursor this listing has already followed. `""` is a valid
-   * MCP cursor (2026-07-28 `server/utilities/pagination`) and no longer ends
-   * the walk, so a server that reissues one has to be caught here or the
-   * infinite scroll would re-append the same page forever.
-   */
-  const seenResourceCursorsRef = useRef<Set<string>>(new Set());
   const [loadingMore, setLoadingMore] = useState(false);
   const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
     ServedFromCache | undefined
@@ -280,7 +273,6 @@ export function ResourcesTab({
     setResourceContent(null);
     setError("");
     setNextCursor(undefined);
-    seenResourceCursorsRef.current = new Set();
     setTemplates([]);
     setSelectedTemplate("");
     setTemplateContent(null);
@@ -330,7 +322,6 @@ export function ResourcesTab({
       setSelectedResource("");
       setResourceContent(null);
       setNextCursor(undefined);
-      seenResourceCursorsRef.current = new Set();
       // Clear stale provenance at the start of a non-append (re)fetch so a
       // failed/in-flight refresh cannot keep showing the previous badge.
       setResourcesServedFromCache(undefined);
@@ -360,14 +351,13 @@ export function ResourcesTab({
         }
       }
       // The response body is untyped, so a non-string `nextCursor` is not a
-      // cursor. A cursor already followed means the server stopped making
-      // progress — treat the listing as finished rather than re-appending it.
-      const rawNext =
-        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
-      const nextIsProgress =
-        rawNext !== undefined && !seenResourceCursorsRef.current.has(rawNext);
-      if (nextIsProgress) seenResourceCursorsRef.current.add(rawNext);
-      setNextCursor(nextIsProgress ? rawNext : undefined);
+      // cursor and ends the listing. A repeated cursor is NOT an ending: the
+      // value is opaque, and a server may legally reissue one constant
+      // token — `""` included — for every page. Paging is user-driven here, so
+      // there is nothing to spin unattended.
+      setNextCursor(
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined,
+      );
       setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;

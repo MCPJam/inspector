@@ -127,24 +127,27 @@ describe("collectConnectedHttpServerDoctorState", () => {
     expect(result.checks.tools.status).toBe("ok");
   });
 
-  it("stops on a repeated empty-string cursor instead of spinning to the page cap", async () => {
-    // Before `""` was accepted as a continuation it terminated this loop, so
-    // the drain never needed a cycle guard. Now that it continues, a server
-    // looping on `""` would re-request the identical page up to
-    // MAX_PAGINATION_PAGES times, each with this module's timeout and retry
-    // handling. The guard trips on the SECOND occurrence.
-    const listTools = jest
-      .fn()
-      .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor: "" });
-    const client = createMockClient({ listTools });
+  // A repeated cursor is FOLLOWED, not read as an ending. Comparing two
+  // cursors for equality is a determination based on cursor value, which MCP
+  // 2026-07-28 `server/utilities/pagination` forbids — and a server may
+  // legally reissue one constant token, `""` very much included. The page cap
+  // is the bound, and it errors rather than reporting a partial tool list.
+  it("keeps walking a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-token-forever"]) {
+      const listTools = jest
+        .fn()
+        .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor: constant });
+      const client = createMockClient({ listTools });
 
-    const result = await collectConnectedHttpServerDoctorState(client, {
-      timeout: 4_000,
-    });
+      const result = await collectConnectedHttpServerDoctorState(client, {
+        timeout: 4_000,
+      });
 
-    expect(listTools).toHaveBeenCalledTimes(2);
-    expect(result.checks.tools.status).toBe("error");
-    expect(result.checks.tools.detail).toContain("repeated cursor");
+      // Not truncated at page two.
+      expect(listTools.mock.calls.length).toBeGreaterThan(2);
+      expect(result.checks.tools.status).toBe("error");
+      expect(result.checks.tools.detail).toContain("exceeded");
+    }
   });
 
   it("treats a non-string nextCursor as the end, never as a cursor", async () => {

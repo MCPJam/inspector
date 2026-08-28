@@ -625,12 +625,6 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
   selectItems: (page: TPage) => readonly TItem[]
 ): Promise<TItem[]> {
   const items: TItem[] = [];
-  // Cycle guard. Without it, a server that reissues a cursor it already handed
-  // out re-requests the identical page until the cap — up to
-  // `MAX_PAGINATION_PAGES` round trips, each carrying this module's timeout and
-  // retry handling. `""` joins the set like any other token, so a server
-  // answering `""` forever trips this on the SECOND occurrence.
-  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let pages = 0;
 
@@ -645,19 +639,18 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
     // provided, and that "an empty string is a valid cursor and thus MUST NOT
     // be treated as the end of results". A NON-STRING `nextCursor` is not a
     // cursor at all and still ends the walk.
+    //
+    // There is deliberately NO repeated-cursor guard: comparing two cursors
+    // for equality is itself a determination based on cursor value, and a
+    // server may legally hand back one constant token — `""` included — for
+    // every page. `MAX_PAGINATION_PAGES` is the bound. It costs the same worst
+    // case a distinct-cursor server would produce anyway, so an equality check
+    // would buy almost nothing and break the empty-string case this module is
+    // being fixed for.
     if (typeof page.nextCursor !== "string") {
       return items;
     }
 
-    if (seenCursors.has(page.nextCursor)) {
-      throw new Error(
-        `Detected repeated cursor ${JSON.stringify(
-          page.nextCursor
-        )} while draining ${methodName}.`
-      );
-    }
-
-    seenCursors.add(page.nextCursor);
     cursor = page.nextCursor;
   }
 

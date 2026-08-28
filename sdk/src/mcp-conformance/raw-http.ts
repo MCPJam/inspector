@@ -91,6 +91,17 @@ export type ToolsListWalk = {
  * previous one: a server that alternates `A → B → A` never repeats
  * back-to-back, so a one-step comparison would re-read the same pages until the
  * cap and report the same offending tool dozens of times.
+ *
+ * THIS IS THE ONE PLACE THAT COMPARES CURSOR VALUES, and it is deliberate.
+ * Everywhere else in the codebase a repeated cursor is followed like any other,
+ * because MCP 2026-07-28 `server/utilities/pagination` forbids a client from
+ * making determinations on a cursor's value and a server may legally reissue a
+ * constant token (`""` included) for every page. Here the point is not to
+ * consume the listing but to CHARACTERIZE the server: the repeat is recorded as
+ * its own terminal state and surfaced to the operator. It is never treated as
+ * the end of a complete listing — `repeated-cursor` is not `complete`, and
+ * callers turn it into a "could not run" skip, never a failure — so no check
+ * passes or fails on the strength of this comparison.
  */
 export async function walkToolsList(options: {
   /** First JSON-RPC id; incremented per page. */

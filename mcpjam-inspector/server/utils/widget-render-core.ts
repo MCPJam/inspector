@@ -90,7 +90,6 @@ export async function renderWidgetForRequest(
   // missed).
   let toolMetadata: Record<string, unknown> = {};
   let cursor: string | undefined;
-  const seenCursors = new Set<string>();
   for (let page = 0; page < MAX_TOOL_LIST_PAGES; page++) {
     const { tools, nextCursor } = await mcpClientManager.listTools(
       serverId,
@@ -102,13 +101,15 @@ export async function renderWidgetForRequest(
       toolMetadata = (match._meta ?? {}) as Record<string, unknown>;
       break;
     }
-    // Stop at the last page, or if the server loops a cursor (no progress).
-    // "Last page" means NO cursor — MCP 2026-07-28
+    // Stop at the last page. "Last page" means NO cursor — MCP 2026-07-28
     // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
-    // treated as the end of results, and it joins `seenCursors` like any other
-    // token so a server looping on `""` still stops here.
-    if (typeof nextCursor !== "string" || seenCursors.has(nextCursor)) break;
-    seenCursors.add(nextCursor);
+    // treated as the end of results, and a non-string is not a cursor at all.
+    //
+    // No repeated-cursor guard: comparing two cursors for equality is itself a
+    // determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page.
+    // `MAX_TOOL_LIST_PAGES` is the bound.
+    if (typeof nextCursor !== "string") break;
     cursor = nextCursor;
   }
 

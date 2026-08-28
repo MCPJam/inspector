@@ -1759,11 +1759,10 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
     let truncated = false;
-    // A server that reissues a cursor it already handed out would otherwise
-    // re-request the identical page until the cap. `""` joins this set like
-    // any other token, so a server looping on it stops on the SECOND
-    // occurrence rather than spinning.
-    const seenCursors = new Set<string>();
+    // No repeated-cursor guard: comparing two cursors for equality is itself
+    // a determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The cap below is
+    // the bound, and it already flags the read as incomplete.
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
         // Presence, not truthiness: `""` is a valid MCP continuation cursor.
@@ -1774,13 +1773,6 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       cursor =
         typeof result.nextCursor === "string" ? result.nextCursor : undefined;
       if (cursor === undefined) break;
-      if (seenCursors.has(cursor)) {
-        // Same reporting as the cap: the read is incomplete, so don't let the
-        // half we hold stand in for the set.
-        truncated = true;
-        break;
-      }
-      seenCursors.add(cursor);
       // Hit the cap with tools still pending — don't pretend the report is
       // complete (a later page could hold widgets that change a verdict).
       if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;

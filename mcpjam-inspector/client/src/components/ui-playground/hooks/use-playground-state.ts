@@ -460,11 +460,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         let cursor: string | undefined;
         let pages = 0;
         const maxPages = 25;
-        // A server that reissues a cursor it already handed out would
-        // otherwise re-request the identical page until `maxPages`. `""` joins
-        // this set like any other token, so a server looping on it stops on
-        // the SECOND occurrence.
-        const seenCursors = new Set<string>();
 
         do {
           const data = await listTools({ serverId: serverName, cursor });
@@ -476,18 +471,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           Object.assign(aggregatedTools, dictionary);
           Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
           // The response body is untyped, so a non-string `nextCursor` is not
-          // a cursor and must not be forwarded as one.
+          // a cursor and must not be forwarded as one. A REPEATED cursor is
+          // not an ending either — the value is opaque, and a server may
+          // legally reissue one constant token for every page; `maxPages`
+          // below is the bound, and hitting it raises a visible error rather
+          // than passing off a partial list as complete.
           cursor =
             typeof data.nextCursor === "string" ? data.nextCursor : undefined;
           pages += 1;
-
-          if (cursor !== undefined) {
-            if (seenCursors.has(cursor)) {
-              cursor = undefined;
-            } else {
-              seenCursors.add(cursor);
-            }
-          }
 
           // Presence, not truthiness: MCP 2026-07-28
           // `server/utilities/pagination` makes `""` a valid cursor that MUST

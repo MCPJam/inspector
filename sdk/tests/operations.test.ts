@@ -472,20 +472,27 @@ describe("listAllTools", () => {
     }
   });
 
-  it('trips the repeated-cursor guard when a server loops on ""', async () => {
-    const manager = createMockManager({
-      listTools: jest.fn().mockResolvedValue({
-        tools: [{ name: "echo" }],
-        nextCursor: "",
-      }),
-    });
+  // A server may legally reissue ONE CONSTANT TOKEN for every page: MCP
+  // 2026-07-28 `server/utilities/pagination` forbids reading anything off a
+  // cursor's value beyond whether one was provided, and comparing two cursors
+  // for equality is exactly that. So a repeated cursor is walked like any
+  // other, and the page cap — not a cycle check — is the bound.
+  it("keeps walking a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-token-forever"]) {
+      const manager = createMockManager({
+        listTools: jest.fn().mockResolvedValue({
+          tools: [{ name: "echo" }],
+          nextCursor: constant,
+        }),
+      });
 
-    // `""` joins the seen-cursor set like any other token, so the second
-    // occurrence throws rather than spinning to the 1000-page cap.
-    await expect(listAllTools(manager, { serverId: "srv" })).rejects.toThrow(
-      'Detected repeated cursor "" while draining tools/list.',
-    );
-    expect(manager.listTools).toHaveBeenCalledTimes(2);
+      // Not truncated at page two — walked until OUR OWN limit says stop, and
+      // the stop is a throw, so a partial listing is never returned as whole.
+      await expect(listAllTools(manager, { serverId: "srv" })).rejects.toThrow(
+        "Exceeded 1000 pages while draining tools/list.",
+      );
+      expect(manager.listTools).toHaveBeenCalledTimes(1000);
+    }
   });
 });
 

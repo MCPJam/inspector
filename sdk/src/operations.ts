@@ -522,7 +522,6 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
   pickItems: (page: TPage) => TItem[]
 ): Promise<TItem[]> {
   const items: TItem[] = [];
-  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let pagesFetched = 0;
 
@@ -543,21 +542,21 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
     // `server/utilities/pagination` states that a client "MUST NOT" decide
     // anything from a cursor's value beyond whether a non-null one was
     // provided, and that "an empty string is a valid cursor and thus MUST NOT
-    // be treated as the end of results". `""` therefore continues, is fed back
-    // verbatim, and joins `seenCursors` like any other token — so a server that
-    // answers `""` forever trips the repeated-cursor guard on the second
-    // occurrence rather than spinning to the page cap.
+    // be treated as the end of results".
+    //
+    // That cuts both ways, and it is why there is no repeated-cursor guard
+    // here. Comparing two cursors for equality IS a determination based on
+    // cursor value. Nothing requires a server to change its token between
+    // pages — one holding its state server-side may legally return a single
+    // constant handle — and a server whose constant handle is `""` is exactly
+    // the case the rule above exists to protect. The page cap is the bound
+    // instead: it limits OUR work rather than interpreting somebody else's
+    // token, and it bounds the adversarial server (which would emit distinct
+    // cursors forever, defeating any equality check) identically.
     if (nextCursor === undefined) {
       break;
     }
 
-    if (seenCursors.has(nextCursor)) {
-      throw new Error(
-        `Detected repeated cursor "${nextCursor}" while draining ${methodName}.`
-      );
-    }
-
-    seenCursors.add(nextCursor);
     cursor = nextCursor;
   }
 

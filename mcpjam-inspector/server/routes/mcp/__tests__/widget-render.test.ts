@@ -338,33 +338,26 @@ describe("POST /api/mcp/widget-render", () => {
       });
     });
 
-    it("stops draining if the server loops an empty-string cursor", async () => {
-      // `""` joins the seen-cursor set like any other token, so a server
-      // answering it forever stops on the second occurrence.
-      mcpClientManager.listTools.mockResolvedValue({
-        tools: [{ name: "x", _meta: {} }],
-        nextCursor: "",
-      });
-      const res = await postRender(app, {
-        serverId: SERVER_ID,
-        toolName: TOOL_NAME,
-      });
-      expect((await res.json()).status).toBe("no_ui_resource");
-      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
-    });
-
-    it("stops draining if the server loops the same cursor", async () => {
-      // A server that returns the same cursor forever must not hang the gate.
-      mcpClientManager.listTools.mockResolvedValue({
-        tools: [{ name: "x", _meta: {} }],
-        nextCursor: "same",
-      });
-      const res = await postRender(app, {
-        serverId: SERVER_ID,
-        toolName: TOOL_NAME,
-      });
-      expect((await res.json()).status).toBe("no_ui_resource");
-      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
+    // A repeated cursor is FOLLOWED, not read as an ending: MCP 2026-07-28
+    // `server/utilities/pagination` forbids reading anything off a cursor's
+    // value beyond whether one was provided, and a server may legally reissue
+    // one constant token — `""` included. MAX_TOOL_LIST_PAGES is what bounds
+    // the gate.
+    it("keeps draining a constant cursor and stops at the page cap", async () => {
+      for (const constant of ["", "same"]) {
+        mcpClientManager.listTools.mockClear();
+        mcpClientManager.listTools.mockResolvedValue({
+          tools: [{ name: "x", _meta: {} }],
+          nextCursor: constant,
+        });
+        const res = await postRender(app, {
+          serverId: SERVER_ID,
+          toolName: TOOL_NAME,
+        });
+        expect((await res.json()).status).toBe("no_ui_resource");
+        // Not stopped at page two; bounded by our own cap instead.
+        expect(mcpClientManager.listTools.mock.calls.length).toBeGreaterThan(2);
+      }
     });
   });
 

@@ -774,7 +774,6 @@ export async function discoverOpenAIImportedSkills(
   // A server that reissues a cursor it already handed out would otherwise
   // re-request the identical page until the cap. `""` joins this set like any
   // other token, so a server looping on it stops on the SECOND occurrence.
-  const seenCursors = new Set<string>();
 
   for (let page = 0; page < MAX_SKILL_LIST_PAGES; page += 1) {
     const call = await callJsonRpc(
@@ -859,14 +858,12 @@ export async function discoverOpenAIImportedSkills(
     // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
     // read as the end of results. A non-string `nextCursor` is not a cursor at
     // all (`asString` already reduced it to undefined) and still ends it.
+    //
+    // No repeated-cursor guard: comparing two cursors for equality is itself a
+    // determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The page cap is the
+    // bound, and it bounds the distinct-cursor case identically.
     if (cursor === undefined) break;
-    if (seenCursors.has(cursor)) {
-      // Reported the same way as the cap: the walk did not reach the end, so
-      // the listing must not read as complete.
-      paginationCapHit = true;
-      break;
-    }
-    seenCursors.add(cursor);
     if (page === MAX_SKILL_LIST_PAGES - 1) paginationCapHit = true;
   }
 

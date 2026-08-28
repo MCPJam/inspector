@@ -244,14 +244,6 @@ export function ToolsTab({
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  /**
-   * Every pagination cursor this listing has already followed. `""` is a valid
-   * MCP cursor (2026-07-28 `server/utilities/pagination`) and no longer ends
-   * the walk, so a server that reissues one has to be caught here or the
-   * infinite scroll would re-append the same page forever. Cleared with the
-   * rest of the loaded-tool state.
-   */
-  const seenToolCursorsRef = useRef<Set<string>>(new Set());
   const [servedFromCache, setServedFromCache] = useState<
     ServedFromCache | undefined
   >(undefined);
@@ -368,7 +360,6 @@ export function ToolsTab({
       setTaskCapabilities(null);
     }
     setCursor(undefined);
-    seenToolCursorsRef.current = new Set();
     // SEP-2549 provenance describes the currently displayed list; once that
     // list is cleared (disconnect, server switch, or a reset before a
     // refresh) the badge must not survive to describe stale/other-server data.
@@ -557,14 +548,13 @@ export function ToolsTab({
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       // The response body is untyped, so a non-string `nextCursor` is not a
-      // cursor. A cursor already followed means the server stopped making
-      // progress — treat the listing as finished rather than re-reading it.
-      const rawNext =
-        typeof data.nextCursor === "string" ? data.nextCursor : undefined;
-      const nextIsProgress =
-        rawNext !== undefined && !seenToolCursorsRef.current.has(rawNext);
-      if (nextIsProgress) seenToolCursorsRef.current.add(rawNext);
-      setCursor(nextIsProgress ? rawNext : undefined);
+      // cursor and ends the listing. A repeated cursor is NOT an ending: the
+      // value is opaque, and a server may legally reissue one constant
+      // token — `""` included — for every page. Paging is user-driven here, so
+      // there is nothing to spin unattended.
+      setCursor(
+        typeof data.nextCursor === "string" ? data.nextCursor : undefined,
+      );
       // SEP-2549 provenance: only ever set on an actual hit — a non-hit
       // fetch clears any stale badge from a previous cached response.
       setServedFromCache(data.servedFromCache);

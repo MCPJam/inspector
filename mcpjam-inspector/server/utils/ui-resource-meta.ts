@@ -427,10 +427,6 @@ export async function findListingMetaForUri(
 ): Promise<Record<string, unknown> | undefined> {
   try {
     let cursor: string | undefined;
-    // A server that keeps handing back a cursor it already issued would
-    // otherwise spin until the page cap, turning one broken server into
-    // `LISTING_LOOKUP_MAX_PAGES` pointless round-trips on every render.
-    const seenCursors = new Set<string>();
     for (let page = 0; page < LISTING_LOOKUP_MAX_PAGES; page++) {
       const listing = (await manager.listResources(
         serverId,
@@ -453,25 +449,16 @@ export async function findListingMetaForUri(
       // paginating — either way there is nothing further to read. "Done" means
       // NO cursor: MCP 2026-07-28 `server/utilities/pagination` makes `""` a
       // valid cursor that MUST NOT be treated as the end of results, so an
-      // empty string keeps the walk going (and joins `seenCursors`, so a
-      // server looping on `""` still trips the repeated-cursor guard below).
+      // empty string keeps the walk going.
+      //
+      // No repeated-cursor guard: comparing two cursors for equality is itself
+      // a determination based on cursor value, and a server may legally
+      // reissue one constant token — `""` included — for every page.
+      // `LISTING_LOOKUP_MAX_PAGES` is the bound, and hitting it is reported
+      // through `onSkipped` below rather than passing as "no declaration".
       if (match || typeof nextCursor !== "string") {
         return undefined;
       }
-      if (seenCursors.has(nextCursor)) {
-        // Report the fact, not the value: pagination cursors are opaque
-        // server-generated tokens and implementations encode internal state
-        // in them. "The server repeated a cursor" is the whole diagnostic;
-        // the token itself adds nothing and puts server-side identifiers
-        // into our debug logs.
-        onSkipped?.(
-          `resources/list repeated a pagination cursor after ${
-            page + 1
-          } page(s) — stopping`
-        );
-        return undefined;
-      }
-      seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
     onSkipped?.(

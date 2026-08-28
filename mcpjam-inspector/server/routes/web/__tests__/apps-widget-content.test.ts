@@ -645,33 +645,27 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     expect(cursors).toEqual([undefined, ""]);
   });
 
-  it("stops paginating when the server repeats an empty-string cursor", async () => {
-    // `""` joins the seen-cursor set like any other token, so it is caught by
-    // the repeated-cursor guard rather than spinning to the page cap.
-    mockResource({});
-    managerState.listResources.mockImplementation(async () => ({
-      resources: [{ uri: "ui://other/a.html" }],
-      nextCursor: "",
-    }));
+  // A repeated cursor is FOLLOWED, not read as an ending: MCP 2026-07-28
+  // `server/utilities/pagination` forbids reading anything off a cursor's
+  // value beyond whether one was provided, and a server may legally reissue
+  // one constant token — `""` included. LISTING_LOOKUP_MAX_PAGES bounds it.
+  it("keeps paginating a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-cursor-forever"]) {
+      managerState.listResources.mockClear();
+      mockResource({});
+      managerState.listResources.mockImplementation(async () => ({
+        resources: [{ uri: "ui://other/a.html" }],
+        nextCursor: constant,
+      }));
 
-    const res = await postWidgetContent(makeApp());
-    expect(res.status).toBe(200);
-    expect(managerState.listResources).toHaveBeenCalledTimes(2);
-  });
-
-  it("stops paginating when the server repeats a cursor", async () => {
-    // A server that keeps reissuing the same cursor would otherwise spin to
-    // the page cap on every single render.
-    mockResource({});
-    managerState.listResources.mockImplementation(async () => ({
-      resources: [{ uri: "ui://other/a.html" }],
-      nextCursor: "same-cursor-forever",
-    }));
-
-    const res = await postWidgetContent(makeApp());
-    expect(res.status).toBe(200);
-    // First page, then one more with the cursor — then the repeat is caught.
-    expect(managerState.listResources).toHaveBeenCalledTimes(2);
+      const res = await postWidgetContent(makeApp());
+      expect(res.status).toBe(200);
+      // Not stopped at page two, and still bounded — the App renders rather
+      // than hanging behind an unbounded enumeration.
+      const calls = managerState.listResources.mock.calls.length;
+      expect(calls).toBeGreaterThan(2);
+      expect(calls).toBeLessThanOrEqual(20);
+    }
   });
 
   it("caps the pagination walk instead of enumerating a huge catalog", async () => {
@@ -681,8 +675,6 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
         { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
       ],
     });
-    // Distinct cursors each time, so this exercises the page cap rather than
-    // the repeated-cursor guard.
     let page = 0;
     managerState.listResources.mockImplementation(async () => ({
       resources: [{ uri: "ui://other/a.html" }],

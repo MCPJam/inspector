@@ -111,28 +111,28 @@ describe("checkHostCompatibilityOperation — pagination", () => {
     expect(result.unknownDimensions).toEqual([]);
   });
 
-  it("stops and reports truncated when a server loops an empty-string cursor", async () => {
-    // No repeated-cursor guard existed here before `""` became a
-    // continuation, so a looping server would have re-requested the same page
-    // up to HOST_COMPAT_TOOLS_PAGE_CAP times.
-    const seen: Array<string | undefined> = [];
-    const client = makePagingClient(
-      () => ({ items: [{ name: "a", _meta: {} }], nextCursor: "" }),
-      seen,
-    );
+  // A repeated cursor is FOLLOWED, not read as an ending — comparing two
+  // cursors for equality is a determination based on cursor value, which the
+  // spec forbids, and a constant token (`""` included) is legal. The page cap
+  // is the bound, and hitting it demotes the verdicts rather than certifying a
+  // listing the walk never finished.
+  it("keeps walking a constant cursor to the page cap and reports the read as incomplete", async () => {
+    for (const constant of ["", "same-token-forever"]) {
+      const seen: Array<string | undefined> = [];
+      const client = makePagingClient(
+        () => ({ items: [{ name: "a", _meta: {} }], nextCursor: constant }),
+        seen,
+      );
 
-    const result = await checkHostCompatibilityOperation.execute(
-      { project: "Proj", server: "Echo" },
-      { client },
-    );
+      const result = await checkHostCompatibilityOperation.execute(
+        { project: "Proj", server: "Echo" },
+        { client },
+      );
 
-    // Two requests, not HOST_COMPAT_TOOLS_PAGE_CAP of them — the guard tripped
-    // on the second occurrence of `""`.
-    expect(seen).toEqual([undefined, ""]);
-    // And the stop is not silent: an incomplete read marks the tool list
-    // unknown, which demotes every `works` verdict rather than certifying a
-    // listing this walk never finished.
-    expect(result.unknownDimensions.length).toBeGreaterThan(0);
+      // Not truncated at page two; bounded by our own cap instead.
+      expect(seen.length).toBeGreaterThan(2);
+      expect(result.unknownDimensions.length).toBeGreaterThan(0);
+    }
   });
 });
 
