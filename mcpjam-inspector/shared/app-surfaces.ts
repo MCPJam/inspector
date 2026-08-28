@@ -759,6 +759,33 @@ export const APP_SURFACES = [
     },
     showInAtlas: true,
   },
+  {
+    id: "webmcp",
+    scope: "project",
+    canonicalPath: "/webmcp",
+    routePatterns: ["webmcp"],
+    navSegments: ["webmcp"],
+    title: "WebMCP",
+    purpose:
+      "Inspect a live web page's WebMCP tools: what it registers, what they accept, and what they return when invoked.",
+    userActivities: [
+      "Open a page in a managed browser and watch the tools it registers",
+      "Invoke a page tool with structured input and read its result",
+      "Review the activity timeline across navigations, with screenshots",
+    ],
+    // The browser runs on the machine running this inspector, so a hosted
+    // replica has nothing to open. The routes are local-only for the same
+    // reason; this keeps the tab from appearing where it cannot work.
+    hostedBlocked: true,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Drives a live third-party web page; the in-app agent must not operate someone's site, and page output is untrusted.",
+    },
+    // Off until rollout: the atlas is static, so `true` would advertise a
+    // flag-hidden surface to the agent before anyone can reach it.
+    showInAtlas: false,
+  },
 ] as const satisfies readonly AppSurfaceManifest[];
 
 /**

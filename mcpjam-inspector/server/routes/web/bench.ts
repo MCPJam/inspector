@@ -754,6 +754,7 @@ const SNAPSHOT_MAX_BYTES = 512 * 1024;
  * before. Counted so the bound holds for the array actually sent rather than
  * for the entries measured in isolation.
  */
+const SNAPSHOT_ARRAY_FRAMING_BYTES = 2;
 const SNAPSHOT_ENTRY_FRAMING_BYTES = 1;
 
 interface ToolSnapshot {
@@ -765,7 +766,7 @@ interface ToolSnapshot {
 
 function buildToolSnapshot(tools: unknown[]): ToolSnapshot {
   const entries: Array<Record<string, unknown>> = [];
-  let bytes = 0;
+  let bytes = SNAPSHOT_ARRAY_FRAMING_BYTES;
   let truncated = false;
 
   for (const raw of tools) {
@@ -795,7 +796,7 @@ function buildToolSnapshot(tools: unknown[]): ToolSnapshot {
     // times the size of a bound that calls itself bytes.
     const size =
       Buffer.byteLength(JSON.stringify(entry), "utf8") +
-      SNAPSHOT_ENTRY_FRAMING_BYTES;
+      (entries.length > 0 ? SNAPSHOT_ENTRY_FRAMING_BYTES : 0);
     if (bytes + size > SNAPSHOT_MAX_BYTES) {
       truncated = true;
       break;

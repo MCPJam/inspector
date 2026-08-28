@@ -98,6 +98,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -1483,6 +1486,20 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   },
   {
     operation: readServerResourceOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listServerSkillsOperation, tier: "direct" },
+  {
+    // A skill body is instructions written by a third party, aimed at a model.
+    // That is the same untrusted-content problem as a resource or a prompt, and
+    // more pointed: the content's whole purpose is to be acted on.
+    operation: getServerSkillOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: readServerSkillFileOperation,
     tier: "direct",
     promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
   },

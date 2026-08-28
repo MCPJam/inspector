@@ -184,6 +184,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow", scope: "project" },
   { path: "tracing", kind: "screen", surfaceId: "tracing", scope: "project" },
+  { path: "webmcp", kind: "screen", surfaceId: "webmcp", scope: "project" },
   // `ChatAliasRoute` is a `<Navigate replace>` — it renders nothing of its
   // own, exactly like `client-config`. `chat` survives as a nav SEGMENT
   // (normalized to `playground`), which is a separate question from whether

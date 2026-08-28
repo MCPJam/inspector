@@ -3022,6 +3022,7 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(updated.isNegative, false);
     assert.equal(updated.checks, null);
     assert.equal(updated.expectedOutput, "");
+    assert.equal(updated.intent, null);
   });
 
   test("case bodies carry the converter's claim, and clear it on re-sync", () => {
@@ -3050,6 +3051,16 @@ describe("file-owned case bodies and idempotency", () => {
     // "leave the stored value" — so a file whose author deleted the import
     // block would otherwise re-sync onto a row still carrying the old claim.
     assert.equal(fileCaseToUpdateBody(plain).import, null);
+  });
+
+  test("case bodies preserve an authored intent and clear a removed one", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const labelled = { ...loaded.resolved.cases[0], intent: "refund" };
+    assert.equal(fileCaseToCreateBody(labelled).intent, "refund");
+    assert.equal(fileCaseToUpdateBody(labelled).intent, "refund");
+    assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).intent, null);
   });
 
   test("derived idempotency keys differ when run knobs differ", () => {

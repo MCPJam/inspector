@@ -1,7 +1,10 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentSchema,
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
@@ -210,6 +213,10 @@ export const RunEvalsRequestSchema = z.object({
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
         expectedOutput: z.string().optional(),
+        // Optional analytics label. This authoring/run shape only creates or
+        // updates from a complete test definition, so it carries the stored
+        // string form; only the authoritative PATCH wire accepts `null`.
+        intent: caseIntentSchema.optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
         // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
@@ -1199,6 +1206,7 @@ function toCaseBatchItem(
     isNegativeTest?: boolean;
     scenario?: string;
     expectedOutput?: string;
+    intent?: string;
     steps?: TestStep[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
@@ -1217,6 +1225,9 @@ function toCaseBatchItem(
     isNegativeTest: testCaseData.isNegativeTest,
     scenario: testCaseData.scenario,
     expectedOutput: testCaseData.expectedOutput,
+    ...(testCaseData.intent !== undefined
+      ? { intent: testCaseData.intent }
+      : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
@@ -1445,6 +1456,7 @@ export async function authorEvalSuite(args: {
       isNegativeTest?: boolean;
       scenario?: string;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       judgeRequirement?: string;
       advancedConfig?: any;
@@ -1466,6 +1478,7 @@ export async function authorEvalSuite(args: {
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
         expectedOutput: test.expectedOutput,
+        intent: test.intent,
         steps: authoringSteps,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
@@ -1573,6 +1586,12 @@ export async function authorEvalSuite(args: {
             const expectedOutputChanged =
               normalize(existingTestCase.expectedOutput) !==
               normalize(testCaseData.expectedOutput);
+            // Omitted intent is a preserve, not an implicit clear. Only a
+            // caller that supplied the label may make an existing row differ.
+            const intentChanged =
+              testCaseData.intent !== undefined &&
+              normalize(existingTestCase.intent) !==
+                normalize(testCaseData.intent);
             const stepsChanged =
               JSON.stringify(
                 normalizeForComparison(existingTestCase.steps || [])
@@ -1605,6 +1624,7 @@ export async function authorEvalSuite(args: {
               isNegativeTestChanged ||
               scenarioChanged ||
               expectedOutputChanged ||
+              intentChanged ||
               stepsChanged ||
               judgeRequirementChanged ||
               advancedConfigChanged ||
@@ -1622,6 +1642,9 @@ export async function authorEvalSuite(args: {
                 isNegativeTest: testCaseData.isNegativeTest,
                 scenario: testCaseData.scenario,
                 expectedOutput: testCaseData.expectedOutput,
+                ...(testCaseData.intent !== undefined
+                  ? { intent: testCaseData.intent }
+                  : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig
@@ -2680,6 +2703,10 @@ export async function runEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -3105,6 +3132,9 @@ export async function streamEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Keep quick and streamed single-case runs identical to suite runs: the
+    // label is authored metadata, but it must be frozen at iteration create.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:

@@ -186,6 +186,33 @@ export type {
   ParsedDigest,
   SupportedDigestAlgorithm,
 } from "./mcp-client-manager/index.js";
+
+// Skills over MCP (SEP-2640) — the VERIFIED READ PATH.
+//
+// The orchestration above the integrity primitives: every SKILL.md fetched via
+// `resources/read` and digest-checked before a caller sees a byte, the manifest
+// enforced as the read allowlist, and each server behaviour mapped to a named
+// refusal. Exported here rather than behind a subpath because every consumer
+// already imports from the package root.
+export {
+  EXTENSION_INACTIVE_REFUSAL,
+  MAX_SERVER_SKILL_READ_BYTES,
+  ServerSkillRefusalError,
+  getVerifiedServerSkill,
+  isServerSkillRefusalError,
+  listServerSkillCatalog,
+  normalizeCatalogText,
+  probeServerSkillMissing,
+  readVerifiedServerSkillFile,
+  serverSkillsActive,
+} from "./server-skills.js";
+export type {
+  ServerSkillListing,
+  ServerSkillRefusal,
+  ServerSkillSummary,
+  ServerSkillsLogger,
+  VerifiedServerSkill,
+} from "./server-skills.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,

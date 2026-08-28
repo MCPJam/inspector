@@ -17,6 +17,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   evalSuiteFileStructuralSchema,
 } from "../src/contract/suite-file.js";
+import { MAX_INTENT_CHARS } from "../src/contract/stage-intent.js";
 
 const contractDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -68,6 +69,27 @@ export const ELEMENT_LOCATOR_ANY_OF = [
 ];
 
 /**
+ * The authored intent validator accepts only an already-trimmed label. Zod
+ * refinements do not project into JSON Schema, but this one is expressible as
+ * a boundary pattern and matters to third-party validators: accepting a
+ * padded label here would produce a suite file the SDK rejects at load time.
+ * `\\S` guards both ends while `[\\s\\S]` keeps internal whitespace,
+ * including newlines, legal just as `String.prototype.trim()` does.
+ */
+const INTENT_TRIMMED_PATTERN = "^\\S(?:[\\s\\S]*\\S)?$";
+
+function isIntentStringNode(ctx: {
+  path: (string | number)[];
+  jsonSchema: Record<string, unknown>;
+}): boolean {
+  return (
+    ctx.path[ctx.path.length - 1] === "intent" &&
+    ctx.jsonSchema.type === "string" &&
+    ctx.jsonSchema.maxLength === MAX_INTENT_CHARS
+  );
+}
+
+/**
  * The JSON Schema document.
  *
  * Built from the STRUCTURAL schema deliberately: refinements do not project
@@ -105,6 +127,9 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       if (isElementLocatorNode(node)) {
         node.anyOf = ELEMENT_LOCATOR_ANY_OF.map((entry) => ({ ...entry }));
       }
+      if (isIntentStringNode(ctx)) {
+        node.pattern = INTENT_TRIMMED_PATTERN;
+      }
     },
   }) as Record<string, unknown>;
   const { $schema, ...rest } = generated;
@@ -125,6 +150,8 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "being required when the claimed status is exact) and a " +
       "serialized-size cap on " +
       "tool-call arguments, none of which JSON Schema can express. " +
+      "The authored intent label's already-trimmed invariant is encoded as a " +
+      "boundary pattern in the schema. " +
       "Objects the suite file and the step union declare are closed " +
       "(additionalProperties: false). A tool call's own `arguments` object " +
       "and the reused predicate union stay open in both validators: their " +
