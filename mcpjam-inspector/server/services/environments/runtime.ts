@@ -51,9 +51,42 @@ export interface ResolvedEnvironmentSkill {
   extraFrontmatter?: unknown;
   /** Optional for deploy skew — an older backend may omit channel provenance. */
   channels?: RuntimeSkillChannel[];
+  /**
+   * The backend's ready-made provenance row for this entry — the shape of
+   * `pinnedSkillMetaValidator` (mcpjam-backend
+   * convex/lib/projectEnvironmentValidators.ts), built there by the one shared
+   * writer.
+   *
+   * OPAQUE on purpose. Re-declaring its fields here would make this the FOURTH
+   * hand mirror of a shape whose three existing mirrors all drifted — and the
+   * only thing this side does with it is echo it back onto the turn trace.
+   * Typing it as a record is what keeps that honest: nothing here can read a
+   * field, so nothing here can start depending on one.
+   *
+   * Optional for deploy skew: an older backend omits it, and a turn then
+   * records no provenance rather than a partial one.
+   */
+  provenance?: Record<string, unknown>;
   /** Optional for deploy skew; absent is read as "no supporting files". */
   files?: Array<{ path: string; size: number; url: string | null }>;
 }
+
+/**
+ * Per-turn configuration provenance, in the shape the chat-ingestion turn
+ * trace carries it (`turnTrace.skillsAtTurn` / `.environmentAtTurn`).
+ *
+ * `skillsAtTurn` being an EMPTY array is meaningful — "this turn ran with no
+ * skills" — and is a different fact from the whole object being undefined,
+ * which means there was no environment to record.
+ */
+export type TurnSkillProvenance = {
+  environmentAtTurn: {
+    environmentId: string;
+    name: string;
+    revision: number;
+  };
+  skillsAtTurn: Array<Record<string, unknown>>;
+};
 
 /**
  * The inspector-side mirror of the backend's `ResolvedEnvironmentRuntimeSpec`.
@@ -107,6 +140,8 @@ export interface ResolvedEnvironmentRuntime {
     versionHash: string;
     versionNumber: number;
     capturedAt: number;
+    /** Same opaque provenance row as {@link ResolvedEnvironmentSkill}. */
+    provenance?: Record<string, unknown>;
     files: Array<{ path: string; size: number; url: string | null }>;
   }>;
   pluginVersions?: Array<{
@@ -388,6 +423,56 @@ export function runtimeSkills(
       ? { extraFrontmatter: skill.extraFrontmatter as never }
       : {}),
   }));
+}
+
+/**
+ * What this turn should RECORD about the configuration it ran with.
+ *
+ * Deliberately NOT part of `runtimeSkills` and not in the effective-capability
+ * set: skill DELIVERY stays byte-identical, and provenance is a separate
+ * outbound field on the turn trace. A recording change that also changed what
+ * reaches the model would be impossible to review.
+ *
+ * Call this AFTER any narrowing (plugin overrides filter `spec.skills`), so the
+ * record reflects what actually ran rather than what the environment would
+ * resolve on its own.
+ *
+ * `undefined` when there is no environment — a plain Playground chat has
+ * nothing to record. An empty `skillsAtTurn` when the environment resolved
+ * none, because "ran with none" is a real answer. Entries whose `provenance`
+ * the backend did not supply are skipped: on an older deployment that yields
+ * an empty array, which is honest about what this side can prove.
+ */
+export function turnSkillProvenance(
+  spec:
+    | Pick<ResolvedEnvironmentRuntime, "environmentRef" | "skills">
+    | null
+    | undefined
+): TurnSkillProvenance | undefined {
+  const ref = spec?.environmentRef;
+  if (
+    !ref ||
+    typeof ref.environmentId !== "string" ||
+    typeof ref.name !== "string" ||
+    typeof ref.revision !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    environmentAtTurn: {
+      environmentId: ref.environmentId,
+      name: ref.name,
+      revision: ref.revision,
+    },
+    skillsAtTurn: (spec?.skills ?? [])
+      .map((skill) => skill.provenance)
+      .filter(
+        (provenance): provenance is Record<string, unknown> =>
+          !!provenance &&
+          typeof provenance === "object" &&
+          !Array.isArray(provenance)
+      ),
+  };
 }
 
 // ── Browser preview projection ──────────────────────────────────────────────

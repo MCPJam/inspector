@@ -88,6 +88,7 @@ import {
   runtimeServerNames,
   runtimeServersAreOverridden,
   runtimeSkills as environmentRuntimeSkills,
+  turnSkillProvenance,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
 import {
@@ -573,6 +574,24 @@ chatV2.post("/", async (c) => {
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
       ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+      : undefined;
+
+    // What this turn will RECORD about the configuration it ran with. Computed
+    // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
+    // above), so it reflects what actually ran rather than what the environment
+    // would resolve on its own.
+    //
+    // Purely a recording concern: it feeds `persist`, never the engines, so
+    // skill delivery is byte-identical whether or not the backend supplied
+    // provenance rows. A turn with no environment records nothing — there is
+    // nothing to record.
+    const turnProvenance = environmentSpec
+      ? turnSkillProvenance(environmentSpec)
+      : scenarioEnvironment
+      ? turnSkillProvenance({
+          environmentRef: scenarioEnvironment.environmentRef,
+          skills: scenarioEnvironment.skills ?? [],
+        })
       : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
@@ -1526,6 +1545,7 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
+          ...(turnProvenance ? { turnProvenance } : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin

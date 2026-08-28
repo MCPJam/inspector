@@ -823,3 +823,162 @@ describe("web chat-v2 — plugin capability attribution", () => {
     ]);
   });
 });
+
+describe("web chat-v2 — turn provenance (P1)", () => {
+  const originalFetch = global.fetch;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const originalConvexUrl = process.env.CONVEX_URL;
+
+  const PROVENANCE = {
+    skillId: "sk_env",
+    projectSkillVersionId: "psv_1",
+    projectSkillVersionNumber: 3,
+    versionPinned: true,
+    name: "release-notes",
+    description: "Write release notes",
+    contentHash: "h_env",
+    sharing: "project",
+    channels: ["environment"],
+  };
+  const SPEC_WITH_PROVENANCE = {
+    ...ENV_SPEC,
+    skills: [{ ...ENV_SPEC.skills[0], provenance: PROVENANCE }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    process.env.CONVEX_URL = "https://example.convex.cloud";
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      resolvedTemperature: 0.7,
+    });
+    fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+      await options.onConversationComplete?.(
+        [{ role: "user", content: "hi" }],
+        {
+          turnId: "t",
+          promptIndex: 0,
+          startedAt: 1,
+          endedAt: 2,
+          spans: [],
+          modelId: "test-model",
+        }
+      );
+      options.onStreamComplete?.();
+      return new Response("ok", { status: 200 });
+    });
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds: string[] = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
+        return new Response(
+          JSON.stringify({
+            results: Object.fromEntries(
+              serverIds.map((serverId) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: false,
+                  },
+                },
+              ])
+            ),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  async function runEnvironmentTurn() {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+    expect(response.status).toBe(200);
+    return persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+  }
+
+  it("records the environment and its skill rows on the turn trace", async () => {
+    convexQueryMock.mockResolvedValue(SPEC_WITH_PROVENANCE);
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+    // The rest of the trace is untouched — provenance is merged onto it, not
+    // substituted for it.
+    expect(persistArgs.turnTrace.turnId).toBe("t");
+    expect(persistArgs.turnTrace.spans).toEqual([]);
+  });
+
+  it("never carries skill CONTENT into the record", async () => {
+    convexQueryMock.mockResolvedValue(SPEC_WITH_PROVENANCE);
+    const persistArgs = await runEnvironmentTurn();
+    expect(JSON.stringify(persistArgs.turnTrace)).not.toContain(
+      "env skill body"
+    );
+  });
+
+  it("records an empty skill list rather than going silent, on an older backend", async () => {
+    // Deploy skew: the backend resolves skills but attaches no provenance
+    // rows. The turn still records WHICH environment ran — the part this side
+    // can prove — and claims nothing about skills it cannot describe.
+    convexQueryMock.mockResolvedValue(ENV_SPEC);
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([]);
+  });
+
+  it("a direct turn with no environment records nothing", async () => {
+    convexQueryMock.mockResolvedValue(ENV_SPEC);
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...BASE_BODY, hostId: "host_legacy" },
+      token
+    );
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.turnTrace.environmentAtTurn).toBeUndefined();
+    expect(persistArgs.turnTrace.skillsAtTurn).toBeUndefined();
+  });
+});

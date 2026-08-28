@@ -802,6 +802,63 @@ describe("chat-ingestion", () => {
     expect(body.turnTrace.turnId).toBe("turn-abc");
   });
 
+  it("carries the turn's skill/environment provenance on the wire", async () => {
+    // The provenance rides INSIDE `turnTrace`, which `buildIngestBody`
+    // serializes whole — so this reaches the backend with no edit to the body
+    // builder's field spread. If someone "fixes" that by adding the fields
+    // there too, this test still passes and the duplication is dead weight;
+    // what it guards is that the fields arrive at all.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
+    const turnTrace = {
+      turnId: "turn-prov",
+      promptIndex: 0,
+      startedAt: 1,
+      endedAt: 2,
+      spans: [],
+      modelId: "openai/gpt-oss-120b",
+      skillsAtTurn: [
+        {
+          skillId: "sk_1",
+          projectSkillVersionNumber: 3,
+          versionPinned: true,
+          name: "refunds",
+          contentHash: "h1",
+          sharing: "project",
+          channels: ["environment"],
+        },
+      ],
+      environmentAtTurn: {
+        environmentId: "env_1",
+        name: "Pinned arm",
+        revision: 4,
+      },
+    };
+
+    await persistChatSessionToConvex({
+      chatSessionId: "prov-session",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace,
+    });
+
+    const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls;
+    const body = JSON.parse(calls[0][1].body as string);
+    expect(body.turnTrace.skillsAtTurn).toEqual(turnTrace.skillsAtTurn);
+    expect(body.turnTrace.environmentAtTurn).toEqual(
+      turnTrace.environmentAtTurn
+    );
+  });
+
   it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {
     // Its own fetch mock: reading `mock.calls[0]` off an inherited one makes the
     // assertion depend on suite order rather than on this request.

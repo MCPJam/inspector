@@ -7,6 +7,7 @@ import {
   runtimeServersAreOverridden,
   runtimeSkills,
   toEnvironmentPreview,
+  turnSkillProvenance,
   translateEnvironmentRuntimeError,
   type ResolvedEnvironmentRuntime,
 } from "../runtime";
@@ -385,5 +386,97 @@ describe("toEnvironmentPreview", () => {
     );
     expect(emulated.capabilities.skillDelivery).toBe("emulated");
     expect(emulated.capabilities.hasComputer).toBe(false);
+  });
+});
+
+describe("turnSkillProvenance", () => {
+  // What a turn RECORDS about the configuration it ran with. Separate from
+  // `runtimeSkills`, which is what reaches the model — a recording change that
+  // also changed delivery would be impossible to review.
+
+  const PROVENANCED: ResolvedEnvironmentRuntime = {
+    ...SPEC,
+    skills: [
+      {
+        ...SPEC.skills![0],
+        provenance: {
+          skillId: "sk_1",
+          projectSkillVersionNumber: 3,
+          versionPinned: true,
+          name: "pdf-processing",
+          contentHash: "h1",
+          sharing: "project",
+          channels: ["host", "environment"],
+        },
+      },
+      {
+        ...SPEC.skills![1],
+        provenance: {
+          name: "release-notes",
+          modelRef: "notes/release-notes",
+          contentHash: "h2",
+          sharing: "project",
+          channels: ["plugin"],
+        },
+      },
+    ],
+  };
+
+  it("echoes the backend's rows verbatim, with the environment binding", () => {
+    expect(turnSkillProvenance(PROVENANCED)).toEqual({
+      environmentAtTurn: {
+        environmentId: "env_1",
+        name: "Staging",
+        revision: 7,
+      },
+      skillsAtTurn: [
+        PROVENANCED.skills![0].provenance,
+        PROVENANCED.skills![1].provenance,
+      ],
+    });
+  });
+
+  it("never carries skill CONTENT — provenance is metadata", () => {
+    const out = turnSkillProvenance(PROVENANCED)!;
+    expect(JSON.stringify(out)).not.toContain("SECRET INSTRUCTIONS");
+  });
+
+  it("returns undefined without an environment — nothing to record", () => {
+    expect(turnSkillProvenance(undefined)).toBeUndefined();
+    expect(turnSkillProvenance(null)).toBeUndefined();
+    expect(
+      turnSkillProvenance({
+        environmentRef: undefined as never,
+        skills: PROVENANCED.skills,
+      })
+    ).toBeUndefined();
+  });
+
+  it("returns an EMPTY array for an environment that resolves no skills", () => {
+    // "Ran with none" is a real answer and a different one from "unknown".
+    expect(
+      turnSkillProvenance({ environmentRef: SPEC.environmentRef, skills: [] })
+    ).toEqual({
+      environmentAtTurn: SPEC.environmentRef,
+      skillsAtTurn: [],
+    });
+  });
+
+  it("skips entries the backend did not attach provenance to", () => {
+    // Deploy skew: an older backend omits the field. Recording only what this
+    // side can prove beats assembling a partial row from the other fields —
+    // `modelRef` and `versionPinned` appear nowhere else in this DTO, which is
+    // exactly how provenance goes quietly missing.
+    const mixed = turnSkillProvenance({
+      environmentRef: SPEC.environmentRef,
+      skills: [SPEC.skills![0], PROVENANCED.skills![1]],
+    })!;
+    expect(mixed.skillsAtTurn).toEqual([PROVENANCED.skills![1].provenance]);
+  });
+
+  it("skills delivery is untouched by any of this", () => {
+    // The invariant that makes the change reviewable: same flat list with and
+    // without provenance rows.
+    expect(runtimeSkills(PROVENANCED)).toEqual(runtimeSkills(SPEC));
   });
 });
