@@ -5,8 +5,10 @@
  * because these are not the same kind of thing as the skills that tree shows:
  * they are identified by URI rather than by name, they are owned by a server
  * rather than by the project, and their contents carry a verification state
- * that has no analogue for a local or Convex skill. Grouping them under their
- * origin server — with that state visible — is the whole point.
+ * that has no analogue for a local or Convex skill. Each row names the server
+ * it came from, and shows its verification state only where that state is
+ * exceptional: every skill listed here is digest-verified, so a badge saying so
+ * on every row would distinguish nothing.
  *
  * Every read goes through the verified path, so a skill that fails a mandatory
  * check renders its specific violation instead of appearing to load.
@@ -21,13 +23,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
-import {
-  AlertTriangle,
-  Link2,
-  Server,
-  ShieldCheck,
-} from "lucide-react";
+import { AlertTriangle, Server } from "lucide-react";
 import {
   getApiContextRevision,
   subscribeApiContext,
@@ -62,6 +58,20 @@ interface Props {
   refreshToken?: number;
   /** Renders a loaded skill in the right-hand viewer. */
   onOpenSkill?: (skill: VerifiedServerSkill, serverLabel: string) => void;
+  /**
+   * How many rows this section is showing, and whether any connected server is
+   * still answering.
+   *
+   * The tab owns two things that describe the WHOLE list — the header count and
+   * the "no skills yet" call to action — and half the list lives in here. While
+   * server skills sat under their own heading the tab could ignore them; flat
+   * rows made both claims wrong at once, the count reading `0` above a screenful
+   * of rows and the call to action reserving a block of vertical space above
+   * them. `pending` keeps the tab from flashing that call to action during the
+   * per-connection fetch, which is a listing that has not answered yet rather
+   * than an empty one.
+   */
+  onListingChange?: (state: { count: number; pending: boolean }) => void;
 }
 
 type ServerState =
@@ -75,6 +85,7 @@ export function ServerSkillsSection({
   projectId,
   refreshToken,
   onOpenSkill,
+  onListingChange,
 }: Props) {
   /**
    * The hosted request context, as a version.
@@ -96,11 +107,9 @@ export function ServerSkillsSection({
     getApiContextRevision
   );
   const [byServer, setByServer] = useState<Record<string, ServerState>>({});
-  const [uriInput, setUriInput] = useState<Record<string, string>>({});
   const [refusal, setRefusal] = useState<
     Record<string, ServerSkillRefusal | undefined>
   >({});
-  const [opening, setOpening] = useState<Record<string, boolean>>({});
   /**
    * Server ids with a listing request in flight.
    *
@@ -206,11 +215,11 @@ export function ServerSkillsSection({
   /**
    * Synchronous in-flight lock, per server.
    *
-   * `opening` is React state, so it does not update until the next render —
-   * the Load button reads it and disables itself, but the URI input's Enter
-   * handler can fire several times before that render lands, dispatching
-   * duplicate concurrent loads. A ref is set before the first `await`, so it
-   * closes the window for BOTH entry points rather than one.
+   * A row is a button with nothing to disable it mid-flight, and `skills/get`
+   * re-reads and re-verifies every file in the manifest — so an impatient
+   * double-click would dispatch that work twice and race two writes into the
+   * viewer. A ref is set before the first `await`, so the second click is
+   * refused on the click that made it rather than a render later.
    */
   const openInFlight = useRef<Set<string>>(new Set());
 
@@ -219,7 +228,6 @@ export function ServerSkillsSection({
       if (openInFlight.current.has(serverId)) return;
       openInFlight.current.add(serverId);
       setRefusal((prev) => ({ ...prev, [serverId]: undefined }));
-      setOpening((prev) => ({ ...prev, [serverId]: true }));
       try {
         const result = await getServerSkill({
           serverId,
@@ -246,11 +254,48 @@ export function ServerSkillsSection({
         }));
       } finally {
         openInFlight.current.delete(serverId);
-        setOpening((prev) => ({ ...prev, [serverId]: false }));
       }
     },
     [onOpenSkill, projectId]
   );
+
+  /**
+   * What the tab needs to describe the list: rows shown, and whether any
+   * answer is still outstanding.
+   *
+   * A server that never declared the extension contributes neither — its
+   * absence from the count is the same judgement the render makes below, kept
+   * in one expression so the number and the rows cannot disagree.
+   */
+  const rendered = useMemo(() => {
+    let count = 0;
+    let pending = false;
+    for (const server of connected) {
+      const state = byServer[server.serverId] ?? { status: "idle" as const };
+      if (state.status === "idle" || state.status === "loading") {
+        pending = true;
+      } else if (state.status === "ready" && state.listing.support.active) {
+        count += state.listing.skills.length;
+      }
+    }
+    return { count, pending };
+  }, [connected, byServer]);
+
+  /**
+   * Reported by VALUE, not on every render.
+   *
+   * The parent hands this section a fresh `servers` array each render and takes
+   * a state update in return, so calling the callback whenever the memo
+   * re-derives the same numbers would be a render loop between the two
+   * components.
+   */
+  const lastReported = useRef<string>("");
+  useEffect(() => {
+    const signature = `${rendered.count}:${rendered.pending}`;
+    if (lastReported.current === signature) return;
+    lastReported.current = signature;
+    onListingChange?.(rendered);
+  }, [rendered, onListingChange]);
 
   if (connected.length === 0) return null;
 
@@ -318,50 +363,12 @@ export function ServerSkillsSection({
               </div>
             ))}
 
-            {/* Load by URI. Not a convenience: `skills/get` answers for skills
-                a listing never mentioned, and a URI can arrive from a server's
-                instructions or from another skill. Kept per server because the
-                URI is only meaningful against the origin that serves it. */}
-            {listing && (
-              <div className="flex items-center gap-1 py-1 px-2">
-                <Link2 className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                <input
-                  value={uriInput[server.serverId] ?? ""}
-                  aria-label={`Load a skill from ${server.label} by URI`}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    const uri = (uriInput[server.serverId] ?? "").trim();
-                    if (!uri) return;
-                    void openSkill(server.serverId, server.label, uri);
-                  }}
-                  onChange={(event) =>
-                    setUriInput((prev) => ({
-                      ...prev,
-                      [server.serverId]: event.target.value,
-                    }))
-                  }
-                  placeholder={`Load from ${server.label} by URI (skill://…)`}
-                  className="flex-1 min-w-0 bg-transparent text-[11px] outline-none border-b border-transparent focus:border-border py-0.5"
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={
-                    !(uriInput[server.serverId] ?? "").trim() ||
-                    opening[server.serverId] === true
-                  }
-                  onClick={() =>
-                    void openSkill(
-                      server.serverId,
-                      server.label,
-                      (uriInput[server.serverId] ?? "").trim()
-                    )
-                  }
-                >
-                  Load
-                </Button>
-              </div>
-            )}
+            {/* No load-by-URI field here. `skills/get` still answers for a URI
+                the listing never mentioned — that is a real capability, and it
+                is why the tab keeps `openSkill` — but a text box under every
+                server is a debugging tool priced as permanent furniture in a
+                panel whose job is to show what a server serves. It lives on
+                `mcpjam skills get` and the REST endpoint instead. */}
 
             {refusal[server.serverId] && (
               <RefusalNotice refusal={refusal[server.serverId]!} />
@@ -388,7 +395,10 @@ function SkillRow({
       type="button"
       onClick={skill.unloadable ? undefined : onOpen}
       disabled={Boolean(skill.unloadable)}
-      title={skill.unloadable?.message ?? skill.skillUri}
+      title={
+        skill.unloadable?.message ??
+        `${skill.skillUri} · ${skill.resources.length} file(s) in the advertised manifest`
+      }
       className="w-full text-left py-1 group disabled:cursor-not-allowed disabled:opacity-60"
     >
       <div className="flex items-center gap-1.5 min-w-0">
@@ -410,21 +420,18 @@ function SkillRow({
         >
           {origin}
         </Badge>
-        {skill.unloadable ? (
+        {/* Only the EXCEPTION gets a badge. Every row that is loadable is
+            digest-verified — verification is mandatory, not a feature a skill
+            can win — so a badge saying so on every row distinguishes nothing,
+            and the manifest file count it used to carry was a number with no
+            reading. Both moved into the row's tooltip; what stays on the row is
+            the one row that behaves differently. */}
+        {skill.unloadable && (
           <Badge
             variant="outline"
             className="text-[10px] flex-shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
           >
             unverifiable — declined
-          </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="text-[10px] flex-shrink-0 gap-1 border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            title={`${skill.resources.length} file(s) in the advertised manifest`}
-          >
-            <ShieldCheck className="h-3 w-3" />
-            {skill.resources.length}
           </Badge>
         )}
       </div>
