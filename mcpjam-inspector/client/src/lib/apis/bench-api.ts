@@ -547,6 +547,7 @@ export interface BenchResult extends Record<string, unknown> {
 
 export class BenchNotEnabledError extends Error {}
 export class BenchResultNotFoundError extends Error {}
+export class BenchResultNotReadyError extends Error {}
 
 /**
  * The exam moved between the quote and the start.
@@ -700,5 +701,82 @@ export async function fetchBenchResult(secret: string): Promise<BenchResult> {
   }
   const body = (await response.json()) as { result?: BenchResult };
   if (!body.result) throw new Error("Could not load this benchmark result.");
-  return body.result;
+  const envelope = body.result as BenchResult & {
+    ready?: boolean;
+    benchmarkRunId?: string;
+    status?: string;
+    profile?: { id: string; version: string; definitionHash: string };
+    completedAt?: number;
+    scorecard?: BenchResult["scorecard"] & {
+      reportUrl?: string | null;
+      provisionalReasons?: string[];
+    };
+    cleanup?: BenchRunCleanup;
+  };
+  if (envelope.ready === false) {
+    throw new BenchResultNotReadyError(
+      "This benchmark is still being scored. Try again shortly.",
+    );
+  }
+
+  // The backend keeps the compact scorecard row in the result envelope and
+  // stores the rich report (sections, slices and provisional reasons) in an
+  // immutable blob. Hydrate that blob when available; if a storage URL is
+  // temporarily unavailable, retain the compact row rather than rendering an
+  // empty report.
+  let report: Record<string, any> | null = null;
+  const reportUrl = envelope.scorecard?.reportUrl;
+  if (reportUrl) {
+    try {
+      const reportResponse = await fetch(reportUrl);
+      if (reportResponse.ok) {
+        const parsed = await reportResponse.json();
+        if (parsed && typeof parsed === "object") report = parsed;
+      }
+    } catch {
+      // The signed blob URL is an enrichment path; the immutable row remains
+      // sufficient for a headline result.
+    }
+  }
+
+  if (!envelope.benchmarkRunId && !envelope.ready) return body.result;
+  const compactScorecard = envelope.scorecard;
+  const reportPublication = report?.publication;
+  const scorecard = compactScorecard
+    ? {
+        ...compactScorecard,
+        ...(report?.scores ? { scores: report.scores } : {}),
+        ...(report?.sections ? { sections: report.sections } : {}),
+        ...(report?.slices ? { slices: report.slices } : {}),
+        ...(report?.provisionalReasons
+          ? { provisionalReasons: report.provisionalReasons }
+          : {}),
+        ...(report?.provenance?.evidenceDigest
+          ? { evidenceDigest: report.provenance.evidenceDigest }
+          : {}),
+        ...(typeof report?.publication?.publicEligible === "boolean"
+          ? { publicEligible: report.publication.publicEligible }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    runId: envelope.benchmarkRunId,
+    finishedAt: envelope.completedAt,
+    definition: envelope.profile
+      ? {
+          profileId: envelope.profile.id,
+          version: envelope.profile.version,
+          definitionHash: envelope.profile.definitionHash,
+        }
+      : undefined,
+    ...(scorecard ? { scorecard } : {}),
+    ...(envelope.cleanup ? { cleanup: envelope.cleanup } : {}),
+    ...(compactScorecard?.publication
+      ? { publication: compactScorecard.publication }
+      : {}),
+    ...(reportPublication?.publicEligible !== undefined
+      ? { publicEligible: reportPublication.publicEligible }
+      : {}),
+  };
 }
