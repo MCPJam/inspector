@@ -1014,6 +1014,9 @@ async function handleTurn(c: Context): Promise<Response> {
               capabilities: turnCapabilities,
               // Keeps #4419's live server skills composed alongside them.
               composeLiveServerSkills: true as const,
+              // The turn's own controller, so a lazy body or file read stops
+              // with the turn instead of running to its own fetch timeout.
+              abortSignal: abortController.signal,
             },
           }
         : {}),

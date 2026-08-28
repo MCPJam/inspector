@@ -118,6 +118,62 @@ describe("a lazy body is fetched only when loaded", () => {
     expect(listed).toContain("scripts/run.py");
     expect(listFiles).toHaveBeenCalledTimes(1);
   });
+
+  it("fetches the listing once across list-then-read, empty included", async () => {
+    // `listSkillFiles` then `readSkillFile` is the sequence the model actually
+    // performs, and the second call needs the same list to find the file in.
+    const listFiles = vi.fn(async () => [
+      { path: "scripts/run.py", size: 12, url: null, read: async () => new Uint8Array([104, 105]) },
+    ]);
+    const set = buildLiveEffectiveCapabilities({
+      standaloneSkills: [cloudSkill({ listFiles })],
+    });
+    const toolSet = tools(set);
+
+    await run(toolSet.listSkillFiles, { name: "code-review" });
+    const read = await run(toolSet.readSkillFile, {
+      name: "code-review",
+      path: "scripts/run.py",
+    });
+
+    expect(read).toContain("hi");
+    expect(listFiles).toHaveBeenCalledTimes(1);
+
+    // An empty listing is the case an "only cache non-empty" shortcut would
+    // miss, and it is the common one.
+    const emptyListFiles = vi.fn(async () => []);
+    const emptySet = buildLiveEffectiveCapabilities({
+      standaloneSkills: [cloudSkill({ listFiles: emptyListFiles })],
+    });
+    const emptyTools = tools(emptySet);
+    await run(emptyTools.listSkillFiles, { name: "code-review" });
+    await run(emptyTools.readSkillFile, {
+      name: "code-review",
+      path: "scripts/run.py",
+    });
+    expect(emptyListFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a listing that failed, rather than caching the failure", async () => {
+    // Caching the rejected promise would pin the skill file-less for the whole
+    // turn on one transient error.
+    const listFiles = vi
+      .fn<() => Promise<Array<{ path: string; size: number; url: null }>>>()
+      .mockRejectedValueOnce(new Error("catalog offline"))
+      .mockResolvedValue([{ path: "scripts/run.py", size: 12, url: null }]);
+    const set = buildLiveEffectiveCapabilities({
+      standaloneSkills: [cloudSkill({ listFiles })],
+    });
+    const toolSet = tools(set);
+
+    expect(await run(toolSet.listSkillFiles, { name: "code-review" })).toContain(
+      "catalog offline"
+    );
+    expect(await run(toolSet.listSkillFiles, { name: "code-review" })).toContain(
+      "scripts/run.py"
+    );
+    expect(listFiles).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("a local skill is read from disk", () => {

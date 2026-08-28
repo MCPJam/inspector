@@ -73,10 +73,33 @@ async function readContent(skill: EffectiveSkill): Promise<string> {
     : await skill.content();
 }
 
-/** The supporting-file list, fetching it once if the origin is lazy. */
-async function readFiles(skill: EffectiveSkill): Promise<RuntimeSkillFile[]> {
-  if (skill.files.length > 0 || !skill.listFiles) return skill.files;
-  return skill.listFiles();
+/**
+ * The supporting-file list, fetched at most ONCE per tool set if the origin is
+ * lazy.
+ *
+ * `listSkillFiles` then `readSkillFile` is the normal sequence, and an uncached
+ * loader fetches the same listing for both — including the empty case, where
+ * the second call buys nothing at all. The PROMISE is cached, not the result,
+ * so two concurrent calls share one fetch; a rejected one is evicted so a
+ * transient failure does not pin the skill file-less for the rest of the turn.
+ */
+function makeFileReader(): (
+  skill: EffectiveSkill
+) => Promise<RuntimeSkillFile[]> {
+  const listings = new Map<EffectiveSkill, Promise<RuntimeSkillFile[]>>();
+  return (skill) => {
+    if (skill.files.length > 0 || !skill.listFiles) {
+      return Promise.resolve(skill.files);
+    }
+    const cached = listings.get(skill);
+    if (cached) return cached;
+    const pending = skill.listFiles().catch((error: unknown) => {
+      listings.delete(skill);
+      throw error;
+    });
+    listings.set(skill, pending);
+    return pending;
+  };
 }
 
 /** Bare standalone name, or a `<plugin>/<skill>` namespaced plugin ref. */
@@ -218,6 +241,7 @@ export function createEffectiveSkillTools(args: {
   signal?: AbortSignal;
 }) {
   const lookup = buildLookup(args.skills);
+  const readFiles = makeFileReader();
 
   return {
     loadSkill: {

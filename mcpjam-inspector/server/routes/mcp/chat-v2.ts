@@ -1287,6 +1287,7 @@ chatV2.post("/", async (c) => {
     let cloudRuntimeSkills: RuntimeStandaloneSkill[] = [];
     let skillsFetchFailed: SkillsFetchFailure | undefined;
     if (requestAuthHeader && body.projectId) {
+      const startedAt = Date.now();
       try {
         cloudRuntimeSkills = await listCloudRuntimeSkills({
           authHeader: requestAuthHeader,
@@ -1295,8 +1296,9 @@ chatV2.post("/", async (c) => {
       } catch (error) {
         // A failed catalog fetch is NOT an empty project, and the difference is
         // what tells "this user has no skills" from "we lost their skills this
-        // turn". Same signal the hosted path already reports.
-        skillsFetchFailed = skillsFailureFrom(error, 0);
+        // turn". Same signal the hosted path already reports — measured, since
+        // a timeout and a refusal are the same class with different latencies.
+        skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
         logger.warn("[chat-v2] project skill catalog fetch failed", {
           projectId: body.projectId,
           message: skillsFetchFailed.message,
@@ -1336,6 +1338,12 @@ chatV2.post("/", async (c) => {
               // Live surface: server skills come from the connected servers,
               // not from a captured set.
               composeLiveServerSkills: true,
+              // A lazy body or file read outlives the request that asked for
+              // it otherwise: the fetch runs to its own timeout after the user
+              // has already navigated away.
+              ...(c.req.raw.signal
+                ? { abortSignal: c.req.raw.signal as AbortSignal }
+                : {}),
             },
         // Body for direct chat (project default), host-re-resolved for
         // scenario-bound sessions. undefined → auto policy.

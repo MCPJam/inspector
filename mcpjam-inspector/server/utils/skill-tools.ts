@@ -198,6 +198,48 @@ function flattenFiles(files: SkillFile[]): SkillFile[] {
 }
 
 /**
+ * Containment that survives a symlink.
+ *
+ * `isPathWithinDirectory` compares resolved STRINGS, so it stops `../` and
+ * nothing else. A skills directory is ordinary user-writable space that
+ * `npx skills` installs third-party packs into, and a symlinked `SKILL.md`
+ * pointing at `~/.ssh/id_rsa` reads as an ordinary skill: its body would go
+ * into the model's context with nothing in the file to notice. Instructions in
+ * a malicious pack are at least legible; a symlink is silent, which is the
+ * difference worth code.
+ *
+ * The BASE is resolved too, and that is load-bearing rather than tidy: a home
+ * or temp directory is often reached through a symlink itself, so comparing a
+ * resolved target against an unresolved base would refuse every read on those
+ * machines.
+ *
+ * This closes `SKILL.md`, which is the only symlink the surface ever follows:
+ * `readdir(withFileTypes)` reports a symlink as neither a file nor a
+ * directory, so a symlinked skill directory or supporting file is already
+ * skipped by the scan and the file lister. The check below stays on the file
+ * read anyway — the listing's rules are not the read's proof.
+ *
+ * Returns the real path to read, or `null` when it lands outside (or does not
+ * exist, which `realpath` reports the same way).
+ */
+async function realPathWithin(
+  baseDir: string,
+  target: string
+): Promise<string | null> {
+  try {
+    const [base, resolved] = await Promise.all([
+      fs.realpath(baseDir),
+      fs.realpath(target),
+    ]);
+    return resolved === base || resolved.startsWith(base + path.sep)
+      ? resolved
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The local filesystem as one origin of an `EffectiveCapabilitySet`.
  *
  * This is what lets a desktop turn offer local files and project skills through
@@ -229,7 +271,12 @@ export async function listLocalRuntimeSkills(): Promise<RuntimeLocalSkill[]> {
       if (!entry.isDirectory()) continue;
       const skillDir = path.join(skillsDir, entry.name);
       try {
-        const raw = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8");
+        const skillFile = await realPathWithin(
+          skillDir,
+          path.join(skillDir, "SKILL.md")
+        );
+        if (!skillFile) continue;
+        const raw = await fs.readFile(skillFile, "utf-8");
         const parsed = parseSkillFile(raw, formatDisplayPath(skillDir));
         // First-wins across the search path, matching `listSkillsMetadata` —
         // two directories offering the same name is a shadowing question the
@@ -280,12 +327,18 @@ async function listLocalRuntimeSkillFiles(
       size: file.size ?? 0,
       url: null,
       read: async () => {
-        const absolute = path.join(skillDir, file.path);
-        // The same containment check the bare local surface applies. A skill
-        // directory can contain a symlink, and "it came from our own listing"
-        // is not a containment proof.
-        if (!isPathWithinDirectory(skillDir, absolute)) {
-          throw new Error(`"${file.path}" resolves outside the skill directory.`);
+        // Belt and braces: the lister already drops symlinks, and the paths
+        // come from that lister rather than from the model. Checked anyway,
+        // because "the listing would never produce that" is an argument about
+        // the caller, and this is the function that touches the disk.
+        const absolute = await realPathWithin(
+          skillDir,
+          path.join(skillDir, file.path)
+        );
+        if (!absolute) {
+          throw new Error(
+            `"${file.path}" is not readable within the skill directory.`
+          );
         }
         return new Uint8Array(await fs.readFile(absolute));
       },

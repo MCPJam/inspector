@@ -1295,12 +1295,19 @@ export async function prepareChatV2(
             ...modelContextTokens,
           })
         : { tools: {}, systemPromptSection: "" }
-    : // Every caller states its source now, so there is no implicit arm left to
-      // fall through to. The old chain ended `cloudSkills ? … : HOSTED_MODE ? {}
-      // : localFS` — exclusive arms, chosen by DEPLOYMENT rather than by what
-      // the user had, which is why a desktop turn could never see a project
-      // skill and a hosted one could never see a local file. A caller with no
-      // skills says `{ kind: "none" }` and means it.
+    : // No source is no SKILLS OF ITS OWN — not a fallback. The old chain
+      // ended `cloudSkills ? … : HOSTED_MODE ? {} : localFS` — exclusive arms
+      // chosen by DEPLOYMENT rather than by what the user had, which is why a
+      // desktop turn could never see a project skill and a hosted one could
+      // never see a local file. That chain is gone; what remains here is the
+      // empty set.
+      //
+      // It is still meaningfully different from `{ kind: "none" }`, which is
+      // why both exist: `undefined` is the LIVE shape and still composes the
+      // connected servers' SEP-2640 skills (see `composeLiveServerSkills`
+      // below), while `none` means this turn gets no skills from anywhere. The
+      // hosted host/adhoc path lands here whenever its project catalog is
+      // gated off or fails, and its server skills must survive that.
       { tools: {}, systemPromptSection: "" };
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
