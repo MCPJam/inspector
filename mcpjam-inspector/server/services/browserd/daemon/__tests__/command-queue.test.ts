@@ -192,6 +192,13 @@ describe("browserd CommandQueue", () => {
     expect(
       () => new CommandQueue(executor, "b", { retainTtlMs: Infinity }),
     ).toThrow(RangeError);
+    expect(
+      () =>
+        new CommandQueue(executor, "b", {
+          maxRetained: 10,
+          maxCommandsPerBoot: 5, // must be >= maxRetained
+        }),
+    ).toThrow(RangeError);
   });
 
   it("evicts least-recently-USED, not merely oldest-settled (rule 3 recency)", async () => {
@@ -214,17 +221,52 @@ describe("browserd CommandQueue", () => {
     });
   });
 
-  it("bounds the tombstone set so a long-lived daemon cannot leak memory", async () => {
-    const { executor, release } = controllableExecutor();
+  it("keeps a tombstone for the whole boot so an evicted id is never re-run (P1)", async () => {
+    // The bug a count-bounded tombstone set would reintroduce: after enough
+    // distinct commands the oldest tombstone is dropped, and a delayed retry of
+    // that id re-runs a non-idempotent action. Tombstones must outlive the
+    // result cache for the full boot.
+    const { executor, calls, release } = controllableExecutor();
     const q = new CommandQueue(executor, "boot-a", { maxRetained: 2 });
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 40; i++) {
       const id = `c${i}`;
       const p = q.submit(cmd(id));
       await release(id, { ok: true, output: i });
       await p;
     }
-    expect(q.retainedCount).toBeLessThanOrEqual(2);
-    expect(q.tombstoneCount).toBeLessThanOrEqual(2); // bounded by maxRetained
+    const callsBefore = calls.length;
+    // c0's RESULT was evicted long ago, but its tombstone remains.
+    expect(await q.submit(cmd("c0"))).toEqual({
+      status: "expired",
+      bootId: "boot-a",
+    });
+    expect(calls.length).toBe(callsBefore); // NOT re-executed
+    expect(q.tombstoneCount).toBeGreaterThan(2); // tombstones outlive the cache
+  });
+
+  it("refuses a NEW command at the per-boot ceiling rather than forgetting a tombstone", async () => {
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", {
+      maxRetained: 2,
+      maxCommandsPerBoot: 3,
+    });
+    for (const id of ["a", "b", "c"]) {
+      const p = q.submit(cmd(id));
+      await release(id, { ok: true });
+      await p;
+    }
+    // 'a' was evicted from the 2-slot result cache but is tombstoned, so the
+    // boot ledger now tracks 3 ids (b, c live + a tombstoned) = the ceiling.
+    expect(await q.submit(cmd("d"))).toEqual({
+      status: "at_capacity",
+      bootId: "boot-a",
+    });
+    // A duplicate of an already-tracked id still resolves — capacity only gates
+    // genuinely new commands.
+    expect(await q.submit(cmd("a"))).toEqual({
+      status: "expired",
+      bootId: "boot-a",
+    });
   });
 
   it("does not let one command's failure stall the rest of its tab's FIFO", async () => {

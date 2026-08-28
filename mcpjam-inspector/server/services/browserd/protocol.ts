@@ -99,7 +99,16 @@ export type BrowserCommandOutcome =
    * The command settled earlier but its result has since been evicted (LRU/TTL),
    * so it can be neither returned nor safely re-run. → 409 `command_expired`
    */
-  | { status: "expired"; bootId: BootId };
+  | { status: "expired"; bootId: BootId }
+  /**
+   * The daemon has tracked its per-boot ceiling of distinct commandIds and
+   * cannot admit a NEW one without either forgetting a tombstone (which would
+   * permit a re-execution) or leaking memory. The caller should rotate the
+   * daemon — a fresh boot resets the ledger, and its new bootId makes any stale
+   * commandId `command_unknown_boot`. Duplicates of already-seen ids still
+   * resolve. → 503 `daemon_at_capacity`
+   */
+  | { status: "at_capacity"; bootId: BootId };
 
 /** The idempotency/eviction knobs, all overridable for tests. */
 export interface CommandQueueOptions {
@@ -109,6 +118,15 @@ export interface CommandQueueOptions {
   retainTtlMs?: number;
   /** Max in-flight + queued commands per tab before `busy`. */
   perQueueDepthCap?: number;
+  /**
+   * Ceiling on DISTINCT commandIds tracked per boot (returnable results + their
+   * boot-long tombstones). Tombstones are never silently forgotten — doing so
+   * would let a delayed retry re-run a non-idempotent action — so instead a NEW
+   * command past this ceiling is refused (`at_capacity`) and the daemon should
+   * rotate. Sized well above any realistic per-session command count; it is a
+   * memory ceiling, not a target. Must be >= `maxRetained`.
+   */
+  maxCommandsPerBoot?: number;
   /** Injectable clock for deterministic TTL tests. */
   now?: () => number;
 }
@@ -119,4 +137,5 @@ export const DEFAULT_COMMAND_QUEUE_OPTIONS: Required<
   maxRetained: 512,
   retainTtlMs: 15 * 60 * 1000,
   perQueueDepthCap: 8,
+  maxCommandsPerBoot: 50_000,
 };

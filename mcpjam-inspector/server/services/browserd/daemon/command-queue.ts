@@ -67,6 +67,7 @@ export class CommandQueue {
   private readonly maxRetained: number;
   private readonly retainTtlMs: number;
   private readonly perQueueDepthCap: number;
+  private readonly maxCommandsPerBoot: number;
   private readonly now: () => number;
 
   /** commandId → its running promise or settled result. */
@@ -74,10 +75,10 @@ export class CommandQueue {
   /** Insertion/access-ordered commandIds of SETTLED entries, for LRU eviction. */
   private readonly settledOrder: string[] = [];
   /** commandIds whose settled result was evicted (LRU/TTL): duplicates → expired.
-   * Bounded (see `tombstone`) so a long-lived daemon cannot leak memory. */
+   * Kept for the FULL boot — forgetting one would let a delayed retry re-run a
+   * non-idempotent action. Growth is bounded by refusing new commands at
+   * `maxCommandsPerBoot`, not by dropping tombstones. */
   private readonly evicted = new Set<string>();
-  /** Insertion-ordered tombstones, for bounding `evicted`. */
-  private readonly evictedOrder: string[] = [];
   /** queueKey → tail of that FIFO, so the next command chains after it. */
   private readonly tails = new Map<string, Promise<unknown>>();
   /** queueKey → count of in-flight + queued commands, for the depth cap. */
@@ -96,6 +97,9 @@ export class CommandQueue {
       options.retainTtlMs ?? DEFAULT_COMMAND_QUEUE_OPTIONS.retainTtlMs;
     this.perQueueDepthCap =
       options.perQueueDepthCap ?? DEFAULT_COMMAND_QUEUE_OPTIONS.perQueueDepthCap;
+    this.maxCommandsPerBoot =
+      options.maxCommandsPerBoot ??
+      DEFAULT_COMMAND_QUEUE_OPTIONS.maxCommandsPerBoot;
     this.now = options.now ?? Date.now;
 
     // Reject nonsensical limits up front: e.g. `maxRetained: -1` would make
@@ -108,6 +112,16 @@ export class CommandQueue {
     }
     if (!Number.isFinite(this.retainTtlMs) || this.retainTtlMs < 0) {
       throw new RangeError(`retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`);
+    }
+    // The per-boot ceiling must admit at least the result cache, or a full cache
+    // would wedge the daemon at capacity with no room for tombstones.
+    if (
+      !Number.isInteger(this.maxCommandsPerBoot) ||
+      this.maxCommandsPerBoot < this.maxRetained
+    ) {
+      throw new RangeError(
+        `maxCommandsPerBoot must be an integer >= maxRetained (${this.maxRetained}), got ${this.maxCommandsPerBoot}`,
+      );
     }
   }
 
@@ -125,6 +139,14 @@ export class CommandQueue {
     // to re-run — its outcome is unknowable.
     if (this.evicted.has(command.commandId)) {
       return { status: "expired", bootId: this.bootId };
+    }
+
+    // A genuinely NEW command adds one more id we must remember for the whole
+    // boot (as a returnable result, then as a tombstone). At the ceiling we
+    // refuse rather than forget a tombstone: forgetting one would let a delayed
+    // retry re-run a non-idempotent action. The daemon should rotate.
+    if (this.distinctTrackedCount >= this.maxCommandsPerBoot) {
+      return { status: "at_capacity", bootId: this.bootId };
     }
 
     const key = queueKeyFor(command);
@@ -165,9 +187,19 @@ export class CommandQueue {
     return this.settledOrder.length;
   }
 
-  /** Current tombstone count. Exposed for tests; bounded by `maxRetained`. */
+  /** Current tombstone count. Exposed for tests. */
   get tombstoneCount(): number {
     return this.evicted.size;
+  }
+
+  /**
+   * Distinct commandIds this boot is obligated to remember: live results/running
+   * entries plus tombstones. Every distinct command contributes exactly one
+   * (a settled result becomes a tombstone on eviction — one leaves `commands`,
+   * one enters `evicted`), so this is monotonic and the memory ceiling.
+   */
+  private get distinctTrackedCount(): number {
+    return this.commands.size + this.evicted.size;
   }
 
   private lookup(commandId: string): CommandEntry | undefined {
@@ -217,19 +249,12 @@ export class CommandQueue {
   }
 
   /**
-   * Record a tombstone, keeping the set bounded by `maxRetained`. Unbounded
-   * tombstones would leak memory in a long-lived daemon. The tradeoff of the
-   * bound: once the OLDEST tombstone is dropped, a replay of that ancient
-   * commandId would be treated as unseen and re-run — acceptable because a
-   * realistic retry arrives within seconds (far inside the retained window), and
-   * cross-boot replays are already caught by the bootId check at the HTTP layer.
+   * Tombstone a commandId for the rest of the boot. Deliberately never dropped:
+   * a delayed retry of any evicted id must return `expired`, never re-run. Total
+   * tombstones are bounded because `submit` refuses NEW commands once
+   * `distinctTrackedCount` reaches `maxCommandsPerBoot`.
    */
   private tombstone(commandId: string): void {
-    if (this.evicted.has(commandId)) return;
     this.evicted.add(commandId);
-    this.evictedOrder.push(commandId);
-    while (this.evictedOrder.length > this.maxRetained) {
-      this.evicted.delete(this.evictedOrder.shift()!);
-    }
   }
 }
