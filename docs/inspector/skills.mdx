@@ -228,7 +228,7 @@ The file tools are not advertised everywhere, because promising them for skills 
 Together with the inlined catalog, these tools let the LLM progressively load skill content as needed during a conversation, rather than injecting every skill's content upfront.
 
 <Note>
-`listSkills` is not a general discovery tool. It appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists those server-provided skills only — their catalog is fetched from the server on demand rather than inlined in the prompt.
+`listSkills` is not a general discovery tool. It appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists those server-provided skills only. Use it to re-read the catalog mid-conversation; the catalog is already inlined in the system prompt at the start of each turn.
 </Note>
 
 ## Skills over MCP (Server-Provided Skills)
