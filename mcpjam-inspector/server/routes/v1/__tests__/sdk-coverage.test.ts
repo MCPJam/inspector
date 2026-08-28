@@ -99,6 +99,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listServerResources",
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
+  "post /projects/{projectId}/servers/{serverId}/skills": "listServerSkills",
+  "post /projects/{projectId}/servers/{serverId}/skills/get": "getServerSkill",
+  "post /projects/{projectId}/servers/{serverId}/skills/read-file":
+    "readServerSkillFile",
 
   // Directory readiness
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":

@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // PR0 of the runner-unification (plan: we-need-robustness-and-jaunty-toast.md).
 // Golden-output parity harness: pins the *persisted Convex payload* and the
 // *emitted EvalStreamEvent sequence* of every runner path BEFORE the four
-// runners are merged into one engine. Later PRs (1-6) must keep these snapshots
-// byte-stable (PR3 normalizes the intermediate finishParams `error` field, which
-// is cosmetic — `finalizeEvalIteration` forwards error/details to Convex
-// unconditionally — so these Convex-payload snapshots stay unchanged; PR5 adds
-// NEW streaming-pinned snapshots).
+// runners are merged into one engine. Later PRs (1-6) should keep these
+// snapshots byte-stable unless they intentionally extend the durable contract.
+// B5c is one such extension: every observed stage now carries additive
+// `stageMeasurements`, and setup signals include scrubbed duration fields.
+// PR3 normalizes the intermediate finishParams `error` field, which is
+// cosmetic — `finalizeEvalIteration` forwards error/details to Convex
+// unconditionally — so those Convex-payload snapshots stay unchanged; PR5
+// adds NEW streaming-pinned snapshots.
 //
 // We snapshot a NORMALIZED projection (timestamps + volatile ids scrubbed), not
 // raw payloads, so the contract is the durable shape, not wall-clock noise.

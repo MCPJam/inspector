@@ -239,15 +239,7 @@ export type BenchmarkRosterEntry = {
   required: boolean;
   cellId?: string;
   repetitions?: number;
-  /**
-   * The cell's pinned model and client profile, as project ids.
-   *
-   * NOT SENT TODAY. The backend reduces the definition's `matrix[]` to
-   * `pins.matrixHash` and puts no launch parameters on the roster, so these
-   * are read where the backend would naturally put them and refused when
-   * absent — see {@link resolveEvalCellSpec}. Declared rather than reached for
-   * with a cast so the shape the two repos have to agree on is written down.
-   */
+  /** Backend-resolved project launch pins for this matrix cell. */
   environmentId?: string | null;
   namedHostId?: string | null;
   /**
@@ -948,25 +940,10 @@ async function abortJob(args: {
  * The pins carry `suiteId` and `suiteRevision`. So the exam and the cell and
  * the repetition count ARE resolvable, and they are resolved here.
  *
- * The cell's MODEL and CLIENT PROFILE are not. They live in the definition's
- * `matrix[]` as `requestedModel` and `clientProfile`, which the claim reduces
- * to `pins.matrixHash`; and `prepareEvalRun` has no model parameter at all —
- * the model comes from a project `environmentId` this worker has no way to
- * look up with a bearer scoped to one server.
- *
- * ── SO THIS FAILS THE CLAIM, LOUDLY ───────────────────────────────────────
- *
- * Not "skip the cell": a skipped cell is a coverage gap the payer is never
- * told about. Not "launch it on the suite default and hope": the backend
- * refuses the attach when `effectiveModelId` does not satisfy the cell's
- * `requestedModel`, so guessing spends the payer's credits and a third party's
- * capacity to produce evidence that is then thrown away — and on the run where
- * the default happens to match, it silently scores a cell that never ran under
- * the model it claims.
- *
- * The refusal is non-retryable, so the run ends with a reason an operator can
- * read instead of cycling three attempts through the same gap. Closing it is a
- * backend change: send the cell's launch parameters on the roster row.
+ * The backend resolves the portable matrix labels to a project-owned host at
+ * claim time. A missing pin is still refused before any connection or model
+ * call, because falling back to a suite default can spend the payer's credits
+ * on evidence that the backend will reject for the wrong engine or model.
  */
 export function resolveEvalCellSpec(
   job: ClaimedBenchmarkJob,
@@ -975,9 +952,8 @@ export function resolveEvalCellSpec(
   const cellId = typeof entry.cellId === "string" ? entry.cellId.trim() : "";
   const suiteId =
     typeof job.pins?.suiteId === "string" ? job.pins.suiteId.trim() : "";
-  // Forward-compatible: the day the backend puts these on the roster row this
-  // worker starts using them with no further change. Until then they are
-  // absent, and absent is refused rather than defaulted.
+  // Absent is refused rather than defaulted so a stale or malformed claim
+  // cannot silently change the cell it is charging.
   const environmentId =
     typeof entry.environmentId === "string" && entry.environmentId.length > 0
       ? entry.environmentId

@@ -2065,6 +2065,31 @@ export class MCPClientManager {
   }
 
   /**
+   * {@link getSkillsSupport}, after ensuring the connection exists.
+   *
+   * `getSkillsSupport` reads what a LIVE connection negotiated, synchronously.
+   * On a manager whose connection has not been established yet it therefore
+   * answers `active: false` for every server — not because the extension is
+   * absent, but because there is nothing to read. That is the right answer to
+   * the question it was asked and the wrong answer to the question a caller
+   * usually means.
+   *
+   * It matters on EPHEMERAL managers, which is every hosted request: a route
+   * that reads support as its first act reads it before anything has
+   * connected, concludes the extension is inactive, and returns an empty
+   * listing — then tears the manager down, aborting the negotiation that was
+   * still in flight. The symptom is a 200 with no skills and an `AbortError`
+   * in the connection telemetry, on a server that is perfectly reachable.
+   *
+   * Every other capability question reaches the wire through a method that
+   * awaits `ensureConnected` first. This is that method for skills.
+   */
+  async ensureSkillsSupport(serverId: string): Promise<SkillsSupport> {
+    await this.ensureConnected(serverId);
+    return this.getSkillsSupport(serverId);
+  }
+
+  /**
    * Advertise = enforce. A `skills/*` request is refused BEFORE it reaches the
    * wire whenever the extension is not mutually declared.
    *

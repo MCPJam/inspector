@@ -195,7 +195,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  async function runQuickTestCase(compareRunId?: string) {
+  async function runQuickTestCase(
+    compareRunId?: string,
+    intent?: string,
+  ) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
     // counterpart and would otherwise route through the backend.
@@ -211,6 +214,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
+            ...(intent !== undefined ? { intent } : {}),
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
@@ -739,6 +743,17 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(callsByRef["testSuites:appendEvalTurnTrace"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:updateTestIteration"]).toBeGreaterThan(0);
     expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
+  });
+
+  it("freezes the authored intent in a quick-run iteration snapshot", async () => {
+    await runQuickTestCase(undefined, "Task search");
+
+    const createCall = convexClient.mutation.mock.calls.find(
+      (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+    );
+    expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+      intent: "Task search",
+    });
   });
 
   it("derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed", async () => {
@@ -2077,6 +2092,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           model: "claude-haiku-4.5",
           provider: "anthropic",
           expectedToolCalls: [],
+          intent: "Stream task",
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
           ],
@@ -2116,6 +2132,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const payload = updateCall![1] as Record<string, unknown>;
       expect(payload.status).toBe("setup_failed");
       expect(payload.result).toBe("failed");
+
+      const createCall = convexClient.mutation.mock.calls.find(
+        (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+      );
+      expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+        intent: "Stream task",
+      });
 
       // The runner must NOT have hit the backend — failure happens before
       // the per-step fetch loop.

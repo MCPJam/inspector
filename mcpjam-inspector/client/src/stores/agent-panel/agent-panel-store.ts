@@ -115,7 +115,7 @@ function persist(state: LoadedState): void {
         width: state.width,
         activeSessionId: state.activeSessionId,
         activeSessionProjectId: state.activeSessionProjectId,
-      })
+      }),
     );
   } catch {
     // Quota/disabled — silently skip; panel will revert to defaults next load.

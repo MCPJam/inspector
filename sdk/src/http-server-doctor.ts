@@ -212,6 +212,15 @@ export async function collectConnectedHttpServerDoctorState(
     resourcesResult,
     promptsResult,
     resourceTemplatesResult,
+    // This doctor drives a bare client rather than an MCPClientManager, and the
+    // verified skills read path is manager-shaped. Reporting `skipped` states
+    // that honestly instead of implying the server serves none.
+    skillsResult: {
+      skills: [],
+      check: skippedCheck(
+        "Skills over MCP is not inspected on this surface."
+      ),
+    },
   });
 }
 

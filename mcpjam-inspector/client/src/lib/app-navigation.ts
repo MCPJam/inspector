@@ -104,6 +104,7 @@ export const routePaths = {
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
+  webmcp: "/webmcp",
   /** Legacy path. Still routed (it redirects), but never build links with it. */
   scenarios: "/scenarios",
   userTesting: "/user-testing",
