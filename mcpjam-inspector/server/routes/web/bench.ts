@@ -446,10 +446,15 @@ async function callBackend(
         backendMessage(body, "You do not have access to this benchmark."),
       );
     case 409:
+      // The envelope rides along, as it does on 402. `CONFLICT` cannot
+      // distinguish "the exam moved under your quote" — which the score site
+      // recovers from by re-quoting — from "this run is already finished",
+      // which it cannot, and only the backend's own code says which.
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
         backendMessage(body, "This benchmark run is no longer in that state."),
+        body ? (body as Record<string, unknown>) : undefined,
       );
     case 429:
       throw new WebRouteError(
@@ -1007,7 +1012,20 @@ bench.get("/results/:secret", async (c) => {
     );
   }
 
-  cacheResult(secret, result);
+  // Cache the FINISHED document only.
+  //
+  // `internalHostedBenchmarkResult` answers a live run with `ready: false` and
+  // no scorecard — a placeholder, deliberately, because its own docblock says
+  // "reporting a partial one would be cached and served as final". Caching it
+  // here does exactly that: a poll that lands one second after the start would
+  // pin "not ready" in front of every reader of that link for the next minute,
+  // including the run's own owner watching it finish.
+  //
+  // `=== true` rather than a truthiness check, so a backend that stops sending
+  // the field is treated as not-cacheable rather than as ready.
+  if ((result as { ready?: unknown }).ready === true) {
+    cacheResult(secret, result);
+  }
   return c.json({ success: true, result });
 });
 

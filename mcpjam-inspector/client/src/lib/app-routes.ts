@@ -112,9 +112,27 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "public",
   },
   {
+    path: "embed/bench",
+    kind: "special",
+    note: "Chrome-less vanity surface (score.mcpjam.com): the Connector Bench runner. No sidebar, no NUX.",
+    scope: "public",
+  },
+  {
+    path: "embed/bench/:runId",
+    kind: "special",
+    note: "The same runner, resumed. The run id in the URL is the whole client state — refresh and a second tab both just re-read it.",
+    scope: "public",
+  },
+  {
     path: "results/:runToken",
     kind: "special",
     note: "One score run's report. Public by link token — no session required to read it.",
+    scope: "public",
+  },
+  {
+    path: "bench/results/:secret",
+    kind: "special",
+    note: "One benchmark scorecard. Public by link secret — no session required to read it.",
     scope: "public",
   },
   {

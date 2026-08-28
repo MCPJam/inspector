@@ -48,15 +48,17 @@ const connectBodies: Array<Record<string, unknown>> = [];
  */
 async function freshApp() {
   vi.resetModules();
-  const [{ default: benchRoutes }, { mapRuntimeError, webError }] =
+  const [{ default: benchRoutes }, { mapRuntimeError, webErrorFromRoute }] =
     await Promise.all([import("../bench"), import("../errors")]);
 
   const app = new Hono();
   app.route("/api/web/bench", benchRoutes);
-  app.onError((error, c) => {
-    const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
-  });
+  // `webErrorFromRoute`, matching how `routes/web/index.ts` actually mounts
+  // this router. A hand-rolled `webError(status, code, message)` here drops
+  // `details`, which is where the specific backend verdict rides — so the
+  // harness would report a passing relay that strips the one field the client
+  // needs to tell two conflicts apart.
+  app.onError((error, c) => webErrorFromRoute(c, mapRuntimeError(error)));
   return app;
 }
 
@@ -774,7 +776,12 @@ describe("GET /api/web/bench/results/:secret", () => {
   });
 
   it("caches a repeat read instead of re-hitting the backend", async () => {
-    const fetchMock = jsonOk({ result: { runId: "run_1" } });
+    // `ready: true` is part of the real payload, not decoration: the cache
+    // now keys on it, and a fixture without it was asserting caching of a
+    // document the backend never sends.
+    const fetchMock = jsonOk({
+      result: { benchmarkRunId: "brun_1", ready: true, status: "completed" },
+    });
     global.fetch = fetchMock as any;
 
     const app = await freshApp();
@@ -782,6 +789,47 @@ describe("GET /api/web/bench/results/:secret", () => {
     await app.request("/api/web/bench/results/sec_abc");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A live run's document is a PLACEHOLDER — `ready: false`, no scorecard.
+   * `internalHostedBenchmarkResult`'s own docblock says reporting a partial
+   * result "would be cached and served as final", and caching it here is
+   * precisely that: one poll a second after the start would pin "not ready"
+   * in front of every reader of that link for the next minute, the run's own
+   * owner included, with nothing to invalidate it when the run finishes.
+   */
+  it("does not cache a run that has not finished yet", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        ok: true,
+        result: { benchmarkRunId: "brun_1", ready: false, status: "running" },
+      }),
+    );
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    expect((await app.request("/api/web/bench/results/sec_abc")).status).toBe(
+      200,
+    );
+    expect((await app.request("/api/web/bench/results/sec_abc")).status).toBe(
+      200,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a missing ready flag as not cacheable, rather than as ready", async () => {
+    // Fail closed on a backend that stops sending the field: serving a stale
+    // unknown document for a minute is worse than one extra round trip.
+    const fetchMock = jsonOk({ result: { benchmarkRunId: "brun_1" } });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    await app.request("/api/web/bench/results/sec_abc");
+    await app.request("/api/web/bench/results/sec_abc");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("charges only cache MISSES, and 429s a secret guesser", async () => {
@@ -911,6 +959,44 @@ describe("backend verdict passthrough", () => {
     const body = await res.json();
     expect(body.code).toBe(code);
     expect(body.message).toBe("backend says no");
+  });
+
+  /**
+   * `CONFLICT` cannot distinguish "the exam moved under your quote" — which
+   * the score site recovers from by re-quoting and re-consenting — from "this
+   * run is already finished", which it cannot. Only the backend's own code
+   * says which, so the envelope has to survive the relay.
+   */
+  it("forwards the backend's own conflict code, not just CONFLICT", async () => {
+    global.fetch = vi.fn(async () =>
+      Response.json(
+        {
+          ok: false,
+          code: "DEFINITION_CHANGED",
+          error: "This exam was republished while your quote was open.",
+        },
+        { status: 409 },
+      ),
+    ) as any;
+
+    const app = await freshApp();
+    const res = await app.request("/api/web/bench/runs", {
+      method: "POST",
+      headers: AUTHED,
+      // The quote id is what makes DEFINITION_CHANGED reachable at all: the
+      // backend raises it by re-checking THIS quote's definition hash.
+      body: JSON.stringify({
+        projectId: "p",
+        serverId: "s",
+        quoteId: "q",
+        receiptId: "r",
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("CONFLICT");
+    expect(body.details?.code).toBe("DEFINITION_CHANGED");
   });
 
   it("502s a 200 that is not the ok envelope", async () => {

@@ -532,6 +532,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
 import { ScoreResultsPage } from "@/components/score/ScoreResultsPage";
+import { BenchRunnerPage } from "@/components/score/BenchRunnerPage";
+import { BenchResultsPage } from "@/components/score/BenchResultsPage";
 
 /**
  * The no-router render path.
@@ -1165,6 +1167,27 @@ export function ScoreRunnerRoute() {
  */
 export function ScoreResultsRoute() {
   return <ScoreResultsPage />;
+}
+
+/**
+ * The Connector Bench runner, on the same chrome-less guest surface.
+ *
+ * Unlike the conformance runner it never executes anything in the browser: it
+ * starts a hosted run and then reads it. The run id is a route param, so this
+ * component holds no phase a reload could lose.
+ */
+export function BenchRunnerRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  return <BenchRunnerPage convexProjectId={convexProjectId ?? null} />;
+}
+
+/**
+ * One benchmark scorecard, addressable only by its secret link. Read through
+ * an unauthenticated GET on purpose — a shared result must open with no
+ * session, no guest cookie, and no project.
+ */
+export function BenchResultsRoute() {
+  return <BenchResultsPage />;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -2515,6 +2538,12 @@ export default function App() {
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
+    barePathname === routePaths.embedBench ||
+    // `/embed/bench/<runId>` is the same chrome-less screen resumed, so the
+    // deep link has to clear the shell and the NUX redirect too — otherwise
+    // reloading a running benchmark drops the visitor into onboarding.
+    barePathname.startsWith(`${routePaths.embedBench}/`) ||
+    barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
