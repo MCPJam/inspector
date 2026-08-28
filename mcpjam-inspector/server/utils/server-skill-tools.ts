@@ -291,67 +291,69 @@ export function withServerSkills<T extends Record<string, unknown>>(
   }
 
   async function drainCatalog(): Promise<void> {
-    // Fetched CONCURRENTLY, applied IN PROVIDER ORDER.
+    // Concurrent, and each provider's listing is applied THE MOMENT it lands.
     //
-    // Sequential fetching made one slow server delay every server behind it,
-    // and the prompt catalog now waits on this — so a single unresponsive
-    // provider could add its whole request timeout to a turn, then the next
-    // one's. Applying the settled results in order keeps ref assignment and
-    // ambiguity marking deterministic: which of two servers claims a
-    // duplicated URI first must not depend on which one answered faster.
-    const listings = await Promise.all(
+    // Batching the applications behind the slowest provider bounded latency
+    // but traded it for a worse failure: one stalled server made every healthy
+    // server's skills invisible for the turn, because the prompt deadline
+    // fired before anything had been applied. Now a slow provider costs only
+    // its own entries.
+    //
+    // Arrival order is unobservable, so this loses no determinism:
+    //   - refs are `<slug>/<name>`, and slugs are assigned up front over every
+    //     candidate, so a ref never depends on who answered first;
+    //   - for a URI two providers both claim, the SECOND claimant marks it
+    //     ambiguous and `classify` refuses on `ambiguousUris` BEFORE reading
+    //     `byUri` — so which entry sits in that slot is never read.
+    await Promise.all(
       providers.map(async (provider) => {
+        let listing;
         try {
-          return await listServerSkillCatalog(args.manager, provider.serverId);
+          listing = await listServerSkillCatalog(args.manager, provider.serverId);
         } catch (error) {
           logger.warn("[server-skills] discovery failed", {
             serverId: provider.serverId,
             error: error instanceof Error ? error.message : String(error),
           });
-          // One broken server must not remove another's skills from the
-          // catalog.
-          return undefined;
+          // One broken server must not remove another's skills.
+          return;
         }
+        // Refs come from the SHARED assigner, which disambiguates EVERY member
+          // of a duplicated name rather than only the ones after the first — so the
+          // ref a skill gets does not depend on where the server placed it in the
+          // listing, and the picker computes the same answer.
+          const assigned = await assignSkillRefs(
+            provider.serverSlug,
+            listing.skills
+          );
+          for (const { skill, ref } of assigned) {
+            const entry: CatalogEntry = {
+              ...skill,
+              ref,
+              serverLabel: provider.serverLabel,
+            };
+            state.byRef.set(ref, entry);
+            // Two connected servers may legally advertise the same URI. Last-write
+            // -wins would silently pick one, so the second claimant marks the URI
+            // AMBIGUOUS and the direct-URI path refuses it with the qualified
+            // options — the same posture `resolveRef` takes for a bare name.
+            if (state.byUri.has(skill.skillUri)) {
+              state.ambiguousUris.add(skill.skillUri);
+            } else {
+              state.byUri.set(skill.skillUri, entry);
+            }
+          }
+          for (const rejection of listing.rejected) {
+            logger.warn("[server-skills] listing entry rejected", {
+              serverId: provider.serverId,
+              skillUri: rejection.skillUri,
+              reason: rejection.reason,
+            });
+          }
       })
     );
-
-    for (const [index, provider] of providers.entries()) {
-      const listing = listings[index];
-      if (listing === undefined) continue;
-      // Refs come from the SHARED assigner, which disambiguates EVERY member of
-      // a duplicated name rather than only the ones after the first — so the
-      // ref a skill gets does not depend on where the server placed it in the
-      // listing, and the picker computes the same answer.
-      const assigned = await assignSkillRefs(
-        provider.serverSlug,
-        listing.skills
-      );
-      for (const { skill, ref } of assigned) {
-        const entry: CatalogEntry = {
-          ...skill,
-          ref,
-          serverLabel: provider.serverLabel,
-        };
-        state.byRef.set(ref, entry);
-        // Two connected servers may legally advertise the same URI. Last-write
-        // -wins would silently pick one, so the second claimant marks the URI
-        // AMBIGUOUS and the direct-URI path refuses it with the qualified
-        // options — the same posture `resolveRef` takes for a bare name.
-        if (state.byUri.has(skill.skillUri)) {
-          state.ambiguousUris.add(skill.skillUri);
-        } else {
-          state.byUri.set(skill.skillUri, entry);
-        }
-      }
-      for (const rejection of listing.rejected) {
-        logger.warn("[server-skills] listing entry rejected", {
-          serverId: provider.serverId,
-          skillUri: rejection.skillUri,
-          reason: rejection.reason,
-        });
-      }
-    }
   }
+
 
   interface LoadSkillInput {
     name?: string | undefined;
@@ -980,19 +982,22 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // `loadSkill` later in the same turn still gets the catalog it was always
     // going to wait for. Mirrors the Cloud path's `raceWithTimeout`.
     const started = Date.now();
+    let timedOut = false;
     try {
       await raceWithDeadline(ensureCatalog(), CATALOG_PROMPT_DEADLINE_MS);
     } catch {
-      logger.warn(
-        "[server-skills] catalog discovery exceeded the prompt deadline; " +
-          "continuing without the prompt catalog for this turn",
-        { deadlineMs: CATALOG_PROMPT_DEADLINE_MS, providers: providers.length }
-      );
-      return "";
+      // PARTIAL, not empty. Providers apply their listings as they land, so
+      // whatever answered in time is already in `state.byRef` — a stalled
+      // server costs its own entries and nobody else's. The skills it would
+      // have contributed are still reachable through `listSkills`/`loadSkill`,
+      // which wait on the same drain.
+      timedOut = true;
     }
     logger.info("[server-skills] prompt catalog built", {
       latencyMs: Date.now() - started,
       providers: providers.length,
+      timedOut,
+      skills: state.byRef.size,
     });
     const entries = [...state.byRef.values()];
     if (entries.length === 0) return "";

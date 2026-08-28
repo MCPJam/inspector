@@ -278,6 +278,38 @@ describe("the catalog is in the prompt, not behind a tool call", () => {
     expect(manager.calls.filter((c) => c === "skills/list")).toHaveLength(1);
   });
 
+  it("keeps a fast provider's skills when a slow one misses the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = await makeManager();
+      const fast = (manager as unknown as { listServerSkills: Function })
+        .listServerSkills;
+      // srv1 answers at once; srv2 never does.
+      (manager as unknown as { listServerSkills: unknown }).listServerSkills =
+        vi.fn((serverId: string) =>
+          serverId === "srv1"
+            ? (fast as Function)(serverId)
+            : new Promise(() => {})
+        );
+
+      const { buildPromptSection } = withServerSkills(baseTools(), {
+        manager,
+        servers: [
+          { serverId: "srv1", serverLabel: "Acme Billing" },
+          { serverId: "srv2", serverLabel: "Slow Co" },
+        ],
+      });
+      const pending = buildPromptSection!();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Partial, not empty: one stalled server must not make every healthy
+      // server's skills invisible for the turn.
+      await expect(pending).resolves.toContain("Handle refunds.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up on the prompt rather than stalling the turn", async () => {
     vi.useFakeTimers();
     try {
