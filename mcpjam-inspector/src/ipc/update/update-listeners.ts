@@ -19,12 +19,23 @@ export type UpdateStatus =
 export const DEFAULT_STALLED_INSTALL_TIMEOUT_MS = 5 * 60_000;
 let stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
 
+// Watchdog for an install that never starts. `quitAndInstall()` can return
+// without quitting AND without throwing: Squirrel.Mac no-ops when it can't
+// swap in the staged build (Team ID mismatch, unwritable staging dir). No
+// event follows, so the quit that never arrives is the only evidence — a
+// successful call reaches `before-quit` almost immediately, so if we're still
+// running after this long the install didn't take. Without this the user
+// clicks Update, nothing happens, and nothing is logged or reported.
+export const DEFAULT_INSTALL_QUIT_TIMEOUT_MS = 5_000;
+let installQuitTimeoutMs = DEFAULT_INSTALL_QUIT_TIMEOUT_MS;
+
 let currentStatus: UpdateStatus = { kind: "idle" };
 let isQuittingForUpdate = false;
 let isCheckingOrDownloading = false;
 let trustedWindow: BrowserWindow | null = null;
 let updateListenersRegistered = false;
 let stalledInstallTimer: ReturnType<typeof setTimeout> | null = null;
+let installQuitTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -38,10 +49,7 @@ function startStalledInstallWatchdog(): void {
   stalledInstallTimer = setTimeout(() => {
     stalledInstallTimer = null;
     // Re-check at fire-time: if anything succeeded or moved on, do nothing.
-    if (
-      currentStatus.kind === "pending" &&
-      currentStatus.installRequested
-    ) {
+    if (currentStatus.kind === "pending" && currentStatus.installRequested) {
       log.error(
         `Auto-updater stalled in pending+installRequested for ${stalledInstallTimeoutMs}ms — surfacing error`,
       );
@@ -56,6 +64,41 @@ function startStalledInstallWatchdog(): void {
       broadcastUpdateError();
     }
   }, stalledInstallTimeoutMs);
+}
+
+function clearInstallQuitWatchdog(): void {
+  if (installQuitTimer !== null) {
+    clearTimeout(installQuitTimer);
+    installQuitTimer = null;
+  }
+}
+
+// Ask Squirrel to swap in the staged build and restart. A throw is surfaced
+// immediately; a silent no-op is caught by the watchdog instead.
+function requestQuitAndInstall(): void {
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (error) {
+    // quitAndInstall can throw on macOS when the staged build is mis-signed
+    // or Squirrel's staging dir is corrupted. Don't leave the quitting flag
+    // stuck — surface the error so the user can retry.
+    log.error("quitAndInstall threw:", error);
+    isQuittingForUpdate = false;
+    broadcastUpdateError();
+    return;
+  }
+  clearInstallQuitWatchdog();
+  installQuitTimer = setTimeout(() => {
+    installQuitTimer = null;
+    log.error(
+      `quitAndInstall() returned without starting a quit within ${installQuitTimeoutMs}ms — treating the install as failed`,
+    );
+    // Let the user click Update again, and tell them it didn't work so they
+    // can fall back to a manual download. Status stays "downloaded" because
+    // the build really is staged — it's the swap-in that failed.
+    isQuittingForUpdate = false;
+    broadcastUpdateError();
+  }, installQuitTimeoutMs);
 }
 
 function isTrustedSender(senderId: number): boolean {
@@ -107,6 +150,9 @@ function setStatus(next: UpdateStatus): void {
 }
 
 export function setupAutoUpdaterEvents(): void {
+  // A quit actually starting is what tells us `quitAndInstall()` took effect.
+  app.on("before-quit", clearInstallQuitWatchdog);
+
   autoUpdater.on("checking-for-update", () => {
     isCheckingOrDownloading = true;
     log.info("Checking for updates...");
@@ -139,6 +185,9 @@ export function setupAutoUpdaterEvents(): void {
   autoUpdater.on("error", (error) => {
     isCheckingOrDownloading = false;
     clearStalledInstallWatchdog();
+    // Squirrel reported the failure itself — don't let the watchdog fire a
+    // second toast for the same install.
+    clearInstallQuitWatchdog();
     log.error("Auto-updater error:", error);
     // Always notify users in packaged builds — Bug 2: previously we only
     // broadcast when the user had clicked, so download failures before any
@@ -176,16 +225,7 @@ export function setupAutoUpdaterEvents(): void {
     if (installRequested && !isQuittingForUpdate) {
       log.info("User had requested install — restarting now");
       isQuittingForUpdate = true;
-      try {
-        autoUpdater.quitAndInstall();
-      } catch (error) {
-        // quitAndInstall can throw on macOS when the staged build is
-        // mis-signed or Squirrel's staging dir is corrupted. Don't leave the
-        // quitting flag stuck — surface the error so the user can retry.
-        log.error("quitAndInstall threw:", error);
-        isQuittingForUpdate = false;
-        broadcastUpdateError();
-      }
+      requestQuitAndInstall();
     }
   });
 }
@@ -218,13 +258,7 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
     if (currentStatus.kind === "downloaded") {
       log.info("Restarting app to install update...");
       isQuittingForUpdate = true;
-      try {
-        autoUpdater.quitAndInstall();
-      } catch (error) {
-        log.error("quitAndInstall threw:", error);
-        isQuittingForUpdate = false;
-        broadcastUpdateError();
-      }
+      requestQuitAndInstall();
     } else if (currentStatus.kind === "pending") {
       log.info("Update still downloading — queuing install for completion");
       setStatus({ ...currentStatus, installRequested: true });
@@ -314,6 +348,11 @@ export function installUpdateOnQuit(): boolean {
   if (currentStatus.kind === "downloaded" && !isQuittingForUpdate) {
     log.info("Staged update found at quit — installing before exit");
     isQuittingForUpdate = true;
+    // Deliberately not requestQuitAndInstall(): arming the quit watchdog from
+    // inside a `before-quit` emit only works if our own `before-quit` listener
+    // happens to run before this one, and that ordering isn't something this
+    // module controls. The failure is mild here anyway — a no-op leaves the
+    // app running and the user's next quit closes it normally.
     try {
       autoUpdater.quitAndInstall();
       return true;
@@ -334,16 +373,22 @@ export function installUpdateOnQuit(): boolean {
 // Test-only reset
 export function __resetUpdateStateForTests(): void {
   clearStalledInstallWatchdog();
+  clearInstallQuitWatchdog();
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
   isCheckingOrDownloading = false;
   trustedWindow = null;
   updateListenersRegistered = false;
   stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
+  installQuitTimeoutMs = DEFAULT_INSTALL_QUIT_TIMEOUT_MS;
 }
 
 // Test-only timeout override so the watchdog test doesn't have to advance
 // a full minute of fake timers.
 export function __setStalledInstallTimeoutForTests(ms: number): void {
   stalledInstallTimeoutMs = ms;
+}
+
+export function __setInstallQuitTimeoutForTests(ms: number): void {
+  installQuitTimeoutMs = ms;
 }

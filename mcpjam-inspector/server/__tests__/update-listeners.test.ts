@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  appHandlers,
   appState,
   autoUpdaterHandlers,
   checkForUpdatesMock,
@@ -15,7 +16,15 @@ const {
   quitAndInstallMock,
   windows,
 } = vi.hoisted(() => {
-  const appState = { isPackaged: true };
+  const appHandlers = new Map<string, Array<(...args: any[]) => void>>();
+  const appState = {
+    isPackaged: true,
+    on: (event: string, handler: (...args: any[]) => void) => {
+      const handlers = appHandlers.get(event) ?? [];
+      handlers.push(handler);
+      appHandlers.set(event, handlers);
+    },
+  };
   const autoUpdaterHandlers = new Map<
     string,
     Array<(...args: any[]) => void>
@@ -25,6 +34,7 @@ const {
   const windows: any[] = [];
 
   return {
+    appHandlers,
     appState,
     autoUpdaterHandlers,
     checkForUpdatesMock: vi.fn(),
@@ -32,7 +42,7 @@ const {
     ipcHandleMock: vi.fn(
       (channel: string, handler: (...args: any[]) => any) => {
         ipcHandlers.set(channel, handler);
-      }
+      },
     ),
     ipcOnMock: vi.fn((channel: string, handler: (...args: any[]) => void) => {
       ipcListeners.set(channel, handler);
@@ -93,7 +103,14 @@ function emitAutoUpdaterEvent(event: string, ...args: any[]) {
   }
 }
 
-type UpdateListenersModule = typeof import("../../src/ipc/update/update-listeners.js");
+function emitAppEvent(event: string, ...args: any[]) {
+  for (const handler of appHandlers.get(event) ?? []) {
+    handler(...args);
+  }
+}
+
+type UpdateListenersModule =
+  typeof import("../../src/ipc/update/update-listeners.js");
 let lastLoadedModule: UpdateListenersModule | null = null;
 
 async function loadUpdateListeners() {
@@ -107,6 +124,7 @@ async function loadUpdateListeners() {
 describe("update-listeners", () => {
   beforeEach(() => {
     appState.isPackaged = true;
+    appHandlers.clear();
     autoUpdaterHandlers.clear();
     ipcHandlers.clear();
     ipcListeners.clear();
@@ -140,7 +158,7 @@ describe("update-listeners", () => {
       installRequested: false,
     });
     expect(
-      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } })
+      ipcHandlers.get("app:get-update-status")?.({ sender: { id: 1 } }),
     ).toEqual({ kind: "pending", installRequested: false });
   });
 
@@ -417,5 +435,94 @@ describe("update-listeners", () => {
     // attempt quitAndInstall again (mock no longer throws).
     ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
     expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces an error when quitAndInstall returns without quitting", async () => {
+    // The reported bug: Squirrel.Mac no-ops instead of throwing when it can't
+    // swap in the staged build, so the user clicks Update and gets nothing —
+    // no restart, no toast, no log line.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+
+      // quitAndInstall returns normally and the app just... keeps running.
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(1);
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+
+      vi.advanceTimersByTime(1_000);
+
+      expect(window.webContents.send).toHaveBeenCalledWith("update-error");
+      // The staged build is still there, so the button stays actionable and a
+      // retry is not blocked by a stuck isQuittingForUpdate.
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+      expect(quitAndInstallMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet when quitAndInstall actually starts the quit", async () => {
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      // Squirrel took the request and the shutdown sequence began.
+      emitAppEvent("before-quit");
+      vi.advanceTimersByTime(5_000);
+
+      expect(window.webContents.send).not.toHaveBeenCalledWith("update-error");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not double-report when the auto-updater reports its own error", async () => {
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      emitAutoUpdaterEvent("error", new Error("install failed"));
+      const afterReportedError = (
+        window.webContents.send as any
+      ).mock.calls.filter(
+        ([channel]: [string]) => channel === "update-error",
+      ).length;
+
+      vi.advanceTimersByTime(2_000);
+
+      const afterWatchdogWindow = (
+        window.webContents.send as any
+      ).mock.calls.filter(
+        ([channel]: [string]) => channel === "update-error",
+      ).length;
+      expect(afterReportedError).toBe(1);
+      expect(afterWatchdogWindow).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
