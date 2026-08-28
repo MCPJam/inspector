@@ -7,6 +7,22 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 
+// The stage-analytics panel owns its own REST read. Stubbed at the api
+// boundary rather than by replacing the component, so this file still proves
+// the real section mounts with the props the page hands it.
+const { stageAnalyticsFetchMock } = vi.hoisted(() => ({
+  stageAnalyticsFetchMock: vi.fn(),
+}));
+vi.mock("@/lib/apis/eval-stage-analytics-api", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/apis/eval-stage-analytics-api")
+  >("@/lib/apis/eval-stage-analytics-api");
+  return {
+    ...actual,
+    fetchEvalSuiteStageAnalytics: stageAnalyticsFetchMock,
+  };
+});
+
 function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
   return {
     _id: "suite-1",
@@ -533,5 +549,67 @@ describe("SuiteDetailOverview", () => {
       screen.queryByText("No runs match these filters."),
     ).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
+  });
+
+  describe("stage analytics section", () => {
+    function renderWithRuns(runs: EvalSuiteRun[], runsLoading = false) {
+      return renderWithProviders(
+        <SuiteDetailOverview
+          suite={makeSuite()}
+          cases={[makeCase({ _id: "case-1" })]}
+          runs={runs}
+          runsLoading={runsLoading}
+          allIterations={[]}
+          hostNamesById={hostNamesById}
+          onRerun={vi.fn()}
+          onEditSuite={vi.fn()}
+          onEditCases={vi.fn()}
+          onRunClick={vi.fn()}
+          onTestCaseClick={vi.fn()}
+          projectId="p1"
+        />,
+      );
+    }
+
+    it("mounts the section on the Evaluate suite page", async () => {
+      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
+      renderWithRuns([makeRun({ _id: "run-1" })]);
+
+      expect(
+        await screen.findByTestId("suite-detail-stage-analytics"),
+      ).toBeTruthy();
+      // Fed the suite and project the page already holds — never resolved in
+      // the browser, which is how a suite gets read against the wrong project.
+      expect(stageAnalyticsFetchMock).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p1", suiteId: "suite-1" }),
+        expect.any(AbortSignal),
+      );
+    });
+
+    it("distinguishes a suite with runs from one without", async () => {
+      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
+      const { unmount } = renderWithRuns([makeRun({ _id: "run-1" })]);
+      expect(
+        await screen.findByTestId("stage-analytics-unmeasured-legacy"),
+      ).toBeTruthy();
+      unmount();
+
+      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
+      renderWithRuns([]);
+      expect(await screen.findByTestId("stage-analytics-empty")).toBeTruthy();
+    });
+
+    it("keeps the sibling sections alive when the panel read fails", async () => {
+      // A panel failure is a panel failure. The run history beside it is a
+      // different query and must not be taken down with it.
+      stageAnalyticsFetchMock.mockRejectedValue(new Error("upstream down"));
+      renderWithRuns([makeRun({ _id: "run-1" })]);
+
+      expect(
+        await screen.findByTestId("stage-analytics-unsupported"),
+      ).toBeTruthy();
+      expect(screen.getByTestId("suite-detail-run-history")).toBeTruthy();
+      expect(screen.getByTestId("suite-detail-test-cases")).toBeTruthy();
+    });
   });
 });
