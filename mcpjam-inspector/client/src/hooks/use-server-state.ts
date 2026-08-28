@@ -3520,15 +3520,9 @@ export function useServerState({
           // problem (and clear, so a later manual attempt re-prompts) instead
           // of looping.
           if (formData.authMethod === "auto") {
-            const settleWithoutEscalation = (
-              message: string,
-              status: "failed" | "needs-auth"
-            ) => {
+            const failWithoutEscalation = (message: string) => {
               dispatch({
-                type:
-                  status === "needs-auth"
-                    ? "CONNECT_NEEDS_AUTH"
-                    : "CONNECT_FAILURE",
+                type: "CONNECT_FAILURE",
                 name: formData.name,
                 error: message,
                 normalized: (storedCredentialResult as { normalized?: unknown })
@@ -3538,18 +3532,15 @@ export function useServerState({
             if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
               autoOAuthEscalation.markFailed(escalationIdentity);
               const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
-              settleWithoutEscalation(errorMessage, "failed");
+              failWithoutEscalation(errorMessage);
               toast.error(errorMessage);
               return;
             }
             const proceed = await confirmAutoOAuthEscalation(formData.name);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
-              // Declined the prompt: the server is saved and reachable, it
-              // just has no credentials yet. Leave it offering a sign-in.
-              settleWithoutEscalation(
-                `Server "${formData.name}" requires authorization. Sign in to connect.`,
-                "needs-auth"
+              failWithoutEscalation(
+                `Server "${formData.name}" requires authorization. Reconnect to sign in with OAuth.`
               );
               return;
             }
@@ -4733,19 +4724,6 @@ export function useServerState({
             return;
           }
 
-          // Terminal, and terminal FIRST: a server parked on `needs-auth`
-          // will never move on its own, so without this arm the poll burns
-          // its whole 15s budget and then reports a "Timed out" failure for
-          // a server that is merely waiting on a human.
-          if (server.connectionStatus === "needs-auth") {
-            resolve({
-              status: "reauth",
-              error:
-                server.lastError || `Reauthenticate ${serverName} to continue.`,
-            });
-            return;
-          }
-
           if (
             server.connectionStatus === "failed" ||
             (server.connectionStatus === "disconnected" &&
@@ -5170,17 +5148,13 @@ export function useServerState({
         error: string;
       }> => {
         if (server.authMethod !== "auto") return null;
-        // `reauth` and `failed` differ in more than their return value: a
-        // server waiting on a human is not an error, so it lands on
-        // `needs-auth` and raises no error toast. Only a genuine failure
-        // (a server that 401s again after a completed flow) reports.
-        const settle = (errorMessage: string, status: "failed" | "reauth") => {
+        const fail = (errorMessage: string, status: "failed" | "reauth") => {
           dispatch({
-            type: status === "reauth" ? "CONNECT_NEEDS_AUTH" : "CONNECT_FAILURE",
+            type: "CONNECT_FAILURE",
             name: serverName,
             error: errorMessage,
           });
-          if (status === "failed") reportError(errorMessage);
+          reportError(errorMessage);
           return { status, error: errorMessage };
         };
         if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
@@ -5188,7 +5162,7 @@ export function useServerState({
           // again — surface the config problem and clear, so a later manual
           // attempt re-prompts instead of being muted all session.
           autoOAuthEscalation.markFailed(escalationIdentity);
-          return settle(
+          return fail(
             `Server "${serverName}" still returns 401 after OAuth. Check the server's authorization configuration.`,
             "failed"
           );
@@ -5196,11 +5170,9 @@ export function useServerState({
         if (options?.allowInteractiveOAuthFlow === false) {
           // Non-interactive reconnect-all (client/host switch, load loop):
           // never prompt or redirect from here; a manual reconnect offers
-          // the escalation. THIS is the auto-connect path, so it decides
-          // what an unauthorized server looks like on a fresh page load:
-          // an amber "Sign in", not a red failure.
-          return settle(
-            `Server "${serverName}" requires authorization. Sign in to connect.`,
+          // the escalation.
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
             "reauth"
           );
         }
@@ -5214,12 +5186,9 @@ export function useServerState({
           };
         }
         if (!proceed) {
-          // The user declined the escalation prompt. That is a "not now",
-          // not a breakage — leave the card offering a sign-in rather
-          // than accusing the server of failing.
-          return settle(
-            `Server "${serverName}" requires authorization. Sign in to connect.`,
-            "reauth"
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
+            "failed"
           );
         }
         autoOAuthEscalation.markPending(escalationIdentity);
@@ -5372,14 +5341,12 @@ export function useServerState({
             };
           }
           dispatch({
-            type: "CONNECT_NEEDS_AUTH",
+            type: "CONNECT_FAILURE",
             name: serverName,
             error: authResult.error,
             oauthTrace: authResult.oauthTrace,
           });
-          // Deliberately no `reportError`: the orchestrator told us the
-          // server needs a human to authorize, which the card now says in
-          // place. A toast would only repeat it, in red.
+          reportError(authResult.error);
           return {
             status: "reauth",
             error: authResult.error,
@@ -5666,22 +5633,6 @@ export function useServerState({
               ] as const;
             }
 
-            // Already established that this server is waiting on a human.
-            // Re-running the non-interactive reconnect would take the same
-            // 401 and land back here, so report the standing outcome
-            // instead of spending a round trip to re-derive it.
-            if (server.connectionStatus === "needs-auth") {
-              return [
-                resolvedKey,
-                {
-                  status: "reauth",
-                  error:
-                    server.lastError ||
-                    `Reauthenticate ${resolvedKey} to continue.`,
-                },
-              ] as const;
-            }
-
             const outcome = await reconnectServerInternal(resolvedKey, {
               allowInteractiveOAuthFlow: false,
               select: false,
@@ -5789,24 +5740,6 @@ export function useServerState({
   const setSelectedServer = useCallback(
     (serverName: string) => {
       dispatch({ type: "SELECT_SERVER", name: serverName });
-    },
-    [dispatch]
-  );
-
-  /**
-   * Count a retry attempt against a server. Used by the auto-connect hook
-   * between bounded retry attempts so the card can say "Failed (2)" rather
-   * than repeating a bare "Failed" three times.
-   *
-   * Deliberately does not move the server back to `connecting` for the
-   * duration of the backoff: `ensureServersReady` treats `connecting` as
-   * "an operation already owns this server" and waits on it instead of
-   * dialing, so a synthetic `connecting` nobody owns burns the wait
-   * timeout and then strands the row. The counter is the whole payload.
-   */
-  const markServerRetrying = useCallback(
-    (serverName: string) => {
-      dispatch({ type: "CONNECT_RETRY_SCHEDULED", name: serverName });
     },
     [dispatch]
   );
@@ -6089,7 +6022,6 @@ export function useServerState({
     connectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,
-    markServerRetrying,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,

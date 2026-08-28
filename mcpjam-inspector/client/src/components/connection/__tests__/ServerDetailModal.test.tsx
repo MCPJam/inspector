@@ -369,7 +369,7 @@ describe("ServerDetailModal", () => {
     });
   });
 
-  it("saves a protocol override WITHOUT enrolling the server in auto-connect", async () => {
+  it("allows setting a protocol override before the server is in auto-connect", async () => {
     const user = userEvent.setup();
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
@@ -398,23 +398,16 @@ describe("ServerDetailModal", () => {
     await user.click(protocolSelect);
     await user.click(await screen.findByRole("option", { name: "2025-11-25" }));
 
-    // The pin used to quietly enroll the server, because the backend
-    // rejected an override key outside `serverIds`. Overrides are
-    // validated against the project's live catalog now, so saving a pin
-    // leaves enrollment exactly as it was — which matters most on a
-    // project with auto-connect OFF, where enrolling one server would
-    // have switched it back on for that server.
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
         projectId: "jh7abc123def456ghi789jk",
         input: {
-          serverIds: [],
+          serverIds: ["server_123"],
           overrides: {
             server_123: {
               mcpProtocolVersionOverride: "2025-11-25",
             },
           },
-          autoConnectMode: "all",
         },
       });
     });
@@ -469,7 +462,7 @@ describe("ServerDetailModal", () => {
     }
   });
 
-  it("clearing a modal-created protocol override leaves enrollment alone", async () => {
+  it("removes implicit auto-connect enrollment when clearing a modal-created protocol override", async () => {
     const user = userEvent.setup();
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
@@ -503,13 +496,12 @@ describe("ServerDetailModal", () => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
         projectId: "jh7abc123def456ghi789jk",
         input: {
-          serverIds: [],
+          serverIds: ["server_123"],
           overrides: {
             server_123: {
               mcpProtocolVersionOverride: "2025-11-25",
             },
           },
-          autoConnectMode: "all",
         },
       });
     });
@@ -520,11 +512,9 @@ describe("ServerDetailModal", () => {
     });
     unmount();
 
-    // The pin was saved without enrolling, so the server is still absent
-    // from `serverIds` when the modal reopens.
     projectServerConfig = {
       projectId: "jh7abc123def456ghi789jk",
-      serverIds: [] as string[],
+      serverIds: ["server_123"],
       overrides: {
         server_123: {
           mcpProtocolVersionOverride: "2025-11-25",
@@ -552,7 +542,6 @@ describe("ServerDetailModal", () => {
         input: {
           serverIds: [],
           overrides: {},
-          autoConnectMode: "all",
         },
       });
     });
@@ -598,7 +587,6 @@ describe("ServerDetailModal", () => {
         input: {
           serverIds: ["server_123"],
           overrides: {},
-          autoConnectMode: "all",
         },
       });
     });
