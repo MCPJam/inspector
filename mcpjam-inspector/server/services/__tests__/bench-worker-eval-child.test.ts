@@ -27,6 +27,7 @@ import {
   type BenchmarkRosterEntry,
   type ClaimedBenchmarkJob,
 } from "../bench-worker";
+import { createBenchmarkArtifactLedger } from "../evals/artifact-ledger";
 
 const JOB: ClaimedBenchmarkJob = {
   jobId: "job-1",
@@ -63,6 +64,7 @@ function run(grantHeaders?: Record<string, string>) {
     entry: ENTRY,
     cell: CELL,
     grantHeaders: grantHeaders ?? { "x-mcpjam-benchmark-grant": "grant-token" },
+    ledger: createBenchmarkArtifactLedger(),
   });
 }
 
@@ -145,6 +147,7 @@ describe("defaultRunEvalCell", () => {
       entry: ENTRY,
       cell: CELL,
       grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+      ledger: createBenchmarkArtifactLedger(),
     });
 
     expect(
@@ -194,6 +197,7 @@ describe("defaultRunEvalCell", () => {
       entry,
       cell: resolveEvalCellSpec(JOB, entry),
       grantHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+      ledger: createBenchmarkArtifactLedger(),
     });
 
     expect(
