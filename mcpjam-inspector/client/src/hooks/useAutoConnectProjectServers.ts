@@ -452,8 +452,17 @@ export function useAutoConnectProjectServers({
         // they took while we slept.
         if (!enabledRef.current) return result;
         const stillRequired = new Set(requiredNamesRef.current);
-        const stillRetriable = retriable.filter((name) =>
-          stillRequired.has(name)
+        const stillRetriable = retriable.filter(
+          (name) =>
+            stillRequired.has(name) &&
+            // Re-run the retriability screen against LIVE state, not the
+            // reading from before the wait. A server that changed during
+            // the backoff — an https:// URL edited to http:// in cloud
+            // mode, a failure that resolved into a protocol-version pin —
+            // is no longer something a retry can fix, and dialing it would
+            // produce exactly the red card the pre-batch filter exists to
+            // avoid. A no-op in the normal case, where nothing moved.
+            isRetriableFailure(latestServersRef.current[name])
         );
         if (stillRetriable.length === 0) return result;
 

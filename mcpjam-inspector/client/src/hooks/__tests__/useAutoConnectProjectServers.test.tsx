@@ -517,6 +517,62 @@ describe("useAutoConnectProjectServers", () => {
       }
     });
 
+    it("re-screens retriability against live state, not the pre-wait reading", async () => {
+      // The eligibility re-check is not only about what the HOST wants —
+      // the server itself can change during the wait. Here the failure
+      // resolves into a protocol-version pin while we sleep, which no
+      // retry can fix; the same line also catches a URL edited from
+      // https:// to http:// in cloud mode. Screening only before the
+      // backoff would spend a round producing the exact red card the
+      // pre-batch filter exists to avoid.
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValue(failResult(["alpha"]));
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      const { rerender } = renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-restated-failure",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      // First attempt fails as retriable, so a retry gets scheduled.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Now the state moves under the sleeping loop.
+      appState.servers.alpha = {
+        ...appState.servers.alpha,
+        lastNormalizedError: { slug: "sdk/protocol_version_pin_unsupported" },
+      };
+      rerender();
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    });
+
     it("stops retrying when the surface unmounts mid-backoff", async () => {
       // Unmount (or a host switch) during the wait genuinely abandons the
       // loop: the user is no longer looking at this project/host, and
