@@ -105,12 +105,7 @@ import {
   fetchRuntimeSkillFiles,
   skillsFingerprint,
 } from "./runtime-skills.js";
-import {
-  deliveredSecretsFingerprint,
-  fetchRuntimeSecrets,
-  toSecretEnv,
-} from "./runtime-secrets.js";
-import { createSecretScrubber } from "../secrets/secret-scrubber.js";
+import { deliveredSecretsFingerprint, toSecretEnv } from "./runtime-secrets.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { selectHarnessSkillSource } from "./skill-delivery.js";
@@ -1128,38 +1123,26 @@ export async function runHarnessTurn(
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
 
-      // MATERIALIZED PROJECT SECRETS, fetched beside the skills and for the
-      // same reason: both are per-turn runtime material the box needs before
-      // the first command runs.
+      // MATERIALIZED PROJECT SECRETS, taken from the CALLER — never fetched
+      // here, and the difference is load-bearing rather than a wiring detail.
       //
-      // TRI-STATE, and the stakes are higher than for skills. `{ ok: false }`
-      // must never read as "no secrets": a transient Convex blip that dropped
-      // the env bag would leave the user watching a `stripe` command fail with
-      // nothing changed on their side to explain it. On failure the turn keeps
-      // whatever the session already has rather than deliberately handing it an
-      // empty environment.
+      // Delivering a value into the box and SCRUBBING it out of the transcript
+      // are two uses of one list, and they have to come from one read. The
+      // persist callback is built by the caller (`web-chat-turn` /
+      // `chat-v2`), so only the caller can hand the scrubber to it — a turn
+      // that fetched its own secrets here would put them in the box and then
+      // persist them verbatim, which is strictly worse than delivering none.
+      //
+      // So a caller that has not wired secrets delivers none. Fail-closed and
+      // visible: the env bag is empty and the runtime fingerprint omits the
+      // dimension entirely, so those sessions keep resuming exactly as before.
       //
       // Brokered secrets are NOT here and never will be: their values reach the
       // box through E2B's egress proxy, outside this process entirely.
-      const secretsFetch =
-        runtimeSecretsOverride !== undefined
-          ? { ok: true as const, secrets: runtimeSecretsOverride }
-          : await fetchRuntimeSecrets(authHeader, {
-              ...(projectId ? { projectId } : {}),
-              ...(environmentId ? { environmentId } : {}),
-              ...(chatSessionId ? { chatSessionId } : {}),
-            });
-      const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
-      // ONE list, two consumers: the env bag the box receives, and the scrubber
-      // registry that keeps those same values out of the transcript. Deriving
-      // both from one fetch is what makes it impossible for the registry to be
-      // missing a value the box actually got.
+      const runtimeSecrets = runtimeSecretsOverride ?? null;
       const secretEnv = runtimeSecrets
         ? toSecretEnv(runtimeSecrets)
         : undefined;
-      const secretScrubber = runtimeSecrets
-        ? createSecretScrubber(runtimeSecrets)
-        : null;
       // What the ADAPTER will actually write, per its own rules (Codex rejects
       // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
       // it filters rather than throws). Every MCPJam-side skill pass below is
@@ -1203,10 +1186,10 @@ export async function runHarnessTurn(
         // rotated value delivered without forking would land everywhere except
         // the conversation the user is sitting in.
         //
-        // On a FETCH FAILURE the dimension is omitted rather than sent empty:
-        // omitted leaves the fingerprint where it was and the session resumes,
-        // while `""` would read as "the secrets were removed" and cold-start a
-        // conversation over a blip.
+        // A caller that delivered no secrets omits the dimension rather than
+        // sending `""`: omitting leaves the fingerprint exactly where it was
+        // and the session resumes, while an empty value would read as "the
+        // secrets were removed" and cold-start the conversation.
         ...(runtimeSecrets !== null
           ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
           : {}),

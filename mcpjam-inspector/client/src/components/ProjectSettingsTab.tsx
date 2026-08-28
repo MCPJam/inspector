@@ -6,6 +6,7 @@ import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
+import { ProjectSecretsSection } from "./project/ProjectSecretsSection";
 
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -82,7 +83,9 @@ function XaaTestDefaultsSection({
     try {
       await onUpdateProject(projectId, {
         xaaTestDefaults: bothSet
-          ? { defaultIdentity: { subject: trimmedSubject, email: trimmedEmail } }
+          ? {
+              defaultIdentity: { subject: trimmedSubject, email: trimmedEmail },
+            }
           : // Explicit clear — the mutation removes the stored default.
             null,
       });
@@ -106,8 +109,8 @@ function XaaTestDefaultsSection({
             Identity provider: MCPJam test IdP
           </span>
           <span className="text-xs text-muted-foreground">
-            Used when an authenticated project member connects without a
-            server override.
+            Used when an authenticated project member connects without a server
+            override.
           </span>
           {!hasStored && (
             <span className="text-xs text-muted-foreground">
@@ -189,10 +192,7 @@ interface ProjectSettingsTabProps {
     updates: Partial<Project>,
   ) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<boolean>;
-  onProjectShared: (
-    sharedProjectId: string,
-    sourceProjectId?: string,
-  ) => void;
+  onProjectShared: (sharedProjectId: string, sourceProjectId?: string) => void;
   onNavigateAway: () => void;
 }
 
@@ -309,6 +309,18 @@ export function ProjectSettingsTab({
           />
         </div>
 
+        {/* Project secrets — Convex-backed projects only: the store is a
+            Convex table, and a local project has nowhere to keep one. Shown to
+            every member rather than admins alone, because PERSONAL secrets are
+            owner-managed; `canManageShared` is what gates the project-shared
+            option inside the form. */}
+        {isAuthenticated && convexProjectId && (
+          <ProjectSecretsSection
+            projectId={convexProjectId}
+            canManageShared={canManageMembers}
+          />
+        )}
+
         {/* XAA test identity defaults — Convex-backed projects only (the
             local-project update path is a no-op for this field). */}
         {isAuthenticated && convexProjectId && (
@@ -335,8 +347,8 @@ export function ProjectSettingsTab({
                 {isDefault
                   ? "Switch to another project first"
                   : !canDeleteProject
-                    ? "Only project admins can delete this project"
-                    : "Permanently delete this project and all its data"}
+                  ? "Only project admins can delete this project"
+                  : "Permanently delete this project and all its data"}
               </span>
             </div>
             <AlertDialog>
@@ -361,8 +373,7 @@ export function ProjectSettingsTab({
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={async () => {
-                      const success =
-                        await onDeleteProject(activeProjectId);
+                      const success = await onDeleteProject(activeProjectId);
                       if (success) {
                         onNavigateAway();
                       }

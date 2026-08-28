@@ -76,7 +76,7 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
       skillSelection: null,
     });
     render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
 
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
@@ -102,17 +102,17 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     });
     mockFlagValue.value = undefined;
     const { rerender, container } = render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
     // Hydrating: route renders nothing, seed untouched.
     expect(container).toBeEmptyDOMElement();
     expect(sessionStorage.getItem("mcp-environment-draft-seed")).toContain(
-      "host_1"
+      "host_1",
     );
 
     mockFlagValue.value = true;
     rerender(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(screen.getByText("New environment")).toBeInTheDocument();
@@ -133,7 +133,7 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     });
 
     const { rerender } = render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_a" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_a" canManage />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(
@@ -141,13 +141,13 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
         mockEditorProps.mock.calls.at(-1)![0] as {
           capturedInitialDraft?: { hostId: string };
         }
-      ).capturedInitialDraft?.hostId
+      ).capturedInitialDraft?.hostId,
     ).toBe("host_a");
 
     // Straight from one seeded create form to another: the remount key must
     // change, or React reuses the instance and B's already-deleted seed is lost.
     rerender(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_b" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_b" canManage />,
     );
     await waitFor(() => {
       const props = mockEditorProps.mock.calls.at(-1)![0] as {
@@ -171,7 +171,7 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
         isAuthenticated
         projectId="  proj_1  "
         canManage
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(
@@ -179,13 +179,13 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
         mockEditorProps.mock.calls.at(-1)![0] as {
           capturedInitialDraft?: { hostId: string };
         }
-      ).capturedInitialDraft?.hostId
+      ).capturedInitialDraft?.hostId,
     ).toBe("host_1");
   });
 
   it("no seed ⇒ lands on the list, not create mode", () => {
     render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
     // The list ALSO renders a "New environment" button — the editor testid is
     // the unambiguous create-mode signal.
@@ -199,12 +199,12 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
       skillSelection: null,
     });
     render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
     // The other project's seed stays for its own route visit.
     expect(sessionStorage.getItem("mcp-environment-draft-seed")).toContain(
-      "proj_other"
+      "proj_other",
     );
   });
 });

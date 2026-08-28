@@ -85,13 +85,13 @@ describe("ProjectEnvironmentsRoute — tentative castle drafts", () => {
     });
 
     render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
 
     expect(screen.getByTestId("environment-tentative-drafts")).toBeVisible();
     const draftId = listTentativeCastles("proj_1")[0]!.id;
     fireEvent.click(
-      screen.getByTestId(`environment-tentative-draft-${draftId}`)
+      screen.getByTestId(`environment-tentative-draft-${draftId}`),
     );
 
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
@@ -121,16 +121,14 @@ describe("ProjectEnvironmentsRoute — tentative castle drafts", () => {
     })!;
 
     render(
-      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />
+      <ProjectEnvironmentsRoute isAuthenticated projectId="proj_1" canManage />,
     );
     fireEvent.click(
-      screen.getByTestId(`environment-tentative-draft-${saved.id}`)
+      screen.getByTestId(`environment-tentative-draft-${saved.id}`),
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     fireEvent.click(screen.getByTestId("fake-save"));
 
-    await waitFor(() =>
-      expect(listTentativeCastles("proj_1")).toHaveLength(0)
-    );
+    await waitFor(() => expect(listTentativeCastles("proj_1")).toHaveLength(0));
   });
 });

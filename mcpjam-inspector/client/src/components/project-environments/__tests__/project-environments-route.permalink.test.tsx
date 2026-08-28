@@ -77,7 +77,7 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_1"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
   });
@@ -93,7 +93,7 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_1"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
 
@@ -104,7 +104,7 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_2"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
   });
@@ -120,12 +120,12 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_1"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     await waitFor(() =>
       expect(
-        screen.getByTestId("environment-permalink-unavailable")
-      ).toBeVisible()
+        screen.getByTestId("environment-permalink-unavailable"),
+      ).toBeVisible(),
     );
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
     expect(screen.queryByText("Other")).not.toBeInTheDocument();
@@ -143,7 +143,7 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_1"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
 
@@ -154,14 +154,14 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
           projectId="proj_1"
           canManage
           routeEnvironmentId={empty}
-        />
+        />,
       );
       await waitFor(() =>
-        expect(screen.queryByTestId("editor")).not.toBeInTheDocument()
+        expect(screen.queryByTestId("editor")).not.toBeInTheDocument(),
       );
       // The list, not the unavailable notice: no id was asked for.
       expect(
-        screen.queryByTestId("environment-permalink-unavailable")
+        screen.queryByTestId("environment-permalink-unavailable"),
       ).not.toBeInTheDocument();
       expect(screen.getByText("Staging")).toBeInTheDocument();
     }
@@ -177,10 +177,10 @@ describe("ProjectEnvironmentsRoute — permalink targets", () => {
         projectId="proj_1"
         canManage
         routeEnvironmentId="env_1"
-      />
+      />,
     );
     expect(
-      screen.queryByTestId("environment-permalink-unavailable")
+      screen.queryByTestId("environment-permalink-unavailable"),
     ).not.toBeInTheDocument();
   });
 });

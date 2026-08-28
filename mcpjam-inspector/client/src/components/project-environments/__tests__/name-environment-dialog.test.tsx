@@ -86,9 +86,7 @@ describe("NameEnvironmentDialog", () => {
         open
         onOpenChange={vi.fn()}
         projectId="p1"
-        environment={
-          { ...(adhocEnvironment as object), revision: 7 } as never
-        }
+        environment={{ ...(adhocEnvironment as object), revision: 7 } as never}
       />,
     );
 
@@ -105,10 +103,9 @@ describe("NameEnvironmentDialog", () => {
     renderDialog({});
 
     typeName("Checkout flow");
-    fireEvent.change(
-      screen.getByTestId("name-environment-description-input"),
-      { target: { value: "Staging servers for the checkout revamp" } },
-    );
+    fireEvent.change(screen.getByTestId("name-environment-description-input"), {
+      target: { value: "Staging servers for the checkout revamp" },
+    });
     fireEvent.click(screen.getByTestId("name-environment-submit"));
 
     await waitFor(() =>

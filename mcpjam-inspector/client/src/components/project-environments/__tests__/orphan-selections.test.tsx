@@ -53,7 +53,7 @@ describe("SuiteProjectEnvironmentsPicker — unresolvable attached ids", () => {
         suiteId="suite-1"
         projectId="proj-1"
         environmentIds={["env-live", "env-gone"]}
-      />
+      />,
     );
 
     // The popover trigger is the only button rendered before it opens; its
@@ -61,7 +61,7 @@ describe("SuiteProjectEnvironmentsPicker — unresolvable attached ids", () => {
     fireEvent.click(screen.getAllByRole("button")[0]!);
 
     const orphanRow = await screen.findByLabelText(
-      /Unavailable environment env-gone \(detach\)/i
+      /Unavailable environment env-gone \(detach\)/i,
     );
     expect(orphanRow).toBeInTheDocument();
 
@@ -82,14 +82,14 @@ describe("SuiteProjectEnvironmentsPicker — unresolvable attached ids", () => {
         suiteId="suite-1"
         projectId="proj-1"
         environmentIds={["env-a", "env-b"]}
-      />
+      />,
     );
     // The popover trigger is the only button rendered before it opens; its
     // label is the joined environment names, so match it positionally.
     fireEvent.click(screen.getAllByRole("button")[0]!);
     // A loading list must not flash every attached id as an orphan.
     expect(
-      screen.queryByLabelText(/Unavailable environment/i)
+      screen.queryByLabelText(/Unavailable environment/i),
     ).not.toBeInTheDocument();
   });
 });
@@ -106,11 +106,11 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
         projectId="proj-1"
         value={{ mode: "explicit", skillIds: ["sk-live", "sk-gone"] }}
         onChange={onChange}
-      />
+      />,
     );
 
     const orphanRow = await screen.findByLabelText(
-      /Unavailable skill sk-gone \(remove\)/i
+      /Unavailable skill sk-gone \(remove\)/i,
     );
     fireEvent.click(orphanRow);
     expect(onChange).toHaveBeenCalledWith({
@@ -130,14 +130,14 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
         projectId="proj-1"
         value={{ mode: "explicit", skillIds: ["sk-gone"] }}
         onChange={onChange}
-      />
+      />,
     );
 
     const orphanRow = await screen.findByLabelText(
-      /Unavailable skill sk-gone \(remove\)/i
+      /Unavailable skill sk-gone \(remove\)/i,
     );
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No shared skills in this project yet/i),
     ).not.toBeInTheDocument();
 
     // Clearing the last pin emits null, never an empty array.

@@ -651,13 +651,14 @@ export interface MCPJamHandlerOptions {
   /**
    * This turn's MATERIALIZED project secrets, already resolved by the caller.
    *
-   * PRESENCE IS SEMANTIC, exactly like `runtimeSkillsOverride`: supplied — even
-   * EMPTY — means "already resolved, do not fetch again". `web-chat-turn`
-   * resolves them once because two consumers need the same list (the sandbox's
-   * env bag and the transcript scrubber) and a second fetch would open a window
-   * where the scrubber is missing a value the box already has. A harness turn
-   * reached from a caller that does not resolve them (the eval/swarm driver)
-   * fetches for itself.
+   * THE ONLY SOURCE. The harness turn does not fetch secrets for itself, and
+   * that is deliberate: delivering a value into the box and scrubbing it out of
+   * the transcript are two uses of one list, and only the caller — which builds
+   * the persist callback — can wire the second. A turn that fetched its own
+   * would put the value in the box and then persist it verbatim.
+   *
+   * Absent ⇒ this turn delivers no materialized secrets. Fail-closed, and the
+   * state every caller that has not wired them is in.
    */
   runtimeSecrets?: { name: string; value: string }[];
   /**
