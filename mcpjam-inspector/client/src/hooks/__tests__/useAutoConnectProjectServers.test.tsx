@@ -55,6 +55,7 @@ function wrapper({
   reconnectServer = async () => {},
   setSelectedServerNames = () => {},
   markServerRetrying = () => {},
+  markServerRetryAbandoned = () => {},
 }: {
   children: ReactNode;
   ensureServersReady: (names: string[]) => Promise<{
@@ -68,6 +69,7 @@ function wrapper({
   reconnectServer?: (name: string) => Promise<void>;
   setSelectedServerNames?: (names: string[]) => void;
   markServerRetrying?: (name: string) => void;
+  markServerRetryAbandoned?: (name: string) => void;
 }) {
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
@@ -79,6 +81,7 @@ function wrapper({
             reconnectServer,
             setSelectedServerNames,
             markServerRetrying,
+            markServerRetryAbandoned,
           }}
         >
           {children}
@@ -266,7 +269,9 @@ describe("useAutoConnectProjectServers", () => {
       reauthServerNames: [],
     });
 
-    // The backoff sleeps on real timers; drain them without waiting.
+    // The backoff sleeps on FAKE timers (installed in beforeEach below);
+    // advance them inside `act` so React commits each round without any
+    // real waiting. Eight passes of 11s comfortably covers 1s/4s/10s.
     const runBackoff = async () => {
       for (let i = 0; i < 8; i++) {
         await act(async () => {
@@ -326,6 +331,121 @@ describe("useAutoConnectProjectServers", () => {
       // server which recovers mid-backoff from flashing red on its way to
       // working.
       expect(markServerRetrying).toHaveBeenCalledWith("alpha");
+    });
+
+    it("survives the re-render its own connect causes", async () => {
+      // THE REGRESSION THIS FILE PREVIOUSLY MISSED. In production
+      // `ensureServersReady` moves each server to `connecting` before its
+      // request settles. That drops the server out of `candidateNamesKey`,
+      // React re-runs this effect, and the old effect's cleanup set a
+      // `cancelled` flag — killing the in-flight retry loop before the
+      // first backoff had elapsed. Retries were dead in the real app and
+      // alive only under fixed-state mocks like the ones around this test.
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValueOnce(failResult(["alpha"]))
+        .mockResolvedValueOnce(okResult(["alpha"]));
+
+      const failedState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+      // What the reducer actually produces once the connect starts: the
+      // server is `connecting`, the candidate filter excludes it, and the
+      // memo key flips to null.
+      const connectingState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "connecting",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      let appState = failedState;
+      const { rerender } = renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-rerender",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+            }),
+        }
+      );
+
+      // The connect has fired; now the state moves under it.
+      appState = connectingState;
+      rerender();
+
+      await runBackoff();
+
+      expect(ensureServersReady).toHaveBeenCalledTimes(2);
+      expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["alpha"]);
+    });
+
+    it("un-strands a server when the retry is abandoned mid-backoff", async () => {
+      // Unmount (or a host switch) during the wait genuinely abandons the
+      // loop. The server is parked on `connecting` at that point, and the
+      // candidate filter skips `connecting`, so leaving it there would
+      // strand it where no later batch looks.
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValue(failResult(["alpha"]));
+      const markServerRetryAbandoned = vi.fn();
+      const appState = {
+        servers: {
+          alpha: {
+            name: "alpha",
+            connectionStatus: "disconnected",
+            config: { url: "https://example.com/mcp" },
+            lastError: "fetch failed",
+          },
+        },
+      } as any;
+
+      const { unmount } = renderHook(
+        () =>
+          useAutoConnectProjectServers({
+            projectId: "proj-abandon",
+            hostScopeKey: "host-a",
+            requiredServerNames: ["alpha"],
+          }),
+        {
+          wrapper: ({ children }) =>
+            wrapper({
+              children,
+              ensureServersReady,
+              appState,
+              markServerRetrying: vi.fn(),
+              markServerRetryAbandoned,
+            }),
+        }
+      );
+
+      // Let the first attempt fail and the first retry be scheduled.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      unmount();
+      await runBackoff();
+
+      expect(markServerRetryAbandoned).toHaveBeenCalledWith("alpha");
     });
 
     it("gives up after the retry budget", async () => {

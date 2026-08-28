@@ -289,6 +289,20 @@ export type AppAction =
       name: string;
     }
   | {
+      /**
+       * A scheduled retry was abandoned before it ran — the user switched
+       * project or host, or the surface unmounted, during the backoff.
+       *
+       * Puts the server back on `failed`, which is the state it was in
+       * when the retry was scheduled. Without this it would sit on
+       * `connecting` forever: nothing else is going to move it, and the
+       * auto-connect candidate filter deliberately skips `connecting`, so
+       * no later batch would pick it up either.
+       */
+      type: "CONNECT_RETRY_ABANDONED";
+      name: string;
+    }
+  | {
       type: "RECONNECT_REQUEST";
       name: string;
       config: MCPServerConfig;

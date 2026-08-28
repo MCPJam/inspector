@@ -302,6 +302,26 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "CONNECT_RETRY_ABANDONED": {
+      const activeProject = state.projects[state.activeProjectId];
+      const existing =
+        state.servers[action.name] ?? activeProject?.servers[action.name];
+      if (!existing) return state;
+      // Only ever undoes a scheduled retry. A server that has since moved
+      // on under its own steam (a manual reconnect that succeeded, say)
+      // must not be dragged back to `failed`.
+      if (existing.connectionStatus !== "connecting") return state;
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: setStatus(existing, "failed", {
+            retryCount: existing.retryCount,
+          }),
+        },
+      };
+    }
+
     case "RECONNECT_REQUEST": {
       // Check state.servers first, then fallback to project servers (for cloud-synced servers)
       // If server doesn't exist anywhere, create it (for servers from Convex remote projects)

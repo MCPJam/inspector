@@ -193,8 +193,12 @@ export function useAutoConnectProjectServers({
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const { ensureServersReady, reconnectServer, markServerRetrying } =
-    useServerActions();
+  const {
+    ensureServersReady,
+    reconnectServer,
+    markServerRetrying,
+    markServerRetryAbandoned,
+  } = useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
@@ -207,6 +211,28 @@ export function useAutoConnectProjectServers({
   latestServersRef.current = sharedAppState.servers;
 
   const scopeKey = hostScopeKey ?? "-";
+
+  /**
+   * Lifetime token for an in-flight attempt, bumped ONLY when the work
+   * genuinely no longer applies: the project or host scope changed, or the
+   * surface unmounted.
+   *
+   * The retry loop cannot use the effect's own cleanup for this, because
+   * the effect is keyed on `candidateNamesKey` and the loop's very first
+   * action invalidates that key: `ensureServersReady` moves each server to
+   * `connecting`, the candidate filter drops `connecting` servers, the key
+   * changes, React runs the cleanup — and the loop would cancel itself
+   * before scheduling a single retry. The batch is already deduped by
+   * `markAttempted`, so a re-render mid-flight needs no cancellation; only
+   * a real scope change does.
+   */
+  const attemptTokenRef = useRef(0);
+  useEffect(() => {
+    return () => {
+      attemptTokenRef.current += 1;
+    };
+  }, [projectId, scopeKey]);
+
   // Stable key for "what the active host wants selected". Drives the
   // playground/chat multi-select sync below, independent of connect /
   // disconnect dedupe.
@@ -356,7 +382,8 @@ export function useAutoConnectProjectServers({
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
-    let cancelled = false;
+    const attemptToken = attemptTokenRef.current;
+    const isAbandoned = () => attemptTokenRef.current !== attemptToken;
 
     /**
      * One logical attempt, internally retried.
@@ -371,7 +398,7 @@ export function useAutoConnectProjectServers({
      */
     const runAttempt = async () => {
       let result = await ensureServersReady(fresh);
-      if (cancelled) return result;
+      if (isAbandoned()) return result;
 
       for (const backoffMs of RETRY_BACKOFF_MS) {
         // Yield a macrotask so React has committed the failure this round
@@ -381,7 +408,7 @@ export function useAutoConnectProjectServers({
         // not-yet-written protocol-pin failure as retriable and spending a
         // round on a server that has already told us the answer.
         await sleep(0);
-        if (cancelled) return result;
+        if (isAbandoned()) return result;
 
         const retriable = result.failedServerNames.filter((name) =>
           isRetriableFailure(latestServersRef.current[name])
@@ -393,10 +420,17 @@ export function useAutoConnectProjectServers({
         for (const name of retriable) markServerRetrying?.(name);
 
         await sleep(backoffMs);
-        if (cancelled) return result;
+        // Abandoned mid-backoff: put the servers we parked on `connecting`
+        // back where we found them. Nothing else will move them, and the
+        // candidate filter skips `connecting`, so leaving them would strand
+        // them permanently.
+        if (isAbandoned()) {
+          for (const name of retriable) markServerRetryAbandoned?.(name);
+          return result;
+        }
 
         const retryResult = await ensureServersReady(retriable);
-        if (cancelled) return retryResult;
+        if (isAbandoned()) return retryResult;
 
         // Fold the retry's outcome back into the batch result: servers not
         // in this round keep whatever the previous round decided, and the
@@ -429,7 +463,7 @@ export function useAutoConnectProjectServers({
 
     runAttempt().then(
       (result) => {
-        if (cancelled) return;
+        if (isAbandoned()) return;
         lastResultRef.current = result;
       },
       // Swallow rejections — `markAttempted` already ran, so a thrown error
@@ -441,9 +475,10 @@ export function useAutoConnectProjectServers({
         // intentionally empty
       }
     );
-    return () => {
-      cancelled = true;
-    };
+    // NO cleanup that cancels the attempt. See `attemptTokenRef`: this
+    // effect is keyed on `candidateNamesKey`, which the attempt itself
+    // invalidates the moment it moves a server to `connecting`. Cancelling
+    // here would kill every retry before the first backoff elapsed.
   }, [
     enabled,
     projectId,
@@ -451,6 +486,7 @@ export function useAutoConnectProjectServers({
     candidateNamesKey,
     ensureServersReady,
     markServerRetrying,
+    markServerRetryAbandoned,
   ]);
 
   return { enabled, lastResult: lastResultRef.current };

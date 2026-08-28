@@ -44,6 +44,12 @@ export interface ServerActions {
    */
   markServerRetrying?: (serverName: string) => void;
   /**
+   * Undo a scheduled retry that never ran (project/host switch, unmount),
+   * putting the server back on `failed` rather than leaving it stranded on
+   * `connecting` where no later batch would pick it up.
+   */
+  markServerRetryAbandoned?: (serverName: string) => void;
+  /**
    * Resolve selected runtime server names → persisted Convex server ids for a
    * hosted send (persisting ad-hoc/App servers that aren't saved yet). Throws if
    * a name can't be resolved/persisted. Surfaces use this as a preflight before a

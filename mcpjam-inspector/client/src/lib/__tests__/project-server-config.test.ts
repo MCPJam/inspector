@@ -87,8 +87,11 @@ describe("applyMcpProtocolVersionOverride", () => {
       next: "2025-11-25",
       setConfig,
     });
-    // A null DTO is the genuine "no row yet" baseline: nothing enrolled,
-    // and no mode to carry (the backend classifies the write).
+    // A null DTO is the genuine "no row yet" baseline. The mode is still
+    // sent, defaulting to "all" — omitting it would make this a legacy
+    // write, which the backend classifies from the array, and an empty
+    // array reads as "none". Saving a pin would have turned the whole
+    // project's auto-connect off.
     expect(setConfig).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       input: {
@@ -96,7 +99,35 @@ describe("applyMcpProtocolVersionOverride", () => {
         overrides: {
           [SERVER_ID]: { mcpProtocolVersionOverride: "2025-11-25" },
         },
+        autoConnectMode: "all",
       },
+    });
+  });
+
+  it("keeps a server's opt-out when its protocol pin is cleared", async () => {
+    // Clearing the pin collapses the entry to just the opt-out flag. If
+    // that did not count as content the entry would be deleted, silently
+    // putting a server the user chose to skip back into auto-connect as a
+    // side effect of an unrelated change.
+    const setConfig = vi.fn().mockResolvedValue(undefined);
+    await applyMcpProtocolVersionOverride({
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      current: dto({
+        serverIds: [SERVER_ID],
+        overrides: {
+          [SERVER_ID]: {
+            autoConnectDisabled: true,
+            mcpProtocolVersionOverride: "2026-07-28",
+          },
+        },
+      }),
+      next: undefined,
+      setConfig,
+    });
+
+    expect(setConfig.mock.calls[0][0].input.overrides).toEqual({
+      [SERVER_ID]: { autoConnectDisabled: true },
     });
   });
 

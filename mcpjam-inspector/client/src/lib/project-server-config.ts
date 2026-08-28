@@ -228,11 +228,16 @@ export async function applyMcpProtocolVersionOverride({
     ...existingEntry,
     mcpProtocolVersionOverride: next,
   };
+  // `autoConnectDisabled` counts as content. Without it, clearing the
+  // protocol pin on a server the user had ALSO opted out of would drop the
+  // whole entry — silently putting that server back into auto-connect as a
+  // side effect of changing an unrelated setting.
   const hasContent =
     (updatedEntry.headersOverride &&
       Object.keys(updatedEntry.headersOverride).length > 0) ||
     updatedEntry.requestTimeoutOverride !== undefined ||
-    updatedEntry.mcpProtocolVersionOverride !== undefined;
+    updatedEntry.mcpProtocolVersionOverride !== undefined ||
+    updatedEntry.autoConnectDisabled === true;
   const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
     ...currentOverrides,
   };
@@ -240,18 +245,22 @@ export async function applyMcpProtocolVersionOverride({
   else delete nextOverrides[serverId];
 
   // Enrollment is carried through verbatim — a protocol pin is a
-  // configuration change, not a request to auto-connect anything. Passing
-  // the mode explicitly matters: without it the backend would re-classify
-  // this write from the array alone, and a project whose user has selected
-  // every server would silently become 'all'.
+  // configuration change, not a request to auto-connect anything.
+  //
+  // The mode is ALWAYS sent, and falls back to "all" rather than being
+  // omitted. Omitting it makes this a legacy write, which the backend
+  // classifies from the array: on a project whose config has never been
+  // written (`serverIds` still empty, mode defaulting to "all"), an
+  // omitted mode reads as "they asked for nothing" — so saving a protocol
+  // pin would turn the whole project's auto-connect OFF. "all" is the same
+  // default the backend reads, so sending it explicitly is a no-op for
+  // every project except the one this would have broken.
   await setConfig({
     projectId,
     input: {
       serverIds: currentServerIds,
       overrides: nextOverrides,
-      ...(current?.autoConnectMode
-        ? { autoConnectMode: current.autoConnectMode }
-        : {}),
+      autoConnectMode: current?.autoConnectMode ?? "all",
     },
   });
 

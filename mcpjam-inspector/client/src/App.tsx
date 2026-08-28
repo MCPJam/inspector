@@ -2898,6 +2898,7 @@ export default function App() {
     ensureServersReady,
     ensureHostedServerIdsForNames,
     markServerRetrying,
+    markServerRetryAbandoned,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
@@ -5024,6 +5025,7 @@ export default function App() {
             reconnectServer: reconnectServerForClientSwitch,
             setSelectedServerNames: setSelectedMCPConfigs,
             markServerRetrying,
+            markServerRetryAbandoned,
           }}
         >
           <ActiveHostServerReconciler

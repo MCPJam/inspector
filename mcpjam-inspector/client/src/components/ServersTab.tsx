@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -457,46 +458,18 @@ function ServersQuickConnectMiniCard({
 function SortableServerCard({
   id,
   dndDisabled,
-  server,
-  needsReconnect,
-  onDisconnect,
-  onReconnect,
-  onRemove,
-  hostedServerId,
-  onOpenDetailModal,
-  projectId,
-  moveTargets,
-  onMoveToProject,
-  isMovingToProject,
-  onShareToOrgRegistry,
+  ...cardProps
 }: {
   id: string;
   dndDisabled: boolean;
-  server: ServerWithName;
-  needsReconnect?: boolean;
-  onDisconnect: (name: string) => void;
-  onReconnect: (
-    name: string,
-    opts?: {
-      forceOAuthFlow?: boolean;
-      allowInteractiveOAuthFlow?: boolean;
-    }
-  ) => Promise<void>;
-  onRemove: (name: string) => void;
-  hostedServerId?: string;
-  onOpenDetailModal?: (
-    server: ServerWithName,
-    defaultTab: ServerDetailTab
-  ) => void;
-  projectId: string;
-  moveTargets?: Array<{ id: string; name: string; icon?: string }>;
-  onMoveToProject?: (
-    serverName: string,
-    targetProjectId: string
-  ) => void | Promise<void>;
-  isMovingToProject?: boolean;
-  onShareToOrgRegistry?: (server: ServerWithName) => void;
-}) {
+} & ComponentProps<typeof ServerConnectionCard>) {
+  // Every card prop is forwarded by rest-spread rather than re-listed. The
+  // hand-written list this replaces silently dropped anything the caller
+  // added but the list did not know about — which is exactly what happened
+  // to the auto-connect opt-out: the grid passed it, this wrapper ate it,
+  // and the action appeared only on cards in the collapsed "needs
+  // attention" section, which renders ServerConnectionCard directly.
+  const { hostedServerId } = cardProps;
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
   const viewPhase = useHostsConnectViewPhase();
@@ -518,20 +491,7 @@ function SortableServerCard({
   // persisted) we fall back to a plain div so the rest of the grid still
   // renders.
   const cardContent = (
-    <ServerConnectionCard
-      server={server}
-      needsReconnect={needsReconnect}
-      onDisconnect={onDisconnect}
-      onReconnect={onReconnect}
-      onRemove={onRemove}
-      hostedServerId={hostedServerId}
-      onOpenDetailModal={onOpenDetailModal}
-      projectId={projectId}
-      moveTargets={moveTargets}
-      onMoveToProject={onMoveToProject}
-      isMovingToProject={isMovingToProject}
-      onShareToOrgRegistry={onShareToOrgRegistry}
-    />
+    <ServerConnectionCard {...cardProps} />
   );
 
   return (
@@ -2185,9 +2145,13 @@ export function ServersTab({
           input: {
             serverIds: projectServerConfigDto?.serverIds ?? [],
             overrides: { ...currentOverrides, [serverId]: nextEntry },
-            ...(projectServerConfigDto?.autoConnectMode
-              ? { autoConnectMode: projectServerConfigDto.autoConnectMode }
-              : {}),
+            // Always sent, defaulting to "all" — the same default the
+            // backend reads. Omitting it makes this a legacy write, which
+            // the backend classifies from the array, and on a project
+            // whose config has never been written that reads as "none":
+            // skipping one server would turn auto-connect off for all of
+            // them.
+            autoConnectMode: projectServerConfigDto?.autoConnectMode ?? "all",
           },
         });
         // A fresh intent: let the current host reconcile again rather than

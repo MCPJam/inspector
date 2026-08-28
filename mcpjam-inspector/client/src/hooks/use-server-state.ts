@@ -5805,6 +5805,14 @@ export function useServerState({
     [dispatch]
   );
 
+  /** Counterpart to `markServerRetrying` for a retry that never ran. */
+  const markServerRetryAbandoned = useCallback(
+    (serverName: string) => {
+      dispatch({ type: "CONNECT_RETRY_ABANDONED", name: serverName });
+    },
+    [dispatch]
+  );
+
   const setSelectedMCPConfigs = useCallback(
     (serverNames: string[]) => {
       dispatch({ type: "SET_MULTI_SELECTED", names: serverNames });
@@ -6084,6 +6092,7 @@ export function useServerState({
     reconnectServerForClientSwitch,
     ensureServersReady,
     markServerRetrying,
+    markServerRetryAbandoned,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
