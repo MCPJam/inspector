@@ -15,6 +15,7 @@ import {
   SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  swarmWaveTitle,
   waveLiveProgress,
 } from "../swarm-overview-panel";
 
@@ -480,6 +481,36 @@ describe("groupRunsIntoSwarmWaves", () => {
       withGroup(second!), // 5s later, but ungrouped ⇒ its own wave
     ]);
     expect(waves).toHaveLength(2);
+  });
+});
+
+describe("swarmWaveTitle", () => {
+  it("titles a wave with the name its author gave the swarm", () => {
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
+      withGroup({ ...second!, swarmName: "Checkout regression" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
+  });
+
+  it("falls back to the short route id when no run carries a name", () => {
+    // Runs launched outside a swarm, plus every row from a backend that
+    // predates the field.
+    const [newest] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([withGroup(newest!, "wave-a")]);
+    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+  });
+
+  it("names a mixed wave after its newest member's swarm", () => {
+    // A reused journey carries its ORIGINAL swarm into another wave, so the
+    // wave can hold two names — the newest run decides, as it does for the id.
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
+      withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
   });
 });
 

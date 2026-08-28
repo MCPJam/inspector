@@ -362,6 +362,12 @@ export interface SwarmOverviewRun {
    * only for runs without one, so legacy rows render exactly as before.
    */
   swarmRunGroupId?: string;
+  /**
+   * Authored swarm name, present once the backend carries it. Absent for runs
+   * launched outside a swarm and on older backends, so the wave title keeps its
+   * short-id fallback rather than rendering an empty heading.
+   */
+  swarmName?: string;
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;

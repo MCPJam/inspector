@@ -247,11 +247,17 @@ export function formatSwarmId(swarmId: string): string {
 }
 
 /**
- * ID-first title, matching evals (`Run n57bwtsk`): `Swarm` + short route id.
- * Scope (goals / personas) lives in the subtitle, not the title.
+ * The name its author gave the swarm, else the ID-first title matching evals
+ * (`Run n57bwtsk`): `Swarm` + short route id. Scope (goals / personas) lives in
+ * the subtitle, not the title.
  */
 export function swarmWaveTitle(wave: SwarmWave): string {
-  return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
+  // The backend resolves the name per WAVE, so a wave's runs agree. The scan
+  // is for legacy rows, whose name falls back to each journey's authoring
+  // swarm and can therefore differ across a wave that reused journeys — the
+  // newest member wins, as it does for `swarmWaveRouteId`.
+  const authored = wave.runs.find((run) => run.swarmName)?.swarmName;
+  return authored ?? `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
 }
 
 /**
