@@ -233,7 +233,9 @@ Together with the inlined catalog, these tools let the LLM progressively load sk
 
 ## Skills over MCP (Server-Provided Skills)
 
-When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and shows them in the catalog alongside local and hosted skills. Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
+When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and inlines them in the system prompt catalog alongside local and hosted skills — each entry attributed to its originating server (`MCP server "…"`). The model can choose a relevant skill from the catalog and load it with `loadSkill`, exactly as it would for any other skill origin.
+
+Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
 
 Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows — "this host and server never had a skills conversation" is a different fact from "this server has no skills".
 
