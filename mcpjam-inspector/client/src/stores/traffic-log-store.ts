@@ -105,8 +105,12 @@ const MAX_ITEMS = 1000;
  * holds, so nothing has to be serialized to measure it. That text carries the
  * event envelope as well as the payload, making the cap slightly conservative.
  * Hosted-mode rows arrive from a different producer and are bounded there.
+ *
+ * MIRRORING IS THE POINT: raising the server cap alone changes nothing that
+ * reaches the panel, because whatever survives the bus is cut again here. The
+ * two constants have to move together, in both directions.
  */
-const MAX_PAYLOAD_CHARS = 256 * 1024;
+const MAX_PAYLOAD_CHARS = 1024 * 1024;
 
 export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   items: [],

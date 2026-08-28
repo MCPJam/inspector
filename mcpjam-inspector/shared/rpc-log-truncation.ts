@@ -24,16 +24,45 @@ export type TruncatedRpcPayload = {
   limitBytes?: number;
   /** Why the payload could not be serialized at all (e.g. a cycle). */
   reason?: string;
+  /**
+   * The first {@link STRING_HEAD_CHARS} characters of a dropped string, when
+   * the budget had room for them. Present only on the marker that replaced a
+   * single oversized string, never on a frame-level marker — a frame is an
+   * object, and objects are shrunk field by field rather than sliced.
+   */
+  head?: string;
   /** Short scalars preserved off the original frame — see
    *  {@link truncateRpcPayload}. */
   [key: string]: unknown;
 };
 
 /**
- * A preserved string this long is a label, not a payload. Anything longer is
- * the thing being dropped.
+ * A string this long is kept whole. It was 256 — a threshold that made sense
+ * when the marker was all a reader got either way, and made none once the
+ * marker started carrying a head: below 8 KB the head WOULD BE the whole
+ * string, so wrapping it in a "truncated" marker would claim a loss that never
+ * happened.
  */
-const MAX_PRESERVED_STRING_CHARS = 256;
+const MAX_PRESERVED_STRING_CHARS = 8 * 1024;
+
+/**
+ * How much of an oversized string the marker carries. Kept only when the
+ * remaining budget has room for all of it: a partial head sized by whatever was
+ * left would make the amount you see depend on where in the frame the string
+ * happened to sit, which is not a property anyone can reason about while
+ * debugging.
+ */
+const STRING_HEAD_CHARS = 8 * 1024;
+
+/** Room for `_truncated`, `bytes`, and the braces around them. */
+const STRING_MARKER_OVERHEAD = 64;
+
+/**
+ * Depth ceiling for the shrink walk. Deep enough for any JSON-RPC frame
+ * (`result.content[n].text` is four), shallow enough that a cyclic or
+ * adversarially nested value terminates without a stack guard.
+ */
+const MAX_SHRINK_DEPTH = 8;
 
 /**
  * Node ceiling for {@link probeSerializedSize}. A value with this many nodes is
@@ -122,9 +151,33 @@ export function probeSerializedSize(
  * or `error`; drop the key and every truncated response reads as "unknown"
  * instead of "result".
  *
- * So: short own scalars are copied, and every other own field keeps its key
- * with a nested marker for its value. No knowledge of which frame shape
- * (request, response, notification) this was handed is needed.
+ * So: short own scalars are copied, and every other own field keeps its key.
+ * No knowledge of which frame shape (request, response, notification) this was
+ * handed is needed.
+ *
+ * What that field's VALUE becomes is where the cost of the old shape showed.
+ * Every non-scalar used to collapse to `{_truncated: true}` at depth one,
+ * unconditionally, so a megabyte of text and an empty object produced identical
+ * rows: `result` vanished whole, and `result._meta` went with it despite being
+ * ~150 bytes that would always have fit. Nothing in the row said how much had
+ * been dropped, which is the one fact a reader needs to tell a capped log entry
+ * apart from a genuinely empty response.
+ *
+ * The walk now descends instead, spending a budget as it goes:
+ *   - a scalar, or a string that still fits, is copied;
+ *   - a longer string becomes `{_truncated, bytes, head}` — its true length and
+ *     its first {@link STRING_HEAD_CHARS} characters when they fit, `bytes`
+ *     alone when they do not. The length is kept even when the head cannot be:
+ *     knowing a value was 2 MB is most of what makes the row readable;
+ *   - an object or array is rebuilt field by field until the budget runs out.
+ *
+ * Two properties from the original are load-bearing and preserved. The walk
+ * ABANDONS a partial container the moment the budget is gone rather than
+ * filling in the rest — a pathologically wide frame must never be materialized
+ * only to be rejected. And the result is re-probed at the end: every caller
+ * sizes its own storage on the guarantee that this returns something under
+ * `limitBytes` (`harness-rpc-log-sink` guards a Convex document limit with it),
+ * so the ceiling holds for every input shape, not just well-formed frames.
  */
 export function truncateRpcPayload(
   payload: unknown,
@@ -139,25 +192,87 @@ export function truncateRpcPayload(
     return marker;
   }
 
-  const preserved: Record<string, unknown> = {};
-  let preservedBytes = 0;
-  for (const key in payload) {
-    if (!Object.hasOwn(payload, key)) continue;
-    const value = (payload as Record<string, unknown>)[key];
-    const isShortScalar =
-      value === null ||
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      (typeof value === "string" && value.length <= MAX_PRESERVED_STRING_CHARS);
-    // The nested marker carries no `limitBytes`; the top level states it once.
-    preserved[key] = isShortScalar ? value : { _truncated: true };
-    // Stop building the envelope the moment it can no longer fit, rather than
-    // materializing one entry per key and rejecting the result afterwards: a
-    // pathologically wide frame would allocate the whole thing first.
-    preservedBytes +=
-      key.length + 4 + probeSerializedSize(preserved[key], limitBytes).bytes;
-    if (preservedBytes > limitBytes) return marker;
-  }
+  let spent = 0;
+  let nodes = 0;
+  /**
+   * The containers currently on the path from the root, so a self-reference
+   * becomes one marker instead of {@link MAX_SHRINK_DEPTH} levels of nesting.
+   * Entries are removed on the way back out: a value referenced twice as
+   * SIBLINGS is not a cycle, and dropping the second copy would hide a field
+   * that was perfectly renderable.
+   */
+  const path = new Set<object>();
+
+  /** The nested marker carries no `limitBytes`; the top level states it once. */
+  const dropped = (bytes?: number): TruncatedRpcPayload =>
+    bytes === undefined ? { _truncated: true } : { _truncated: true, bytes };
+
+  const shrink = (value: unknown, depth: number): unknown => {
+    if (++nodes > MAX_PROBE_NODES) return dropped();
+
+    if (typeof value === "string") {
+      if (
+        value.length <= MAX_PRESERVED_STRING_CHARS &&
+        spent + value.length + 2 <= limitBytes
+      ) {
+        spent += value.length + 2;
+        return value;
+      }
+      if (spent + STRING_HEAD_CHARS + STRING_MARKER_OVERHEAD <= limitBytes) {
+        spent += STRING_HEAD_CHARS + STRING_MARKER_OVERHEAD;
+        return {
+          _truncated: true,
+          bytes: value.length,
+          head: value.slice(0, STRING_HEAD_CHARS),
+        };
+      }
+      spent += STRING_MARKER_OVERHEAD;
+      return dropped(value.length);
+    }
+
+    if (value === null || typeof value !== "object") {
+      spent += 5;
+      return value;
+    }
+
+    if (depth >= MAX_SHRINK_DEPTH || path.has(value)) return dropped();
+    path.add(value);
+
+    if (Array.isArray(value)) {
+      spent += 2;
+      const out: unknown[] = [];
+      for (const item of value) {
+        spent += 1;
+        if (spent > limitBytes) {
+          path.delete(value);
+          return dropped();
+        }
+        out.push(shrink(item, depth + 1));
+      }
+      path.delete(value);
+      return out;
+    }
+
+    spent += 2;
+    const out: Record<string, unknown> = {};
+    for (const key in value as Record<string, unknown>) {
+      if (!Object.hasOwn(value, key)) continue;
+      spent += key.length + 4;
+      if (spent > limitBytes) {
+        path.delete(value);
+        return dropped();
+      }
+      out[key] = shrink((value as Record<string, unknown>)[key], depth + 1);
+    }
+    path.delete(value);
+    return out;
+  };
+
+  const shrunk = shrink(payload, 0);
+  const preserved =
+    isTruncatedRpcPayload(shrunk) || typeof shrunk !== "object" || shrunk === null
+      ? {}
+      : (shrunk as Record<string, unknown>);
   // Marker last: it must win over any same-named field on the frame.
   const truncated = { ...preserved, ...marker };
 
@@ -189,8 +304,15 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * One line explaining why a row has no body. Reads the same whichever producer
- * dropped it, and says what the reader lost rather than that something failed.
+ * One line explaining why a row has no body — or, now, a partial one. Reads the
+ * same whichever producer dropped it, and says what the reader lost rather than
+ * that something failed.
+ *
+ * "Not recorded" and "truncated" are deliberately different words. A reader who
+ * sees the first 8 KB of a value needs to know the rest exists somewhere; a
+ * reader who sees nothing needs to know the row never carried a body at all.
+ * One line for both states cannot say which of the two happened, and the
+ * difference is what tells a shortened row apart from an empty response.
  */
 export function describeTruncatedRpcPayload(
   payload: TruncatedRpcPayload,
@@ -206,5 +328,12 @@ export function describeTruncatedRpcPayload(
     typeof payload.bytes === "number"
       ? ` It was ${formatBytes(payload.bytes)}.`
       : "";
+  if (typeof payload.head === "string") {
+    // No claim about where the rest is: this module describes frames of every
+    // kind, and only SOME of them have a tool-result card holding the original.
+    return `Payload truncated — ${limit}.${size} Showing the first ${formatBytes(
+      payload.head.length,
+    )}.`;
+  }
   return `Payload not recorded — ${limit}.${size}`;
 }

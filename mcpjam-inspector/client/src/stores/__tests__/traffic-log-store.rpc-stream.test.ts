@@ -148,7 +148,7 @@ describe("traffic-log-store rpc stream (local mode)", () => {
         jsonrpc: "2.0",
         id: 14,
         method: "tools/call",
-        params: { data: "A".repeat(400_000) },
+        params: { data: "A".repeat(2_000_000) },
       },
     });
     unsubscribe();
@@ -162,9 +162,15 @@ describe("traffic-log-store rpc stream (local mode)", () => {
       jsonrpc: "2.0",
       id: 14,
       method: "tools/call",
-      params: { _truncated: true },
+      params: {
+        data: {
+          _truncated: true,
+          bytes: 2_000_000,
+          head: "A".repeat(8 * 1024),
+        },
+      },
       _truncated: true,
-      limitBytes: 256 * 1024,
+      limitBytes: 1024 * 1024,
     });
   });
 

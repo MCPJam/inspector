@@ -76,13 +76,15 @@ describe("truncateRpcPayload", () => {
     expect(truncated).toEqual({
       jsonrpc: "2.0",
       id: null,
-      error: { _truncated: true },
+      // The walk descends, so the error CODE survives too — the single most
+      // useful field on a frame whose body could not be kept.
+      error: { code: -32700, message: { _truncated: true, bytes: 400 } },
       _truncated: true,
       limitBytes: 256,
     });
   });
 
-  it("preserves short scalars and replaces long values with a nested marker", () => {
+  it("descends into a dropped field instead of collapsing it, and names the size", () => {
     const truncated = truncateRpcPayload(
       {
         jsonrpc: "2.0",
@@ -94,15 +96,81 @@ describe("truncateRpcPayload", () => {
       1024,
     );
 
+    // `params` used to become a bare `{_truncated: true}`, which told a reader
+    // nothing about what had been there. Its shape now survives, and the string
+    // that could not fit reports its own length.
     expect(truncated).toEqual({
       jsonrpc: "2.0",
       id: 7,
       method: "tools/call",
       streaming: false,
-      params: { _truncated: true },
+      params: { data: { _truncated: true, bytes: 5000 } },
       _truncated: true,
       limitBytes: 1024,
     });
+  });
+
+  it("keeps a head of an oversized string when the budget has room for one", () => {
+    const truncated = truncateRpcPayload(
+      { jsonrpc: "2.0", id: 8, result: { content: [{ type: "text", text: "y".repeat(1_048_576) }] } },
+      1024 * 1024,
+    );
+
+    const text = (truncated as any).result.content[0].text;
+    expect(text.bytes).toBe(1_048_576);
+    expect(text.head).toHaveLength(8 * 1024);
+    expect(text.head).toBe("y".repeat(8 * 1024));
+    // Sibling scalars inside the same content block are untouched — the reader
+    // can still tell WHAT kind of block lost its body.
+    expect((truncated as any).result.content[0].type).toBe("text");
+  });
+
+  it("keeps a frame's `_meta` — 150 bytes that the depth-one collapse always threw away", () => {
+    const truncated = truncateRpcPayload(
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        result: {
+          content: [{ type: "text", text: "z".repeat(2_000_000) }],
+          _meta: { tool: "big_text", actualBytes: 2_000_000, fnv: "4db183ec" },
+        },
+      },
+      1024 * 1024,
+    );
+
+    expect((truncated as any).result._meta).toEqual({
+      tool: "big_text",
+      actualBytes: 2_000_000,
+      fnv: "4db183ec",
+    });
+  });
+
+  it("never returns more than the limit, whatever the frame looks like", () => {
+    for (const limit of [512, 16 * 1024, 1024 * 1024]) {
+      const truncated = truncateRpcPayload(
+        {
+          jsonrpc: "2.0",
+          id: 10,
+          result: {
+            a: "x".repeat(5_000_000),
+            b: "y".repeat(5_000_000),
+            c: Array.from({ length: 200 }, () => "z".repeat(50_000)),
+          },
+        },
+        limit,
+      );
+      expect(probeSerializedSize(truncated, limit).exceeded).toBe(false);
+    }
+  });
+
+  it("terminates on a cyclic frame instead of recursing forever", () => {
+    const cyclic: Record<string, unknown> = { jsonrpc: "2.0", id: 11 };
+    cyclic.self = cyclic;
+
+    const truncated = truncateRpcPayload(cyclic, 1024 * 1024);
+
+    expect(truncated._truncated).toBe(true);
+    expect(truncated.id).toBe(11);
   });
 
   it("returns a bare marker for a frame too wide for the envelope to fit", () => {
@@ -141,6 +209,24 @@ describe("the truncation notice the Logs panel renders", () => {
     // No limit and no size still reads as a sentence, not as "undefined".
     expect(describeTruncatedRpcPayload({ _truncated: true })).toBe(
       "Payload not recorded — over the log size limit.",
+    );
+  });
+
+  it("says TRUNCATED, not 'not recorded', once a head survived", () => {
+    // The two words carry different information. A reader looking at the first
+    // 8 KB has to know the rest exists somewhere, and needs a size to compare
+    // against what the server actually sent; a reader looking at nothing needs
+    // to know the row never had a body at all.
+    expect(
+      describeTruncatedRpcPayload({
+        _truncated: true,
+        limitBytes: 1024 * 1024,
+        bytes: 2 * 1024 * 1024,
+        head: "x".repeat(8 * 1024),
+      }),
+    ).toBe(
+      "Payload truncated — over the 1.0 MB log limit. It was 2.0 MB. " +
+        "Showing the first 8 KB.",
     );
   });
 
