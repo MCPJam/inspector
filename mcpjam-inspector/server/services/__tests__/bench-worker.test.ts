@@ -19,7 +19,33 @@ import {
 
 const CLAIMED_BY = "inspector-bench-test";
 const DEFINITION_HASH = "def-hash-1";
+const CASE_METADATA_HASH = "cases-hash-1";
 const TARGET_URL = "https://target.example/mcp";
+
+/**
+ * One case's pinned side effects, as they arrive inside `pins.caseMetadata`.
+ *
+ * A run that may write always carries a manifest here, because a claim that
+ * produced one without is refused before anything launches — see
+ * `bench-worker-cleanup.test.ts`.
+ */
+function writeManifest() {
+  return {
+    mode: "test_write" as const,
+    summary: "creates one artifact",
+    allowedTools: ["create"],
+    createRules: [
+      {
+        tool: "create",
+        artifactNamePath: "name",
+        requiredPrefix: "mcpjam-benchmark-",
+        createdIdResultPaths: ["id"],
+      },
+    ],
+    mutationTargetPaths: [],
+    cleanupSteps: [{ tool: "remove", idArgPath: "id" }],
+  };
+}
 
 /**
  * One roster row, in the shape `rosterFor()` sends it.
@@ -59,11 +85,11 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
       definitionHash: DEFINITION_HASH,
       consentHash: "consent-1",
       suiteId: "suite-1",
+      caseMetadataHash: CASE_METADATA_HASH,
     },
     target: { targetKind: "server", targetKey: "srv-1", serverUrl: TARGET_URL },
-    // Read-only by default: the whole matrix runs in parallel unless the payer
-    // consented to write cases, which is the only per-run signal the claim
-    // carries about side effects.
+    // Read-only by default: a matrix runs in parallel only when the pinned
+    // caseMetadata declares no write case AND the payer consented to none.
     consent: { authenticatedChecks: false, writeCases: false },
     roster: [
       // A pillar this lane does not own; it must be left entirely alone.
@@ -92,6 +118,8 @@ type Recorded = {
   aborted: Array<{ reason: string; retryable: boolean }>;
   /** Header objects handed to each cell, so grant rotation is observable. */
   grantHeaders: Array<Record<string, string>>;
+  /** Cleanup + the terminal sequence, in the order they were called. */
+  terminal: string[];
 };
 
 function harness(options?: {
@@ -111,6 +139,7 @@ function harness(options?: {
     aborted: [],
     completed: [],
     grantHeaders: [],
+    terminal: [],
   };
 
   const runCell: BenchExecutionDeps["runEvalCell"] =
@@ -139,10 +168,30 @@ function harness(options?: {
         testSuiteRunId: args.testSuiteRunId,
       });
     },
+    cleanupArtifacts: async () => {
+      recorded.terminal.push("cleanup");
+      return {
+        status: "clean" as const,
+        attempted: 0,
+        removed: 0,
+        residue: 0,
+        residualIds: [],
+      };
+    },
     executionComplete: async (args) => {
+      recorded.terminal.push("execution-complete");
       recorded.completed.push({
         ...(args.stoppedReason ? { stoppedReason: args.stoppedReason } : {}),
       });
+    },
+    finalize: async () => {
+      recorded.terminal.push("finalize");
+    },
+    analyze: async () => {
+      recorded.terminal.push("analyze");
+    },
+    complete: async () => {
+      recorded.terminal.push("complete");
     },
     abort: async (args) => {
       recorded.aborted.push({ reason: args.reason, retryable: args.retryable });
@@ -352,6 +401,17 @@ describe("executeClaimedJob", () => {
     // list-style case then observes its sibling's.
     const claimed = job({
       consent: { authenticatedChecks: false, writeCases: true },
+      pins: {
+        definitionHash: DEFINITION_HASH,
+        suiteId: "suite-1",
+        caseMetadataHash: CASE_METADATA_HASH,
+        // A write cell needs its pinned manifest, or the claim is refused
+        // before anything launches — see `bench-worker-cleanup.test.ts`.
+        caseMetadata: {
+          suiteHash: "suite-1",
+          cases: [{ caseId: "case-1", sideEffects: writeManifest() }],
+        },
+      },
     });
     claimed.roster = [cell("w1"), cell("r1"), cell("w2"), cell("r2")];
 
@@ -1092,11 +1152,14 @@ describe("post-claim routes carry the execution grant", () => {
     vi.restoreAllMocks();
   });
 
-  function okFetch() {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, leaseOk: true }), {
-        status: 200,
-      }),
+  /**
+   * A `Response` body can be read only once, so every call gets a fresh one —
+   * a shared instance makes the SECOND route call fail on a consumed body,
+   * which looks exactly like a broken route.
+   */
+  function okFetch(body: Record<string, unknown> = { ok: true, leaseOk: true }) {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(body), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
@@ -1142,15 +1205,127 @@ describe("post-claim routes carry the execution grant", () => {
     expect(complete?.grant).toBe("grant-token");
   });
 
+  it("writes a harvested artifact id to /artifacts before the phase is reported", async () => {
+    // THE FINDING THIS LOCKS: the ledger was process-local and nothing was
+    // ever written to `/internal/v1/bench/artifacts`, so a worker that died
+    // after a create call lost the ids and the resumed worker reported a clean
+    // empty ledger while the artifacts stayed in the target's tenant.
+    const fetchMock = okFetch({ ok: true, recorded: 1, total: 1 });
+
+    const claimed = job();
+    claimed.roster = [cell("a")];
+
+    await executeClaimedJob(claimed, CLAIMED_BY, {
+      runEvalCell: async (args) => {
+        // What the write gate does when a create call comes back with an id.
+        args.ledger.record({
+          tool: "create_page",
+          artifactName: "mcpjam-benchmark-brun-1-0-notes",
+          createdId: "page-1",
+          caseId: "case-1",
+          iteration: 0,
+          cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+        });
+        await args.ledger.flush();
+        return { runId: "run-a", executed: true };
+      },
+      cleanupArtifacts: async () => ({
+        status: "clean",
+        attempted: 1,
+        removed: 1,
+        residue: 0,
+        residualIds: [],
+      }),
+      heartbeat: async () => ({ leaseOk: true }),
+      heartbeatIntervalMs: 20_000,
+    });
+
+    const calls = fetchMock.mock.calls.map((call: any[]) => ({
+      path: new URL(call[0] as string).pathname,
+      grant: call[1].headers["x-mcpjam-benchmark-grant"] as string,
+      body: JSON.parse(call[1].body as string),
+    }));
+
+    const record = calls.find(
+      (c) => c.path === "/internal/v1/bench/artifacts",
+    );
+    expect(record?.grant).toBe("grant-token");
+    expect(record?.body).toEqual({
+      benchmarkRunId: "brun-1",
+      artifacts: [
+        {
+          caseId: "case-1",
+          tool: "create_page",
+          createdId: "page-1",
+          artifactName: "mcpjam-benchmark-brun-1-0-notes",
+          iteration: 0,
+        },
+      ],
+    });
+
+    // And it landed BEFORE the phase was reported, which is what makes the
+    // backend's record of what to clean up complete when it takes over.
+    const recordAt = calls.findIndex(
+      (c) => c.path === "/internal/v1/bench/artifacts",
+    );
+    const completeAt = calls.findIndex(
+      (c) => c.path === "/internal/v1/bench/runs/execution-complete",
+    );
+    expect(recordAt).toBeGreaterThanOrEqual(0);
+    expect(completeAt).toBeGreaterThan(recordAt);
+  });
+
+  it("hands the job back rather than reporting a phase over an unrecorded artifact", async () => {
+    const claimed = job();
+    claimed.roster = [cell("a")];
+    const completed: string[] = [];
+    const aborted: Array<{ reason: string; retryable: boolean }> = [];
+
+    await executeClaimedJob(claimed, CLAIMED_BY, {
+      recordArtifacts: async () => {
+        throw new Error("convex unreachable");
+      },
+      runEvalCell: async (args) => {
+        args.ledger.record({
+          tool: "create_page",
+          artifactName: "mcpjam-benchmark-brun-1-0-notes",
+          createdId: "page-1",
+          caseId: "case-1",
+          cleanupSteps: [],
+        });
+        await args.ledger.flush();
+        return { runId: "run-a", executed: true };
+      },
+      attachEvidence: async () => {},
+      cleanupArtifacts: async () => ({
+        status: "clean",
+        attempted: 0,
+        removed: 0,
+        residue: 0,
+        residualIds: [],
+      }),
+      executionComplete: async () => {
+        completed.push("reported");
+      },
+      abort: async (args) => {
+        aborted.push({ reason: args.reason, retryable: args.retryable });
+      },
+      heartbeat: async () => ({ leaseOk: true }),
+      heartbeatIntervalMs: 20_000,
+    });
+
+    expect(completed).toEqual([]);
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0].retryable).toBe(true);
+    expect(aborted[0].reason).toMatch(/could not be recorded durably/);
+  });
+
   it("attaches a conformance child as the conformance variant, with kind", async () => {
     // THE FINDING THIS LOCKS: the conformance payload omitted `kind`, so it
     // had no discriminator at all and `parseEvidenceAttachment` answered 400
     // — every persisted conformance child was rejected and the job stayed in
     // the unattached/retry path.
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = okFetch({ ok: true });
 
     const claimed = job();
     claimed.roster = [

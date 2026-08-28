@@ -66,6 +66,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
   environmentServerIds,
@@ -476,6 +477,17 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * it mid-run without restarting anything.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement for this cell.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot hand itself permission to write to a target. The
+   * manifests inside are pinned in the definition and verified against the
+   * claim BEFORE the cell launches; the artifact ledger inside is the run's,
+   * shared by reference so every iteration writes into the one the run's
+   * cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -1969,6 +1981,7 @@ export async function prepareEvalRun(
     toolPolicy,
     importApprovals,
     extraHeaders,
+    benchmarkWriteGuard,
   } = request;
 
   /**
@@ -2335,6 +2348,25 @@ export async function prepareEvalRun(
       }
     );
   }
+  // Benchmark write manifests currently enforce argument/prefix ownership in
+  // the in-process tool-policy gate. Native harnesses execute MCP calls in a
+  // separate process, where that gate cannot inspect arguments or harvest
+  // created ids. Refuse this combination until the proxy carries the full
+  // side-effect guard; running it would make a consented write benchmark
+  // unbounded on the target server.
+  if (
+    benchmarkWriteGuard?.requireManifest === true &&
+    harnessAdmission.harness
+  ) {
+    const reason =
+      "benchmark write cases are not supported on an out-of-process harness yet; " +
+      "run this benchmark with an emulated client so argument and cleanup guards apply";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "BENCHMARK_WRITE_UNSUPPORTED",
+      harness: harnessAdmission.harness,
+    });
+  }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
   // `hostConfigId`, so the record cannot disagree with the config the run
@@ -2546,6 +2578,8 @@ export async function prepareEvalRun(
       ...(toolPolicy ? { toolPolicy } : {}),
       // The SAME object, never a copy — see `extraHeaders` on the request type.
       ...(extraHeaders ? { extraHeaders } : {}),
+      // Likewise by reference: the ledger inside is the RUN's.
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     });
   };
 
