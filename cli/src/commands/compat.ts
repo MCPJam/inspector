@@ -119,6 +119,11 @@ export function registerCompatCommands(program: Command): void {
           [];
         let cursor: string | undefined;
         let truncated = false;
+        // A server that reissues a cursor it already handed out would
+        // otherwise re-request the identical page until the cap. `""` joins
+        // this set like any other token, so a server looping on it stops on
+        // the SECOND occurrence.
+        const seenCursors = new Set<string>();
         for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
           const result = await listTools(manager, { serverId, cursor });
           tools.push(
@@ -127,11 +132,21 @@ export function registerCompatCommands(program: Command): void {
               _meta?: Record<string, unknown>;
             }>)
           );
-          cursor = result.nextCursor;
+          cursor =
+            typeof result.nextCursor === "string"
+              ? result.nextCursor
+              : undefined;
           // Presence, not truthiness: MCP 2026-07-28
           // `server/utilities/pagination` makes `""` a valid cursor that MUST
           // NOT be read as the end of results.
           if (cursor === undefined) break;
+          if (seenCursors.has(cursor)) {
+            // Same reporting as the cap: the read stopped short, so don't let
+            // the half we hold stand in for the whole listing.
+            truncated = true;
+            break;
+          }
+          seenCursors.add(cursor);
           // Cap hit with tools still pending — flag rather than drop them.
           if (page === TOOLS_PAGE_CAP - 1) truncated = true;
         }

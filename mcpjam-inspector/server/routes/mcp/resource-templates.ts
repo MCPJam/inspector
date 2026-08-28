@@ -32,7 +32,9 @@ resourceTemplates.post("/list", async (c) => {
       mcpClientManager.listResourceTemplates(
         serverId!,
         // Presence, not truthiness: `""` is a valid continuation cursor.
-        body.cursor !== undefined ? { cursor: body.cursor } : undefined,
+        // The body is an untyped cast, so a non-string `cursor` is not a
+        // cursor — omit it rather than forwarding it to the server.
+        typeof body.cursor === "string" ? { cursor: body.cursor } : undefined,
         // Mirrors the SDK's `cacheOptions()` convention: omit the options
         // object entirely unless a refresh was actually requested.
         refresh === true ? { cacheMode: "refresh" as const } : undefined,
@@ -44,7 +46,7 @@ resourceTemplates.post("/list", async (c) => {
       // Relay the server's cursor verbatim. `""` is a valid continuation
       // cursor, so the test is presence — dropping it would turn "there is
       // another page" into "that was the last page" for the caller.
-      ...(result.nextCursor !== undefined
+      ...(typeof result.nextCursor === "string"
         ? { nextCursor: result.nextCursor }
         : {}),
       ...(servedFromCache ? { servedFromCache } : {}),

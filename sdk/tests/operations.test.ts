@@ -455,6 +455,23 @@ describe("listAllTools", () => {
     );
   });
 
+  it("treats a non-string nextCursor as the end, never as a cursor", async () => {
+    // The pinned semantics keep three buckets distinct: absent/null ends the
+    // walk, `""` continues it, and a non-string is not a cursor at all.
+    for (const nextCursor of [null, 42, { opaque: true }, []]) {
+      const manager = createMockManager({
+        listTools: jest
+          .fn()
+          .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor }),
+      });
+
+      const result = await listAllTools(manager, { serverId: "srv" });
+
+      expect(result.tools.map((tool) => tool.name)).toEqual(["echo"]);
+      expect(manager.listTools).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('trips the repeated-cursor guard when a server loops on ""', async () => {
     const manager = createMockManager({
       listTools: jest.fn().mockResolvedValue({

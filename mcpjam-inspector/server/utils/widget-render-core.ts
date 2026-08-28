@@ -107,7 +107,7 @@ export async function renderWidgetForRequest(
     // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
     // treated as the end of results, and it joins `seenCursors` like any other
     // token so a server looping on `""` still stops here.
-    if (nextCursor === undefined || seenCursors.has(nextCursor)) break;
+    if (typeof nextCursor !== "string" || seenCursors.has(nextCursor)) break;
     seenCursors.add(nextCursor);
     cursor = nextCursor;
   }

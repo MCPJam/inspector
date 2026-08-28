@@ -2070,6 +2070,11 @@ export function MCPAppsRendererSurface({
           appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
           const tools: AppToolDescriptor[] = [];
           let cursor: string | undefined;
+          // The page values cross the iframe boundary, so they are untrusted:
+          // a non-string `nextCursor` is not a cursor, and a repeated one
+          // would re-run the same RPC and register the same page of tools
+          // again. `""` joins this set like any other token.
+          const seenCursors = new Set<string>();
           for (let page = 0; page < 8; page += 1) {
             const result = await bridge.listTools(
               cursor === undefined ? {} : { cursor }
@@ -2079,11 +2084,16 @@ export function MCPAppsRendererSurface({
                 Boolean(t && typeof t.name === "string" && t.name.length > 0)
               )
             );
-            cursor = result.nextCursor;
+            cursor =
+              typeof result.nextCursor === "string"
+                ? result.nextCursor
+                : undefined;
             // Presence, not truthiness: MCP 2026-07-28
             // `server/utilities/pagination` makes `""` a valid cursor that MUST
             // NOT be read as the end of results.
             if (cursor === undefined) break;
+            if (seenCursors.has(cursor)) break;
+            seenCursors.add(cursor);
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);

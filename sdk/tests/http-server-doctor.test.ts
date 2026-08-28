@@ -104,6 +104,65 @@ describe("collectConnectedHttpServerDoctorState", () => {
     });
     expect(result.errors).toEqual([]);
   });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results".
+  it("follows an empty-string nextCursor and forwards it verbatim", async () => {
+    const cursors: Array<string | undefined> = [];
+    const client = createMockClient({
+      listTools: jest.fn().mockImplementation(async (params?: any) => {
+        cursors.push(params?.cursor);
+        return params?.cursor === undefined
+          ? { tools: [{ name: "echo" }], nextCursor: "" }
+          : { tools: [{ name: "draw" }] };
+      }),
+    });
+
+    const result = await collectConnectedHttpServerDoctorState(client, {
+      timeout: 4_000,
+    });
+
+    expect(result.tools).toEqual([{ name: "echo" }, { name: "draw" }]);
+    expect(cursors).toEqual([undefined, ""]);
+    expect(result.checks.tools.status).toBe("ok");
+  });
+
+  it("stops on a repeated empty-string cursor instead of spinning to the page cap", async () => {
+    // Before `""` was accepted as a continuation it terminated this loop, so
+    // the drain never needed a cycle guard. Now that it continues, a server
+    // looping on `""` would re-request the identical page up to
+    // MAX_PAGINATION_PAGES times, each with this module's timeout and retry
+    // handling. The guard trips on the SECOND occurrence.
+    const listTools = jest
+      .fn()
+      .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor: "" });
+    const client = createMockClient({ listTools });
+
+    const result = await collectConnectedHttpServerDoctorState(client, {
+      timeout: 4_000,
+    });
+
+    expect(listTools).toHaveBeenCalledTimes(2);
+    expect(result.checks.tools.status).toBe("error");
+    expect(result.checks.tools.detail).toContain("repeated cursor");
+  });
+
+  it("treats a non-string nextCursor as the end, never as a cursor", async () => {
+    for (const nextCursor of [null, 42, { opaque: true }]) {
+      const listTools = jest
+        .fn()
+        .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor });
+      const client = createMockClient({ listTools });
+
+      const result = await collectConnectedHttpServerDoctorState(client, {
+        timeout: 4_000,
+      });
+
+      expect(listTools).toHaveBeenCalledTimes(1);
+      expect(result.tools).toEqual([{ name: "echo" }]);
+      expect(result.checks.tools.status).toBe("ok");
+    }
+  });
 });
 
 describe("runHttpServerDoctor", () => {
