@@ -120,6 +120,49 @@ describe("ServerDetailModal hosted reconnect", () => {
     });
   });
 
+  it("blocks the connect switch for transports the cloud cannot reach", () => {
+    // The card's switch already refused these; this modal's switch was a
+    // separate control that never learned the rule, so the same impossible
+    // attempt could still be started from the detail view.
+    for (const [label, config] of [
+      ["insecure http", { url: "http://example.com/mcp" }],
+      ["legacy stdio", { command: "npx", args: ["-y", "some-server"] }],
+    ] as const) {
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      const { unmount } = render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ name: label, config: config as any })}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      const toggle = screen.getByRole("switch");
+      expect(toggle).toBeDisabled();
+      fireEvent.click(toggle);
+      expect(onReconnect).not.toHaveBeenCalled();
+      unmount();
+    }
+  });
+
+  it("shows the retry count, matching the card", () => {
+    // One server reading `Failed (3)` on its card and a bare `Failed` in
+    // its own modal is the kind of disagreement that makes a user trust
+    // neither number.
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          connectionStatus: "failed",
+          retryCount: 3,
+          lastError: "fetch failed",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Failed (3)")).toBeInTheDocument();
+  });
+
   it("reveals vault-backed OAuth tokens on demand without writing localStorage", async () => {
     const user = userEvent.setup();
     const writeTextSpy = vi

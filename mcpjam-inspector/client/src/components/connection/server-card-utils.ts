@@ -55,6 +55,32 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
 export const getConnectionStatusMeta = (status: ConnectionStatus) =>
   connectionStatusMeta[status] || connectionStatusMeta.disconnected;
 
+/**
+ * Status label with the retry count appended when there is one to show:
+ * `Failed (3)`.
+ *
+ * Shared so the card, the detail modal and the eval picker cannot drift
+ * apart — one server reading `Failed (3)` in the grid and a bare `Failed`
+ * in its own modal is the kind of disagreement that makes a user distrust
+ * both numbers.
+ *
+ * The suffix is deliberately `failed`-only and deliberately conditional.
+ * It used to render on every failure and always read `(0)`, because
+ * nothing incremented the counter; the auto-connect retry loop now does,
+ * so `Failed (3)` means we tried three times before giving up, and a
+ * failure with no retries behind it — a protocol pin the server does not
+ * offer, say — correctly shows no number at all.
+ */
+export const formatConnectionStatusLabel = (
+  status: ConnectionStatus,
+  retryCount: number | undefined
+): string => {
+  const { label } = getConnectionStatusMeta(status);
+  if (status !== "failed") return label;
+  if (!retryCount || retryCount <= 0) return label;
+  return `${label} (${retryCount})`;
+};
+
 export const getServerCommandDisplay = (config: MCPServerConfig): string => {
   if (config.url) {
     return config.url.toString();

@@ -7,19 +7,13 @@ import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import {
+  getHostedUnsupportedReason,
   hostedUnsupportedExplanation,
-  isHostedInsecureHttpServer as isHostedInsecureHttpConfig,
 } from "@/lib/hosted-server-support";
 import {
   isOAuthDebuggerHeaderServer,
   isXaaDebuggerHeaderServer,
 } from "@/lib/debugger-header-servers";
-
-const HOSTED_HTTPS_REQUIRED_HINT = hostedUnsupportedExplanation("insecure-http");
-
-function isHostedInsecureHttpServer(server: ServerWithName): boolean {
-  return isHostedInsecureHttpConfig(server.config);
-}
 
 export interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
@@ -260,8 +254,13 @@ export function ActiveServerSelector({
             const isSelected = isMultiSelectEnabled
               ? selectedMultipleServers.includes(name)
               : selectedServer === name;
-            const isHostedHttpReconnectBlocked =
-              isHostedInsecureHttpServer(serverConfig);
+            // Every transport this deployment structurally cannot reach,
+            // not just `http://`: in cloud mode a stdio server has no local
+            // process to spawn either. Dialing one can only fail, so the
+            // button says why instead of producing a red card the user can
+            // do nothing about.
+            const hostedUnsupportedReason =
+              getHostedUnsupportedReason(serverConfig.config);
 
             return (
               <button
@@ -321,23 +320,23 @@ export function ActiveServerSelector({
                       e.nativeEvent.stopImmediatePropagation();
                       // Also prevent default to avoid double actions if standard button behavior applies
                       e.preventDefault();
-                      if (isHostedHttpReconnectBlocked) {
+                      if (hostedUnsupportedReason) {
                         return;
                       }
                       onReconnect(name).catch(() => {});
                     }}
                     className={cn(
                       "ml-auto p-1 rounded-md transition-colors",
-                      isHostedHttpReconnectBlocked
+                      hostedUnsupportedReason
                         ? "cursor-not-allowed text-muted-foreground/40"
                         : "hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground",
                     )}
                     title={
-                      isHostedHttpReconnectBlocked
-                        ? HOSTED_HTTPS_REQUIRED_HINT
+                      hostedUnsupportedReason
+                        ? hostedUnsupportedExplanation(hostedUnsupportedReason)
                         : "Reconnect"
                     }
-                    aria-disabled={isHostedHttpReconnectBlocked}
+                    aria-disabled={Boolean(hostedUnsupportedReason)}
                   >
                     <RefreshCw className="w-3 h-3" />
                   </div>

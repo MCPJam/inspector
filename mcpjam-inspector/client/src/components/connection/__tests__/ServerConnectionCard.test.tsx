@@ -7,6 +7,7 @@ import {
   act,
 } from "@testing-library/react";
 import { toast } from "sonner";
+import { errorToastMessage } from "@/test/utils";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
@@ -746,6 +747,58 @@ describe("ServerConnectionCard", () => {
         "test-server",
         false
       );
+    });
+
+    it("tells the user when the opt-out could not be saved", async () => {
+      // The mutation can fail (offline, a permission change mid-session).
+      // A bare `void` would swallow that: the menu closes as if the change
+      // had been saved, the flag is unchanged on the next read, and the
+      // only trace is an unhandled rejection in the console.
+      const onSetAutoConnectDisabled = vi
+        .fn()
+        .mockRejectedValue(new Error("mutation failed"));
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          onSetAutoConnectDisabled={onSetAutoConnectDisabled}
+        />
+      );
+
+      openMenu();
+      fireEvent.click(await screen.findByText("Skip on auto-connect"));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          errorToastMessage(
+            "Couldn't update auto-connect for this server. Please try again."
+          ),
+          { duration: 8000 }
+        );
+      });
+    });
+
+    it("survives a synchronous handler that throws nothing", async () => {
+      // The prop is `Promise<void> | void`; a surface may pass a plain
+      // synchronous setter. `Promise.resolve` has to cope with a non-thenable
+      // return without turning a working action into an error toast.
+      const onSetAutoConnectDisabled = vi.fn().mockReturnValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={createServer()}
+          {...defaultProps}
+          onSetAutoConnectDisabled={onSetAutoConnectDisabled}
+        />
+      );
+
+      openMenu();
+      fireEvent.click(await screen.findByText("Skip on auto-connect"));
+
+      expect(onSetAutoConnectDisabled).toHaveBeenCalledWith(
+        "test-server",
+        true
+      );
+      await waitFor(() => expect(toast.error).not.toHaveBeenCalled());
     });
 
     it("hides the option on surfaces with no project config to write", async () => {

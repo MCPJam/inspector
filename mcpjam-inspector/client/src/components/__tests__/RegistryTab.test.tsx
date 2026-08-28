@@ -1333,6 +1333,54 @@ describe("RegistryTab", () => {
       ).toBeInTheDocument();
     });
 
+    it("clears registry pending when the server lands on needs-auth", async () => {
+      // `needs-auth` is a terminal outcome for a quick connect: the attempt
+      // is over and the ball is in the user's court. Holding the pending
+      // marker open would spin "Connecting" at someone whose next move is
+      // to click Authorize, and the marker would only clear on a timeout.
+      const server = createMockServer({
+        displayName: "PostHog",
+        clientType: "text",
+        _id: "ph-1",
+      });
+      const serverName = "PostHog (Text)";
+      writePendingQuickConnect({
+        serverName,
+        registryServerId: "ph-1",
+        displayName: "PostHog",
+        sourceTab: "registry",
+        createdAt: Date.now(),
+      });
+      mockHookReturn = {
+        catalogCards: [toCatalogCard([server], "posthog")],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
+      };
+
+      render(
+        <RegistryTab
+          {...defaultProps}
+          servers={{
+            [serverName]: {
+              name: serverName,
+              connectionStatus: "needs-auth",
+              config: {} as any,
+              lastConnectionTime: new Date(),
+              retryCount: 0,
+            },
+          }}
+        />
+      );
+
+      await waitFor(() => {
+        expect(readPendingQuickConnect()).toBeNull();
+      });
+      expect(screen.queryByText("Connecting")).not.toBeInTheDocument();
+    });
+
     it("clears registry pending when oauth-flow exceeds the stale window", async () => {
       const server = createMockServer({
         displayName: "PostHog",

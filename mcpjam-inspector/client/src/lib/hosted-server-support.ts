@@ -82,16 +82,6 @@ export function isHostedUnsupportedServer(config: MCPServerConfig): boolean {
   return getHostedUnsupportedReason(config) !== null;
 }
 
-/**
- * Back-compat alias for the `http://`-only check the connect switch and the
- * chip strip already had. Kept separate from
- * {@link isHostedUnsupportedServer} because these two call sites raise an
- * HTTPS-specific message that would be wrong for a stdio server.
- */
-export function isHostedInsecureHttpServer(config: MCPServerConfig): boolean {
-  return getHostedUnsupportedReason(config) === "insecure-http";
-}
-
 /** Short chip text. Neutral — states the deployment, blames nothing. */
 export function hostedUnsupportedChipLabel(
   reason: HostedUnsupportedReason

@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
+  formatConnectionStatusLabel,
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerTransportLabel,
@@ -24,7 +25,6 @@ export function ServerSelectionCard({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isConfigExpanded, setIsConfigExpanded] = useState(true);
   const {
-    label: connectionStatusLabel,
     Icon: ConnectionStatusIcon,
     iconClassName,
     indicatorColor,
@@ -59,9 +59,12 @@ export function ServerSelectionCard({
     }
   };
 
-  // Was `Failed (N retries)`. Nothing ever incremented `retryCount`, so it
-  // was always "(0 retries)" — a fixed number dressed up as a diagnostic.
-  const totalRetriesLabel = connectionStatusLabel;
+  // Shared with the server card and the detail modal so the same server
+  // cannot read `Failed (3)` in one place and a bare `Failed` in another.
+  const totalRetriesLabel = formatConnectionStatusLabel(
+    server.connectionStatus,
+    server.retryCount,
+  );
 
   return (
     <Card

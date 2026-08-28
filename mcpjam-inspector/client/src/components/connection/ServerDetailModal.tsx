@@ -32,7 +32,14 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { getConnectionStatusMeta } from "./server-card-utils";
+import {
+  formatConnectionStatusLabel,
+  getConnectionStatusMeta,
+} from "./server-card-utils";
+import {
+  getHostedUnsupportedReason,
+  hostedUnsupportedExplanation,
+} from "@/lib/hosted-server-support";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -340,8 +347,9 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  const { indicatorColor } = getConnectionStatusMeta(server.connectionStatus);
+  // Null unless this deployment structurally cannot run this transport.
+  const hostedUnsupportedReason = getHostedUnsupportedReason(server.config);
 
   useEffect(() => {
     let isCancelled = false;
@@ -611,25 +619,39 @@ export function ServerDetailModal({
                     style={{ backgroundColor: indicatorColor }}
                   />
                 )}
-                {/* No `(retryCount)` suffix — nothing increments it, so it
-                    always read "(0)". See ServerConnectionCard. */}
                 <span>
-                  {isReconnecting ? "Connecting..." : connectionStatusLabel}
+                  {isReconnecting
+                    ? "Connecting..."
+                    : formatConnectionStatusLabel(
+                        server.connectionStatus,
+                        server.retryCount
+                      )}
                 </span>
               </span>
               <Switch
                 checked={isConnected}
+                // Also off for a transport this deployment cannot reach at
+                // all — hosted stdio, hosted `http://`. Auto-connect skips
+                // those; this switch is the other way to start the same
+                // impossible attempt, and it used to be wide open.
                 disabled={
                   isReconnecting ||
                   server.connectionStatus === "connecting" ||
-                  server.connectionStatus === "oauth-flow"
+                  server.connectionStatus === "oauth-flow" ||
+                  hostedUnsupportedReason !== null
+                }
+                title={
+                  hostedUnsupportedReason
+                    ? hostedUnsupportedExplanation(hostedUnsupportedReason)
+                    : undefined
                 }
                 onCheckedChange={(checked) => {
                   if (!checked) {
                     handleDisconnect();
-                  } else {
-                    void handleConnect(getSwitchReconnectOptions());
+                    return;
                   }
+                  if (hostedUnsupportedReason) return;
+                  void handleConnect(getSwitchReconnectOptions());
                 }}
                 className="cursor-pointer scale-75"
               />

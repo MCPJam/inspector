@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  formatConnectionStatusLabel,
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerTransportLabel,
@@ -148,5 +149,51 @@ describe("getServerTransportLabel", () => {
   it('returns "STDIO" for empty config', () => {
     const config = {} as MCPServerConfig;
     expect(getServerTransportLabel(config)).toBe("STDIO");
+  });
+});
+
+describe("formatConnectionStatusLabel", () => {
+  it("appends the retry count to a failure that was retried", () => {
+    expect(formatConnectionStatusLabel("failed", 3)).toBe("Failed (3)");
+  });
+
+  it("omits the suffix when nothing was retried", () => {
+    // The old unconditional suffix always rendered "(0)", because nothing
+    // incremented the counter. A failure with no retries behind it — a
+    // protocol pin the server does not offer, say — must show no number
+    // rather than a zero dressed up as a diagnostic.
+    expect(formatConnectionStatusLabel("failed", 0)).toBe("Failed");
+  });
+
+  it("omits the suffix when the count is absent", () => {
+    expect(formatConnectionStatusLabel("failed", undefined)).toBe("Failed");
+  });
+
+  it("never adds a count to a non-failed status", () => {
+    // `retryCount` is only cleared on CONNECT_SUCCESS, so a server that
+    // recovered on its third attempt still carries a 3 while connected.
+    // "Connected (3)" would read as a warning about a server that is fine.
+    expect(formatConnectionStatusLabel("connected", 3)).toBe("Connected");
+    expect(formatConnectionStatusLabel("needs-auth", 3)).toBe(
+      getConnectionStatusMeta("needs-auth").label
+    );
+  });
+
+  it("agrees with the raw status label for every status when un-retried", () => {
+    // Pins the card, the detail modal and the eval picker to one source:
+    // whatever this returns is what all three render.
+    const statuses: ConnectionStatus[] = [
+      "connected",
+      "connecting",
+      "oauth-flow",
+      "needs-auth",
+      "failed",
+      "disconnected",
+    ];
+    for (const status of statuses) {
+      expect(formatConnectionStatusLabel(status, 0)).toBe(
+        getConnectionStatusMeta(status).label
+      );
+    }
   });
 });

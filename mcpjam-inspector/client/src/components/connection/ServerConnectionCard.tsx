@@ -49,6 +49,7 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  formatConnectionStatusLabel,
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerUrl,
@@ -219,7 +220,6 @@ export function ServerConnectionCard({
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
-    label: connectionStatusLabel,
     indicatorColor,
     Icon: ConnectionStatusIcon,
     iconClassName,
@@ -252,7 +252,12 @@ export function ServerConnectionCard({
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
-  const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
+  // Also blocked when the deployment cannot reach this transport at all.
+  // A hosted stdio or `http://` server is excluded from auto-connect for
+  // that reason; leaving the manual Reconnect live would let the user
+  // reproduce the same impossible attempt by hand and get a red card back.
+  const isReconnectMenuDisabled =
+    isReconnecting || isPendingConnection || hostedUnsupportedReason !== null;
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
       setTunnelUrl(serverTunnelUrl);
@@ -686,19 +691,11 @@ export function ServerConnectionCard({
                       style={{ backgroundColor: indicatorColor }}
                     />
                   )}
-                  {/* The suffix appears only when the counter means
-                      something. It used to render unconditionally on every
-                      failure and always read "(0)", because nothing
-                      incremented it; the auto-connect retry loop now does,
-                      so "Failed (3)" tells the user we tried three times
-                      before giving up — and a failure with no retries
-                      behind it (a pin mismatch, say) correctly shows no
-                      number at all. */}
                   <span>
-                    {server.connectionStatus === "failed" &&
-                    server.retryCount > 0
-                      ? `${connectionStatusLabel} (${server.retryCount})`
-                      : connectionStatusLabel}
+                    {formatConnectionStatusLabel(
+                      server.connectionStatus,
+                      server.retryCount
+                    )}
                   </span>
                   {needsReconnect ? (
                     <Tooltip>
@@ -975,10 +972,22 @@ export function ServerConnectionCard({
                           track("server_auto_connect_opt_out_toggled", {
                             location: "server_connection_card",
                           });
-                          void onSetAutoConnectDisabled(
-                            server.name,
-                            !autoConnectDisabled
-                          );
+                          // `Promise.resolve` because the prop is allowed
+                          // to be synchronous. A bare `void` would drop a
+                          // rejection: the menu would close as if the
+                          // opt-out had been saved, the next config read
+                          // would show it unchanged, and the failure would
+                          // surface only as an unhandled rejection.
+                          void Promise.resolve(
+                            onSetAutoConnectDisabled(
+                              server.name,
+                              !autoConnectDisabled
+                            )
+                          ).catch(() => {
+                            toast.error(
+                              "Couldn't update auto-connect for this server. Please try again."
+                            );
+                          });
                         }}
                       >
                         {autoConnectDisabled ? (
