@@ -57,6 +57,31 @@ function nonJsonReply(status: number) {
 
 const TARGET = { projectId: "proj_1", serverId: "srv_1" };
 
+/**
+ * The real argument shapes, not convenient subsets.
+ *
+ * A quote is priced against the stable target and one exact exam, and a start
+ * is the acceptance of a quote — so `benchmarkTargetId`/`profileId` and
+ * `quoteId` are required, and the backend refuses the call without them. The
+ * table below used to pass `TARGET` alone to both, which type-checked nowhere
+ * (client tests are excluded from `typecheck:client`) and passed anyway
+ * because the mocked failure lands before anything reads the payload. That is
+ * exactly the blind spot the happy-path block below closes: an error-only
+ * suite stays green straight through a contract change that breaks every one
+ * of these calls.
+ */
+const QUOTE_INPUT = {
+  ...TARGET,
+  benchmarkTargetId: "btgt_1",
+  profileId: "connector-bench/crm/standard",
+  profileVersion: "1.0.0",
+};
+const START_INPUT = {
+  ...TARGET,
+  quoteId: "quote_1",
+  receiptId: "rcpt_1",
+};
+
 beforeEach(() => {
   authFetchMock.mockReset();
   fetchMock.mockReset();
@@ -65,8 +90,8 @@ beforeEach(() => {
 describe("a relay whose backend has not enabled benchmark runs", () => {
   it.each([
     ["preflightBench", () => preflightBench(TARGET)],
-    ["quoteBench", () => quoteBench(TARGET)],
-    ["startBenchRun", () => startBenchRun({ ...TARGET, receiptId: "rcpt_1" })],
+    ["quoteBench", () => quoteBench(QUOTE_INPUT)],
+    ["startBenchRun", () => startBenchRun(START_INPUT)],
     ["fetchBenchRun", () => fetchBenchRun("run_1")],
     ["cancelBenchRun", () => cancelBenchRun("run_1")],
   ])(
@@ -288,8 +313,189 @@ describe("the authed calls", () => {
       reply(402, { message: "Not enough credits", error: "BILLING" }),
     );
 
-    await expect(
-      startBenchRun({ ...TARGET, receiptId: "rcpt_1" }),
-    ).rejects.toThrow("Not enough credits");
+    await expect(startBenchRun(START_INPUT)).rejects.toThrow(
+      "Not enough credits",
+    );
+  });
+});
+
+/**
+ * What each call puts on the wire, and what it hands back.
+ *
+ * Everything above this point asserts error TRANSLATION, which is shared by
+ * all five calls and therefore says nothing about any one of them. A wrong
+ * method, a wrong path, a dropped field, or a response read out of the wrong
+ * envelope all survive a suite that only ever mocks a failure — and every one
+ * of those has actually happened on this surface: `/runs` was quoted without
+ * `quoteId`, `/quotes` without `benchmarkTargetId`, and the poll response was
+ * read with its wrapper still on.
+ *
+ * `toEqual` on the body rather than `toMatchObject`, deliberately: a field
+ * that should not be sent is as much a contract break as one that should.
+ */
+describe("what each call sends, and what it gives back", () => {
+  const post = (payload: Record<string, unknown>) =>
+    expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+  it("prices a quote against the target and the exam, not the saved server", async () => {
+    authFetchMock.mockResolvedValue(
+      reply(200, {
+        quoteId: "quote_1",
+        totalCredits: 42,
+        writesToTarget: true,
+      }),
+    );
+
+    await expect(quoteBench(QUOTE_INPUT)).resolves.toEqual({
+      quoteId: "quote_1",
+      totalCredits: 42,
+      writesToTarget: true,
+    });
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/bench/quotes",
+      post(QUOTE_INPUT),
+    );
+  });
+
+  it("starts a run by accepting a quote, carrying consent and an idempotency key", async () => {
+    // Consent and the idempotency key are both optional in the type and both
+    // load-bearing when present: the backend re-checks the agreement against
+    // the definition's hashes, and the key is what lets a lost start be
+    // retried without commissioning a second paid run.
+    const input = {
+      ...START_INPUT,
+      consent: { writeCases: true },
+      idempotencyKey: "idem_1",
+    };
+    authFetchMock.mockResolvedValue(
+      reply(200, {
+        benchmarkRunId: "brun_1",
+        status: "queued",
+        resultSecret: "sec_abc",
+      }),
+    );
+
+    await expect(startBenchRun(input)).resolves.toEqual({
+      benchmarkRunId: "brun_1",
+      status: "queued",
+      // Returned by the start and only by the start — the backend keeps a
+      // digest, so if this were dropped here the plaintext would be gone.
+      resultSecret: "sec_abc",
+    });
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/bench/runs",
+      post(input),
+    );
+  });
+
+  it("polls a run with a bare GET, and no body at all", async () => {
+    authFetchMock.mockResolvedValue(
+      reply(200, { benchmarkRunId: "brun_1", status: "running" }),
+    );
+
+    await expect(fetchBenchRun("brun_1")).resolves.toEqual({
+      benchmarkRunId: "brun_1",
+      status: "running",
+    });
+    // One argument, exactly: passing an init here at all would be the start of
+    // sending a method or a body on a read.
+    expect(authFetchMock).toHaveBeenCalledWith("/api/web/bench/runs/brun_1");
+    expect(authFetchMock.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("cancels with a POST to the run's own path, and sends no body", async () => {
+    authFetchMock.mockResolvedValue(
+      reply(200, { benchmarkRunId: "brun_1", status: "cancelled" }),
+    );
+
+    await expect(cancelBenchRun("brun_1")).resolves.toEqual({
+      benchmarkRunId: "brun_1",
+      status: "cancelled",
+    });
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/web/bench/runs/brun_1/cancel",
+      { method: "POST" },
+    );
+  });
+
+  it("hands back the relay's body verbatim, and does not unwrap on its own", async () => {
+    // `/runs/get` is the one backend route that nests its entity, and
+    // `relayedRun()` is where that gets flattened — one place, so a run has
+    // one shape however it was obtained. This pins that the client does not
+    // grow a second unwrapper: a nested body arriving here means the relay
+    // regressed, and absorbing it quietly would hide that behind a poll that
+    // simply never reports a terminal status.
+    authFetchMock.mockResolvedValue(
+      reply(200, { run: { benchmarkRunId: "brun_1", status: "completed" } }),
+    );
+
+    await expect(fetchBenchRun("brun_1")).resolves.toEqual({
+      run: { benchmarkRunId: "brun_1", status: "completed" },
+    });
+  });
+});
+
+/**
+ * Ids and secrets that are not ordinary.
+ *
+ * This module is a transport: it has no validation layer, and deliberately so
+ * — the relay validates with zod, and a second copy of those rules here would
+ * be a second place for them to drift. So the property to pin is not "null is
+ * rejected" (nothing here would reject it) but that whatever it is handed goes
+ * into the path ESCAPED rather than concatenated, and that an id which is
+ * missing entirely produces a path that cannot be mistaken for another route.
+ */
+describe("ids and secrets that are not ordinary", () => {
+  it("escapes a run id rather than letting it reshape the path", async () => {
+    authFetchMock.mockResolvedValue(reply(200, {}));
+
+    await fetchBenchRun("a/b?c");
+    await cancelBenchRun("a/b?c");
+
+    expect(authFetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/web/bench/runs/a%2Fb%3Fc",
+    );
+    // Without the escape this reads `/runs/a/b?c/cancel` — a different route
+    // with a query string, on a call that CANCELS things.
+    expect(authFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/web/bench/runs/a%2Fb%3Fc/cancel",
+      { method: "POST" },
+    );
+  });
+
+  it("does not collapse a missing run id into the collection path", async () => {
+    authFetchMock.mockResolvedValue(reply(404, { message: "No such run" }));
+
+    await expect(fetchBenchRun("")).rejects.toThrow("No such run");
+    // The trailing slash is the point: `/runs` is the START route, and a poll
+    // that silently addressed it would be a paid run rather than a read.
+    expect(authFetchMock).toHaveBeenCalledWith("/api/web/bench/runs/");
+  });
+
+  it("keeps an empty result secret out of the collection path too", async () => {
+    fetchMock.mockResolvedValue(reply(404, { message: "Not a valid link" }));
+
+    await expect(fetchBenchResult("")).rejects.toBeInstanceOf(
+      BenchResultNotFoundError,
+    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/web/bench/results/");
+  });
+
+  it("reads a null body on an error as no message, not as a crash", async () => {
+    // `response.json()` resolving to `null` is a different path from it
+    // rejecting: `body?.message` is fine, but a non-optional read would throw
+    // inside the error handler and replace the caller's message with a
+    // TypeError.
+    authFetchMock.mockResolvedValue(reply(500, null));
+
+    await expect(quoteBench(QUOTE_INPUT)).rejects.toThrow(
+      "Could not price this benchmark.",
+    );
   });
 });

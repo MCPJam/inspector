@@ -49,6 +49,7 @@ describe("startSuiteRunWithRecorder", () => {
             model: "gpt-5",
             provider: "openai",
             runs: 1,
+            intent: "Bootstrap task search",
             steps: [
               {
                 id: "s1",
@@ -173,6 +174,7 @@ describe("startSuiteRunWithRecorder", () => {
               model: "gpt-5",
               provider: "openai",
               runs: 1,
+              intent: "Bootstrap task search",
               expectedToolCalls: [
                 {
                   toolName: "bootstrap",

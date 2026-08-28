@@ -543,14 +543,13 @@ export async function createHonoApp() {
 
         // Guest bootstrap blob: mint a guest bearer server-side and inject it
         // so a cold guest boots with a token already in hand. Gated on
-        // production + hosted + not locked-down + a host allowlist that
-        // includes the hosted app host(s) (mayServeGuestBootstrap), mirroring
-        // the session-token discipline. Wrapped in its own try/catch so a
-        // mint failure never 500s the document.
+        // production + hosted + a host allowlist that includes the hosted app
+        // host(s) (mayServeGuestBootstrap), mirroring the session-token
+        // discipline. Wrapped in its own try/catch so a mint failure never
+        // 500s the document.
         if (
           process.env.NODE_ENV === "production" &&
           HOSTED_MODE &&
-          process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
           mayServeGuestBootstrap({
             host,
             forwardedHost,

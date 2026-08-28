@@ -729,6 +729,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc._id ?? tc.testCaseId,
           },
         ];
@@ -747,6 +748,7 @@ export const startSuiteRunWithRecorder = async ({
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
           successPredicates,
+          ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
           testCaseId: tc._id,
         }));
       }
@@ -766,6 +768,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

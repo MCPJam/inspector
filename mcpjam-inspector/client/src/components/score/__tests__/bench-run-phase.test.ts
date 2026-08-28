@@ -8,7 +8,9 @@ import {
   shouldPollBenchRun,
 } from "../bench-run-phase";
 
-function run(overrides: Partial<BenchRun> & { status: BenchRunStatus }): BenchRun {
+function run(
+  overrides: Partial<BenchRun> & { status: BenchRunStatus },
+): BenchRun {
   return { runId: "run_1", ...overrides };
 }
 
@@ -73,7 +75,10 @@ describe("progress is a fraction or nothing", () => {
     expect(benchProgressFraction(run({ status: "running" }))).toBeNull();
     expect(
       benchProgressFraction(
-        run({ status: "running", progress: { cellsTotal: 0, cellsCompleted: 0 } }),
+        run({
+          status: "running",
+          progress: { cellsTotal: 0, cellsCompleted: 0 },
+        }),
       ),
     ).toBeNull();
   });

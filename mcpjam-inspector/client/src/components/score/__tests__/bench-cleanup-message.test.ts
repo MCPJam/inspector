@@ -14,39 +14,34 @@ import { benchCancelledCleanupMessage } from "../bench-cleanup-message";
  */
 describe("benchCleanupState", () => {
   it("reads an absent ledger as unreported, never as clean", () => {
-    // The backend OMITS the ledger when it holds nothing. That covers both a
-    // read-only exam and a worker that died before recording, and this cannot
-    // tell them apart — so it must not pick the comfortable one.
+    // Absent is still reachable — an older backend, or a status read from
+    // before the field existed. It is NOT the same claim as `not_applicable`:
+    // one says "this exam creates nothing", the other says nothing at all.
     expect(benchCleanupState(undefined)).toEqual({ kind: "unreported" });
   });
 
-  it("earns clean only when everything recorded was removed", () => {
-    expect(benchCleanupState({ recorded: 3, removed: 3, residue: 0 })).toEqual({
+  it("keeps not_applicable distinct from a finished cleanup", () => {
+    expect(
+      benchCleanupState({ status: "not_applicable", residueCount: 0 }),
+    ).toEqual({ kind: "nothing_created" });
+    expect(benchCleanupState({ status: "complete", residueCount: 0 })).toEqual({
       kind: "clean",
-      removed: 3,
     });
   });
 
-  it("calls residue residue, whatever else was removed", () => {
-    expect(benchCleanupState({ recorded: 4, removed: 3, residue: 1 })).toEqual({
+  it("carries the residue count through", () => {
+    expect(benchCleanupState({ status: "residue", residueCount: 2 })).toEqual({
       kind: "residual",
-      residue: 1,
-      recorded: 4,
+      residue: 2,
     });
   });
 
-  it("is in progress while removed trails recorded with nothing yet residual", () => {
-    expect(benchCleanupState({ recorded: 4, removed: 1, residue: 0 })).toEqual({
+  it("treats both unfinished states as in progress", () => {
+    expect(benchCleanupState({ status: "pending", residueCount: 0 })).toEqual({
       kind: "in_progress",
-      removed: 1,
-      recorded: 4,
     });
-  });
-
-  it("does not read an empty ledger as an unfinished one", () => {
-    expect(benchCleanupState({ recorded: 0, removed: 0, residue: 0 })).toEqual({
-      kind: "clean",
-      removed: 0,
+    expect(benchCleanupState({ status: "running", residueCount: 0 })).toEqual({
+      kind: "in_progress",
     });
   });
 });
@@ -62,33 +57,34 @@ describe("what a cancelled run says about the connector", () => {
     // These are objects sitting in somebody's tenant that they now have to
     // remove by hand. A vague sentence leaves them there.
     const message = benchCancelledCleanupMessage({
-      recorded: 4,
-      removed: 3,
-      residue: 1,
+      status: "residue",
+      residueCount: 2,
     });
-    expect(message).toContain("1 of 4");
+    expect(message).toContain("2 items");
     expect(message).toMatch(/could not be removed/);
   });
 
   it("does not claim removal while cleanup is still running", () => {
     const message = benchCancelledCleanupMessage({
-      recorded: 4,
-      removed: 1,
-      residue: 0,
+      status: "pending",
+      residueCount: 0,
     });
     expect(message).toMatch(/still running/);
-    expect(message).toContain("1 of 4");
+    expect(message).not.toMatch(/was removed/);
   });
 
   it("says everything was removed only when it was", () => {
     expect(
-      benchCancelledCleanupMessage({ recorded: 2, removed: 2, residue: 0 }),
-    ).toMatch(/Everything it created on your connector was removed \(2\)/);
+      benchCancelledCleanupMessage({ status: "complete", residueCount: 0 }),
+    ).toBe("Everything it created on your connector was removed.");
   });
 
-  it("distinguishes a run that created nothing from one that cleaned up", () => {
+  it("distinguishes a read-only exam from one that cleaned up after itself", () => {
     expect(
-      benchCancelledCleanupMessage({ recorded: 0, removed: 0, residue: 0 }),
-    ).toBe("This run created nothing on your connector.");
+      benchCancelledCleanupMessage({
+        status: "not_applicable",
+        residueCount: 0,
+      }),
+    ).toBe("This exam only reads, so nothing was created on your connector.");
   });
 });

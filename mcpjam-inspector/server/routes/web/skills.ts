@@ -34,6 +34,9 @@ import {
   attachCloudSkillFiles,
   removeCloudSkillFile,
   readCloudSkillFile,
+  listCloudSkillVersions,
+  getCloudSkillVersion,
+  restoreCloudSkillVersion,
   MAX_SKILL_CONTENT_BYTES,
   type CloudSkillsContext,
 } from "../../utils/computers/cloud-skills.js";
@@ -78,7 +81,10 @@ async function run<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function ctxFrom(c: Context, projectId: string): Promise<CloudSkillsContext> {
+async function ctxFrom(
+  c: Context,
+  projectId: string,
+): Promise<CloudSkillsContext> {
   // Exchange the request bearer for a Convex-usable bearer (handles WorkOS
   // API-key → delegated-JWT; a session JWT passes through).
   const bearer = await getConvexBearerForRequest(c);
@@ -156,6 +162,53 @@ skills.post("/get-by-name", async (c) =>
   }),
 );
 
+// ── Version history ──────────────────────────────────────────────────────────
+//
+// Reads are visibility-gated exactly like the skill itself; restore is
+// manage-gated, because it rewrites the live artifact.
+
+skills.post("/versions/list", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const versions = await run(async () =>
+      listCloudSkillVersions(await ctxFrom(c, body.projectId), body.skillId),
+    );
+    return { versions };
+  }),
+);
+
+skills.post("/versions/get", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ versionId: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const version = await run(async () =>
+      getCloudSkillVersion(await ctxFrom(c, body.projectId), {
+        skillId: body.skillId,
+        versionId: body.versionId,
+      }),
+    );
+    return { version };
+  }),
+);
+
+skills.post("/versions/restore", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ versionId: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const skill = await run(async () =>
+      restoreCloudSkillVersion(await ctxFrom(c, body.projectId), {
+        skillId: body.skillId,
+        versionId: body.versionId,
+      }),
+    );
+    return { success: true, skill };
+  }),
+);
+
 skills.post("/create", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(
@@ -169,6 +222,11 @@ skills.post("/create", async (c) =>
         // client's naive frontmatter parse drops preserved fields like
         // `allowed-tools`). Absent ⇒ legacy behavior, unchanged.
         skillMd: skillMdSchema.optional(),
+        // FOLDER IMPORT: create the skill as a hidden draft whose files are
+        // still uploading. The bulk `/files/attach` that follows commits it and
+        // mints its one v1, so an interrupted import cannot leave a visible
+        // skill missing its scripts. Set only by the folder-upload flow.
+        importPending: z.boolean().optional(),
       }),
       await readJsonBody(c),
     );
@@ -222,6 +280,7 @@ skills.post("/create", async (c) =>
         content,
         ...(body.sharing ? { sharing: body.sharing } : {}),
         ...(extraFrontmatter ? { extraFrontmatter } : {}),
+        ...(body.importPending ? { importPending: true } : {}),
       }),
     );
     return { success: true, skill };

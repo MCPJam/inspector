@@ -349,42 +349,52 @@ export interface BenchRunBudget {
  */
 /**
  * The artifact ledger, exactly as `internalHostedBenchmarkRunStatus` reports
- * it. Three counts and no status word — the status is a reading of the counts,
- * which is what `benchCleanupState` below is for.
+ * it.
  *
- * OMITTED by the backend when the ledger is empty, deliberately: a run that
- * created nothing has no cleanup to report, and `{recorded: 0, …}` would be a
- * claim it never made. Absence is therefore "no ledger yet", NOT "clean".
+ * A read-only run arrives as an explicit `not_applicable` with zero residue
+ * rather than an omitted field — the backend states "nothing to clean up"
+ * rather than leaving a client to infer it from silence. `residueCount` is the
+ * number that matters: artifacts created in the target's tenant and not
+ * removed again, which somebody now has to delete by hand.
  */
 export interface BenchRunCleanup {
-  recorded: number;
-  removed: number;
-  residue: number;
+  status: "pending" | "running" | "complete" | "residue" | "not_applicable";
+  residueCount: number;
 }
 
 /**
- * What the counts allow us to say — and, more to the point, what they do not.
+ * What the ledger entitles us to SAY — which is not the same as what it holds.
  *
- * `removed === recorded && residue === 0` is the ONLY combination that earns
- * "everything was removed". Cancellation marks a run terminal immediately
- * while the worker may still be cleaning up, so a terminal status is not
- * evidence of a finished cleanup, and an unconditional reassurance there is a
- * promise about somebody else's tenant that nothing checked.
+ * Cancelling marks a run terminal immediately while the worker may still be
+ * deleting, so a terminal status is not evidence of a finished cleanup. Only
+ * `complete` earns the reassurance; everything else gets an honest sentence.
  */
 export type BenchCleanupState =
   | { kind: "unreported" }
-  | { kind: "clean"; removed: number }
-  | { kind: "residual"; residue: number; recorded: number }
-  | { kind: "in_progress"; removed: number; recorded: number };
+  | { kind: "nothing_created" }
+  | { kind: "clean" }
+  | { kind: "residual"; residue: number }
+  | { kind: "in_progress" };
 
 export function benchCleanupState(
   cleanup: BenchRunCleanup | undefined,
 ): BenchCleanupState {
+  // Absent is still possible on the wire — an older backend, or a status read
+  // taken before the field existed — and it is NOT the same claim as
+  // `not_applicable`. One says "this exam creates nothing"; the other says
+  // nothing at all.
   if (!cleanup) return { kind: "unreported" };
-  const { recorded, removed, residue } = cleanup;
-  if (residue > 0) return { kind: "residual", residue, recorded };
-  if (removed >= recorded) return { kind: "clean", removed };
-  return { kind: "in_progress", removed, recorded };
+  switch (cleanup.status) {
+    case "not_applicable":
+      return { kind: "nothing_created" };
+    case "complete":
+      return { kind: "clean" };
+    case "residue":
+      return { kind: "residual", residue: cleanup.residueCount };
+    case "pending":
+    case "running":
+      return { kind: "in_progress" };
+  }
 }
 
 export interface BenchRun {

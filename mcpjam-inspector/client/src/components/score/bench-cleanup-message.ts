@@ -18,23 +18,21 @@ export function benchCancelledCleanupMessage(
   const state = benchCleanupState(cleanup);
   switch (state.kind) {
     case "clean":
-      return state.removed === 0
-        ? "This run created nothing on your connector."
-        : `Everything it created on your connector was removed (${state.removed}).`;
+      return "Everything it created on your connector was removed.";
     case "residual":
       // Named, not softened: these are objects sitting in the visitor's tenant
-      // that they now have to remove by hand, and a vague sentence would leave
-      // them there.
-      return `${state.residue} of ${state.recorded} item${
-        state.recorded === 1 ? "" : "s"
+      // that they now have to remove by hand, and a vague sentence leaves them
+      // there.
+      return `${state.residue} item${
+        state.residue === 1 ? "" : "s"
       } this run created could not be removed, and may still be on your connector.`;
     case "in_progress":
-      return `Cleanup is still running — ${state.removed} of ${state.recorded} removed so far.`;
+      return "Cleanup is still running — we do not know yet what it managed to delete.";
+    case "nothing_created":
+      return "This exam only reads, so nothing was created on your connector.";
     case "unreported":
-      // The backend omits the ledger when it holds nothing, which is BOTH "this
-      // exam only reads" and "the worker stopped before recording anything".
-      // Those are different situations and this cannot tell them apart, so it
-      // says what it knows instead of guessing the comfortable one.
+      // Different from `not_applicable`: that one is the backend saying there
+      // was nothing to clean, this one is the backend not saying anything.
       return "We have no cleanup report for this run yet.";
   }
 }

@@ -69,7 +69,11 @@ jobs:
       # browser-parsed frame-ancestors directive, which DOES support `*`.
       # `ALLOWED_ORIGINS` (origin-validation middleware) supports the
       # wildcard via `matchesAllowedOrigin`, gated on
-      # `MCPJAM_NONPROD_LOCKDOWN=true` — staging satisfies that.
+      # `MCPJAM_ALLOW_WILDCARD_ORIGINS=true`, which is set below. That opt-in
+      # is set HERE rather than by hand on the service: it used to be implied
+      # by `MCPJAM_NONPROD_LOCKDOWN`, which was never actually set on the
+      # staging service, so `getAllowedOrigins()` silently stripped the
+      # wildcard on every boot and preview→staging calls were rejected.
       #
       # The two vars use different wildcard shapes intentionally:
       #   - ALLOWED_ORIGINS uses the tight mid-host pattern so only PR
@@ -95,6 +99,7 @@ jobs:
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app" \
             WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.up.railway.app" \
+            MCPJAM_ALLOW_WILDCARD_ORIGINS=true \
             MCPJAM_INSPECTOR_PUBLIC_URL="$STAGING_APP_URL"
 
       # Capture the most recent deployment id before we trigger a new one so

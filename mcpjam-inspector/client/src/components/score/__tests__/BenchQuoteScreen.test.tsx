@@ -17,7 +17,12 @@ function quote(overrides: Partial<BenchQuote> = {}): BenchQuote {
     quotedMaxMicros: 500_000,
     availableMicros: 2_000_000,
     payerKind: "org_credits",
-    plan: { cases: 12, cells: 4, repetitions: 3, estimatedWallClockMs: 600_000 },
+    plan: {
+      cases: 12,
+      cells: 4,
+      repetitions: 3,
+      estimatedWallClockMs: 600_000,
+    },
     ...overrides,
   };
 }
@@ -115,9 +120,7 @@ describe("write operations need explicit consent", () => {
     expect(
       screen.getByText(/creates a page and deletes it afterwards/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/mcpjam-benchmark-run_1-0/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/mcpjam-benchmark-run_1-0/)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
 
     await userEvent.click(screen.getByRole("checkbox"));
@@ -144,9 +147,7 @@ describe("write operations need explicit consent", () => {
 
     expect(screen.queryByText(/This exam only reads/)).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/could not read the manifest/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/could not read the manifest/)).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
   });
 
@@ -179,7 +180,9 @@ describe("a guest is told the contribution is gone either way", () => {
     expect(screen.getByText(/1 of 1 run left today/)).toBeInTheDocument();
     expect(screen.getByText("not refundable")).toBeInTheDocument();
     expect(
-      screen.getByText(/cancelling, or a run that fails, does not give it back/i),
+      screen.getByText(
+        /cancelling, or a run that fails, does not give it back/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -193,7 +196,9 @@ describe("a guest is told the contribution is gone either way", () => {
       onTopUp: vi.fn(),
     });
 
-    expect(screen.getByText(/You have used today.s guest run/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/You have used today.s guest run/),
+    ).toBeInTheDocument();
     expect(startButton()).toBeDisabled();
     expect(screen.getByText("Sign in")).toBeInTheDocument();
     expect(screen.getByText("Add credits")).toBeInTheDocument();
