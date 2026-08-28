@@ -46,7 +46,11 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
     let timeoutId: number | undefined;
     let inFlight = false;
     let consecutiveFailures = 0;
-    let nextDueAt = Date.now();
+    // nextDueAt lives on performance.now()'s monotonic clock: it is only ever
+    // read back as an elapsed-time delta, and a wall-clock step (an NTP
+    // correction, the user editing the system clock) would park the probe for
+    // the size of a backward jump and fire it early on a forward one.
+    let nextDueAt = performance.now();
 
     const nextDelayMs = () =>
       consecutiveFailures === 0
@@ -68,7 +72,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
       timeoutId = window.setTimeout(() => {
         timeoutId = undefined;
         void checkOllama();
-      }, Math.max(0, nextDueAt - Date.now()));
+      }, Math.max(0, nextDueAt - performance.now()));
     };
 
     const disarm = () => {
@@ -117,7 +121,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
       } finally {
         inFlight = false;
         if (!cancelled) {
-          nextDueAt = Date.now() + nextDelayMs();
+          nextDueAt = performance.now() + nextDelayMs();
           arm();
         }
       }

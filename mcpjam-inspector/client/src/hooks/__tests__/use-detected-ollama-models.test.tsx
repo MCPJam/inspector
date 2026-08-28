@@ -174,6 +174,54 @@ describe("useDetectedOllamaModels", () => {
     await expectNextProbeAfter(BASE / 3);
   });
 
+  /**
+   * The schedule measures elapsed time, so it has to read a monotonic clock.
+   * `vi.setSystemTime` models an NTP step or a user editing the system clock:
+   * it moves `Date.now()` and leaves `performance.now()` — and the timer queue
+   * — alone, which is exactly the split a wall-clock jump produces in a live
+   * browser. Read the wall clock instead and a backward step parks the probe
+   * for the size of the jump while a forward step fires it early.
+   */
+  const CLOCK_STEP = 60 * 60_000;
+
+  function stepSystemClock(deltaMs: number) {
+    vi.setSystemTime(new Date(Date.now() + deltaMs));
+  }
+
+  it("keeps the remaining delay when the system clock jumps backward", async () => {
+    unreachable();
+    mount();
+    await advance(0);
+    const before = probes();
+
+    await advance(BASE / 3);
+    await setHidden(true);
+    stepSystemClock(-CLOCK_STEP);
+    await setHidden(false);
+    expect(probes()).toBe(before);
+
+    // Two thirds of the base interval is still owed, not two thirds plus an hour.
+    await expectNextProbeAfter((2 * BASE) / 3);
+    // And that probe is the second failure, so the backoff carries on doubling.
+    await expectNextProbeAfter(2 * BASE);
+  });
+
+  it("keeps the remaining delay when the system clock jumps forward", async () => {
+    unreachable();
+    mount();
+    await advance(0);
+    const before = probes();
+
+    await advance(BASE / 3);
+    await setHidden(true);
+    stepSystemClock(CLOCK_STEP);
+    await setHidden(false);
+    expect(probes()).toBe(before);
+
+    await expectNextProbeAfter((2 * BASE) / 3);
+    await expectNextProbeAfter(2 * BASE);
+  });
+
   it("probes on return when the interval already elapsed while hidden", async () => {
     unreachable();
     mount();
