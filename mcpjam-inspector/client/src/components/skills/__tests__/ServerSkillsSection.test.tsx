@@ -11,6 +11,10 @@
  *
  * 2. Provenance rides the ROW. There is no "From MCP servers" heading any
  *    more, so each row states the server it came from.
+ *
+ * 3. The row states what DISTINGUISHES it. Verification is mandatory, so a
+ *    badge on every verified row said nothing; the manifest file count it
+ *    carried said less. Both belong in the tooltip.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +41,7 @@ import { ServerSkillsSection } from "../ServerSkillsSection";
 
 const SERVERS = [{ serverId: "s1", label: "staging", connected: true }];
 
-function listing(active: boolean, names: string[] = []) {
+function listing(active: boolean, names: string[] = [], files = 1) {
   return {
     support: {
       declared: true,
@@ -52,7 +56,10 @@ function listing(active: boolean, names: string[] = []) {
       name,
       description: `${name} description`,
       frontmatter: {},
-      resources: [{ uri: `skill://mcpjam/${name}/SKILL.md`, digest: "d" }],
+      resources: Array.from({ length: files }, (_, index) => ({
+        uri: `skill://mcpjam/${name}/file-${index}.md`,
+        digest: "d",
+      })),
     })),
     duplicateUris: [],
     rejected: [],
@@ -113,6 +120,82 @@ describe("ServerSkillsSection", () => {
     // read — a heading only says it while you are underneath it.
     expect(screen.getByText("staging")).toBeInTheDocument();
     expect(screen.queryByText(/from mcp servers/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the manifest file count out of the row and in its tooltip", async () => {
+    listServerSkills.mockResolvedValue(listing(true, ["run-evals"], 3));
+    render(<ServerSkillsSection servers={SERVERS} projectId="p1" />);
+
+    const row = await screen.findByRole("button", { name: /run-evals/ });
+    // A bare "3" next to a shield rendered on every row and read as nothing.
+    expect(row.textContent).not.toMatch(/\b3\b/);
+    expect(row.getAttribute("title")).toBe(
+      "skill://mcpjam/run-evals/SKILL.md \u00b7 3 file(s) in the advertised manifest"
+    );
+  });
+
+  it("still marks the exception — a skill it declines to verify", async () => {
+    const answer = listing(true, ["run-evals"]);
+    answer.skills[0] = {
+      ...answer.skills[0],
+      unloadable: { reason: "no_resources", message: "no manifest" },
+    } as (typeof answer.skills)[number];
+    listServerSkills.mockResolvedValue(answer);
+    render(<ServerSkillsSection servers={SERVERS} projectId="p1" />);
+
+    expect(await screen.findByText(/unverifiable/)).toBeInTheDocument();
+  });
+
+  it("offers no load-by-URI field — that capability lives on the CLI", async () => {
+    listServerSkills.mockResolvedValue(listing(true, ["run-evals"]));
+    render(<ServerSkillsSection servers={SERVERS} projectId="p1" />);
+
+    expect(await screen.findByText("run-evals")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/skill:\/\//)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^load$/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("reports its row count so the tab can describe the whole list", async () => {
+    listServerSkills.mockResolvedValue(listing(true, ["run-evals", "triage"]));
+    const onListingChange = vi.fn();
+    render(
+      <ServerSkillsSection
+        servers={SERVERS}
+        projectId="p1"
+        onListingChange={onListingChange}
+      />
+    );
+
+    // Pending first: an unanswered listing is not an empty one, and the tab
+    // would otherwise offer "upload your first skill" over rows about to land.
+    expect(onListingChange).toHaveBeenCalledWith({ count: 0, pending: true });
+    await waitFor(() =>
+      expect(onListingChange).toHaveBeenLastCalledWith({
+        count: 2,
+        pending: false,
+      })
+    );
+  });
+
+  it("counts nothing for a server that never declared the extension", async () => {
+    listServerSkills.mockResolvedValue(listing(false, ["run-evals"]));
+    const onListingChange = vi.fn();
+    render(
+      <ServerSkillsSection
+        servers={SERVERS}
+        projectId="p1"
+        onListingChange={onListingChange}
+      />
+    );
+
+    await waitFor(() =>
+      expect(onListingChange).toHaveBeenLastCalledWith({
+        count: 0,
+        pending: false,
+      })
+    );
   });
 
   it("renders nothing at all when no connected server declares it", async () => {
