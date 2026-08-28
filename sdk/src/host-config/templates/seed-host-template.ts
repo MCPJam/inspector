@@ -414,6 +414,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // MCP UI extension intact.
       base.clientCapabilities = {
         ...base.clientCapabilities,
+        // MCPJam has both local and hosted bridges for form and URL
+        // elicitation. URL mode is narrowed or rejected on legacy protocol
+        // connections, so this only declares modes the active bridge can
+        // safely handle.
+        elicitation: { form: {}, url: {} },
         extensions: {
           ...(base.clientCapabilities.extensions as Record<string, unknown>),
           [XAA_MCP_EXTENSION]: {},

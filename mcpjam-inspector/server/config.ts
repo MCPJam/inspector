@@ -30,7 +30,18 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
-export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
+/**
+ * WebMCP Inspector (a managed Chromium the user points at a page, so its
+ * WebMCP tools can be listed and invoked) — server-side kill switch. FORCED
+ * off in hosted mode: the browser runs on the machine running this inspector,
+ * and a hosted replica must never open one. `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors. The routes live under `/api/mcp/*`, which is itself mounted only
+ * when `!HOSTED_MODE`, so this is the second of two independent gates; the
+ * client-side gate is the `webmcp-inspector-enabled` PostHog flag.
+ */
+export const WEBMCP_INSPECTOR_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
 
 /**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
@@ -43,30 +54,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
-
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
-
-  const emailDomain = normalizedEmail.slice(atIndex + 1);
-  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
-}
 
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")

@@ -282,6 +282,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
   },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
+  },
   diagnose_server: {
     excluded:
       "`server doctor` runs the same sweep locally; the hosted variant is reachable through `projects status`.",

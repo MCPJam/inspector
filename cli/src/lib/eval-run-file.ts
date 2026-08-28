@@ -105,6 +105,7 @@ export function fileCaseToCreateBody(
   return {
     id: testCase.id,
     title: testCase.title,
+    ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
@@ -136,6 +137,9 @@ export function fileCaseToUpdateBody(
 ): Record<string, unknown> {
   return {
     title: testCase.title,
+    // A file re-sync is authoritative: unlike an ordinary PATCH, a missing
+    // label must clear the old one rather than preserve stale attribution.
+    intent: testCase.intent ?? null,
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,

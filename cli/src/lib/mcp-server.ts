@@ -1,7 +1,12 @@
 import {
   MCPClientManager,
+  getVerifiedServerSkill,
+  isServerSkillRefusalError,
+  listServerSkillCatalog,
   probeMcpServer,
+  readVerifiedServerSkillFile,
   runServerDoctor,
+  withSkillsExtensionCapability,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -261,6 +266,15 @@ export function createMcpJamMcpServer(
       defaultClientName: "mcpjam",
       defaultClientVersion: options.version,
       defaultTimeout: defaultTimeoutMs,
+      // Skills over MCP is mutually declared, so `skills/*` is refused to a
+      // client that never advertised it — the skill tools below would be
+      // correct and useless without this.
+      //
+      // On DEFAULTS rather than per-server `clientCapabilities`, which the
+      // manager advertises verbatim: a verbatim set would drop whatever else
+      // the defaults carry, and would also override a caller who pinned their
+      // own set. Defaults merge, and a pinned set still wins.
+      defaultCapabilities: withSkillsExtensionCapability({}),
     },
   );
 
@@ -562,6 +576,100 @@ export function createMcpJamMcpServer(
       runTool(async () => {
         requireConnected(name);
         return manager.readResource(name, { uri });
+      }),
+  );
+
+  // Skills over MCP (SEP-2640), inspecting the CONNECTED server. Note the
+  // direction: `registerSkillsSurface` above makes this process SERVE its own
+  // skills, while these three read somebody else's. Every one of them can
+  // answer with a refusal naming the integrity check that failed — that is the
+  // whole reason these exist rather than pointing an agent at `read_resource`
+  // and a `skill://` uri.
+  server.registerTool(
+    "list_skills",
+    {
+      title: "List the target server's skills",
+      description:
+        "List the Agent Skills a connected server serves over the skills extension (SEP-2640), including ones it advertises that cannot be verified, each with the reason.",
+      inputSchema: z.object({
+        server: z.string().describe("Connection name from connect_server"),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ server: name }) =>
+      runTool(async () => {
+        requireConnected(name);
+        return listServerSkillCatalog(manager, name);
+      }),
+  );
+
+  server.registerTool(
+    "get_skill",
+    {
+      title: "Get a skill from the target server",
+      description:
+        "Fetch one skill by uri and verify it before returning content: the SKILL.md digest against the manifest, the fetched frontmatter against what the listing advertised, and the name against the uri. Answers with the skill, or with a refusal naming the check that failed.",
+      inputSchema: z.object({
+        server: z.string().describe("Connection name from connect_server"),
+        uri: z
+          .string()
+          .describe(
+            "Skill URI. Usually from list_skills, but any uri works — a skill absent from a partial listing may still be served.",
+          ),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ server: name, uri }) =>
+      runTool(async () => {
+        requireConnected(name);
+        try {
+          return { skill: await getVerifiedServerSkill(manager, { serverId: name, uri }) };
+        } catch (error) {
+          if (isServerSkillRefusalError(error)) return { refusal: error.refusal };
+          throw error;
+        }
+      }),
+  );
+
+  server.registerTool(
+    "read_skill_file",
+    {
+      title: "Read a skill's supporting file",
+      description:
+        "Read one supporting file of a skill served by a connected server, checked against that skill's own manifest for byte length and digest.",
+      inputSchema: z.object({
+        server: z.string().describe("Connection name from connect_server"),
+        skillUri: z.string().describe("URI of the skill that owns the file"),
+        resourceUri: z
+          .string()
+          .describe(
+            "URI of the supporting file, which must appear in that skill's manifest — the manifest is the read allowlist.",
+          ),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ server: name, skillUri, resourceUri }) =>
+      runTool(async () => {
+        requireConnected(name);
+        try {
+          // Re-fetch the owning skill rather than trusting the caller: the
+          // manifest is the read allowlist, so a caller-supplied one would
+          // authorize its own read.
+          const skill = await getVerifiedServerSkill(manager, {
+            serverId: name,
+            uri: skillUri,
+          });
+          return {
+            file: await readVerifiedServerSkillFile(manager, {
+              serverId: name,
+              entry: { uri: skill.skillUri, resources: skill.resources },
+              resourceUri,
+            }),
+          };
+        } catch (error) {
+          if (isServerSkillRefusalError(error)) return { refusal: error.refusal };
+          throw error;
+        }
       }),
   );
 
