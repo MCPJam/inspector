@@ -99,6 +99,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listServerResources",
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
+  "post /projects/{projectId}/servers/{serverId}/skills": "listServerSkills",
+  "post /projects/{projectId}/servers/{serverId}/skills/get": "getServerSkill",
+  "post /projects/{projectId}/servers/{serverId}/skills/read-file":
+    "readServerSkillFile",
 
   // Directory readiness
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
@@ -151,6 +155,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Agent Plugins (read-only)
   "get /projects/{projectId}/plugins": "listProjectPlugins",
   "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
+
+  // Cloud Skills (read-only)
+  "get /projects/{projectId}/skills": "listProjectSkills",
+  "get /projects/{projectId}/skills/{skillId}": "getProjectSkill",
 
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",

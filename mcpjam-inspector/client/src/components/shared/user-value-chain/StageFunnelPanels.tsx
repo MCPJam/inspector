@@ -21,7 +21,10 @@
 import { useQuery } from "convex/react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { StageFunnel } from "./StageFunnel";
-import type { ChatSessionStageFunnel } from "./user-value-chain-types";
+import type {
+  ChatSessionStageFunnel,
+  StageTally,
+} from "./user-value-chain-types";
 
 /**
  * The User Testing funnel for one scenario.
@@ -114,4 +117,110 @@ function SwarmRunStageFunnelPanel({ journeyRunId }: { journeyRunId: string }) {
       populationLabel="Sessions in this swarm run"
     />
   );
+}
+
+/**
+ * The funnel for one eval suite run's trials.
+ *
+ * Its own denominator again, and the third population that must never be
+ * folded into the other two: an eval trial is a pinned case executed against a
+ * pinned config, which is neither a real person nor a persona rehearsal.
+ *
+ * COSTS NOTHING TO RENDER, which is why it is mounted unconditionally on the
+ * run detail rather than behind an opt-in. The chain was already derived by
+ * the stage worker; this reads the rollup. The explanatory flow diagram beside
+ * it is a model's reading of the same traces, is bought per pass, and is
+ * gated — the difference in how they are offered is the difference in what
+ * they cost.
+ */
+export function SuiteRunStageFunnelPanel({
+  suiteRunId,
+  className,
+}: {
+  suiteRunId: string | undefined;
+  className?: string;
+}) {
+  return (
+    <ErrorBoundary fallback={null}>
+      <SuiteRunStageFunnel suiteRunId={suiteRunId} className={className} />
+    </ErrorBoundary>
+  );
+}
+
+function SuiteRunStageFunnel({
+  suiteRunId,
+  className,
+}: {
+  suiteRunId: string | undefined;
+  className?: string;
+}) {
+  // `evalStageRollups`, NOT `chatSessionStageDerivation`. An eval trial carries
+  // its chain on the iteration row, so no session-level derivation exists to
+  // read — the rollup is the only place this funnel comes from.
+  const funnel = useQuery(
+    "evalStageRollups:getSuiteRunStageFunnel" as never,
+    (suiteRunId ? { suiteRunId } : "skip") as never
+  ) as SuiteRunStageFunnel | null | undefined;
+
+  if (!funnel) return null;
+
+  return (
+    <StageFunnel
+      summary={toChatSessionFunnel(funnel)}
+      title="User value chain"
+      populationLabel="Trials in this run"
+      className={className}
+    />
+  );
+}
+
+/** One eval run's funnel, as `evalStageRollups:getSuiteRunStageFunnel` returns it. */
+type SuiteRunStageFunnel = {
+  totalIterations: number;
+  measuredIterations: number;
+  stages: StageTally[];
+  notMeasured: boolean;
+};
+
+/**
+ * Rename fields. Derive nothing.
+ *
+ * The two vocabularies describe the same six stages over different
+ * populations, so the stage rows cross unchanged — the backend already sends
+ * `eligible`, `observations` and `passRate` derived by the same
+ * `stageMeasuredRate` a scorecard is built from, precisely so this function
+ * does no arithmetic. A rate computed here would be a second definition of it.
+ *
+ * TWO FIELDS ARE DELIBERATELY EMPTY, and both render as silence rather than as
+ * a zero:
+ *
+ *   - `exclusions` is a closed record about DERIVATION lifecycle — `absent`,
+ *     `deriving`, `stale`, `failed`. An eval run's exclusions are named
+ *     iteration reasons (`setup_failed`, `evaluator_failure`, `no_verdict`).
+ *     Mapping one onto the other would file a crashed evaluator as "the
+ *     derivation worker gave up", which is exactly the mislabelling the
+ *     evidence failure classes exist to prevent. The panel therefore says
+ *     nothing about exclusions here; the run detail reports them in their own
+ *     vocabulary.
+ *   - `firstFailedStage` is a per-session tally the rollup does not carry. It
+ *     records `failureCategories` instead, which is a different question.
+ *
+ * `StageFunnel` gates both sections on being non-empty, so an unmappable field
+ * produces an absent section rather than a confident "0".
+ */
+function toChatSessionFunnel(
+  funnel: SuiteRunStageFunnel
+): ChatSessionStageFunnel {
+  return {
+    // An eval trial is a pinned case against a pinned config: not a real
+    // person, not a persona rehearsal, and not one of the three sources.
+    source: null,
+    total: funnel.totalIterations,
+    counted: funnel.measuredIterations,
+    exclusions: { absent: 0, deriving: 0, stale: 0, failed: 0 },
+    stages: funnel.stages,
+    firstFailedStage: {},
+    notMeasured: funnel.notMeasured,
+    truncated: false,
+  };
 }

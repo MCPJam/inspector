@@ -1415,6 +1415,8 @@ export interface PlatformEvalCase {
    */
   declaredId?: string;
   title: string;
+  /** Optional authored analytics grouping label; absent is unlabelled. */
+  intent?: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
@@ -1751,7 +1753,66 @@ export interface PlatformRunCompare {
     estimatedCostUsd: PlatformNumericDiff;
   };
   scoreContract: PlatformScoreContractDiff;
+  /**
+   * Which skills changed between the two runs — the configuration attribution
+   * that usually explains the case-level differences beside it.
+   *
+   * Three states, and they mean different things:
+   *   - a section — these skills changed (or none did, with a count);
+   *   - `null` — NEITHER run recorded pinned skills, so there is nothing to
+   *     say; an empty section would claim no skills were involved;
+   *   - ABSENT — the deployment answering predates skill attribution entirely.
+   *     Optional for that reason: a client cannot assume every backend it talks
+   *     to has this, and a required field would make old responses unusable.
+   */
+  skills?: PlatformRunCompareSkills | null;
   cases: PlatformRunCompareCase[];
+}
+
+/** Delivery channel a pinned skill reached a run through. */
+export type PlatformRunCompareSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export interface PlatformRunCompareSkillSide {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+}
+
+export interface PlatformRunCompareSkillChange {
+  /** Stable match key; opaque, safe for list keys and dedupe. */
+  key: string;
+  name: string;
+  /** Namespaced runtime address for a plugin-channel skill. */
+  modelRef?: string;
+  channels: PlatformRunCompareSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** Renamed between the runs — matched as ONE skill by its logical id. */
+  renamedFrom?: string;
+  base?: PlatformRunCompareSkillSide;
+  compare?: PlatformRunCompareSkillSide;
+  /**
+   * `v3 → v4`, present only when BOTH sides recorded a revision number. A
+   * change with no delta is a real content change whose revisions are unknown
+   * (one side predates versioning) — not a smaller change.
+   */
+  versionDelta?: string;
+}
+
+export interface PlatformRunCompareSkills {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: PlatformRunCompareSkillChange[];
+  unchangedCount: number;
 }
 
 export interface PlatformEvalSuiteDeleted {
@@ -1885,6 +1946,21 @@ export interface PlatformHostDeleted {
 export interface PlatformEnvironmentSkillSelection {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * EXACT-version overlay. At most one entry per selected skill; a selected
+   * skill with no entry resolves "Latest" — its current revision, read when the
+   * run starts, which is what every environment did before pins existed and
+   * what omitting this field still means.
+   *
+   * Pin a version to hold an environment at a known revision — the way two
+   * environments run two revisions of one skill side by side for a comparison.
+   */
+  versionPins?: PlatformEnvironmentSkillVersionPin[];
+}
+
+export interface PlatformEnvironmentSkillVersionPin {
+  skillId: string;
+  versionId: string;
 }
 
 export interface PlatformEnvironment {
@@ -2116,6 +2192,48 @@ export interface PlatformEnvironmentResolved {
   /** The environment's sandbox-image pin, when set (and the backend is new
    *  enough to carry it through the resolve). */
   sandboxImageId?: string;
+}
+
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// An authored SKILL.md stored in Convex. Environments pin them by id
+// (`skillSelection.skillIds`) and eval runs pin them with `--compose-skill`,
+// so the id is the load-bearing value — and this READ-ONLY surface is the only
+// programmatic way to obtain one. Authoring stays on the app's `/api/web`
+// surface behind the `skills-enabled` beta gate.
+
+/** Why a skill cannot be pinned into an environment's `skillSelection`. */
+export type PlatformSkillPinnability =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/** One skill visible to the caller: project-shared, or their own draft. */
+export interface PlatformProjectSkill {
+  id: string;
+  projectId: string;
+  /** Load-bearing identity: the on-box dir name and `loadSkill(name)` arg. */
+  name: string;
+  description: string;
+  /** `project` = shared with the org (the only kind an environment may pin). */
+  sharing: "user" | "project";
+  isOwner: boolean;
+  /** Drift key folding in the body and any supporting files. */
+  aggregateHash: string;
+  provenance?: string;
+  /**
+   * Whether this skill may be pinned. Absent on older backends — treat absent
+   * as UNKNOWN, never as `{ok:true}`: a skill with supporting files or extra
+   * frontmatter is rejected at save time, and guessing would just move the
+   * failure later.
+   */
+  pinnability?: PlatformSkillPinnability;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One skill with its SKILL.md body (frontmatter stripped). */
+export interface PlatformProjectSkillDetail extends PlatformProjectSkill {
+  content: string;
 }
 
 // ── Agent Plugins ────────────────────────────────────────────────────────────

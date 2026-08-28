@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
-import { NON_PROD_LOCKDOWN } from "@/lib/config";
 import { reportCaught } from "@/lib/error-reporting";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
@@ -142,14 +141,6 @@ export function useUnifiedConvexAuth() {
       setGuestLoading(false);
       return;
     }
-    // Non-prod lockdown blocks guest sessions: the gate will show "logged-out"
-    // and any retry would just spam 403s. Settle as unauthenticated immediately.
-    if (NON_PROD_LOCKDOWN) {
-      setGuestToken(null);
-      setGuestLoading(false);
-      return;
-    }
-
     let cancelled = false;
     // Only flip to loading if we have no cached token; if we do, the async
     // call will resolve immediately and setting true→false would cause the
@@ -220,10 +211,6 @@ export function useUnifiedConvexAuth() {
       getAccessToken: async (
         opts?: { forceRefreshToken?: boolean },
       ): Promise<string | null> => {
-        // Lockdown blocks guest sessions server-side; a ladder would just
-        // spend 5s collecting 403s.
-        if (NON_PROD_LOCKDOWN) return null;
-
         // Convex asks for a token, gets one, and authenticates the guest —
         // the true "activated as a guest" signal. Marking HERE (rather than
         // in the resolve effect) is immune to the effect-cancel race when a

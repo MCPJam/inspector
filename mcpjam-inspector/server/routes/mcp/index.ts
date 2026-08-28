@@ -28,6 +28,7 @@ import subscribe from "./subscribe";
 import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
+import webmcpInspector from "./webmcp-inspector";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
@@ -141,5 +142,6 @@ mcp.route("/widget-render", widgetRender);
 // Interactive headless widget sessions (keepMounted) - start/action/close with
 // strict browser lifecycle. Local-mode only; backs `mcpjam apps session`.
 mcp.route("/widget-session", widgetSession);
+mcp.route("/webmcp", webmcpInspector);
 
 export default mcp;

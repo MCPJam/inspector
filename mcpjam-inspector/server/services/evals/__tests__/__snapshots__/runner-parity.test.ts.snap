@@ -182,6 +182,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
         "multiTurn": true,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -220,9 +250,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -386,6 +418,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "unknown",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "setupAborted",
@@ -424,9 +486,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -684,6 +748,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
         "multiTurn": true,
         "outputTokens": 4,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -722,9 +816,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -882,6 +978,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -920,9 +1046,11 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -1119,6 +1247,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "multiTurn": true,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",
@@ -1337,6 +1495,36 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",
@@ -1533,6 +1721,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "reached",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -1571,9 +1789,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -1780,6 +2000,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "reached",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -1823,9 +2073,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -1950,6 +2202,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "setupAborted",
@@ -1988,9 +2270,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2147,6 +2431,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
         "multiTurn": true,
         "outputTokens": 4,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -2185,9 +2499,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2301,6 +2617,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "reached",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -2344,9 +2690,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2454,6 +2802,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -2492,9 +2870,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2661,6 +3041,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "reached",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -2699,9 +3109,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2831,6 +3243,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -2869,9 +3311,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -2994,6 +3438,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -3032,9 +3506,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -3142,6 +3618,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -3180,9 +3686,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -3309,6 +3817,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
           },
         ],
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "reached",
+              "stage": "connection",
+            },
+            {
+              "reach": "reached",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "reached",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "observed",
@@ -3347,9 +3885,11 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
           },
           "signals": {
             "connection": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
             "discovery": {
+              "durationMs": "<scrubbed>",
               "outcome": "ok",
             },
           },
@@ -3501,6 +4041,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
         "multiTurn": true,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "call",
+            },
+            {
+              "reach": "unknown",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",
@@ -3725,6 +4295,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
         "multiTurn": true,
         "outputTokens": 4,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",
@@ -3904,6 +4504,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "missingCount": 0,
         "outputTokens": 0,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",
@@ -4030,6 +4660,36 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "missingCount": 0,
         "outputTokens": 2,
         "stageAnalyzerVersion": 5,
+        "stageMeasurements": {
+          "rows": [
+            {
+              "reach": "unknown",
+              "stage": "connection",
+            },
+            {
+              "reach": "unknown",
+              "stage": "discovery",
+            },
+            {
+              "reach": "reached",
+              "stage": "selection",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "call",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "response",
+            },
+            {
+              "reach": "notApplicable",
+              "stage": "userValue",
+            },
+          ],
+          "schemaVersion": 1,
+          "stageAnalyzerVersion": 5,
+        },
         "stageResults": [
           {
             "reason": "noEvidenceCaptured",

@@ -15,6 +15,10 @@ import {
   MAX_BATCH_CREATE_CASES,
   evalSuiteFileCaseImportSchema,
 } from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -138,6 +142,8 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
@@ -1502,6 +1508,185 @@ export const readServerResourceOperation: PlatformOperation<
         projectId: project.id,
         serverId: server.id,
         body: { uri: input.uri },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+// ── Server-served Agent Skills (SEP-2640) ────────────────────────────
+//
+// Three operations rather than the resource family's two. Resources need
+// `list` + `read`; skills need `list` + `get` + `read file`, because
+// `skills/get` reaches a skill a partial listing never mentioned — a URI can
+// arrive from the server's own `instructions`, from another skill's body, or
+// from a user — and that is the reason the SEP has `skills/get` at all.
+//
+// Every one of these answers with EITHER content or a `refusal` naming the
+// integrity check that failed. The refusals are the product: a debugger's user
+// asking "why won't this skill load" is asking exactly which digest, which
+// field, which URI.
+
+export type ListServerSkillsResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const listServerSkillsOperation: PlatformOperation<
+  ServerScopedInput,
+  ListServerSkillsResult
+> = {
+  name: "list_server_skills",
+  title: "List MCPJam server skills",
+  description:
+    "List the Agent Skills a saved MCP server serves over the skills extension (SEP-2640). Includes skills the server advertises that MCPJam declines to load, each with the reason. Not paginated: the catalog is drained server-side because duplicate detection spans the whole listing.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [serverRef(result)]),
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.listServerSkills(
+      { projectId: project.id, serverId: server.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const getServerSkillInput = serverScopedInput.extend({
+  uri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Exact skill uri. Usually from list_server_skills, but any uri works — a skill absent from a partial listing may still be served."
+    ),
+});
+
+export type GetServerSkillInput = z.infer<typeof getServerSkillInput>;
+
+export type GetServerSkillResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const getServerSkillOperation: PlatformOperation<
+  GetServerSkillInput,
+  GetServerSkillResult
+> = {
+  name: "get_server_skill",
+  title: "Get MCPJam server skill",
+  description:
+    "Fetch one skill from a saved MCP server by uri, verified before any content is returned: the SKILL.md digest against the manifest, the fetched frontmatter against what the listing advertised, and the name against the uri. Answers with the skill, or with a refusal naming the check that failed.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill content."
+  ),
+  inputSchema: getServerSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.getServerSkill(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: { uri: input.uri },
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      result,
+    };
+  },
+};
+
+const readServerSkillFileInput = serverScopedInput.extend({
+  skillUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Uri of the skill that owns the file."),
+  resourceUri: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Uri of the supporting file, which must appear in that skill's manifest — the manifest is the read allowlist."
+    ),
+});
+
+export type ReadServerSkillFileInput = z.infer<typeof readServerSkillFileInput>;
+
+export type ReadServerSkillFileResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  result: Record<string, unknown>;
+};
+
+export const readServerSkillFileOperation: PlatformOperation<
+  ReadServerSkillFileInput,
+  ReadServerSkillFileResult
+> = {
+  name: "read_server_skill_file",
+  title: "Read MCPJam server skill file",
+  description:
+    "Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. Get both uris from list_server_skills or get_server_skill first.",
+  readOnly: true,
+  permalink: noPermalink(
+    "external-resource",
+    "The payload is the third-party server's skill file content."
+  ),
+  inputSchema: readServerSkillFileInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
+    const result = await client.readServerSkillFile(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          skillUri: input.skillUri,
+          resourceUri: input.resourceUri,
+        },
       },
       { signal }
     );
@@ -4255,6 +4440,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4461,6 +4651,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -5396,6 +5591,14 @@ const updateEvalCaseInput = z.object({
     .optional()
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
     ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
@@ -8532,8 +8735,47 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
       ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
   })
   .describe(
     "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
@@ -9073,6 +9315,109 @@ export const restoreEnvironmentOperation: PlatformOperation<
       },
       { signal }
     );
+  },
+};
+
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// Read-only, for the same reason as plugins: authoring is a project-admin app
+// flow. These exist because skill IDs are load-bearing on this very surface —
+// `set_eval_suite_environments`, an environment's `skillSelection`, and the
+// CLI's `--compose-skill` all demand one — and before this there was no
+// programmatic way to obtain one. The answer was "open the web app", which is
+// not an answer an unattended caller can act on.
+
+const listProjectSkillsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type ListProjectSkillsInput = z.infer<typeof listProjectSkillsInput>;
+
+export type ListProjectSkillsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformProjectSkill[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listProjectSkillsOperation: PlatformOperation<
+  ListProjectSkillsInput,
+  ListProjectSkillsResult
+> = {
+  name: "list_project_skills",
+  title: "List MCPJam project skills",
+  description:
+    "List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: \"project\"` skills can be pinned; each row's `pinnability` says whether that skill is eligible and, if not, why.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open one of these rows at."
+  ),
+  inputSchema: listProjectSkillsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const page = await client.listProjectSkills(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getProjectSkillInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  skillId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Skill ID, from list_project_skills."),
+});
+export type GetProjectSkillInput = z.infer<typeof getProjectSkillInput>;
+
+export type GetProjectSkillResult = {
+  project: SelectedProjectInfo;
+  skill: PlatformProjectSkillDetail;
+};
+
+export const getProjectSkillOperation: PlatformOperation<
+  GetProjectSkillInput,
+  GetProjectSkillResult
+> = {
+  name: "get_project_skill",
+  title: "Get an MCPJam project skill",
+  description:
+    "Read one Cloud Skill, including its SKILL.md body. Useful for confirming which body a skill currently holds before pinning it into a run — the body is mutable and an edit overwrites the previous one in place, so `aggregateHash` is the only handle on which version you are looking at.",
+  readOnly: true,
+  permalink: noPermalink(
+    "route-not-addressable",
+    "The app's /skills surface selects a skill as component state, so there is no skills/:skillId route to open this row at."
+  ),
+  inputSchema: getProjectSkillInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const skill = await client.getProjectSkill(
+      { projectId: project.id, skillId: input.skillId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), skill };
   },
 };
 
@@ -13009,6 +13354,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   renderServerWidgetOperation,
   getServerPromptOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -13090,6 +13438,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   restoreEnvironmentOperation,
   listProjectPluginsOperation,
   getPluginVersionOperation,
+  listProjectSkillsOperation,
+  getProjectSkillOperation,
   listImagesOperation,
   getImageOperation,
   createImageOperation,

@@ -63,6 +63,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -137,6 +140,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -429,6 +435,16 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   export_server: "Emits a full server config including its auth shape.",
   show_servers:
     "The widget-bearing variant for MCP Apps hosts, not in-app chat.",
+
+  // Cloud Skills, the read half. Advertised on the agent catalog
+  // (`mcp/src/tools/platformTools.ts`) because an agent driving eval runs
+  // cannot pin a skill it cannot name. In-app chat is the surface where that
+  // argument does NOT hold: the person is already looking at /skills, which
+  // lists the same rows with the pinnability and the body beside them.
+  list_project_skills:
+    "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
+  get_project_skill:
+    "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 };
 
 const OPERATIONS_BY_ID = new Map(
@@ -454,6 +470,11 @@ const CONNECTION_OPENING_IDS = new Set([
   getServerPromptOperation.name,
   listServerResourcesOperation.name,
   readServerResourceOperation.name,
+  // Skills over MCP opens the same ephemeral connection as the primitives
+  // above, so it inherits the host's approval policy for the same reason.
+  listServerSkillsOperation.name,
+  getServerSkillOperation.name,
+  readServerSkillFileOperation.name,
 ]);
 
 // Operations that mutate state and therefore require user approval when the

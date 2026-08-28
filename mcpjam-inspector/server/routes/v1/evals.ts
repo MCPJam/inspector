@@ -49,6 +49,8 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
   opaqueIdSchema,
@@ -339,6 +341,9 @@ const publicInlineTestSchema = z.object({
   expectedOutput: z.string().optional(),
   isNegativeTest: z.boolean().optional(),
   scenario: z.string().optional(),
+  // Analytics-only label frozen into the authored case/run snapshot. `null`
+  // is not meaningful on an inline create, so this uses the stored form.
+  intent: caseIntentSchema.optional(),
   advancedConfig: z
     .object({
       system: z.string().optional(),
@@ -372,6 +377,7 @@ function publicInlineTestToRunTest(
       ? { isNegativeTest: test.isNegativeTest }
       : {}),
     ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     ...(test.advancedConfig !== undefined
       ? { advancedConfig: test.advancedConfig }
       : {}),
@@ -484,6 +490,7 @@ const createEvalSuiteSchema = z.strictObject({
         expectedOutput: z.string().optional(),
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
+        intent: caseIntentSchema.optional(),
         advancedConfig: z
           .object({
             system: z.string().optional(),
@@ -634,6 +641,7 @@ function normalizeCreateTestsToRunTests(
         ? { isNegativeTest: test.isNegativeTest }
         : {}),
       ...(test.scenario !== undefined ? { scenario: test.scenario } : {}),
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       ...(test.advancedConfig !== undefined
         ? { advancedConfig: test.advancedConfig }
         : {}),
@@ -1797,6 +1805,7 @@ function toCaseDto(testCase: CaseDoc) {
           },
         }
       : {}),
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
@@ -2057,6 +2066,11 @@ const publicCaseBodyShape = {
   passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
   scenario: z.string().optional(),
+  /**
+   * Optional analytics label. Omitted preserves it on PATCH; `null` clears it.
+   * `createCaseSchema` narrows this to the stored (string-only) form below.
+   */
+  intent: caseIntentUpdateSchema.optional(),
   models: z
     .array(
       z.object({
@@ -2107,6 +2121,8 @@ const createCaseSchema = z.strictObject({
    * same request.
    */
   id: opaqueIdSchema.optional(),
+  // A new case has nothing to clear: stored intent is a string or absent.
+  intent: caseIntentSchema.optional(),
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
 });
@@ -2321,8 +2337,12 @@ const generateCasesSchema = z
  * the two schemas do not infer to one type. Widened here rather than casting at
  * the PATCH call site, which would lose exactly the `null` this has to carry.
  */
-type CaseMutationBody = Omit<z.infer<typeof createCaseSchema>, "import"> & {
+type CaseMutationBody = Omit<
+  z.infer<typeof createCaseSchema>,
+  "import" | "intent"
+> & {
   import?: z.infer<typeof publicCaseImportSchema> | null;
+  intent?: z.infer<typeof caseIntentUpdateSchema>;
 };
 
 function buildCaseMutationArgs(
@@ -2358,6 +2378,10 @@ function buildCaseMutationArgs(
   if (body.passThreshold !== undefined) args.passThreshold = body.passThreshold;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
   if (body.scenario !== undefined) args.scenario = body.scenario;
+  // Definedness is the three-way intent protocol: omit = preserve; null =
+  // clear; string = set. Never use a truthiness check here: it would collapse
+  // the explicit clear into omission before Convex can apply it.
+  if (body.intent !== undefined) args.intent = body.intent;
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 

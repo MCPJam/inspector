@@ -53,6 +53,9 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   get_swarm: "swarms/definitions/:swarmId",
   create_swarm: "swarms/definitions/:swarmId",
   update_swarm: "swarms/definitions/:swarmId",
+  // Cloud Skills: the /skills surface selects a skill as component state.
+  list_project_skills: "skills/:skillId",
+  get_project_skill: "skills/:skillId",
   get_persona: "swarms/personas/:personaId",
   create_persona: "swarms/personas/:personaId",
   update_persona: "swarms/personas/:personaId",
