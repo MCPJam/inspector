@@ -1,0 +1,63 @@
+name: Spike — E2B Desktop
+
+# The credentialed lane for the Hosted Browser + WebMCP Runtime M0 spike. Unlike
+# the normal Tests workflow it creates LIVE E2B sandboxes and builds a template,
+# so it never runs on PRs — only on manual dispatch and a nightly schedule, and
+# only when the E2B_API_KEY secret is present. PR CI runs the reduced lane (the
+# local webmcp-cdp contract suite + pure-logic tests) as part of `Tests`; the
+# spike file skips there because RUN_E2B_DESKTOP_SPIKE is unset.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 06:00 UTC nightly — catches E2B pause/resume beta drift and a Chromium bump
+    # that breaks the WebMCP CDP domain, the same way the local contract suite
+    # guards the pin on every PR.
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-e2b-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.14.0"
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    # Skip cleanly on forks / anywhere the secret is not configured, rather than
+    # failing a scheduled run with an auth error.
+    if: ${{ github.repository == 'MCPJam/inspector' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build the SDK
+        run: npm run build -w @mcpjam/sdk
+
+      - name: Run the E2B desktop spike
+        env:
+          # Add this secret in repo settings before enabling the lane; without it
+          # the guard in the spike file throws instead of silently skipping.
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          RUN_E2B_DESKTOP_SPIKE: "1"
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        run: |
+          npm run test -w @mcpjam/inspector -- \
+            --project server \
+            server/services/browserd/__tests__/e2b-desktop.spike.test.ts
