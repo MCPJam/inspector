@@ -5794,21 +5794,19 @@ export function useServerState({
   );
 
   /**
-   * Put a server back on `connecting` and bump its retry counter. Used by
-   * the auto-connect hook between bounded retry attempts so a transient
-   * failure never surfaces as a red card on the way to succeeding.
+   * Count a retry attempt against a server. Used by the auto-connect hook
+   * between bounded retry attempts so the card can say "Failed (2)" rather
+   * than repeating a bare "Failed" three times.
+   *
+   * Deliberately does not move the server back to `connecting` for the
+   * duration of the backoff: `ensureServersReady` treats `connecting` as
+   * "an operation already owns this server" and waits on it instead of
+   * dialing, so a synthetic `connecting` nobody owns burns the wait
+   * timeout and then strands the row. The counter is the whole payload.
    */
   const markServerRetrying = useCallback(
     (serverName: string) => {
       dispatch({ type: "CONNECT_RETRY_SCHEDULED", name: serverName });
-    },
-    [dispatch]
-  );
-
-  /** Counterpart to `markServerRetrying` for a retry that never ran. */
-  const markServerRetryAbandoned = useCallback(
-    (serverName: string) => {
-      dispatch({ type: "CONNECT_RETRY_ABANDONED", name: serverName });
     },
     [dispatch]
   );
@@ -6092,7 +6090,6 @@ export function useServerState({
     reconnectServerForClientSwitch,
     ensureServersReady,
     markServerRetrying,
-    markServerRetryAbandoned,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,

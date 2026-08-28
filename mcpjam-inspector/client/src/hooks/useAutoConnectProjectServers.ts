@@ -193,12 +193,8 @@ export function useAutoConnectProjectServers({
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const {
-    ensureServersReady,
-    reconnectServer,
-    markServerRetrying,
-    markServerRetryAbandoned,
-  } = useServerActions();
+  const { ensureServersReady, reconnectServer, markServerRetrying } =
+    useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
@@ -415,19 +411,18 @@ export function useAutoConnectProjectServers({
         );
         if (retriable.length === 0) break;
 
-        // Back onto `connecting` BEFORE the wait, so a server that comes
-        // back mid-backoff is never shown as broken on its way to working.
+        // Count the attempt so the card reads "Failed (2)" instead of the
+        // same bare "Failed" three times over. This does NOT change the
+        // server's status: the row stays `failed` for the backoff window,
+        // which is the truth — the last attempt failed and nothing is in
+        // flight yet. Parking it on `connecting` instead looks nicer and
+        // breaks the retry outright, because `ensureServersReady` reads
+        // that status as "an operation already owns this server" and waits
+        // on an operation that does not exist.
         for (const name of retriable) markServerRetrying?.(name);
 
         await sleep(backoffMs);
-        // Abandoned mid-backoff: put the servers we parked on `connecting`
-        // back where we found them. Nothing else will move them, and the
-        // candidate filter skips `connecting`, so leaving them would strand
-        // them permanently.
-        if (isAbandoned()) {
-          for (const name of retriable) markServerRetryAbandoned?.(name);
-          return result;
-        }
+        if (isAbandoned()) return result;
 
         const retryResult = await ensureServersReady(retriable);
         if (isAbandoned()) return retryResult;
@@ -486,7 +481,6 @@ export function useAutoConnectProjectServers({
     candidateNamesKey,
     ensureServersReady,
     markServerRetrying,
-    markServerRetryAbandoned,
   ]);
 
   return { enabled, lastResult: lastResultRef.current };

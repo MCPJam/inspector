@@ -280,26 +280,16 @@ export type AppAction =
   | {
       /**
        * A transport-shaped failure is about to be retried inside the same
-       * logical auto-connect attempt. Puts the row back on `connecting`
-       * (so a server that recovers mid-backoff is never shown as broken)
-       * and increments `retryCount` — the first thing that ever has. The
-       * counter is reset by `CONNECT_SUCCESS`.
+       * logical auto-connect attempt. Increments `retryCount` — the first
+       * thing that ever has — and deliberately leaves `connectionStatus`
+       * alone. The counter is reset by `CONNECT_SUCCESS`.
+       *
+       * The row therefore stays on `failed` through the backoff window.
+       * That is the honest state: the last attempt did fail, and nothing
+       * is in flight until the next one starts. See the reducer case for
+       * why showing `connecting` here actively breaks the retry.
        */
       type: "CONNECT_RETRY_SCHEDULED";
-      name: string;
-    }
-  | {
-      /**
-       * A scheduled retry was abandoned before it ran — the user switched
-       * project or host, or the surface unmounted, during the backoff.
-       *
-       * Puts the server back on `failed`, which is the state it was in
-       * when the retry was scheduled. Without this it would sit on
-       * `connecting` forever: nothing else is going to move it, and the
-       * auto-connect candidate filter deliberately skips `connecting`, so
-       * no later batch would pick it up either.
-       */
-      type: "CONNECT_RETRY_ABANDONED";
       name: string;
     }
   | {

@@ -758,6 +758,57 @@ describe("appReducer", () => {
     });
   });
 
+  describe("CONNECT_RETRY_SCHEDULED", () => {
+    it("counts the attempt without touching the status", () => {
+      // PINNED DELIBERATELY. An earlier version moved the server to
+      // `connecting` here so the card would not flash red between backoff
+      // rounds. That broke retries outright: `ensureServersReady` reads
+      // `connecting` as "an operation already owns this server" and waits
+      // on it rather than dialing, and no operation owned this one — so
+      // every retry burned the full wait timeout, made no network attempt,
+      // and stranded the row on `connecting` forever.
+      //
+      // The connect path owns `connecting`. This action owns the counter.
+      const server = createServer("flaky", {
+        connectionStatus: "failed",
+        lastError: "fetch failed",
+      });
+      const state = createInitialState({ servers: { flaky: server } });
+
+      const result = appReducer(state, {
+        type: "CONNECT_RETRY_SCHEDULED",
+        name: "flaky",
+      });
+
+      expect(result.servers["flaky"].connectionStatus).toBe("failed");
+      expect(result.servers["flaky"].retryCount).toBe(1);
+      expect(result.servers["flaky"].lastError).toBe("fetch failed");
+    });
+
+    it("accumulates across rounds so the card can say how many", () => {
+      const server = createServer("flaky", { connectionStatus: "failed" });
+      let state = createInitialState({ servers: { flaky: server } });
+
+      for (let i = 0; i < 3; i++) {
+        state = appReducer(state, {
+          type: "CONNECT_RETRY_SCHEDULED",
+          name: "flaky",
+        });
+      }
+
+      expect(state.servers["flaky"].retryCount).toBe(3);
+    });
+
+    it("ignores an unknown server", () => {
+      const state = createInitialState({ servers: {} });
+      const result = appReducer(state, {
+        type: "CONNECT_RETRY_SCHEDULED",
+        name: "ghost",
+      });
+      expect(result).toBe(state);
+    });
+  });
+
   describe("SET_INITIALIZATION_INFO", () => {
     it("stores initialization info on server", () => {
       const server = createServer("test");

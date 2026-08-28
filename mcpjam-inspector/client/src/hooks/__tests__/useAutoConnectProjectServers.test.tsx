@@ -55,7 +55,6 @@ function wrapper({
   reconnectServer = async () => {},
   setSelectedServerNames = () => {},
   markServerRetrying = () => {},
-  markServerRetryAbandoned = () => {},
 }: {
   children: ReactNode;
   ensureServersReady: (names: string[]) => Promise<{
@@ -69,7 +68,6 @@ function wrapper({
   reconnectServer?: (name: string) => Promise<void>;
   setSelectedServerNames?: (names: string[]) => void;
   markServerRetrying?: (name: string) => void;
-  markServerRetryAbandoned?: (name: string) => void;
 }) {
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
@@ -81,7 +79,6 @@ function wrapper({
             reconnectServer,
             setSelectedServerNames,
             markServerRetrying,
-            markServerRetryAbandoned,
           }}
         >
           {children}
@@ -288,7 +285,7 @@ describe("useAutoConnectProjectServers", () => {
       vi.useRealTimers();
     });
 
-    it("retries a transport failure and lands green without ever showing red", async () => {
+    it("retries a transport failure and lands green", async () => {
       const ensureServersReady = vi
         .fn()
         .mockResolvedValueOnce(failResult(["alpha"]))
@@ -327,9 +324,8 @@ describe("useAutoConnectProjectServers", () => {
 
       expect(ensureServersReady).toHaveBeenCalledTimes(2);
       expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["alpha"]);
-      // Put back on `connecting` BEFORE the wait — that is what stops a
-      // server which recovers mid-backoff from flashing red on its way to
-      // working.
+      // Counts the attempt so the card can say "Failed (1)". It does not
+      // change the server's status — see the reducer test pinning that.
       expect(markServerRetrying).toHaveBeenCalledWith("alpha");
     });
 
@@ -399,15 +395,18 @@ describe("useAutoConnectProjectServers", () => {
       expect(ensureServersReady).toHaveBeenNthCalledWith(2, ["alpha"]);
     });
 
-    it("un-strands a server when the retry is abandoned mid-backoff", async () => {
+    it("stops retrying when the surface unmounts mid-backoff", async () => {
       // Unmount (or a host switch) during the wait genuinely abandons the
-      // loop. The server is parked on `connecting` at that point, and the
-      // candidate filter skips `connecting`, so leaving it there would
-      // strand it where no later batch looks.
+      // loop: the user is no longer looking at this project/host, and
+      // dialing servers for a surface that is gone is pure waste.
+      //
+      // Nothing needs un-parking on the way out. The retry only ever bumped
+      // a counter — the server is still sitting on `failed`, which is where
+      // the last real attempt left it and a perfectly valid state to
+      // abandon it in.
       const ensureServersReady = vi
         .fn()
         .mockResolvedValue(failResult(["alpha"]));
-      const markServerRetryAbandoned = vi.fn();
       const appState = {
         servers: {
           alpha: {
@@ -433,7 +432,6 @@ describe("useAutoConnectProjectServers", () => {
               ensureServersReady,
               appState,
               markServerRetrying: vi.fn(),
-              markServerRetryAbandoned,
             }),
         }
       );
@@ -445,7 +443,8 @@ describe("useAutoConnectProjectServers", () => {
       unmount();
       await runBackoff();
 
-      expect(markServerRetryAbandoned).toHaveBeenCalledWith("alpha");
+      // Only the original attempt ran; the three backoff rounds did not.
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
     });
 
     it("gives up after the retry budget", async () => {

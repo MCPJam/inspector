@@ -291,33 +291,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const existing =
         state.servers[action.name] ?? activeProject?.servers[action.name];
       if (!existing) return state;
+      // COUNTS the attempt; deliberately does NOT touch `connectionStatus`.
+      //
+      // An earlier version set `connecting` here so the row would not flash
+      // red between attempts. That broke the retry outright:
+      // `ensureServersReady` treats `connecting` as "an operation is
+      // already running" and waits on `waitForServerReconnectOutcome`
+      // instead of reconnecting — but nothing owned that synthetic state,
+      // so every retry burned the poll's full 15s timeout, made no network
+      // attempt, and left the server stuck on `connecting`.
+      //
+      // The connect path owns `connecting`: `ensureServersReady` dispatches
+      // RECONNECT_REQUEST for the duration of each real attempt. The cost
+      // is that the row does show `failed` during the backoff windows.
       return {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: setStatus(existing, "connecting", {
+          [action.name]: {
+            ...existing,
             retryCount: existing.retryCount + 1,
-          }),
-        },
-      };
-    }
-
-    case "CONNECT_RETRY_ABANDONED": {
-      const activeProject = state.projects[state.activeProjectId];
-      const existing =
-        state.servers[action.name] ?? activeProject?.servers[action.name];
-      if (!existing) return state;
-      // Only ever undoes a scheduled retry. A server that has since moved
-      // on under its own steam (a manual reconnect that succeeded, say)
-      // must not be dragged back to `failed`.
-      if (existing.connectionStatus !== "connecting") return state;
-      return {
-        ...state,
-        servers: {
-          ...state.servers,
-          [action.name]: setStatus(existing, "failed", {
-            retryCount: existing.retryCount,
-          }),
+          },
         },
       };
     }
