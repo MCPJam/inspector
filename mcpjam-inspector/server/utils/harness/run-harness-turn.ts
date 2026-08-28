@@ -105,6 +105,12 @@ import {
   fetchRuntimeSkillFiles,
   skillsFingerprint,
 } from "./runtime-skills.js";
+import {
+  deliveredSecretsFingerprint,
+  fetchRuntimeSecrets,
+  toSecretEnv,
+} from "./runtime-secrets.js";
+import { createSecretScrubber } from "../secrets/secret-scrubber.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { selectHarnessSkillSource } from "./skill-delivery.js";
@@ -216,7 +222,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     ...(pluginOrigins ? { pluginOrigins } : {}),
     onSkipped: (id) =>
       logger.warn(
-        `[harness] selected server has no live config; skipping serverId=${id}`
+        `[harness] selected server has no live config; skipping serverId=${id}`,
       ),
   });
 
@@ -233,7 +239,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     });
     if (!minted.ok) {
       throw new Error(
-        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`
+        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`,
       );
     }
     // Hard-fail, never skip: the harness must run with every selected server or
@@ -245,7 +251,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       const token = minted.tokens[id];
       if (!token) {
         throw new Error(
-          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`
+          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`,
         );
       }
       const url = await resolveHarnessProxyUrl({
@@ -287,7 +293,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
     // there. A policied run must never reach it.
     if (toolPolicy) {
       throw new Error(
-        "TOOL_POLICY_UNSUPPORTED: a tool policy cannot be enforced on the local-mcp harness plane (adapter-http accepts an absent proxy token), so the run is refused rather than run unenforced"
+        "TOOL_POLICY_UNSUPPORTED: a tool policy cannot be enforced on the local-mcp harness plane (adapter-http accepts an absent proxy token), so the run is refused rather than run unenforced",
       );
     }
     for (const id of configured) {
@@ -311,7 +317,7 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       const header = entry.headers?.["X-MCPJam-Proxy-Token"];
       if (!isSealedHarnessProxyToken(header)) {
         throw new Error(
-          `TOOL_POLICY_UNSEALED: harness .mcp.json entry for serverId=${serverId} carries an unsealed proxy token while a tool policy is in force — refusing to run unenforced`
+          `TOOL_POLICY_UNSEALED: harness .mcp.json entry for serverId=${serverId} carries an unsealed proxy token while a tool policy is in force — refusing to run unenforced`,
         );
       }
     }
@@ -361,7 +367,7 @@ const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
  *  anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
-  isError: boolean
+  isError: boolean,
 ): { type: string; value: unknown } {
   if (isError) {
     return {
@@ -432,6 +438,21 @@ export function harnessRuntimeFingerprint(parts: {
    * to before this dimension existed and its sessions keep resuming.
    */
   pluginVersions?: RuntimePluginVersion[];
+  /**
+   * The MATERIALIZED project secrets delivered into this turn's box
+   * (`deliveredSecretsFingerprint` — a digest, never a value).
+   *
+   * A resumed session reattaches to a bridge process holding the environment it
+   * was CREATED with, so a rotated credential would otherwise be delivered to a
+   * box that already has the old one. Forking is the only way a rotation
+   * reaches an in-flight conversation.
+   *
+   * Appended ONLY when non-empty, so a secretless turn hashes byte-identically
+   * to before this dimension existed and its sessions keep resuming. A fetch
+   * FAILURE omits it entirely (see the call site) rather than sending `""`,
+   * which would read as "the secrets were removed".
+   */
+  secretsHash?: string;
 }): string {
   const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
   const s = [
@@ -439,6 +460,7 @@ export function harnessRuntimeFingerprint(parts: {
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
     ...(pluginDimension ? [pluginDimension] : []),
+    ...(parts.secretsHash ? [parts.secretsHash] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -477,7 +499,7 @@ const DEFAULT_POLICY_SEAL_TTL_MS = 6 * 60 * 60_000;
 
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none"
+  streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -518,12 +540,14 @@ export async function runHarnessTurn(
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
+    environmentId,
+    runtimeSecrets: runtimeSecretsOverride,
     createHarnessScopeStepUpContinuation,
   } = options;
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
-    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn")
+    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn"),
   );
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -552,7 +576,7 @@ export async function runHarnessTurn(
     throw new Error(
       "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
         "an execution scope (the guest/host-funded path runs on the scenario's " +
-        "own computer)"
+        "own computer)",
     );
   }
   const harnessAdapter = getHarnessAdapter(harness);
@@ -666,13 +690,13 @@ export async function runHarnessTurn(
     `${serverId}\u0000${toolName}`;
   const claimChannelPolicyBlock = (
     serverId: string,
-    toolName: string
+    toolName: string,
   ): HarnessPolicyBlockEvent | undefined => {
     const event = channelPolicyBlocks.find(
       (candidate) =>
         !candidate.claimed &&
         candidate.serverId === serverId &&
-        candidate.toolName === toolName
+        candidate.toolName === toolName,
     );
     if (event) event.claimed = true;
     return event;
@@ -777,7 +801,7 @@ export async function runHarnessTurn(
           },
           toolName: matchingCall.toolName,
           toolInput: matchingCall.input,
-        })
+        }),
       )
         .then((event) => {
           emitScopeStepUpRequiredChunk(writer, event);
@@ -821,7 +845,7 @@ export async function runHarnessTurn(
       ? subscribeHarnessScopeStepUp(
           turnId,
           receiveScopeStepUpChallenge,
-          selectedServers
+          selectedServers,
         )
       : () => {};
 
@@ -838,7 +862,7 @@ export async function runHarnessTurn(
             (event) => {
               channelPolicyBlocks.push({ ...event });
             },
-            selectedServers
+            selectedServers,
           )
         : () => {};
     const stopPolicyBlockPoll =
@@ -869,12 +893,12 @@ export async function runHarnessTurn(
     try {
       if (!projectId) {
         throw new Error(
-          "harness turn requires a projectId to resolve the computer"
+          "harness turn requires a projectId to resolve the computer",
         );
       }
       if (!authHeader) {
         throw new Error(
-          "harness turn requires an auth bearer to resolve the computer"
+          "harness turn requires an auth bearer to resolve the computer",
         );
       }
       // WS3: requireToolApproval is now SUPPORTED via the harness's native
@@ -912,7 +936,7 @@ export async function runHarnessTurn(
       //       silently substitute its own default model.
       if (!harnessAdapter.supportsModel(modelId)) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
         );
       }
       //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
@@ -925,7 +949,7 @@ export async function runHarnessTurn(
       ) {
         throw new Error(
           `The ${harnessAdapter.displayName} harness advertises plugin-bundle ` +
-            "support but has no deliverPluginBundles strategy (adapter misconfigured)."
+            "support but has no deliverPluginBundles strategy (adapter misconfigured).",
         );
       }
       //   (b) approval invariant (advertise = enforce). The route pre-flight
@@ -960,7 +984,7 @@ export async function runHarnessTurn(
           "Harness runs require broker credential delivery, but it is " +
             "disabled on this server (MCPJAM_HARNESS_BROKER_DELIVERY=false). " +
             "There is no fallback credential path — re-enable the broker to " +
-            "run harness turns."
+            "run harness turns.",
         );
       }
 
@@ -994,7 +1018,7 @@ export async function runHarnessTurn(
         !harnessMcpProxy
       ) {
         throw new Error(
-          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy"
+          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
         );
       }
       const pluginServerOrigins = effectiveCapabilities
@@ -1103,6 +1127,39 @@ export async function runHarnessTurn(
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+
+      // MATERIALIZED PROJECT SECRETS, fetched beside the skills and for the
+      // same reason: both are per-turn runtime material the box needs before
+      // the first command runs.
+      //
+      // TRI-STATE, and the stakes are higher than for skills. `{ ok: false }`
+      // must never read as "no secrets": a transient Convex blip that dropped
+      // the env bag would leave the user watching a `stripe` command fail with
+      // nothing changed on their side to explain it. On failure the turn keeps
+      // whatever the session already has rather than deliberately handing it an
+      // empty environment.
+      //
+      // Brokered secrets are NOT here and never will be: their values reach the
+      // box through E2B's egress proxy, outside this process entirely.
+      const secretsFetch =
+        runtimeSecretsOverride !== undefined
+          ? { ok: true as const, secrets: runtimeSecretsOverride }
+          : await fetchRuntimeSecrets(authHeader, {
+              ...(projectId ? { projectId } : {}),
+              ...(environmentId ? { environmentId } : {}),
+              ...(chatSessionId ? { chatSessionId } : {}),
+            });
+      const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+      // ONE list, two consumers: the env bag the box receives, and the scrubber
+      // registry that keeps those same values out of the transcript. Deriving
+      // both from one fetch is what makes it impossible for the registry to be
+      // missing a value the box actually got.
+      const secretEnv = runtimeSecrets
+        ? toSecretEnv(runtimeSecrets)
+        : undefined;
+      const secretScrubber = runtimeSecrets
+        ? createSecretScrubber(runtimeSecrets)
+        : null;
       // What the ADAPTER will actually write, per its own rules (Codex rejects
       // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
       // it filters rather than throws). Every MCPJam-side skill pass below is
@@ -1114,7 +1171,7 @@ export async function runHarnessTurn(
           : undefined;
       const deliveredSkills = preparedSkills?.delivered ?? [];
       const deliveredSkillNamesById = new Map(
-        deliveredSkills.map((s) => [s.skillId, s.name])
+        deliveredSkills.map((s) => [s.skillId, s.name]),
       );
 
       // WS3: gate side-effecting built-ins (Bash/Edit/Write) behind approval
@@ -1140,6 +1197,19 @@ export async function runHarnessTurn(
         ...(effectiveCapabilities
           ? { pluginVersions: effectiveCapabilities.pluginVersions }
           : {}),
+        // ROTATION FORKS THE SESSION. A resumed harness session reattaches to a
+        // bridge process that already holds its environment — the exact failure
+        // the `ANTHROPIC_BASE_URL` compat bump above was minted for — so a
+        // rotated value delivered without forking would land everywhere except
+        // the conversation the user is sitting in.
+        //
+        // On a FETCH FAILURE the dimension is omitted rather than sent empty:
+        // omitted leaves the fingerprint where it was and the session resumes,
+        // while `""` would read as "the secrets were removed" and cold-start a
+        // conversation over a blip.
+        ...(runtimeSecrets !== null
+          ? { secretsHash: deliveredSecretsFingerprint(runtimeSecrets) }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "scenario"
@@ -1162,7 +1232,7 @@ export async function runHarnessTurn(
         throw new Error(
           "Swarm harness turn is missing continuity identity " +
             "(journeyRunId, hostId, and chatSessionId are all required for " +
-            "the swarm-chat owner lane)"
+            "the swarm-chat owner lane)",
         );
       }
       let continuity:
@@ -1226,7 +1296,7 @@ export async function runHarnessTurn(
           // conversation.
           if (claim.status === 409) {
             throw new Error(
-              "Another turn is already running for this chat — wait for it to finish."
+              "Another turn is already running for this chat — wait for it to finish.",
             );
           }
           logger.warn("[harness] session-state claim failed; failing closed", {
@@ -1236,7 +1306,7 @@ export async function runHarnessTurn(
           throw new Error(
             `Couldn't start a ${harnessAdapter.displayName} session — the ` +
               "continuity service is unavailable right now. Please try again in " +
-              "a moment."
+              "a moment.",
           );
         } else {
           continuity = {
@@ -1397,7 +1467,7 @@ export async function runHarnessTurn(
           .then((renewed) => {
             if (!renewed.ok && reservationHeld) {
               logger.error(
-                "[harness] preparation reservation was lost; aborting the turn"
+                "[harness] preparation reservation was lost; aborting the turn",
               );
               livenessAbort.abort(new Error("harness box reservation lost"));
             }
@@ -1406,7 +1476,7 @@ export async function runHarnessTurn(
             if (reservationHeld) {
               logger.error(
                 "[harness] preparation reservation renewal failed; aborting the turn",
-                err
+                err,
               );
               livenessAbort.abort(new Error("harness box reservation lost"));
             }
@@ -1429,7 +1499,7 @@ export async function runHarnessTurn(
       // `computerWorkdir` keeps the personal path identical. Both still go
       // through `resolveWorkingDirectory`, so neither can escape /home/user.
       const resolvedHarnessWorkdir = resolveWorkingDirectory(
-        harnessSandboxBinding?.workdir ?? computerWorkdir
+        harnessSandboxBinding?.workdir ?? computerWorkdir,
       );
       const defaultWorkingDirectory =
         "error" in resolvedHarnessWorkdir
@@ -1441,6 +1511,17 @@ export async function runHarnessTurn(
       const sandbox = createE2BHarnessSandboxProvider({
         sandboxId,
         defaultWorkingDirectory,
+        // The materialized secrets, as a session-wide env bag on every `run`
+        // and `spawn`. This is the whole of materialized delivery on the
+        // harness path: the agent runs `stripe customers list`, and
+        // `STRIPE_API_KEY` is simply in that process's environment.
+        //
+        // In `envs`, never in the command line — the rule `plugin-box.ts`
+        // already states: argv is readable by every process in the box through
+        // `/proc`, and it lands in shell history.
+        ...(secretEnv && Object.keys(secretEnv).length > 0
+          ? { sessionEnv: secretEnv }
+          : {}),
       });
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
@@ -1542,7 +1623,7 @@ export async function runHarnessTurn(
         Object.keys(hostExecutedTools).length
           ? {
               toolApproval: Object.fromEntries(
-                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"])
+                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"]),
               ) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,
@@ -1638,7 +1719,7 @@ export async function runHarnessTurn(
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
               const pluginSkills = pluginSkillDeliverySummary(
-                effectiveCapabilities
+                effectiveCapabilities,
               );
               if (pluginSkills.length > 0) {
                 // Provenance, not a pin: which plugin material this sandbox was
@@ -1683,7 +1764,7 @@ export async function runHarnessTurn(
               const fileResult = await fetchRuntimeSkillFiles(
                 authHeader,
                 projectId,
-                executionScope
+                executionScope,
               ).catch(() => ({ ok: false } as const));
               if (fileResult.ok) {
                 await materializeSkillFiles({
@@ -1743,7 +1824,7 @@ export async function runHarnessTurn(
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",
-          { harnessSessionId: continuity?.state?.harnessSessionId }
+          { harnessSessionId: continuity?.state?.harnessSessionId },
         );
       }
       // WS3: resuming a turn the user just approved/denied. The committed state
@@ -1846,7 +1927,7 @@ export async function runHarnessTurn(
             });
             if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
               logger.warn(
-                "[harness] heartbeat lost liveness past TTL — aborting turn"
+                "[harness] heartbeat lost liveness past TTL — aborting turn",
               );
               livenessAbort.abort(new Error("harness lost liveness"));
             }
@@ -1965,7 +2046,7 @@ export async function runHarnessTurn(
             });
           }
           const flushedToolCallIds = new Set(
-            pendingResults.map((tr) => tr.toolCallId)
+            pendingResults.map((tr) => tr.toolCallId),
           );
           for (const tr of pendingResults) {
             messageHistory.push({
@@ -1982,7 +2063,7 @@ export async function runHarnessTurn(
                     ? {
                         providerOptions: mergeMcpToolOriginMetadata(
                           undefined,
-                          tr.serverId
+                          tr.serverId,
                         ),
                       }
                     : {}),
@@ -1999,7 +2080,7 @@ export async function runHarnessTurn(
             messageHistory,
             promptIndex,
             stepIndex,
-            flushedToolCallIds
+            flushedToolCallIds,
           );
         };
         // Step + tool-identity tracking. A "step" spans assistant content + its
@@ -2022,7 +2103,7 @@ export async function runHarnessTurn(
             writer,
             messageHistory,
             toolSetForTrace as unknown as ToolSet,
-            activeDriver.snapshotContext(messageHistory)
+            activeDriver.snapshotContext(messageHistory),
           );
           stepIndex += 1;
           stepStartedAt = Date.now();
@@ -2069,7 +2150,7 @@ export async function runHarnessTurn(
             } else {
               if (reasoningId === undefined) {
                 reasoningId = String(
-                  (part as { id?: unknown }).id ?? crypto.randomUUID()
+                  (part as { id?: unknown }).id ?? crypto.randomUUID(),
                 );
                 emitReasoningStart(writer, reasoningId);
               }
@@ -2077,7 +2158,7 @@ export async function runHarnessTurn(
                 const rDelta = String(
                   (part as { text?: unknown; delta?: unknown }).text ??
                     (part as { delta?: unknown }).delta ??
-                    ""
+                    "",
                 );
                 if (rDelta) emitReasoningDelta(writer, reasoningId, rDelta);
               }
@@ -2087,7 +2168,7 @@ export async function runHarnessTurn(
             const delta = String(
               (part as { text?: unknown; delta?: unknown }).delta ??
                 (part as { text?: unknown }).text ??
-                ""
+                "",
             );
             if (!delta) continue;
             // Assistant text after tool results begins the next step.
@@ -2130,10 +2211,10 @@ export async function runHarnessTurn(
             }
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ??
-                crypto.randomUUID()
+                crypto.randomUUID(),
             );
             const rawToolName = String(
-              (part as { toolName?: unknown }).toolName ?? "tool"
+              (part as { toolName?: unknown }).toolName ?? "tool",
             );
             // Claude Code namespaces MCP tools as mcp__<server>__<tool>; map back
             // to { serverId, un-namespaced toolName } so the UI chunks, engine
@@ -2142,12 +2223,12 @@ export async function runHarnessTurn(
             // tools (Bash, Read, …) have no prefix → serverId stays undefined.
             const { serverId, toolName } = harnessAdapter.parseToolName(
               rawToolName,
-              harnessKeyToServerId
+              harnessKeyToServerId,
             );
             const input = coerceToolInput(
               (part as { input?: unknown }).input ??
                 (part as { args?: unknown }).args ??
-                {}
+                {},
             );
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
@@ -2163,7 +2244,7 @@ export async function runHarnessTurn(
             // auto-continues, re-submitting the turn forever.
             const providerMetadata = mergeMcpToolOriginMetadata(
               undefined,
-              serverId
+              serverId,
             );
             writer.write({
               type: "tool-input-available",
@@ -2203,7 +2284,7 @@ export async function runHarnessTurn(
             type === "tool-output-available"
           ) {
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? ""
+              (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
             // HOST-EXECUTED delivery: prefer the raw result captured at
             // `execute()` time over the runtime's echo, which is the model-facing
@@ -2227,7 +2308,7 @@ export async function runHarnessTurn(
               toolMeta.get(toolCallId) ??
               harnessAdapter.parseToolName(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
-                harnessKeyToServerId
+                harnessKeyToServerId,
               );
             // A tool call the MCP proxy blocked on policy, recognised only when
             // THIS run sealed a policy for that server, and only ever with the
@@ -2321,7 +2402,7 @@ export async function runHarnessTurn(
                 ...createOffsetInterval(
                   traceBaseMs,
                   toolStartMs.get(toolCallId) ?? Date.now(),
-                  Date.now()
+                  Date.now(),
                 ),
                 promptIndex,
                 stepIndex,
@@ -2435,15 +2516,15 @@ export async function runHarnessTurn(
             // for a turn that can never resume.
             if (!continuity) {
               throw new Error(
-                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably."
+                "Tool approval requested on a turn without a resumable harness session; aborting instead of pausing unresumably.",
               );
             }
             const approvalId = String(
               (part as { approvalId?: unknown }).approvalId ??
-                crypto.randomUUID()
+                crypto.randomUUID(),
             );
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? ""
+              (part as { toolCallId?: unknown }).toolCallId ?? "",
             );
             closeReasoning();
             if (textId !== undefined) {
@@ -2563,7 +2644,7 @@ export async function runHarnessTurn(
           const finalTextLength =
             typeof finalText === "string" ? finalText.length : 0;
           logger.warn(
-            `[harness] completed without visible chat parts; streamTypes=${streamTypes}; finalTextLength=${finalTextLength}`
+            `[harness] completed without visible chat parts; streamTypes=${streamTypes}; finalTextLength=${finalTextLength}`,
           );
           projectAssistantText(HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT);
         }
@@ -2587,13 +2668,11 @@ export async function runHarnessTurn(
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
-          }ms brokerStart=${
-            tBroker - tSandbox
-          }ms sessionConnect=${
+          }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`
+          }ms resumed=${resumedSession}`,
         );
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -2719,7 +2798,7 @@ export async function runHarnessTurn(
         } catch (finalizeErr) {
           logger.warn(
             "[harness] session finalize failed; releasing lease, sidecar not committed",
-            { error: finalizeErr }
+            { error: finalizeErr },
           );
           // stop()/destroy() threw → no resume payload to commit. Drop any
           // half-built commit and free the lane so the next turn can claim.
@@ -2759,7 +2838,7 @@ export async function runHarnessTurn(
           writer,
           messageHistory,
           toolSetForTrace as unknown as ToolSet,
-          driver.snapshotContext(messageHistory)
+          driver.snapshotContext(messageHistory),
         );
         driver.emitErrorTurnFinish(writer);
       }
@@ -2835,7 +2914,7 @@ export async function runHarnessTurn(
         const persistOutcome = await onConversationComplete?.(
           [...messageHistory],
           trace,
-          runSucceeded ? capturedHarnessCommit : undefined
+          runSucceeded ? capturedHarnessCommit : undefined,
         );
         // The callback RESOLVING is not the same as the turn being saved. Now
         // that it reports an outcome, a `failed`/`skipped`/`conflict` result
@@ -2883,7 +2962,7 @@ export async function runHarnessTurn(
     } catch (cleanupError) {
       logger.error(
         "[harness] error while running stream cleanup",
-        cleanupError
+        cleanupError,
       );
     }
   };

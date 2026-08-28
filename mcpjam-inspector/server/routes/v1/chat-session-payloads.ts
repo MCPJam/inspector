@@ -27,6 +27,8 @@
  * conclude the server returned the short value and debug the wrong thing.
  */
 
+import type { SecretScrubber } from "../../utils/secrets/secret-scrubber";
+
 /** Nesting beyond this is replaced by a marker rather than recursed into. */
 const MAX_DEPTH = 8;
 /** Serialized ceiling for ONE tool call's input or output. */
@@ -149,6 +151,17 @@ type EngineToolResult = {
 export function joinToolCalls(
   toolCalls: readonly EngineToolCall[],
   toolResults: readonly EngineToolResult[],
+  /**
+   * Materialized project secrets this turn delivered. Supplied, their values
+   * are replaced with `[secret:NAME]` in the LIVE response.
+   *
+   * The persistence path is scrubbed separately, at `buildIngestBody` — one
+   * pass over the serialized body. This is the other half: what this function
+   * returns goes straight back to the caller over HTTP and never passes through
+   * that pass, so scrubbing only there would keep the value out of the
+   * transcript while handing it to whoever made the request.
+   */
+  scrubber?: SecretScrubber,
 ): PublicToolCall[] {
   const resultsById = new Map<string, EngineToolResult>();
   for (const result of toolResults) {
@@ -158,14 +171,22 @@ export function joinToolCalls(
       resultsById.set(result.toolCallId, result);
     }
   }
+  const scrub = <T>(value: T): T =>
+    scrubber ? scrubber.scrubDeep(value) : value;
   return toolCalls.map((call) => {
     const result = resultsById.get(call.toolCallId);
+    // Scrubbed AFTER bounding, not before. Bounding is measured on the
+    // serialized payload, and `[secret:NAME]` is almost always shorter than the
+    // credential it replaces — so scrubbing first would let a payload that the
+    // caller should see truncated slip in under the cap, and two runs of the
+    // same tool would truncate at different points depending on whether a
+    // secret happened to appear.
     const input = boundPayload(call.input);
     if (!result) {
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: input.value,
+        input: scrub(input.value),
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
@@ -179,11 +200,11 @@ export function joinToolCalls(
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: input.value,
+      input: scrub(input.value),
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: output.value,
+      output: scrub(output.value),
       ...(input.truncated || output.truncated
         ? { truncated: true as const }
         : {}),

@@ -74,6 +74,8 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import { fetchRuntimeSecrets } from "./harness/runtime-secrets.js";
+import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
@@ -254,6 +256,32 @@ export interface WebChatTurnPersistContext {
    * resumed sandbox with stale plugin material ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
+   * project secrets.
+   *
+   * An id rather than the resolved spec, deliberately. `resolveEnvironmentForRuntime`
+   * and `ResolvedEnvironmentRuntime` never carry secrets: `toEnvironmentPreview`
+   * spreads nothing and must never see a value, and a resolved spec that could
+   * carry one would put a credential on the same object every preview, log line
+   * and telemetry field already reads. The harness turn fetches its own secrets
+   * from Convex with the user's own bearer instead, and this is the only thing
+   * it needs to do that.
+   *
+   * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   */
+  environmentId?: string;
+  /**
+   * This turn's MATERIALIZED secrets, when the ROUTE already resolved them.
+   *
+   * Presence is semantic (even empty): supplied ⇒ do not fetch again. `chat-v2`
+   * resolves them before it builds the emulated `bash` tool, so by the time
+   * this helper runs the list already exists — and re-fetching would both cost
+   * a second KMS decrypt and risk the scrubber registering a different set than
+   * the box received. A caller that has not resolved them omits this and the
+   * helper fetches from {@link environmentId}.
+   */
+  runtimeSecrets?: { name: string; value: string }[];
 }
 
 /**
@@ -666,13 +694,13 @@ export async function streamWebChatTurn(
           abortSignal: runtime.abortSignal,
         })
       : runtime.scopeStepUp?.cancelRequest
-        ? buildHostedScopeStepUpCancellation({
-            request: runtime.scopeStepUp.cancelRequest,
-            bearer: runtime.scopeStepUp.bearer,
-            messages: modelMessages,
-            tools: preparedTools,
-          })
-        : undefined;
+      ? buildHostedScopeStepUpCancellation({
+          request: runtime.scopeStepUp.cancelRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          messages: modelMessages,
+          tools: preparedTools,
+        })
+      : undefined;
   const createScopeStepUpContinuation =
     runtime.scopeStepUp && persist.chatSessionId
       ? async ({
@@ -783,6 +811,40 @@ export async function streamWebChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
+
+  // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
+  // very different things need the same list and must not disagree about it:
+  //
+  //   1. the SANDBOX, which receives the values as environment variables (the
+  //      harness turn takes them via `runtimeSecrets` below);
+  //   2. the SCRUBBER, which replaces those same values with `[secret:NAME]`
+  //      in everything this turn persists.
+  //
+  // Two fetches would mean two KMS decrypts per turn AND a window where the
+  // registry is missing something the box already has — which is the one way
+  // this feature leaks by accident. Values that reach the box but not the
+  // registry are values that get written to the transcript verbatim.
+  //
+  // Tri-state: on failure the scrubber is `null` and the harness turn keeps
+  // whatever environment its session already holds. A failure must never read
+  // as "no secrets".
+  const secretsFetch =
+    persist.runtimeSecrets !== undefined
+      ? { ok: true as const, secrets: persist.runtimeSecrets }
+      : await fetchRuntimeSecrets(runtime.authHeader, {
+          ...(persist.projectId ? { projectId: persist.projectId } : {}),
+          ...(persist.environmentId
+            ? { environmentId: persist.environmentId }
+            : {}),
+          ...(hostedChatSessionId
+            ? { chatSessionId: hostedChatSessionId }
+            : {}),
+        });
+  const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+  const secretScrubber = runtimeSecrets
+    ? createSecretScrubber(runtimeSecrets)
+    : null;
+
   const cleanupStream = async () => {
     // Withdraw pending elicitation rows BEFORE dropping the connections: once
     // the stream is gone nobody can answer, and an abandoned row would stay
@@ -810,8 +872,8 @@ export async function streamWebChatTurn(
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
-      : (persist.hostConfig ?? null);
+      ? persist.hostConfig({ resolvedTemperature }) ?? null
+      : persist.hostConfig ?? null;
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
@@ -855,6 +917,11 @@ export async function streamWebChatTurn(
       // rather than inferring it from a version poll.
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        // Applied to the SERIALIZED ingest body, so it covers every payload
+        // this call can carry — session messages, the tool snapshot, assistant
+        // text, a nested JSON string a tool returned — without a per-field list
+        // somebody has to remember to extend.
+        ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
         modelSource,
         projectId: persist.projectId,
@@ -1104,6 +1171,12 @@ export async function streamWebChatTurn(
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
+    ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
+    // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
+    // (even empty) means "this turn's secrets are already resolved, do not
+    // fetch again". A harness turn reached from somewhere that does not resolve
+    // them (the eval/swarm driver) still fetches for itself.
+    ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool

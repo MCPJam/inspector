@@ -47,6 +47,25 @@ export interface E2BHarnessSandboxProviderOptions {
    *  ~60s — too short for the harness bootstrap (`pnpm install`) on a larger
    *  dep tree. Background `spawn` is not subject to the foreground cap. */
   commandTimeoutMs?: number;
+  /**
+   * SESSION-WIDE environment merged into every `run` and `spawn`.
+   *
+   * This is how a MATERIALIZED project secret reaches a CLI in the box: the
+   * agent runs `stripe customers list`, and `STRIPE_API_KEY` has to be in that
+   * process's environment. Per-command `env` already existed, but the harness
+   * composes its own commands — nothing upstream of a `run` call knows to add a
+   * credential to it — so the bag has to live with the session.
+   *
+   * A CALLER-SUPPLIED `env` WINS on collision. The session bag is ambient
+   * configuration; a per-command value is a deliberate override at the call
+   * site, and ambient config silently beating an explicit argument is the
+   * surprise nobody debugs successfully.
+   *
+   * Secrets travel in `envs`, never in the command line — the rule
+   * `plugin-box.ts` already states, for the same reason: argv is visible to
+   * every process in the box through `/proc` and lands in shell history.
+   */
+  sessionEnv?: Record<string, string>;
 }
 
 const enc = new TextEncoder();
@@ -125,7 +144,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 async function streamToBytes(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -145,7 +164,7 @@ async function streamToBytes(
 }
 
 export function createE2BHarnessSandboxProvider(
-  opts: E2BHarnessSandboxProviderOptions
+  opts: E2BHarnessSandboxProviderOptions,
 ): HarnessV1SandboxProvider {
   const bridgePort = opts.bridgePort ?? 39271;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
@@ -153,6 +172,18 @@ export function createE2BHarnessSandboxProvider(
   // from the sandbox's own lifetime — too short for the harness bootstrap
   // (`pnpm install`). Background `spawn` is not subject to this cap.
   const commandTimeoutMs = opts.commandTimeoutMs ?? 10 * 60_000;
+  // Frozen at provider construction. The session's env is fixed for its
+  // lifetime by design: a harness session that changed its environment
+  // mid-flight would hand different commands different credentials, and the
+  // runtime fingerprint exists precisely so a change forks a NEW session
+  // instead.
+  const sessionEnv = opts.sessionEnv;
+  const mergeEnv = (
+    env: Record<string, string> | undefined,
+  ): Record<string, string> | undefined => {
+    if (!sessionEnv) return env;
+    return { ...sessionEnv, ...(env ?? {}) };
+  };
 
   // Connect to the host's persistent computer and build a session bound to it.
   // Shared by createSession (fresh) and resumeSession (reattach): for our E2B
@@ -161,7 +192,7 @@ export function createE2BHarnessSandboxProvider(
   // (which persists on the box) using the `resumeFrom` state; our provider just
   // has to supply the sandbox connection.
   const connectSession = async (
-    connectSignal?: AbortSignal
+    connectSignal?: AbortSignal,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
@@ -201,7 +232,7 @@ export function createE2BHarnessSandboxProvider(
             `model proxy, the package registry is unreachable by design — the ` +
             `harness runtime must be installed before that lock. Output: ` +
             (output ? output.slice(-500) : "(none)"),
-          { cause: err }
+          { cause: err },
         );
       }
       throw err;
@@ -213,7 +244,7 @@ export function createE2BHarnessSandboxProvider(
       description:
         `E2B sandbox ${sandbox.sandboxId} (host computer). Working dir ${cwd}. ` +
         `Bridge port ${bridgePort} reachable at ${sandbox.getHost(
-          bridgePort
+          bridgePort,
         )}.`,
 
       // ── file I/O ──────────────────────────────────────────────────────
@@ -249,14 +280,14 @@ export function createE2BHarnessSandboxProvider(
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: content }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
       writeBinaryFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(content) }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
       writeFile: async ({ path, content, abortSignal }) => {
@@ -264,7 +295,7 @@ export function createE2BHarnessSandboxProvider(
         const bytes = await streamToBytes(content);
         await sandbox.files.write(
           [{ path, data: u8ToArrayBuffer(bytes) }],
-          signalOpt(abortSignal)
+          signalOpt(abortSignal),
         );
       },
 
@@ -273,7 +304,7 @@ export function createE2BHarnessSandboxProvider(
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
-            envs: env,
+            envs: mergeEnv(env),
             timeoutMs: commandTimeoutMs,
             ...signalOpt(abortSignal),
           });
@@ -324,7 +355,7 @@ export function createE2BHarnessSandboxProvider(
         const handle = await sandbox.commands.run(command, {
           background: true,
           cwd: workingDirectory ?? cwd,
-          envs: env,
+          envs: mergeEnv(env),
           ...signalOpt(abortSignal),
           // Guard against enqueue-after-close once the process ends/is killed.
           onStdout: (d: string) => {

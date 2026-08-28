@@ -125,6 +125,10 @@ import {
   maybeAppendEnvironmentContext,
 } from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
+import {
+  fetchRuntimeSecrets,
+  toSecretEnv,
+} from "../../utils/harness/runtime-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -576,8 +580,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -774,7 +778,9 @@ chatV2.post("/", async (c) => {
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // COMP-16: the host-configured computer working directory — the SAME
@@ -1197,6 +1203,32 @@ chatV2.post("/", async (c) => {
     // failure) must be rejected BEFORE it can acquire a paid box. Nothing
     // between here and the `streamWebChatTurn` call reads `builtInTools` or
     // `effectiveSystemPrompt`, which is what makes the late placement free.
+    // MATERIALIZED PROJECT SECRETS for this turn, resolved ONCE, here, because
+    // three separate things consume the SAME list and must not disagree:
+    //
+    //   1. the emulated engine's `bash` tool, which exports them into every
+    //      command's environment (sandbox bindings only — see the registry);
+    //   2. the harness turn, which puts them in its sandbox session's env bag;
+    //   3. the transcript scrubber, which replaces those same values with
+    //      `[secret:NAME]` in everything the turn persists.
+    //
+    // Three fetches would be three KMS decrypts per turn, and — worse — a
+    // window where the scrubber's registry is missing a value the box already
+    // has. Values delivered but unregistered are values written to the
+    // transcript verbatim, which is the one way this feature leaks by accident.
+    //
+    // Tri-state: on failure this is `null`, and every consumer treats that as
+    // "leave whatever state exists alone" rather than "there are no secrets".
+    const secretsFetch = await fetchRuntimeSecrets(bearerToken, {
+      projectId: hostedBody.projectId,
+      ...(environmentSpec
+        ? { environmentId: environmentSpec.environmentRef.environmentId }
+        : {}),
+      ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+    });
+    const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+    const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1207,7 +1239,8 @@ chatV2.post("/", async (c) => {
     // stream layer calls this right after writing the SSE parts; until it does,
     // the notices stay pending server-side and are re-delivered next turn.
     let ackSandboxNotices:
-      ((delivered: SandboxNoticeReason[]) => void) | undefined;
+      | ((delivered: SandboxNoticeReason[]) => void)
+      | undefined;
     // Drop the personal-computer resource for every suppressing plan, so
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:
@@ -1348,6 +1381,12 @@ chatV2.post("/", async (c) => {
         // rejects anything that isn't `personal`, so a union on the config
         // would be either rejected or — worse — wire-forgeable.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        // Read by the registry ONLY inside its `sandboxBinding` branch: a
+        // project's credential reaches a box the project provisioned, never the
+        // user's own machine (local runner) or a remote data plane.
+        ...(secretEnv && Object.keys(secretEnv).length > 0
+          ? { secretEnv }
+          : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
       },
     );
@@ -1559,6 +1598,18 @@ chatV2.post("/", async (c) => {
           // file query cannot return a plugin skill's) and the pinned plugin
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+          // PROJECT SECRETS: the id only, never the resolved spec. The harness
+          // turn fetches this environment's materialized secrets from Convex
+          // with the END USER'S OWN bearer, so the backend decides which of
+          // them that user's session receives — this process cannot ask for
+          // somebody else's. Absent ⇒ no grant.
+          ...(environmentSpec
+            ? { environmentId: environmentSpec.environmentRef.environmentId }
+            : {}),
+          // Already resolved above, so the turn helper does not re-fetch:
+          // presence is semantic, and one fetch is what keeps the scrubber's
+          // registry and the box's environment describing the same set.
+          ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Hosted sessions finally honor the CAS the client already sends.
