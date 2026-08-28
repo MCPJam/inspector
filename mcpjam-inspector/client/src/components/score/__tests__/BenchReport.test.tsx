@@ -258,19 +258,19 @@ describe("cleanup is reported either way", () => {
     render(
       <BenchReport
         result={result(sectioned(), {
-          cleanup: { recorded: 3, removed: 1, residue: 2 },
+          cleanup: { status: "residue", residueCount: 2 },
         })}
       />,
     );
     expect(screen.getByText(/could not be removed/)).toBeInTheDocument();
-    expect(screen.getByText(/2 of 3 items left behind/)).toBeInTheDocument();
+    expect(screen.getByText(/2 items left behind/)).toBeInTheDocument();
   });
 
   it("claims removal only when everything recorded came back", () => {
     render(
       <BenchReport
         result={result(sectioned(), {
-          cleanup: { recorded: 2, removed: 2, residue: 0 },
+          cleanup: { status: "complete", residueCount: 0 },
         })}
       />,
     );
@@ -283,7 +283,7 @@ describe("cleanup is reported either way", () => {
     render(
       <BenchReport
         result={result(sectioned(), {
-          cleanup: { recorded: 3, removed: 1, residue: 0 },
+          cleanup: { status: "pending", residueCount: 0 },
         })}
       />,
     );

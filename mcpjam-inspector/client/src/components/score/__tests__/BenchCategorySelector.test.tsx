@@ -13,7 +13,12 @@ import { BenchCategorySelector } from "../BenchCategorySelector";
  * an active definition.
  */
 const CATEGORIES: BenchCategory[] = [
-  { id: "crm", title: "CRM", description: "Contact and deal tools.", runnable: true },
+  {
+    id: "crm",
+    title: "CRM",
+    description: "Contact and deal tools.",
+    runnable: true,
+  },
   {
     id: "tracker",
     title: "Issue tracker",
@@ -72,7 +77,13 @@ describe("a failed classifier is not a gate", () => {
   it("says nothing about classification when there is a ranking", () => {
     renderSelector({
       classification: {
-        ranked: [{ categorySlug: "crm", confidence: 0.82, rationale: "Nine contact tools." }],
+        ranked: [
+          {
+            categorySlug: "crm",
+            confidence: 0.82,
+            rationale: "Nine contact tools.",
+          },
+        ],
       },
     });
     expect(
@@ -155,12 +166,16 @@ describe("unrunnable options stay visible with their reason", () => {
 describe("continuing needs a runnable category and a track", () => {
   it("refuses when the selected category cannot be run", () => {
     renderSelector({ selectedCategoryId: "payments" });
-    expect(screen.getByText("See what this costs").closest("button")).toBeDisabled();
+    expect(
+      screen.getByText("See what this costs").closest("button"),
+    ).toBeDisabled();
   });
 
   it("refuses with no track chosen", () => {
     renderSelector({ selectedTrackId: null });
-    expect(screen.getByText("See what this costs").closest("button")).toBeDisabled();
+    expect(
+      screen.getByText("See what this costs").closest("button"),
+    ).toBeDisabled();
   });
 });
 

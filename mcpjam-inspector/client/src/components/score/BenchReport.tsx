@@ -451,29 +451,23 @@ export function BenchReport({
         not the same claim as "nothing was left behind", and this panel exists
         to make exactly that distinction.
       */}
-      {cleanupState.kind !== "unreported" ? (
+      {cleanupState.kind !== "unreported" &&
+      cleanupState.kind !== "nothing_created" ? (
         <div className="flex items-start gap-2 rounded-md border border-border/50 px-3 py-2 text-[11px]">
           <Trash2 className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <div>
             <div className="font-medium">
               {cleanupState.kind === "clean"
-                ? cleanupState.removed === 0
-                  ? "This run created nothing on the connector."
-                  : "Everything this run created was removed."
+                ? "Everything this run created was removed."
                 : cleanupState.kind === "residual"
                 ? "Some of what this run created could not be removed."
                 : "Cleanup had not finished when this was written."}
             </div>
             {cleanupState.kind === "residual" ? (
               <p className="text-amber-600 dark:text-amber-400">
-                {cleanupState.residue} of {cleanupState.recorded} item
-                {cleanupState.recorded === 1 ? "" : "s"} left behind, and may
+                {cleanupState.residue} item
+                {cleanupState.residue === 1 ? "" : "s"} left behind, and may
                 still be on the connector.
-              </p>
-            ) : null}
-            {cleanupState.kind === "in_progress" ? (
-              <p className="text-muted-foreground">
-                {cleanupState.removed} of {cleanupState.recorded} removed.
               </p>
             ) : null}
           </div>
