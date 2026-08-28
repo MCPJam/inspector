@@ -9,10 +9,16 @@
  * section to read this DTO.
  *
  * Storage on the backend:
+ *   - how the pool is derived: `projects.autoConnectMode` (optional;
+ *     normalized to 'all' at read time — this is what makes auto-connect
+ *     on by default)
  *   - membership: `projects.serverIds` (optional array; normalized to []
- *     at read time)
+ *     at read time). Under mode 'all' this is a materialized cache of the
+ *     project's live catalog, not an independent list.
  *   - per-server header / timeout overrides: `projectServerRefs` table
- *     keyed by (projectId, serverId)
+ *     keyed by (projectId, serverId). INDEPENDENT of membership: a server
+ *     can carry overrides while auto-connect is off, which is what makes
+ *     the toggle non-destructive.
  *
  * Scenario/eval forks do NOT read this — they keep using the per-host
  * `serverIds` / `serverConnectionOverrides` snapshotted into their
@@ -38,21 +44,51 @@ export type ProjectServerOverrideEntry = {
    * layer.
    */
   mcpProtocolVersionOverride?: McpProtocolVersion;
+  /**
+   * Per-server "never auto-connect this one". Honoured under every
+   * `autoConnectMode`, including `all`, so one chronically broken or slow
+   * server can be silenced without turning auto-connect off for the whole
+   * project.
+   *
+   * Unlike the fields above this changes MEMBERSHIP rather than connection
+   * settings: the backend subtracts opted-out servers from the pool and
+   * never fans the flag out to a host config.
+   */
+  autoConnectDisabled?: boolean;
 };
 
-/** Write payload for `ensureProjectServerConfig`. `overrides` is keyed
- * by serverId; entries for ids not in `serverIds` are rejected by the
- * backend. */
+/**
+ * How the project's auto-connect pool is derived.
+ *
+ *   all      — every live server in the project. A newly created server is
+ *              enrolled by definition, so `serverIds` is advisory on write:
+ *              the backend re-resolves the catalog.
+ *   none     — auto-connect off. Overrides survive.
+ *   selected — `serverIds` is a hand-picked list.
+ */
+export type ProjectAutoConnectMode = "all" | "none" | "selected";
+
+/** Write payload for `ensureProjectServerConfig`. `overrides` is keyed by
+ * serverId; entries for servers that are not live members of the project
+ * are rejected by the backend, but an override for a live server OUTSIDE
+ * `serverIds` is fine — configuration and enrollment are separate.
+ *
+ * Omitting `autoConnectMode` is a legacy write: the backend classifies it
+ * from the array (empty → none, whole catalog → all, else selected). New
+ * call sites should pass it explicitly. */
 export type ProjectServerConfigInput = {
   serverIds: string[];
   overrides: Record<string, ProjectServerOverrideEntry>;
+  autoConnectMode?: ProjectAutoConnectMode;
 };
 
 /** Read shape returned by `getProjectServerConfig`. Identical to the
  * input plus the projectId stamped on so callers can key caches by
- * project without an extra round trip. */
+ * project without an extra round trip. `autoConnectMode` is always
+ * concrete on a read, even for a project with no stored field. */
 export type ProjectServerConfigDto = ProjectServerConfigInput & {
   projectId: string;
+  autoConnectMode: ProjectAutoConnectMode;
 };
 
 /** Empty / "no servers configured yet" default. Use as the seed value
@@ -63,11 +99,22 @@ export const emptyProjectServerConfigInput = (): ProjectServerConfigInput => ({
 });
 
 /**
- * Provenance marker for a server that was enrolled in `serverIds` ONLY so a
- * `mcpProtocolVersionOverride` could be saved (backend validation requires
- * override keys to be members of `serverIds`). Remembered so clearing the
- * pin can undo the implicit enrollment without removing servers that were
- * already explicitly auto-connected.
+ * @deprecated The implicit enrollment this recorded no longer happens.
+ *
+ * It existed for one reason: the backend used to reject an override key
+ * that was not a member of `serverIds`, so pinning a protocol version on a
+ * server that wasn't auto-connected meant quietly enrolling it — and this
+ * record was how clearing the pin could un-enroll it again without
+ * disturbing servers the user had genuinely chosen.
+ *
+ * Overrides are now validated against the project's live catalog rather
+ * than the pool, so a pin no longer touches enrollment at all. Keeping the
+ * workaround would be worse than useless: under `autoConnectMode: 'none'`,
+ * enrolling one server to save a pin would classify the write as
+ * `'selected'` and switch auto-connect back ON for it.
+ *
+ * The type stays exported only so `ServerDetailModal`'s cache prop keeps
+ * its shape through this change; both go away with the next cleanup.
  */
 export type ProtocolOverrideAutoEnrollRecord = {
   previousServerIds: string[];
@@ -145,10 +192,16 @@ export const matchesImplicitAutoEnrollment = (
  * a still-loading `undefined` must be handled by the caller BEFORE calling
  * this — defaulting it here would wipe the project's membership list and
  * every other server's overrides). Every other server's overrides are
- * preserved verbatim, an entry that collapses to nothing is dropped
- * (mirrors backend `normalizeOverrideEntry`), and implicit enrollment /
- * un-enrollment provenance is tracked via sessionStorage plus the optional
- * in-memory `autoEnrollCache`.
+ * preserved verbatim, and an entry that collapses to nothing is dropped
+ * (mirrors backend `normalizeOverrideEntry`).
+ *
+ * Saving a pin NEVER changes enrollment. It used to have to: the backend
+ * rejected an override key outside `serverIds`, so a pin on a server that
+ * wasn't auto-connected quietly enrolled it. Overrides are now validated
+ * against the project's live catalog instead, so `serverIds` and the mode
+ * pass through untouched — which matters most for a project with
+ * auto-connect OFF, where the old behaviour would have switched it back on
+ * for that server.
  */
 export async function applyMcpProtocolVersionOverride({
   projectId,
@@ -175,49 +228,45 @@ export async function applyMcpProtocolVersionOverride({
     ...existingEntry,
     mcpProtocolVersionOverride: next,
   };
+  // `autoConnectDisabled` counts as content. Without it, clearing the
+  // protocol pin on a server the user had ALSO opted out of would drop the
+  // whole entry — silently putting that server back into auto-connect as a
+  // side effect of changing an unrelated setting.
   const hasContent =
     (updatedEntry.headersOverride &&
       Object.keys(updatedEntry.headersOverride).length > 0) ||
     updatedEntry.requestTimeoutOverride !== undefined ||
-    updatedEntry.mcpProtocolVersionOverride !== undefined;
+    updatedEntry.mcpProtocolVersionOverride !== undefined ||
+    updatedEntry.autoConnectDisabled === true;
   const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
     ...currentOverrides,
   };
   if (hasContent) nextOverrides[serverId] = updatedEntry;
   else delete nextOverrides[serverId];
-  const autoEnrollKey = getProtocolOverrideAutoEnrollKey(projectId, serverId);
-  const autoEnrollRecord =
-    autoEnrollCache?.get(autoEnrollKey) ??
-    readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-  const shouldAutoEnrollForOverride =
-    hasContent && !currentServerIds.includes(serverId);
-  const shouldUndoAutoEnroll =
-    !hasContent &&
-    autoEnrollRecord !== undefined &&
-    matchesImplicitAutoEnrollment(
-      currentServerIds,
-      serverId,
-      autoEnrollRecord.previousServerIds,
-    );
-  const nextServerIds = shouldAutoEnrollForOverride
-    ? [...currentServerIds, serverId]
-    : shouldUndoAutoEnroll
-      ? currentServerIds.filter(
-          (currentServerId) => currentServerId !== serverId,
-        )
-      : currentServerIds;
+
+  // Enrollment is carried through verbatim — a protocol pin is a
+  // configuration change, not a request to auto-connect anything.
+  //
+  // The mode is ALWAYS sent, and falls back to "all" rather than being
+  // omitted. Omitting it makes this a legacy write, which the backend
+  // classifies from the array: on a project whose config has never been
+  // written (`serverIds` still empty, mode defaulting to "all"), an
+  // omitted mode reads as "they asked for nothing" — so saving a protocol
+  // pin would turn the whole project's auto-connect OFF. "all" is the same
+  // default the backend reads, so sending it explicitly is a no-op for
+  // every project except the one this would have broken.
   await setConfig({
     projectId,
-    input: { serverIds: nextServerIds, overrides: nextOverrides },
+    input: {
+      serverIds: currentServerIds,
+      overrides: nextOverrides,
+      autoConnectMode: current?.autoConnectMode ?? "all",
+    },
   });
-  if (shouldAutoEnrollForOverride) {
-    const nextAutoEnrollRecord = {
-      previousServerIds: [...currentServerIds],
-    };
-    autoEnrollCache?.set(autoEnrollKey, nextAutoEnrollRecord);
-    writeProtocolOverrideAutoEnrollRecord(autoEnrollKey, nextAutoEnrollRecord);
-  } else if (!hasContent && autoEnrollRecord !== undefined) {
-    autoEnrollCache?.delete(autoEnrollKey);
-    removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-  }
+
+  // Clear any provenance left by the old implicit-enrollment behaviour so
+  // a session that straddles the change doesn't keep a stale marker.
+  const autoEnrollKey = getProtocolOverrideAutoEnrollKey(projectId, serverId);
+  autoEnrollCache?.delete(autoEnrollKey);
+  removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
 }

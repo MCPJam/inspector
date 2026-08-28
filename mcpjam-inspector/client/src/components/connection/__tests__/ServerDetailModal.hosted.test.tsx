@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockFetchHostedOAuthTokens = vi.hoisted(() => vi.fn());
@@ -118,6 +119,74 @@ describe("ServerDetailModal hosted reconnect", () => {
     expect(onReconnect).toHaveBeenCalledWith("test-server", {
       allowInteractiveOAuthFlow: true,
     });
+  });
+
+  it("blocks the connect switch for transports the cloud cannot reach", () => {
+    // The card's switch already refused these; this modal's switch was a
+    // separate control that never learned the rule, so the same impossible
+    // attempt could still be started from the detail view.
+    for (const [label, config] of [
+      ["insecure http", { url: "http://example.com/mcp" }],
+      ["legacy stdio", { command: "npx", args: ["-y", "some-server"] }],
+    ] as const) {
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      const { unmount } = render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ name: label, config: config as any })}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      // Enabled, not disabled — see the component comment. A disabled
+      // switch swallows the click and explains nothing; this one explains.
+      fireEvent.click(screen.getByRole("switch"));
+      expect(onReconnect).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+      unmount();
+      vi.clearAllMocks();
+    }
+  });
+
+  it("still disconnects an unsupported server that is somehow connected", () => {
+    // The reason the guard cannot simply disable the switch. Blocking the
+    // control blocks BOTH directions, and a connected server with no way
+    // to turn it off is a worse state than the one the guard prevents.
+    // Only connecting is impossible here; disconnecting always works.
+    const onDisconnect = vi.fn();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          name: "legacy-stdio",
+          connectionStatus: "connected",
+          config: { command: "npx", args: ["-y", "some-server"] } as any,
+        })}
+        onDisconnect={onDisconnect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+
+    expect(onDisconnect).toHaveBeenCalledWith("legacy-stdio");
+  });
+
+  it("shows the retry count, matching the card", () => {
+    // One server reading `Failed (3)` on its card and a bare `Failed` in
+    // its own modal is the kind of disagreement that makes a user trust
+    // neither number.
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          connectionStatus: "failed",
+          retryCount: 3,
+          lastError: "fetch failed",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Failed (3)")).toBeInTheDocument();
   });
 
   it("reveals vault-backed OAuth tokens on demand without writing localStorage", async () => {

@@ -161,6 +161,22 @@ vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
   resetAutoConnectAttempts: vi.fn(),
 }));
 
+// ServersTab reads the per-user auto-connect opt-out directly (it renders
+// the "On this device" switch beside the project-wide one), so it now needs
+// the preferences store. The auto-connect hook is mocked above, which is why
+// this file never needed the real provider before.
+const mockPreferencesState = {
+  autoConnectServersEnabled: true,
+  setAutoConnectServersEnabled: vi.fn((next: boolean) => {
+    mockPreferencesState.autoConnectServersEnabled = next;
+  }),
+};
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: unknown) => unknown) =>
+    selector(mockPreferencesState),
+}));
+
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
   return {

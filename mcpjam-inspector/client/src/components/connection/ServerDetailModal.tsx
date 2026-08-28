@@ -32,7 +32,14 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { getConnectionStatusMeta } from "./server-card-utils";
+import {
+  formatConnectionStatusLabel,
+  getConnectionStatusMeta,
+} from "./server-card-utils";
+import {
+  getHostedUnsupportedReason,
+  hostedUnsupportedExplanation,
+} from "@/lib/hosted-server-support";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -340,8 +347,9 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  const { indicatorColor } = getConnectionStatusMeta(server.connectionStatus);
+  // Null unless this deployment structurally cannot run this transport.
+  const hostedUnsupportedReason = getHostedUnsupportedReason(server.config);
 
   useEffect(() => {
     let isCancelled = false;
@@ -614,11 +622,19 @@ export function ServerDetailModal({
                 <span>
                   {isReconnecting
                     ? "Connecting..."
-                    : server.connectionStatus === "failed"
-                    ? `${connectionStatusLabel} (${server.retryCount})`
-                    : connectionStatusLabel}
+                    : formatConnectionStatusLabel(
+                        server.connectionStatus,
+                        server.retryCount
+                      )}
                 </span>
               </span>
+              {/* Stays ENABLED for a transport this deployment cannot
+                  reach, matching the server card: a disabled switch would
+                  swallow the click and explain nothing, and — worse here —
+                  it would also block the DISCONNECT direction, stranding a
+                  server that is somehow already connected with no way to
+                  turn it off. Only the connect direction is impossible, so
+                  only that direction is guarded. */}
               <Switch
                 checked={isConnected}
                 disabled={
@@ -629,9 +645,15 @@ export function ServerDetailModal({
                 onCheckedChange={(checked) => {
                   if (!checked) {
                     handleDisconnect();
-                  } else {
-                    void handleConnect(getSwitchReconnectOptions());
+                    return;
                   }
+                  if (hostedUnsupportedReason) {
+                    toast.error(
+                      hostedUnsupportedExplanation(hostedUnsupportedReason)
+                    );
+                    return;
+                  }
+                  void handleConnect(getSwitchReconnectOptions());
                 }}
                 className="cursor-pointer scale-75"
               />

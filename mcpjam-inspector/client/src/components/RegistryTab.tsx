@@ -259,8 +259,12 @@ export function RegistryTab({
     const age = Date.now() - pending.createdAt;
 
     if (pendingServer) {
+      // Terminal outcomes clear the marker. `needs-auth` counts: the quick
+      // connect is over and the ball is in the user's court, so holding the
+      // pending state open would just keep a spinner running at them.
       if (
         pendingServer.connectionStatus === "failed" ||
+        pendingServer.connectionStatus === "needs-auth" ||
         pendingServer.connectionStatus === "disconnected"
       ) {
         clearPendingQuickConnect();
@@ -403,6 +407,12 @@ export function RegistryTab({
         return "connecting";
       }
       if (live?.connectionStatus === "failed") return "error";
+      // `needs-auth` deliberately does NOT map to "error" — it falls through
+      // to "added", which renders the ordinary Connect affordance. That is
+      // exactly the right next step: clicking it runs the interactive
+      // connect, which is the OAuth flow this server is waiting for.
+      // Calling it an error would put a red card on a server that is one
+      // click from working.
       // Coming back from an OAuth redirect, `connectingDirectoryIds` is gone
       // (the component remounted) and the live map has not caught up yet — so
       // without this the card would briefly offer Connect again on a server

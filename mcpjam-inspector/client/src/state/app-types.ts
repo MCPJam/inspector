@@ -14,12 +14,30 @@ import type {
 } from "@/lib/client-config";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
+/**
+ * Runtime connection state for a single server.
+ *
+ * `needs-auth` is a TERMINAL, ACTIONABLE state — not an error. It means the
+ * server is reachable and correctly configured but has no live credentials,
+ * so only the user can finish the job (by authorizing). Painting that as
+ * `failed` was the single largest source of red in the Servers tab: every
+ * OAuth server without tokens rendered a red dot, an Error pill, an
+ * ErrorCard and a troubleshooting link for a situation where nothing is
+ * broken. Keep the distinction sharp when adding branches:
+ *
+ *   failed      — broken; a human must fix a config or the server itself
+ *   needs-auth  — working; a human must sign in
+ *
+ * A server that still 401s AFTER a completed OAuth flow is `failed`, not
+ * `needs-auth`: signing in again cannot help, so it is a config problem.
+ */
 export type ConnectionStatus =
   | "connected"
   | "connecting"
   | "failed"
   | "disconnected"
-  | "oauth-flow";
+  | "oauth-flow"
+  | "needs-auth";
 
 export type ProjectVisibility = "public" | "private";
 
@@ -241,6 +259,38 @@ export type AppAction =
        */
       normalized?: NormalizedError;
       oauthTrace?: OAuthTrace;
+    }
+  | {
+      /**
+       * Terminal "the user must sign in" outcome. Same payload shape as
+       * `CONNECT_FAILURE` — the message and trace are still worth keeping
+       * for the detail view — but it lands the server on `needs-auth`
+       * rather than `failed`, so no error affordance renders.
+       *
+       * Dispatch this whenever the ONLY thing standing between us and a
+       * connection is a human authorizing. Dispatch `CONNECT_FAILURE`
+       * when a second sign-in would not help.
+       */
+      type: "CONNECT_NEEDS_AUTH";
+      name: string;
+      error: string;
+      normalized?: NormalizedError;
+      oauthTrace?: OAuthTrace;
+    }
+  | {
+      /**
+       * A transport-shaped failure is about to be retried inside the same
+       * logical auto-connect attempt. Increments `retryCount` — the first
+       * thing that ever has — and deliberately leaves `connectionStatus`
+       * alone. The counter is reset by `CONNECT_SUCCESS`.
+       *
+       * The row therefore stays on `failed` through the backoff window.
+       * That is the honest state: the last attempt did fail, and nothing
+       * is in flight until the next one starts. See the reducer case for
+       * why showing `connecting` here actively breaks the retry.
+       */
+      type: "CONNECT_RETRY_SCHEDULED";
+      name: string;
     }
   | {
       type: "RECONNECT_REQUEST";

@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
+import { isHostedUnsupportedServer } from "@/lib/hosted-server-support";
+import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
+import type { ServerWithName } from "@/state/app-types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useServerActions } from "@/state/server-actions-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -41,22 +44,59 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The one surviving toast on this path, and it is deliberately hard to
+ * reach: only a MULTI-server failure raises it. Switching hosts is routine
+ * navigation, and a single flaky server interrupting that navigation with a
+ * toast was most of the noise this hook used to generate — the row already
+ * animates through `connecting` and lands on its own status, which is the
+ * progress indicator. Several servers failing at once is different: that
+ * usually means the network or the whole backend, not one bad URL, and it
+ * is worth saying out loud.
+ */
 function reconnectFailureToastMessage(count: number): string {
-  return count === 1
-    ? "Failed to reconnect 1 server."
-    : `Failed to reconnect ${count} servers.`;
+  return `Failed to reconnect ${count} servers.`;
 }
 
-function reconnectingToastMessage(count: number): string {
-  return count === 1
-    ? "Reconnecting 1 server…"
-    : `Reconnecting ${count} servers…`;
-}
+/**
+ * Backoff between retries WITHIN one logical auto-connect attempt.
+ *
+ * Three tries across about fifteen seconds: long enough to ride out a
+ * server that is still booting (the common case — `npm run dev` in the
+ * next terminal), short enough that a genuinely dead URL settles into red
+ * while the user is still looking at the screen.
+ */
+const RETRY_BACKOFF_MS = [1_000, 4_000, 10_000] as const;
 
-function reconnectSuccessToastMessage(count: number): string {
-  return count === 1
-    ? "Reconnected 1 server."
-    : `Reconnected ${count} servers.`;
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+/**
+ * Whether a failure is worth another try.
+ *
+ * Only transport-shaped ones are. `ensureServersReady` already separates
+ * the outcomes a retry cannot change into their own buckets — a server in
+ * `reauthServerNames` needs a human, one in `missingServerNames` does not
+ * exist — so what reaches here is the `failed` bucket, and the remaining
+ * distinction is "the network was briefly unhappy" versus "this
+ * configuration is wrong".
+ *
+ * A protocol-version pin mismatch is the clearest case of the latter: the
+ * server has said it does not speak the version we pinned, and it will say
+ * exactly the same thing in a second. Retrying only delays the card that
+ * offers to change the pin.
+ */
+function isRetriableFailure(server: ServerWithName | undefined): boolean {
+  if (!server) return false;
+  if (isHostedUnsupportedServer(server.config)) return false;
+  if (
+    isProtocolVersionPinFailure(server.lastNormalizedError, server.lastError)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
@@ -153,11 +193,59 @@ export function useAutoConnectProjectServers({
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const { ensureServersReady, reconnectServer } = useServerActions();
+  const { ensureServersReady, reconnectServer, markServerRetrying } =
+    useServerActions();
   const logger = useLogger("AutoConnectProjectServers");
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
+  // Live view of runtime server state for the retry loop. A ref, not the
+  // state object itself: the loop needs the error a failed attempt JUST
+  // wrote (to decide whether retrying could help), and reading that through
+  // the effect's dependencies would re-fire the batch on every status
+  // change.
+  const latestServersRef = useRef(sharedAppState.servers);
+  latestServersRef.current = sharedAppState.servers;
+
   const scopeKey = hostScopeKey ?? "-";
+
+  /**
+   * Live view of "should we still be auto-connecting, and to what".
+   *
+   * A backoff window is up to ten seconds of wall time, and the user can
+   * act during it: flip the per-device auto-connect switch off, or change
+   * which servers the host requires. Neither of those bumps
+   * `attemptTokenRef` — that token is for scope changes — so without these
+   * the loop would finish its wait and dial anyway, contradicting an
+   * explicit action the user took while it slept.
+   *
+   * Refs rather than effect dependencies for the same reason as
+   * `latestServersRef`: reading them through the deps would re-fire the
+   * batch on every unrelated preference or host edit.
+   */
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+
+  /**
+   * Lifetime token for an in-flight attempt, bumped ONLY when the work
+   * genuinely no longer applies: the project or host scope changed, or the
+   * surface unmounted.
+   *
+   * The retry loop cannot use the effect's own cleanup for this, because
+   * the effect is keyed on `candidateNamesKey` and the loop's very first
+   * action invalidates that key: `ensureServersReady` moves each server to
+   * `connecting`, the candidate filter drops `connecting` servers, the key
+   * changes, React runs the cleanup — and the loop would cancel itself
+   * before scheduling a single retry. The batch is already deduped by
+   * `markAttempted`, so a re-render mid-flight needs no cancellation; only
+   * a real scope change does.
+   */
+  const attemptTokenRef = useRef(0);
+  useEffect(() => {
+    return () => {
+      attemptTokenRef.current += 1;
+    };
+  }, [projectId, scopeKey]);
+
   // Stable key for "what the active host wants selected". Drives the
   // playground/chat multi-select sync below, independent of connect /
   // disconnect dedupe.
@@ -169,6 +257,10 @@ export function useAutoConnectProjectServers({
     () => (requiredNamesKey ? requiredNamesKey.split("\0") : []),
     [requiredNamesKey]
   );
+
+  /** Companion to `enabledRef` — see the note there. */
+  const requiredNamesRef = useRef(requiredNames);
+  requiredNamesRef.current = requiredNames;
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
@@ -183,12 +275,26 @@ export function useAutoConnectProjectServers({
       return null;
     }
     const candidates = requiredNames.filter((name) => {
-      const status = sharedAppState.servers[name]?.connectionStatus;
-      return (
-        status !== "connected" &&
-        status !== "connecting" &&
-        status !== "oauth-flow"
-      );
+      const server = sharedAppState.servers[name];
+      const status = server?.connectionStatus;
+      if (
+        status === "connected" ||
+        status === "connecting" ||
+        status === "oauth-flow"
+      ) {
+        return false;
+      }
+      // Waiting on a human. A second non-interactive attempt takes the same
+      // 401 and lands back here, so it can only re-run the work that
+      // produced the amber card — it cannot produce a different answer. The
+      // Authorize button on the card is the way out of this state.
+      if (status === "needs-auth") return false;
+      // Impossible in this deployment (hosted stdio, hosted `http://`).
+      // Excluded from the batch entirely rather than attempted and painted
+      // red: there is no retry that fixes "the cloud cannot run your local
+      // command". The card says so with a neutral chip instead.
+      if (server && isHostedUnsupportedServer(server.config)) return false;
+      return true;
     });
     if (candidates.length === 0) return null;
     // Stable key: sorted and joined with NUL so reordering doesn't trigger a
@@ -232,15 +338,11 @@ export function useAutoConnectProjectServers({
       .map(([name]) => name);
     if (connectedNow.length === 0) return;
 
-    // Surface the client-switch recycle as one progress toast so the dev can
-    // see it happening: a "Reconnecting…" spinner flips in place to
-    // "Reconnected" (or a failure message) once the batch settles. Reusing the
-    // same toast id keeps the loading → result transition on a single toast
-    // instead of stacking a second one.
-    const toastId = toast.loading(
-      reconnectingToastMessage(connectedNow.length)
-    );
-
+    // No progress toast. This fires on every host switch — routine
+    // navigation — and a "Reconnecting N servers…" spinner flipping to
+    // "Reconnected N servers." announced work the user did not ask about
+    // and cannot act on. The rows animate through `connecting` on their
+    // own; that IS the progress indicator.
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -257,19 +359,16 @@ export function useAutoConnectProjectServers({
         ];
       });
 
-      if (failures.length === 0) {
-        toast.success(reconnectSuccessToastMessage(connectedNow.length), {
-          id: toastId,
-        });
-        return;
-      }
-
       for (const failure of failures) {
         logger.error("Failed to reconnect server after client switch", failure);
       }
-      toast.error(reconnectFailureToastMessage(failures.length), {
-        id: toastId,
-      });
+
+      // Only a multi-server failure is loud enough to be worth a toast —
+      // see `reconnectFailureToastMessage`. One server failing leaves its
+      // own row red, which is where the user is already looking.
+      if (failures.length > 1) {
+        toast.error(reconnectFailureToastMessage(failures.length));
+      }
     });
     // `sharedAppState.servers` is read via closure but excluded from deps on
     // purpose: this must fire only on scope transitions, not whenever the
@@ -300,10 +399,99 @@ export function useAutoConnectProjectServers({
       markAttempted(projectId, scopeKey, `srv:${name}`);
     }
 
-    let cancelled = false;
-    ensureServersReady(fresh).then(
+    const attemptToken = attemptTokenRef.current;
+    const isAbandoned = () => attemptTokenRef.current !== attemptToken;
+
+    /**
+     * One logical attempt, internally retried.
+     *
+     * The retries live INSIDE the attempt on purpose. `markAttempted` above
+     * has already run — deliberately, before any connecting — so that a
+     * failure is never auto-retried later; that is the
+     * "refresh-keeps-failing" guard this hook's header describes, and
+     * relaxing it to get retries would bring the storm back. Retrying here
+     * instead means a server gets its three chances and then genuinely
+     * settles, with the dedupe contract untouched.
+     */
+    const runAttempt = async () => {
+      let result = await ensureServersReady(fresh);
+      if (isAbandoned()) return result;
+
+      for (const backoffMs of RETRY_BACKOFF_MS) {
+        // Yield a macrotask so React has committed the failure this round
+        // just dispatched. `isRetriableFailure` reads `lastError` from the
+        // rendered state, and without this the FIRST check would run
+        // against the state as it was before the attempt — reading a
+        // not-yet-written protocol-pin failure as retriable and spending a
+        // round on a server that has already told us the answer.
+        await sleep(0);
+        if (isAbandoned()) return result;
+
+        const retriable = result.failedServerNames.filter((name) =>
+          isRetriableFailure(latestServersRef.current[name])
+        );
+        if (retriable.length === 0) break;
+
+        // Count the attempt so the card reads "Failed (2)" instead of the
+        // same bare "Failed" three times over. This does NOT change the
+        // server's status: the row stays `failed` for the backoff window,
+        // which is the truth — the last attempt failed and nothing is in
+        // flight yet. Parking it on `connecting` instead looks nicer and
+        // breaks the retry outright, because `ensureServersReady` reads
+        // that status as "an operation already owns this server" and waits
+        // on an operation that does not exist.
+        for (const name of retriable) markServerRetrying?.(name);
+
+        await sleep(backoffMs);
+        if (isAbandoned()) return result;
+
+        // Re-check eligibility on the far side of the wait. The scope token
+        // covers project and host changes, but the user can also turn
+        // auto-connect off or change what the host requires during those
+        // seconds — and dialing anyway would override an explicit action
+        // they took while we slept.
+        if (!enabledRef.current) return result;
+        const stillRequired = new Set(requiredNamesRef.current);
+        const stillRetriable = retriable.filter((name) =>
+          stillRequired.has(name)
+        );
+        if (stillRetriable.length === 0) return result;
+
+        const retryResult = await ensureServersReady(stillRetriable);
+        if (isAbandoned()) return retryResult;
+
+        // Fold the retry's outcome back into the batch result: servers not
+        // in this round keep whatever the previous round decided, and the
+        // ones we retried take their new answer.
+        const retriedSet = new Set(stillRetriable);
+        const keep = <T extends string>(names: T[]) =>
+          names.filter((name) => !retriedSet.has(name));
+        result = {
+          readyServerNames: [
+            ...keep(result.readyServerNames),
+            ...retryResult.readyServerNames,
+          ],
+          missingServerNames: [
+            ...keep(result.missingServerNames),
+            ...retryResult.missingServerNames,
+          ],
+          failedServerNames: [
+            ...keep(result.failedServerNames),
+            ...retryResult.failedServerNames,
+          ],
+          reauthServerNames: [
+            ...keep(result.reauthServerNames),
+            ...retryResult.reauthServerNames,
+          ],
+        };
+      }
+
+      return result;
+    };
+
+    runAttempt().then(
       (result) => {
-        if (cancelled) return;
+        if (isAbandoned()) return;
         lastResultRef.current = result;
       },
       // Swallow rejections — `markAttempted` already ran, so a thrown error
@@ -315,10 +503,18 @@ export function useAutoConnectProjectServers({
         // intentionally empty
       }
     );
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, projectId, scopeKey, candidateNamesKey, ensureServersReady]);
+    // NO cleanup that cancels the attempt. See `attemptTokenRef`: this
+    // effect is keyed on `candidateNamesKey`, which the attempt itself
+    // invalidates the moment it moves a server to `connecting`. Cancelling
+    // here would kill every retry before the first backoff elapsed.
+  }, [
+    enabled,
+    projectId,
+    scopeKey,
+    candidateNamesKey,
+    ensureServersReady,
+    markServerRetrying,
+  ]);
 
   return { enabled, lastResult: lastResultRef.current };
 }

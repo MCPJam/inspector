@@ -259,6 +259,63 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "CONNECT_NEEDS_AUTH": {
+      // Sibling of CONNECT_FAILURE with one difference that matters: the
+      // status. We still keep `lastError` / `lastNormalizedError` /
+      // `lastOAuthTrace` because the detail modal and the OAuth trace
+      // viewer read them, but `needs-auth` is not an error state, so no
+      // red affordance keys off it.
+      const activeProject = state.projects[state.activeProjectId];
+      const existing =
+        state.servers[action.name] ?? activeProject?.servers[action.name];
+      if (!existing) return state;
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: setStatus(existing, "needs-auth", {
+            retryCount: existing.retryCount,
+            lastError: action.error,
+            lastNormalizedError: resolveNormalized(
+              action.error,
+              action.normalized
+            ),
+            lastOAuthTrace: action.oauthTrace,
+          }),
+        },
+      };
+    }
+
+    case "CONNECT_RETRY_SCHEDULED": {
+      const activeProject = state.projects[state.activeProjectId];
+      const existing =
+        state.servers[action.name] ?? activeProject?.servers[action.name];
+      if (!existing) return state;
+      // COUNTS the attempt; deliberately does NOT touch `connectionStatus`.
+      //
+      // An earlier version set `connecting` here so the row would not flash
+      // red between attempts. That broke the retry outright:
+      // `ensureServersReady` treats `connecting` as "an operation is
+      // already running" and waits on `waitForServerReconnectOutcome`
+      // instead of reconnecting — but nothing owned that synthetic state,
+      // so every retry burned the poll's full 15s timeout, made no network
+      // attempt, and left the server stuck on `connecting`.
+      //
+      // The connect path owns `connecting`: `ensureServersReady` dispatches
+      // RECONNECT_REQUEST for the duration of each real attempt. The cost
+      // is that the row does show `failed` during the backoff windows.
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: {
+            ...existing,
+            retryCount: existing.retryCount + 1,
+          },
+        },
+      };
+    }
+
     case "RECONNECT_REQUEST": {
       // Check state.servers first, then fallback to project servers (for cloud-synced servers)
       // If server doesn't exist anywhere, create it (for servers from Convex remote projects)
@@ -343,8 +400,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const map = new Map(action.servers.map((s) => [s.id, s]));
       const updated: AppState["servers"] = {};
       for (const [name, server] of Object.entries(state.servers)) {
-        const inFlight = server.connectionStatus === "connecting";
-        if (inFlight) {
+        // Statuses the agent list cannot express, so a sync must not
+        // overwrite them. The agent only ever reports
+        // connected/connecting/disconnected (see the SDK's
+        // `MCPConnectionStatus`), and a server absent from its list is
+        // forced to "disconnected" below — which would silently erase a
+        // client-side `needs-auth` (or an in-flight browser OAuth
+        // redirect) on the next sync tick, repainting a "Sign in" card
+        // as an idle gray one seconds after we asked the user to act.
+        const clientOwnedStatus =
+          server.connectionStatus === "connecting" ||
+          server.connectionStatus === "oauth-flow" ||
+          server.connectionStatus === "needs-auth";
+        if (clientOwnedStatus) {
           updated[name] = server;
           continue;
         }
