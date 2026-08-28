@@ -68,8 +68,8 @@ function job(overrides?: Partial<ClaimedBenchmarkJob>): ClaimedBenchmarkJob {
     roster: [
       // A pillar this lane does not own; it must be left entirely alone.
       {
-        evidenceKey: "conformance",
-        kind: "conformance_run",
+        evidenceKey: "claude-readiness",
+        kind: "claude_readiness",
         status: "expected",
         required: true,
       },
@@ -701,7 +701,7 @@ describe("executeClaimedJob", () => {
     await executeClaimedJob(job(), CLAIMED_BY, deps);
 
     expect(recorded.attached.map((a) => a.evidenceKey)).not.toContain(
-      "conformance",
+      "claude-readiness",
     );
   });
 });
@@ -1140,6 +1140,49 @@ describe("post-claim routes carry the execution grant", () => {
       (c) => c.path === "/internal/v1/bench/runs/execution-complete",
     );
     expect(complete?.grant).toBe("grant-token");
+  });
+
+  it("attaches a conformance child as the conformance variant, with kind", async () => {
+    // THE FINDING THIS LOCKS: the conformance payload omitted `kind`, so it
+    // had no discriminator at all and `parseEvidenceAttachment` answered 400
+    // — every persisted conformance child was rejected and the job stayed in
+    // the unattached/retry path.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const claimed = job();
+    claimed.roster = [
+      {
+        evidenceKey: "conformance",
+        kind: "conformance_run",
+        status: "expected",
+        required: true,
+        conformance: { suites: ["protocol"] },
+      },
+    ];
+
+    await executeClaimedJob(claimed, CLAIMED_BY, {
+      runConformanceChild: async () => ({ runId: "conf-1" }),
+      heartbeat: async () => ({ leaseOk: true }),
+      heartbeatIntervalMs: 20_000,
+    });
+
+    const attach = fetchMock.mock.calls
+      .map((call: any[]) => ({
+        path: new URL(call[0] as string).pathname,
+        grant: call[1].headers["x-mcpjam-benchmark-grant"] as string,
+        body: JSON.parse(call[1].body as string),
+      }))
+      .find((c) => c.path === "/internal/v1/bench/evidence/attach");
+
+    expect(attach?.grant).toBe("grant-token");
+    expect(attach?.body).toEqual({
+      benchmarkRunId: "brun-1",
+      kind: "conformance",
+      conformanceRunId: "conf-1",
+    });
   });
 
   it("attaches an eval child as the eval_cell variant the parser accepts", async () => {
