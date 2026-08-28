@@ -353,6 +353,32 @@ describe("POST /api/web/bench/preflight", () => {
     );
   });
 
+  it("counts the snapshot array brackets at the exact byte boundary", async () => {
+    // `{"name":"..."}` is 11 bytes plus the name. With the two array
+    // brackets, this lands exactly on SNAPSHOT_MAX_BYTES and must be retained.
+    const name = "x".repeat(512 * 1024 - 2 - 11);
+    listAllToolsMock.mockResolvedValue({
+      tools: [{ name }],
+      toolsMetadata: {},
+    });
+    const fetchMock = jsonOk({ receiptId: "rcpt_1" });
+    global.fetch = fetchMock as any;
+
+    const app = await freshApp();
+    const res = await postPreflight(app);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      toolCount: 1,
+      toolSnapshotTruncated: false,
+    });
+    const [, init] = classifyCall(fetchMock);
+    const sent = JSON.parse(init.body as string);
+    expect(Buffer.byteLength(JSON.stringify(sent.toolSnapshot.tools), "utf8")).toBe(
+      512 * 1024,
+    );
+  });
+
   it("400s a body with no serverId without dialing anything", async () => {
     const fetchMock = vi.fn();
     global.fetch = fetchMock as any;
