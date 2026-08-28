@@ -12,20 +12,29 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
  */
 function controllableExecutor() {
   const calls: BrowserCommand[] = [];
-  const resolvers = new Map<string, (r: BrowserCommandResult) => void>();
+  const pending = new Map<
+    string,
+    { resolve: (r: BrowserCommandResult) => void; reject: (e: unknown) => void }
+  >();
   const executor: CommandExecutor = (command) => {
     calls.push(command);
-    return new Promise<BrowserCommandResult>((resolve) => {
-      resolvers.set(command.commandId, resolve);
+    return new Promise<BrowserCommandResult>((resolve, reject) => {
+      pending.set(command.commandId, { resolve, reject });
     });
   };
-  async function release(commandId: string, result: BrowserCommandResult) {
-    for (let i = 0; i < 100 && !resolvers.has(commandId); i++) await tick();
-    const resolve = resolvers.get(commandId);
-    if (!resolve) throw new Error(`executor never called for ${commandId}`);
-    resolve(result);
+  async function waitForCall(commandId: string) {
+    for (let i = 0; i < 100 && !pending.has(commandId); i++) await tick();
+    const p = pending.get(commandId);
+    if (!p) throw new Error(`executor never called for ${commandId}`);
+    return p;
   }
-  return { executor, calls, release };
+  async function release(commandId: string, result: BrowserCommandResult) {
+    (await waitForCall(commandId)).resolve(result);
+  }
+  async function throwFor(commandId: string, error: unknown) {
+    (await waitForCall(commandId)).reject(error);
+  }
+  return { executor, calls, release, throwFor };
 }
 
 function cmd(
@@ -145,6 +154,77 @@ describe("browserd CommandQueue", () => {
     // A duplicate gets the same recorded failure, not a re-throw or re-run.
     const dup = await q.submit(cmd("c1"));
     expect(dup).toMatchObject({ result: { ok: false, error: "cdp exploded" } });
+  });
+
+  it("gives a duplicate the SAME normalized result when the executor throws (rule 2, P1 regression)", async () => {
+    // The bug this guards: a duplicate attached while running used to await the
+    // raw rejected promise and reject, while the original caller caught the same
+    // failure and got a normalized {ok:false} outcome — two callers, two answers.
+    const { executor, calls, throwFor } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a");
+    const first = q.submit(cmd("c1"));
+    await tick(); // executor invoked for c1
+    const dup = q.submit(cmd("c1")); // attached while running
+    await throwFor("c1", new Error("cdp exploded"));
+    const [a, b] = await Promise.all([first, dup]); // neither rejects
+    expect(a).toMatchObject({
+      status: "ok",
+      result: { ok: false, error: "cdp exploded" },
+    });
+    expect(b).toEqual(a);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects nonsensical constructor limits instead of looping forever", () => {
+    const { executor } = controllableExecutor();
+    expect(() => new CommandQueue(executor, "b", { maxRetained: -1 })).toThrow(
+      RangeError,
+    );
+    expect(() => new CommandQueue(executor, "b", { maxRetained: 1.5 })).toThrow(
+      RangeError,
+    );
+    expect(
+      () => new CommandQueue(executor, "b", { perQueueDepthCap: 0 }),
+    ).toThrow(RangeError);
+    expect(() => new CommandQueue(executor, "b", { retainTtlMs: -1 })).toThrow(
+      RangeError,
+    );
+    expect(
+      () => new CommandQueue(executor, "b", { retainTtlMs: Infinity }),
+    ).toThrow(RangeError);
+  });
+
+  it("evicts least-recently-USED, not merely oldest-settled (rule 3 recency)", async () => {
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", { maxRetained: 2 });
+    for (const id of ["c1", "c2"]) {
+      const p = q.submit(cmd(id));
+      await release(id, { ok: true, output: id });
+      await p;
+    }
+    // Touch c1 so c2 is now the least-recently-used of the two.
+    expect(await q.submit(cmd("c1"))).toMatchObject({ status: "ok" });
+    const third = q.submit(cmd("c3"));
+    await release("c3", { ok: true, output: "c3" });
+    await third; // settling c3 must evict c2 (LRU), NOT c1 (FIFO would evict c1)
+    expect(await q.submit(cmd("c1"))).toMatchObject({ status: "ok" });
+    expect(await q.submit(cmd("c2"))).toEqual({
+      status: "expired",
+      bootId: "boot-a",
+    });
+  });
+
+  it("bounds the tombstone set so a long-lived daemon cannot leak memory", async () => {
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", { maxRetained: 2 });
+    for (let i = 0; i < 50; i++) {
+      const id = `c${i}`;
+      const p = q.submit(cmd(id));
+      await release(id, { ok: true, output: i });
+      await p;
+    }
+    expect(q.retainedCount).toBeLessThanOrEqual(2);
+    expect(q.tombstoneCount).toBeLessThanOrEqual(2); // bounded by maxRetained
   });
 
   it("does not let one command's failure stall the rest of its tab's FIFO", async () => {
