@@ -13,9 +13,7 @@ function section(
   return { coverage: "eligible", score: 80, ...overrides };
 }
 
-function sectioned(
-  overrides: Partial<BenchScorecard> = {},
-): BenchScorecard {
+function sectioned(overrides: Partial<BenchScorecard> = {}): BenchScorecard {
   return {
     status: "scored",
     scores: { core: 90, category: 70, composite: 80 },
@@ -249,18 +247,58 @@ describe("the two reruns read differently", () => {
   });
 });
 
+/**
+ * The ledger is `{recorded, removed, residue}` and carries no status word.
+ * These fixtures used to build a `{status, residueCount, detail}` shape that
+ * nothing produces, which meant the panel's "everything was removed" default
+ * was what a real payload would always have rendered.
+ */
 describe("cleanup is reported either way", () => {
   it("names what was left behind", () => {
     render(
       <BenchReport
         result={result(sectioned(), {
-          cleanup: { status: "residue", residueCount: 2, detail: "Two pages." },
+          cleanup: { recorded: 3, removed: 1, residue: 2 },
+        })}
+      />,
+    );
+    expect(screen.getByText(/could not be removed/)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 3 items left behind/)).toBeInTheDocument();
+  });
+
+  it("claims removal only when everything recorded came back", () => {
+    render(
+      <BenchReport
+        result={result(sectioned(), {
+          cleanup: { recorded: 2, removed: 2, residue: 0 },
         })}
       />,
     );
     expect(
-      screen.getByText(/could not be removed/),
+      screen.getByText("Everything this run created was removed."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/2 items left behind\./)).toBeInTheDocument();
+  });
+
+  it("does not claim removal while the counts still disagree", () => {
+    render(
+      <BenchReport
+        result={result(sectioned(), {
+          cleanup: { recorded: 3, removed: 1, residue: 0 },
+        })}
+      />,
+    );
+    expect(screen.getByText(/Cleanup had not finished/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Everything this run created was removed."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says nothing at all when no ledger was reported", () => {
+    // Silence, not reassurance: "no cleanup reported" and "nothing was left
+    // behind" are different claims, and this panel exists to keep them apart.
+    render(<BenchReport result={result(sectioned())} />);
+    expect(
+      screen.queryByText(/removed|left behind|Cleanup/),
+    ).not.toBeInTheDocument();
   });
 });

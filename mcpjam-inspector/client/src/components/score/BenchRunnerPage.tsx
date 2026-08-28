@@ -37,6 +37,7 @@ import { BenchQuoteScreen } from "./BenchQuoteScreen";
 import { BenchReport } from "./BenchReport";
 import { BenchRunProgress } from "./BenchRunProgress";
 import { benchPhaseForRun, shouldPollBenchRun } from "./bench-run-phase";
+import { benchCancelledCleanupMessage } from "./bench-cleanup-message";
 import {
   forgetBenchResultSecret,
   readBenchResultSecret,
@@ -675,7 +676,7 @@ export function BenchRunnerPage({
                   every check produces a completed run holding a bad score. */}
               {run.failureMessage ??
                 (run.status === "cancelled"
-                  ? "Anything it wrote to your connector was still cleaned up."
+                  ? benchCancelledCleanupMessage(run.cleanup)
                   : "This says nothing about your connector — it means we could not interpret what came back.")}
             </p>
           </div>

@@ -16,10 +16,8 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2 } from "lucide-react";
 import type { BenchRun } from "@/lib/apis/bench-api";
-import {
-  benchProgressFraction,
-  benchProgressLabel,
-} from "./bench-run-phase";
+import { benchCleanupState } from "@/lib/apis/bench-api";
+import { benchProgressFraction, benchProgressLabel } from "./bench-run-phase";
 
 function formatMicros(micros: number | undefined): string | null {
   if (typeof micros !== "number" || !Number.isFinite(micros)) return null;
@@ -88,7 +86,12 @@ export function BenchRunProgress({
         </p>
       ) : null}
 
-      {run.cleanup?.status === "running" ? (
+      {/*
+        Derived from the counts — the ledger has no `status` word, so
+        `cleanup?.status === "running"` was a comparison that could never be
+        true and this line never rendered.
+      */}
+      {benchCleanupState(run.cleanup).kind === "in_progress" ? (
         <p className="text-[11px] text-muted-foreground">
           Removing everything this run created.
         </p>

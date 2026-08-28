@@ -347,10 +347,44 @@ export interface BenchRunBudget {
  * any model call, so budget exhaustion never skips it, and a visitor who let
  * us write into their tenant is owed the answer either way.
  */
+/**
+ * The artifact ledger, exactly as `internalHostedBenchmarkRunStatus` reports
+ * it. Three counts and no status word — the status is a reading of the counts,
+ * which is what `benchCleanupState` below is for.
+ *
+ * OMITTED by the backend when the ledger is empty, deliberately: a run that
+ * created nothing has no cleanup to report, and `{recorded: 0, …}` would be a
+ * claim it never made. Absence is therefore "no ledger yet", NOT "clean".
+ */
 export interface BenchRunCleanup {
-  status?: "pending" | "running" | "complete" | "residue" | "not_applicable";
-  residueCount?: number;
-  detail?: string;
+  recorded: number;
+  removed: number;
+  residue: number;
+}
+
+/**
+ * What the counts allow us to say — and, more to the point, what they do not.
+ *
+ * `removed === recorded && residue === 0` is the ONLY combination that earns
+ * "everything was removed". Cancellation marks a run terminal immediately
+ * while the worker may still be cleaning up, so a terminal status is not
+ * evidence of a finished cleanup, and an unconditional reassurance there is a
+ * promise about somebody else's tenant that nothing checked.
+ */
+export type BenchCleanupState =
+  | { kind: "unreported" }
+  | { kind: "clean"; removed: number }
+  | { kind: "residual"; residue: number; recorded: number }
+  | { kind: "in_progress"; removed: number; recorded: number };
+
+export function benchCleanupState(
+  cleanup: BenchRunCleanup | undefined,
+): BenchCleanupState {
+  if (!cleanup) return { kind: "unreported" };
+  const { recorded, removed, residue } = cleanup;
+  if (residue > 0) return { kind: "residual", residue, recorded };
+  if (removed >= recorded) return { kind: "clean", removed };
+  return { kind: "in_progress", removed, recorded };
 }
 
 export interface BenchRun {
@@ -382,13 +416,7 @@ export interface BenchRun {
 }
 
 export const BENCH_TERMINAL_RUN_STATUSES: ReadonlySet<BenchRunStatus> = new Set(
-  [
-    "completed",
-    "provisional",
-    "insufficient_evidence",
-    "failed",
-    "cancelled",
-  ],
+  ["completed", "provisional", "insufficient_evidence", "failed", "cancelled"],
 );
 
 export function isTerminalBenchRunStatus(status: BenchRunStatus): boolean {
