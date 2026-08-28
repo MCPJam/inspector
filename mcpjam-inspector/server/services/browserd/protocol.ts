@@ -31,6 +31,23 @@ export type BrowserActTarget =
   | { selector: string }
   | { a11yRef: string };
 
+/**
+ * A cheap fingerprint of a tab's rendered state, minted with every observation
+ * (L3). `browser_act` may carry the token it was DECIDED from; the daemon
+ * rejects the act (`stale_observation`) if the page has navigated or mutated
+ * structurally since — the actual production failure mode is not duplicate
+ * command delivery (the command queue already handles that) but STALE targeting:
+ * a click computed from a screenshot that a late-loading banner has shifted.
+ * `navCounter` bumps on every commit; `urlHash`/`domHash` are cheap digests of
+ * the location and a structural view of the DOM.
+ */
+export interface ObservationStateToken {
+  tabId: string;
+  navCounter: number;
+  urlHash: string;
+  domHash: string;
+}
+
 export type BrowserAction =
   | { kind: "navigate"; url: string; newTab?: boolean }
   | { kind: "back" }
@@ -49,6 +66,13 @@ export type BrowserAction =
         | "activate_tab";
       target?: BrowserActTarget;
       value?: string;
+      /**
+       * The observation token this act was decided from (L3). When present, the
+       * daemon refuses the act if the tab's current state token no longer matches
+       * — the page moved under the model — and returns a fresh observation so it
+       * can re-decide. Optional: a caller that opts out accepts stale targeting.
+       */
+      expectedState?: ObservationStateToken;
     }
   | {
       kind: "observe";
@@ -83,6 +107,26 @@ export interface BrowserCommandResult {
   output?: unknown;
   /** Present when `ok` is false. */
   error?: string;
+  /**
+   * The fresh state token for the acted-on / observed tab (L3). Every capture
+   * carries one so the next `act` can be pinned to it.
+   */
+  stateToken?: ObservationStateToken;
+  /**
+   * False while the page is still loading at capture time (L2). browserd settles
+   * (nav commit → brief network-quiet → rAF) before capturing, so this is
+   * normally true; when a page genuinely will not settle, the daemon returns the
+   * frame with `settled: false` rather than exposing a `wait` verb, and the
+   * caller re-observes only when told the state is unsettled.
+   */
+  settled?: boolean;
+  /**
+   * Set when an `act` was REFUSED because its `expectedState` no longer matched
+   * the live tab (L3). The action did NOT run; `output`/`stateToken` carry the
+   * fresh observation so the caller can re-decide. The HTTP layer maps a result
+   * with this flag to `409 stale_observation`.
+   */
+  staleObservation?: boolean;
 }
 
 /**
