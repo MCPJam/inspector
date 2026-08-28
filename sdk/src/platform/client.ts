@@ -1842,12 +1842,12 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalStageAnalytics>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/stage-analytics`,
       {
         query: {
@@ -1858,7 +1858,7 @@ export class PlatformApiClient {
           limit: params.limit,
         },
       },
-      options,
+      options
     );
   }
 

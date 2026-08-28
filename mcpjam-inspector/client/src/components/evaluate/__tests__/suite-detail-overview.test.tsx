@@ -599,6 +599,34 @@ describe("SuiteDetailOverview", () => {
       expect(await screen.findByTestId("stage-analytics-empty")).toBeTruthy();
     });
 
+    it("omits the panel entirely when there is no project id", async () => {
+      // `projectId` is nullable on this page and the read is project-scoped, so
+      // without one there is no request to make. Rendering the panel anyway
+      // would leave it on a spinner for a fetch that never starts.
+      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
+      renderWithProviders(
+        <SuiteDetailOverview
+          suite={makeSuite()}
+          cases={[makeCase({ _id: "case-1" })]}
+          runs={[makeRun({ _id: "run-1" })]}
+          runsLoading={false}
+          allIterations={[]}
+          hostNamesById={hostNamesById}
+          onRerun={vi.fn()}
+          onEditSuite={vi.fn()}
+          onEditCases={vi.fn()}
+          onRunClick={vi.fn()}
+          onTestCaseClick={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("suite-detail-stage-analytics")).toBeNull();
+      expect(screen.queryByTestId("stage-analytics-loading")).toBeNull();
+      expect(stageAnalyticsFetchMock).not.toHaveBeenCalled();
+      // The rest of the page is unaffected.
+      expect(screen.getByTestId("suite-detail-run-history")).toBeTruthy();
+    });
+
     it("keeps the sibling sections alive when the panel read fails", async () => {
       // A panel failure is a panel failure. The run history beside it is a
       // different query and must not be taken down with it.
