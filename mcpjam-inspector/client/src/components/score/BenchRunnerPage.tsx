@@ -663,7 +663,14 @@ export function BenchRunnerPage({
 
       {phase === "report" && run ? (
         result ? (
-          <BenchReport result={result} />
+          // The scope is passed HERE and not on the public result page: this
+          // is the surface whose visitor can actually authorize the analyzer's
+          // spend. A shared result link has no session to bill, so it passes
+          // nothing and the offer never appears there.
+          <BenchReport
+            result={result}
+            flowScope={{ kind: "benchmark", benchmarkRunId: run.benchmarkRunId }}
+          />
         ) : run.status === "failed" || run.status === "cancelled" ? (
           <div className="space-y-2 rounded-md border border-border/50 px-4 py-3">
             <div className="text-sm font-medium">
