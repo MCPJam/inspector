@@ -18,6 +18,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import type { PinnableSkill } from "../../../shared/skill-types.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import { logger } from "../logger.js";
 import {
   CloudSkillsError,
@@ -241,7 +242,10 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function skillsFailureFrom(err: unknown, latencyMs: number): SkillsFetchFailure {
+export function skillsFailureFrom(
+  err: unknown,
+  latencyMs: number
+): SkillsFetchFailure {
   const errorClass =
     err instanceof Error ? err.constructor.name : typeof err;
   const status = err instanceof CloudSkillsError ? err.status : undefined;
@@ -258,6 +262,81 @@ export type CloudSkillToolsAndPrompt = {
   systemPromptSection: string;
   skillsFetchFailed?: SkillsFetchFailure;
 };
+
+/**
+ * The project's Convex skills as one origin of an `EffectiveCapabilitySet`.
+ *
+ * The counterpart to `listLocalRuntimeSkills`, and what lets the merged catalog
+ * carry project skills without the exclusive `cloudSkills` branch the chat
+ * orchestrator used to take.
+ *
+ * Everything here stays LAZY, exactly as `createCloudSkillTools` already
+ * behaves: the catalog costs one query, and a body or a file list is fetched
+ * only for the skill the model actually asks for. Eager-loading a 200-skill
+ * project on every turn to build a listing the model mostly ignores is the
+ * failure this shape avoids.
+ *
+ * Throws on catalog failure so the caller can distinguish it from a genuinely
+ * empty project — `getCloudSkillToolsAndPrompt` turns that into
+ * `skillsFetchFailed`, and callers of this function do the same.
+ */
+export async function listCloudRuntimeSkills(
+  ctx: CloudSkillsContext
+): Promise<RuntimeStandaloneSkill[]> {
+  const skills = await raceWithTimeout(
+    listCloudSkills(ctx),
+    CLOUD_SKILLS_FETCH_TIMEOUT_MS
+  );
+  return skills.map((skill) => ({
+    skillId: skill.skillId,
+    // A bare name, like any standalone project skill: this IS the project's
+    // standalone family, reached live instead of through a resolved
+    // environment. A local skill's `local/` prefix is what keeps the two
+    // separable when both are present.
+    ref: skill.name,
+    name: skill.name,
+    description: skill.description,
+    aggregateHash: skill.aggregateHash,
+    channels: [],
+    content: async () => {
+      const detail = await getCloudSkillByName(ctx, skill.name);
+      if (!detail) {
+        throw new Error(`Skill "${skill.name}" is no longer in this project.`);
+      }
+      return detail.content;
+    },
+    files: [],
+    listFiles: async () => {
+      const files = await listCloudSkillFiles(ctx, skill.skillId);
+      return files.map((file) => ({
+        path: file.path,
+        size: file.size,
+        // No URL is minted here: `readCloudSkillFile` resolves a fresh signed
+        // one at read time. Minting per file per turn would spend a query on
+        // every file the model never opens, and hand out URLs that outlive the
+        // read they were for.
+        url: null,
+        read: async () => {
+          const content = await readCloudSkillFile(
+            ctx,
+            skill.skillId,
+            file.path
+          );
+          // Text and binary arrive on different fields; the caller re-applies
+          // its own mime/size policy to whatever bytes come back, so both are
+          // decoded here rather than judged.
+          if (typeof content.content === "string") {
+            return new TextEncoder().encode(content.content);
+          }
+          if (typeof content.base64 === "string") {
+            return Uint8Array.from(Buffer.from(content.base64, "base64"));
+          }
+          return new Uint8Array(0);
+        },
+      }));
+    },
+  }));
+}
 
 /**
  * Cloud equivalent of `getSkillToolsAndPrompt`. Fetches the catalog at

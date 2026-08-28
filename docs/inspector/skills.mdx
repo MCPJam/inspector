@@ -96,6 +96,53 @@ To update every installed skill at once:
 npx skills update
 ```
 
+## Where a turn's skills come from
+
+A chat turn builds **one catalog** from every origin available to it, rather
+than picking a single source:
+
+| Origin | Reference | Available on |
+|---|---|---|
+| Your project (Cloud Skills) | `code-review` | anywhere you're signed in with a project |
+| A local file | `local/code-review` | the desktop and npm app |
+| A connected MCP server | `<server>/code-review` | anywhere that server is connected |
+| A plugin | `<plugin>/code-review` | wherever the plugin is installed |
+
+This is why the Skills tab's Local/Cloud switch only changes what you are
+**browsing**. It no longer decides what the model can use: a desktop turn signed
+into a project offers your local files *and* your project skills, so a skill you
+author in the tab is usable in the very next message.
+
+Signed out, or with no project selected, a desktop turn simply has no project
+family — it offers local files, exactly as before.
+
+### Two skills with the same name
+
+Local and project skills are namespaced apart on purpose, so nothing is hidden
+and nothing is silently preferred. If you have a local `code-review` and a
+project `code-review`, both appear and both load:
+
+```
+loadSkill("local/code-review")  → your file
+loadSkill("code-review")        → the project's
+```
+
+**An exact reference always wins.** `code-review` *is* the project skill's
+reference, so asking for it is not ambiguous — it is a direct hit, and the local
+skill stays reachable under its own name. That is what keeps a project skill
+addressable no matter what you happen to have on disk.
+
+Ambiguity is the case where nothing is an exact hit: two *namespaced* skills
+share a name and no skill answers to the bare name itself — a plugin
+`docs-tools/code-review` alongside a local `local/code-review`, with no project
+`code-review`. There the tool refuses and names the alternatives rather than
+guessing:
+
+```
+"code-review" is ambiguous — it matches "docs-tools/code-review" and
+"local/code-review". Use the full reference.
+```
+
 ## Skills an agent writes for itself
 
 Harness runs (Claude Code, Codex) execute in a sandbox with a real filesystem, so

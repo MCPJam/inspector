@@ -1935,7 +1935,6 @@ export function SkillsRoute() {
   );
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
-  const computersEnabled = useComputersEnabledState();
   const skillsEnabled = useSkillsEnabledState();
 
   // Skills is a Servers-page view (Servers | Client | Computer | Skills), so
@@ -1955,9 +1954,13 @@ export function SkillsRoute() {
   // whole route on the Cloud flag would hold the protocol half hostage to an
   // unrelated feature's rollout, so the flag is passed DOWN instead.
   //
-  // `computersEnabled` is passed through only for the local-mode Local/Cloud
-  // toggle; the skills flag applies to hosted mode only (local FS skills are
-  // always available).
+  // The same flag also decides whether the local-mode Local/Cloud toggle is
+  // offered, because that toggle browses the project store: gating it on
+  // `computers-enabled` was a leftover from when cloud skills lived on a
+  // Computer's filesystem. That is why the prop below is the flag itself and
+  // not `!HOSTED_MODE || flag` — the old form read as "local mode always has
+  // the store", which was harmless while the toggle carried its own gate and
+  // becomes "no gate at all" the moment the toggle reads this prop instead.
   if (HOSTED_MODE && !convexProjectId) {
     // Wait for the project to resolve before rendering: hosted skills have no
     // local FS to fall back to, and the server-skills routes address their
@@ -1968,7 +1971,6 @@ export function SkillsRoute() {
   const skillsView = (
     <SkillsTab
       projectId={convexProjectId}
-      computersEnabled={computersEnabled === true}
       // Skills over MCP (SEP-2640): the "From MCP servers" section reads its
       // catalog live, per connection, so it needs the CURRENT server list —
       // the label (host-assigned, from our registry) and whether the
@@ -1978,7 +1980,7 @@ export function SkillsRoute() {
       // renders its protocol half immediately and the Cloud store appears when
       // the flag resolves — content arriving is a better first paint than a
       // blank page for every user who only has the protocol half.
-      cloudSkillsEnabled={!HOSTED_MODE || skillsEnabled === true}
+      cloudSkillsEnabled={skillsEnabled === true}
     />
   );
 

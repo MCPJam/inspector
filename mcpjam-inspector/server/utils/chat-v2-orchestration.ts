@@ -2,7 +2,7 @@
  * Shared chat-v2 tool preparation and message scrubbing.
  *
  * Encapsulates the identical prep logic used by both mcp/chat-v2 and web/chat-v2:
- *   1. getToolsForAiSdk + getSkillToolsAndPrompt + needsApproval merge
+ *   1. getToolsForAiSdk + the turn's skill source + needsApproval merge
  *   2. Anthropic tool name validation (throws on invalid names)
  *   3. System prompt + skills prompt concatenation
  *   4. Temperature resolution (GPT-5 check)
@@ -37,12 +37,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
   type CustomProviderConfig,
 } from "./chat-helpers.js";
-import { getSkillToolsAndPrompt } from "./skill-tools.js";
-import {
-  getCloudSkillToolsAndPrompt,
-  getPinnedSkillToolsAndPrompt,
-  type SkillsFetchFailure,
-} from "./computers/cloud-skill-tools.js";
+import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import {
   SERVER_SKILLS_PROMPT_SECTION,
@@ -68,7 +63,6 @@ import {
   WEBMCP_TOOL_MAX_ENTRIES,
   WEBMCP_TOOL_NAME_MAX_CHARS,
 } from "@/shared/webmcp-inspector-protocol";
-import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
   createDiscoveryState,
@@ -748,9 +742,8 @@ export interface PrepareChatV2Options {
    * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
    * instead of the local filesystem — the hosted/`/web` path. Only set by
    * callers whose host actually has a computer, so "advertise == enforce".
-   * Takes precedence over the local/HOSTED_MODE skill branches.
+   * The turn's only skill source.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
   /**
    * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
    * the legacy paths never set it → the existing precedence is byte-identical.
@@ -802,6 +795,22 @@ export interface PrepareChatV2Options {
          * disconnected.
          */
         abortSignal?: AbortSignal;
+        /**
+         * Whether to ALSO compose live SEP-2640 skills from the connected
+         * servers (see the `withServerSkills` block below).
+         *
+         * Opt-in, and the distinction is the whole reason this flag exists.
+         * An ENVIRONMENT-resolved set is a snapshot: its server skills were
+         * captured, and fetching more from a live connection would falsify the
+         * claim that the set describes the turn. An INTERACTIVE surface — the
+         * desktop app, the hosted Playground's default target — resolves no
+         * environment; its set is just "what the user has right now", and its
+         * server skills are only available live. Without this flag those
+         * surfaces would lose server skills the moment they started passing a
+         * `skillsSource` at all, which is exactly how a convergence quietly
+         * drops a capability.
+         */
+        composeLiveServerSkills?: boolean;
       }
     | { kind: "none" };
 }
@@ -1114,12 +1123,6 @@ export interface PrepareChatV2Result {
    * not inherit MCPJam UI approval semantics from a discarded client entry.
    */
   effectiveUiTools: UiToolEntry[];
-  /**
-   * Set when the live-cloud catalog fetch threw or timed out. Distinguishes
-   * that skip from a genuine empty project (no marker). Session-sim can
-   * forward this as a `session_notice`.
-   */
-  skillsFetchFailed?: SkillsFetchFailure;
 }
 
 /**
@@ -1145,7 +1148,6 @@ export async function prepareChatV2(
     uiTools,
     pageTools,
     builtInTools,
-    cloudSkills,
     skillsSource,
     harness,
     tasks,
@@ -1230,18 +1232,17 @@ export async function prepareChatV2(
       delete (mcpTools as Record<string, unknown>)[name];
     }
   }
-  // Skills source, in precedence order:
-  //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
-  //      `resolved` for a Project-Environment turn) or none. Above everything;
-  //      legacy chat callers never set it, so the chain below is byte-identical
-  //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
-  //      is an interactive turn and keeps the host's approval rule. All three
-  //      static surfaces inline the catalog in the prompt (no `listSkills`).
-  //   1. cloudSkills set ⇒ Convex-backed project skills. Catalog is fetched
-  //      at prompt-build time (timeout + latency log); failure skips skills
-  //      for the turn and sets `skillsFetchFailed`.
-  //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
-  //   3. local ⇒ the inspector's own filesystem.
+  // ONE skill source per turn, stated by the caller. Where a skill comes FROM —
+  // the project, a plugin, a connected server, this machine's filesystem — is a
+  // property of the skill inside an `EffectiveCapabilitySet`, not a mode the
+  // orchestrator picks between:
+  //   - `pinned` / `pinned-effective` ⇒ frozen eval content; the ONLY kinds
+  //     that bypass approval (decision 12), because an eval run auto-denies.
+  //   - `resolved` ⇒ a live or environment-resolved set, keeping the host's
+  //     approval rule. `composeLiveServerSkills` says which of the two it is.
+  //   - `none` ⇒ no skills, said deliberately.
+  // Every surface inlines its catalog in the prompt; there is no `listSkills`
+  // discovery tool on any of them.
   const skillsArePinned =
     skillsSource?.kind === "pinned" ||
     skillsSource?.kind === "pinned-effective";
@@ -1257,11 +1258,18 @@ export async function prepareChatV2(
   // live-fetch skills" — that stopped being true when on-box pinned delivery
   // landed, and the stale wording cost real debugging time. `run-harness-turn`
   // does not call `fetchRuntimeSkills` at all in pinned mode.)
-  if (harness && skillsArePinned) {
+  if (harness && skillsSource !== undefined && skillsSource.kind !== "none") {
+    // Generalized from "pinned" to ANY in-memory source. The rule was always
+    // about DOUBLE DELIVERY; `pinned` was merely the only shape a harness
+    // caller could reach when it was written. Once `resolved` became the shape
+    // every live surface passes, a harness turn carrying one would have been
+    // handed the same skill twice — as SKILL.md on the box AND as a `loadSkill`
+    // tool — with nothing to catch it, because callers guard this themselves
+    // and a forgotten guard is silent.
     throw new Error(
-      "Harness turns receive pinned skills on box via `pinnedHarnessSkills`, " +
-        "not via `skillsSource`. Pass `skillsSource: { kind: 'none' }` for a " +
-        "harness turn — the two delivery channels are deliberately disjoint.",
+      "Harness turns receive skills on box via `pinnedHarnessSkills`, not via " +
+        "`skillsSource`. Pass `skillsSource: { kind: 'none' }` for a harness " +
+        "turn — the two delivery channels are deliberately disjoint.",
     );
   }
   const modelContextTokens =
@@ -1271,7 +1279,6 @@ export async function prepareChatV2(
   type SkillPrep = {
     tools: Record<string, unknown>;
     systemPromptSection: string;
-    skillsFetchFailed?: SkillsFetchFailure;
   };
   const skillPrep: SkillPrep = skillsSource
     ? skillsSource.kind === "pinned"
@@ -1288,22 +1295,22 @@ export async function prepareChatV2(
             ...modelContextTokens,
           })
         : { tools: {}, systemPromptSection: "" }
-    : cloudSkills
-      ? await getCloudSkillToolsAndPrompt(
-          {
-            authHeader: cloudSkills.authHeader,
-            projectId: cloudSkills.projectId,
-          },
-          modelContextTokens,
-        )
-      : HOSTED_MODE
-        ? { tools: {}, systemPromptSection: "" }
-        : await getSkillToolsAndPrompt();
-  const {
-    tools: skillTools,
-    systemPromptSection: skillsPromptSection,
-    skillsFetchFailed,
-  } = skillPrep;
+    : // No source is no SKILLS OF ITS OWN — not a fallback. The old chain
+      // ended `cloudSkills ? … : HOSTED_MODE ? {} : localFS` — exclusive arms
+      // chosen by DEPLOYMENT rather than by what the user had, which is why a
+      // desktop turn could never see a project skill and a hosted one could
+      // never see a local file. That chain is gone; what remains here is the
+      // empty set.
+      //
+      // It is still meaningfully different from `{ kind: "none" }`, which is
+      // why both exist: `undefined` is the LIVE shape and still composes the
+      // connected servers' SEP-2640 skills (see `composeLiveServerSkills`
+      // below), while `none` means this turn gets no skills from anywhere. The
+      // hosted host/adhoc path lands here whenever its project catalog is
+      // gated off or fails, and its server skills must survive that.
+      { tools: {}, systemPromptSection: "" };
+  const { tools: skillTools, systemPromptSection: skillsPromptSection } =
+    skillPrep;
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
@@ -1333,30 +1340,40 @@ export async function prepareChatV2(
   // extension, which is what keeps every pre-existing turn byte-identical.
   // The wrapper applies its own always-on approval to server-origin loads —
   // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
-  const finalSkillTools: Record<string, unknown> =
-    skillsSource !== undefined || harness
-      ? approvalWrappedSkillTools
-      : withServerSkills(approvalWrappedSkillTools, {
-          manager: mcpClientManager,
-          // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
-          // Slug collision suffixes are assigned over whatever set they are
-          // given, and the playground picker mints its refs from the raw
-          // selection because it cannot see which ids the manager registered.
-          // Handing the filtered list here would shift every suffix behind a
-          // dropped id, so the picker's `acme-2/refunds` would address a
-          // different server than `loadSkill`'s. `withServerSkills` filters to
-          // extension-active servers itself, and an unregistered id is not
-          // active, so nothing unknown is contacted either way.
-          servers: (selectedServers ?? []).map((serverId) => ({
-            serverId,
-            // The user-assigned label from OUR registry, never
-            // `serverInfo.name` — a server must not be able to choose the
-            // namespace its skills are addressed under. Falls back to the
-            // server id, which is host-assigned too and therefore still safe;
-            // it just reads worse in a ref.
-            serverLabel: serverLabels?.[serverId] ?? serverId,
-          })),
-        });
+  // A LIVE turn composes server skills whether or not it also carries an
+  // explicit source; a captured or frozen one never does. `skillsSource ===
+  // undefined` is the legacy live shape (no caller passes it once every surface
+  // is explicit); `resolved` + the opt-in flag is how a live surface says so
+  // while still using the merged, ref-addressed catalog.
+  const composeLiveServerSkills =
+    !harness &&
+    (skillsSource === undefined ||
+      (skillsSource.kind === "resolved" &&
+        skillsSource.composeLiveServerSkills === true));
+
+  const finalSkillTools: Record<string, unknown> = !composeLiveServerSkills
+    ? approvalWrappedSkillTools
+    : withServerSkills(approvalWrappedSkillTools, {
+        manager: mcpClientManager,
+        // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
+        // Slug collision suffixes are assigned over whatever set they are
+        // given, and the playground picker mints its refs from the raw
+        // selection because it cannot see which ids the manager registered.
+        // Handing the filtered list here would shift every suffix behind a
+        // dropped id, so the picker's `acme-2/refunds` would address a
+        // different server than `loadSkill`'s. `withServerSkills` filters to
+        // extension-active servers itself, and an unregistered id is not
+        // active, so nothing unknown is contacted either way.
+        servers: (selectedServers ?? []).map((serverId) => ({
+          serverId,
+          // The user-assigned label from OUR registry, never
+          // `serverInfo.name` — a server must not be able to choose the
+          // namespace its skills are addressed under. Falls back to the
+          // server id, which is host-assigned too and therefore still safe;
+          // it just reads worse in a ref.
+          serverLabel: serverLabels?.[serverId] ?? serverId,
+        })),
+      });
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -1599,6 +1616,5 @@ export async function prepareChatV2(
     progressivePlan,
     discoveryState,
     effectiveUiTools,
-    ...(skillsFetchFailed ? { skillsFetchFailed } : {}),
   };
 }
