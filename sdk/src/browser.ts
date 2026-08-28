@@ -499,6 +499,29 @@ export {
   planCompletionSafeRedirects,
 } from "./oauth/emulation/redirects.js";
 export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+export {
+  compareOAuthEmulationTrace,
+  computeOAuthGoldenTraceDigest,
+  computeOAuthProfileDigest,
+  GOLDEN_STALENESS_DAYS,
+  isUnqualifiedMatch,
+  insertAuthorizationRedirectStep,
+  normalizeAuthorizationRedirectStep,
+  normalizeOAuthTrace,
+  NORMALIZED_VALUE,
+} from "./oauth/emulation/golden-trace.js";
+export type {
+  CompareOAuthEmulationTraceInput,
+  NormalizedTraceStep,
+  NormalizedTraceStepKind,
+  OAuthComparisonNotComparedReason,
+  OAuthComparisonQualifier,
+  OAuthComparisonStatus,
+  OAuthGoldenFreshness,
+  OAuthGoldenTrace,
+  OAuthTraceComparisonResult,
+  OAuthTraceDifference,
+} from "./oauth/emulation/golden-trace.js";
 // SSRF host classification (shared hardening): the browser executor re-validates
 // the FINAL response URL after redirects using the same RFC 6890 policy the
 // factory guard applies to the initial request URL.

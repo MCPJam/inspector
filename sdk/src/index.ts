@@ -774,6 +774,29 @@ export {
   planCompletionSafeRedirects,
 } from "./oauth/emulation/redirects.js";
 export type { CompletionSafeRedirectPlan } from "./oauth/emulation/redirects.js";
+export {
+  compareOAuthEmulationTrace,
+  computeOAuthGoldenTraceDigest,
+  computeOAuthProfileDigest,
+  GOLDEN_STALENESS_DAYS,
+  isUnqualifiedMatch,
+  insertAuthorizationRedirectStep,
+  normalizeAuthorizationRedirectStep,
+  normalizeOAuthTrace,
+  NORMALIZED_VALUE,
+} from "./oauth/emulation/golden-trace.js";
+export type {
+  CompareOAuthEmulationTraceInput,
+  NormalizedTraceStep,
+  NormalizedTraceStepKind,
+  OAuthComparisonNotComparedReason,
+  OAuthComparisonQualifier,
+  OAuthComparisonStatus,
+  OAuthGoldenFreshness,
+  OAuthGoldenTrace,
+  OAuthTraceComparisonResult,
+  OAuthTraceDifference,
+} from "./oauth/emulation/golden-trace.js";
 // Node-only: runs the emulated ladder over the hardened OAuth networking path.
 export { runEmulatedOAuthPreflight } from "./oauth/emulation/preflight.js";
 export type {
