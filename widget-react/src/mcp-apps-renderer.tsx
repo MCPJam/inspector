@@ -2080,7 +2080,10 @@ export function MCPAppsRendererSurface({
               )
             );
             cursor = result.nextCursor;
-            if (!cursor) break;
+            // Presence, not truthiness: MCP 2026-07-28
+            // `server/utilities/pagination` makes `""` a valid cursor that MUST
+            // NOT be read as the end of results.
+            if (cursor === undefined) break;
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);

@@ -613,6 +613,52 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     expect(body.metadataSources.csp).toBe("listing");
   });
 
+  it("follows an empty-string nextCursor and sends it back verbatim", async () => {
+    // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a
+    // valid cursor and thus MUST NOT be treated as the end of results".
+    // Reading `""` as the end reported a declared App as undeclared.
+    managerState.readResource.mockResolvedValue({
+      contents: [
+        { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
+      ],
+    });
+    const cursors: Array<string | undefined> = [];
+    managerState.listResources.mockImplementation(
+      async (_serverId: string, params?: { cursor?: string }) => {
+        cursors.push(params?.cursor);
+        if (params?.cursor === undefined) {
+          return {
+            resources: [{ uri: "ui://other/a.html" }],
+            nextCursor: "",
+          };
+        }
+        return {
+          resources: [{ uri: RESOURCE_URI, _meta: { ui: { csp: ESM_CSP } } }],
+        };
+      }
+    );
+
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSources.csp).toBe("listing");
+    expect(cursors).toEqual([undefined, ""]);
+  });
+
+  it("stops paginating when the server repeats an empty-string cursor", async () => {
+    // `""` joins the seen-cursor set like any other token, so it is caught by
+    // the repeated-cursor guard rather than spinning to the page cap.
+    mockResource({});
+    managerState.listResources.mockImplementation(async () => ({
+      resources: [{ uri: "ui://other/a.html" }],
+      nextCursor: "",
+    }));
+
+    const res = await postWidgetContent(makeApp());
+    expect(res.status).toBe(200);
+    expect(managerState.listResources).toHaveBeenCalledTimes(2);
+  });
+
   it("stops paginating when the server repeats a cursor", async () => {
     // A server that keeps reissuing the same cursor would otherwise spin to
     // the page cap on every single render.

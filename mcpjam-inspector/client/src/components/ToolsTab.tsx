@@ -432,7 +432,9 @@ export function ToolsTab({
     const observer = new IntersectionObserver((entries) => {
       const entry = entries[0];
       if (!entry.isIntersecting) return;
-      if (!cursor || fetchingTools) return;
+      // Presence, not truthiness: MCP 2026-07-28 `server/utilities/pagination`
+      // makes `""` a valid cursor that MUST NOT be read as the end of results.
+      if (cursor === undefined || fetchingTools) return;
 
       // Load more tools
       fetchTools();
@@ -1088,7 +1090,7 @@ export function ToolsTab({
       displayedToolCount={toolNames.length}
       sentinelRef={sentinelRef}
       loadingMore={fetchingTools}
-      cursor={cursor ?? ""}
+      cursor={cursor}
       serverConnected={isServerConnected}
       formFields={formFields}
       onFieldChange={updateFieldValue}

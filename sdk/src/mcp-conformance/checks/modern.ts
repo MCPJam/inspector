@@ -1084,7 +1084,11 @@ async function runCacheScopePaginationCheck(
       if (!payload) break;
       scopes.push(payload.cacheScope);
       const next = payload.nextCursor;
-      if (typeof next !== "string" || next === "" || next === cursor) break;
+      // `""` is a valid continuation cursor (MCP 2026-07-28
+      // `server/utilities/pagination`), so only a non-string ends the walk.
+      // The no-progress guard below still catches a server that answers the
+      // same token — `""` included — twice in a row.
+      if (typeof next !== "string" || next === cursor) break;
       cursor = next;
     }
 

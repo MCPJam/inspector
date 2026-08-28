@@ -128,7 +128,10 @@ export function registerCompatCommands(program: Command): void {
             }>)
           );
           cursor = result.nextCursor;
-          if (!cursor) break;
+          // Presence, not truthiness: MCP 2026-07-28
+          // `server/utilities/pagination` makes `""` a valid cursor that MUST
+          // NOT be read as the end of results.
+          if (cursor === undefined) break;
           // Cap hit with tools still pending — flag rather than drop them.
           if (page === TOOLS_PAGE_CAP - 1) truncated = true;
         }

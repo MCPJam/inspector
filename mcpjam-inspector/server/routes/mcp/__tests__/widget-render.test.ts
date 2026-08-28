@@ -307,6 +307,52 @@ describe("POST /api/mcp/widget-render", () => {
       expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
     });
 
+    it("follows an empty-string nextCursor and sends it back verbatim", async () => {
+      // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a
+      // valid cursor and thus MUST NOT be treated as the end of results".
+      // Reading `""` as the end hid every tool from page two onward.
+      const cursors: Array<string | undefined> = [];
+      mcpClientManager.listTools.mockImplementation(
+        async (_serverId: string, params?: { cursor?: string }) => {
+          cursors.push(params?.cursor);
+          if (params?.cursor === undefined) {
+            return {
+              tools: [{ name: "other_tool", _meta: {} }],
+              nextCursor: "",
+            };
+          }
+          return {
+            tools: [{ name: TOOL_NAME, _meta: MCP_APP_META }],
+            nextCursor: undefined,
+          };
+        },
+      );
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect((await res.json()).status).toBe("rendered");
+      expect(cursors).toEqual([undefined, ""]);
+      expect(mcpClientManager.listTools).toHaveBeenLastCalledWith(SERVER_ID, {
+        cursor: "",
+      });
+    });
+
+    it("stops draining if the server loops an empty-string cursor", async () => {
+      // `""` joins the seen-cursor set like any other token, so a server
+      // answering it forever stops on the second occurrence.
+      mcpClientManager.listTools.mockResolvedValue({
+        tools: [{ name: "x", _meta: {} }],
+        nextCursor: "",
+      });
+      const res = await postRender(app, {
+        serverId: SERVER_ID,
+        toolName: TOOL_NAME,
+      });
+      expect((await res.json()).status).toBe("no_ui_resource");
+      expect(mcpClientManager.listTools).toHaveBeenCalledTimes(2);
+    });
+
     it("stops draining if the server loops the same cursor", async () => {
       // A server that returns the same cursor forever must not hang the gate.
       mcpClientManager.listTools.mockResolvedValue({

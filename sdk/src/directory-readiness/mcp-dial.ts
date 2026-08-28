@@ -370,7 +370,8 @@ async function walkListing<Entry>(
       options,
       idBase + page,
       method,
-      cursor ? { cursor } : {},
+      // Presence, not truthiness: `""` is a valid continuation cursor.
+      cursor !== undefined ? { cursor } : {},
       headers,
     );
     pagesWalked += 1;
@@ -417,7 +418,11 @@ async function walkListing<Entry>(
     if (entryCapHit) break;
 
     const next = asString(result.nextCursor);
-    if (!next) break;
+    // ABSENCE ends the walk, not emptiness — MCP 2026-07-28
+    // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
+    // read as the end of results. It joins `seenCursors` like any other token,
+    // so a server looping on `""` trips the repeated-cursor guard below.
+    if (next === undefined) break;
     if (seenCursors.has(next)) {
       error = `${method} repeated cursor ${JSON.stringify(
         next,

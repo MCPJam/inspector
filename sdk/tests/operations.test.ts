@@ -414,6 +414,62 @@ describe("listAllTools", () => {
       "Exceeded 1000 pages while draining tools/list.",
     );
   });
+
+  // MCP 2026-07-28 / draft `server/utilities/pagination`: "Don't make any
+  // determination based on cursor value other than whether a non-null value
+  // was provided (e.g. an empty string is a valid cursor and thus MUST NOT be
+  // treated as the end of results)".
+  it('follows a nextCursor of "" and forwards it verbatim', async () => {
+    const manager = createMockManager({
+      listTools: jest
+        .fn()
+        .mockResolvedValueOnce({
+          tools: [{ name: "echo" }],
+          nextCursor: "",
+        })
+        .mockResolvedValueOnce({
+          tools: [{ name: "draw" }],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllTools(manager, { serverId: "srv" });
+
+    // (a) the drain continued past the `""` page ...
+    expect(result.tools.map((tool) => tool.name)).toEqual(["echo", "draw"]);
+    expect(manager.listTools).toHaveBeenCalledTimes(2);
+
+    // (b) ... and the follow-up call actually carried `cursor: ""` — a
+    // truthiness forward would drop it and silently re-read page one.
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      1,
+      "srv",
+      undefined,
+      undefined,
+    );
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      2,
+      "srv",
+      { cursor: "" },
+      undefined,
+    );
+  });
+
+  it('trips the repeated-cursor guard when a server loops on ""', async () => {
+    const manager = createMockManager({
+      listTools: jest.fn().mockResolvedValue({
+        tools: [{ name: "echo" }],
+        nextCursor: "",
+      }),
+    });
+
+    // `""` joins the seen-cursor set like any other token, so the second
+    // occurrence throws rather than spinning to the 1000-page cap.
+    await expect(listAllTools(manager, { serverId: "srv" })).rejects.toThrow(
+      'Detected repeated cursor "" while draining tools/list.',
+    );
+    expect(manager.listTools).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ── withEphemeralClient ─────────────────────────────────────────────

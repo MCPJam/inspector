@@ -473,10 +473,13 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           cursor = data.nextCursor;
           pages += 1;
 
+          // Presence, not truthiness: MCP 2026-07-28
+          // `server/utilities/pagination` makes `""` a valid cursor that MUST
+          // NOT be read as the end of results.
           if (
             toolName &&
             !aggregatedTools[toolName] &&
-            cursor &&
+            cursor !== undefined &&
             pages >= maxPages
           ) {
             const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
@@ -487,7 +490,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             );
           }
 
-          if (!toolName || aggregatedTools[toolName] || !cursor) {
+          if (!toolName || aggregatedTools[toolName] || cursor === undefined) {
             break;
           }
         } while (true);

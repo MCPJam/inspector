@@ -161,7 +161,8 @@ export async function listResources(
 ) {
   const result = await manager.listResources(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    // Presence, not truthiness: `""` is a valid continuation cursor.
+    params.cursor !== undefined ? { cursor: params.cursor } : undefined,
     cacheOptions(params.cacheMode)
   );
   return {
@@ -190,7 +191,8 @@ export async function listPrompts(
 ) {
   const result = await manager.listPrompts(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    // Presence, not truthiness: `""` is a valid continuation cursor.
+    params.cursor !== undefined ? { cursor: params.cursor } : undefined,
     cacheOptions(params.cacheMode)
   );
   return {
@@ -255,7 +257,8 @@ export async function listTools(
 ) {
   const result = await manager.listTools(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    // Presence, not truthiness: `""` is a valid continuation cursor.
+    params.cursor !== undefined ? { cursor: params.cursor } : undefined,
     cacheOptions(params.cacheMode)
   );
   return {
@@ -374,7 +377,8 @@ export async function listAllResourceTemplates(
       try {
         result = await manager.listResourceTemplates(
           params.serverId,
-          cursor ? { cursor } : undefined,
+          // Presence, not truthiness: `""` is a valid continuation cursor.
+          cursor !== undefined ? { cursor } : undefined,
           cacheOptions(params.cacheMode)
         );
       } catch (error) {
@@ -433,7 +437,8 @@ export async function listAllServerSkills(
     async (cursor) => {
       const page = await manager.listServerSkills(
         params.serverId,
-        cursor ? { cursor } : undefined,
+        // Presence, not truthiness: `""` is a valid continuation cursor.
+        cursor !== undefined ? { cursor } : undefined,
         cacheOptions(params.cacheMode)
       );
       if (page.ttlMs !== undefined) ttlMs = page.ttlMs;
@@ -534,7 +539,15 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
 
     const nextCursor =
       typeof page.nextCursor === "string" ? page.nextCursor : undefined;
-    if (!nextCursor) {
+    // ABSENCE ends the walk, not emptiness. MCP 2026-07-28
+    // `server/utilities/pagination` states that a client "MUST NOT" decide
+    // anything from a cursor's value beyond whether a non-null one was
+    // provided, and that "an empty string is a valid cursor and thus MUST NOT
+    // be treated as the end of results". `""` therefore continues, is fed back
+    // verbatim, and joins `seenCursors` like any other token — so a server that
+    // answers `""` forever trips the repeated-cursor guard on the second
+    // occurrence rather than spinning to the page cap.
+    if (nextCursor === undefined) {
       break;
     }
 

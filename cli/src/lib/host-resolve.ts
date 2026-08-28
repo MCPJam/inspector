@@ -152,7 +152,8 @@ export async function assertToolVisibleToHost(
   for (let page = 0; page < TOOLS_PAGE_CAP; page++) {
     const result = await manager.listTools(
       serverId,
-      cursor ? { cursor } : undefined,
+      // Presence, not truthiness: `""` is a valid continuation cursor.
+      cursor !== undefined ? { cursor } : undefined,
     );
     const tool = (result.tools ?? []).find(
       (t) => (t as { name?: unknown }).name === toolName,
@@ -167,8 +168,12 @@ export async function assertToolVisibleToHost(
     }
     cursor = result.nextCursor;
     // Paged through the WHOLE list without finding it → genuinely unlisted;
-    // allow the call (the server may still expose it).
-    if (!cursor) return;
+    // allow the call (the server may still expose it). "Whole list" means the
+    // server stopped handing out cursors — MCP 2026-07-28
+    // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
+    // read as the end of results, and it joins `seenCursors` below like any
+    // other token.
+    if (cursor === undefined) return;
     if (seenCursors.has(cursor)) break; // server looping on a cursor
     seenCursors.add(cursor);
   }

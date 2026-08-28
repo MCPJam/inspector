@@ -237,7 +237,8 @@ async function collectTools(
         withRetry(
           () =>
             client.listTools(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -294,7 +295,8 @@ async function collectResources(
         withRetry(
           () =>
             client.listResources(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -351,7 +353,8 @@ async function collectPrompts(
         withRetry(
           () =>
             client.listPrompts(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -395,7 +398,8 @@ async function collectResourceTemplates(
         withRetry(
           () =>
             client.listResourceTemplates(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -629,7 +633,12 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
     items.push(...selectItems(page));
     pages += 1;
 
-    if (!page.nextCursor) {
+    // ABSENCE ends the walk, not emptiness. MCP 2026-07-28
+    // `server/utilities/pagination` states that a client "MUST NOT" decide
+    // anything from a cursor's value beyond whether a non-null one was
+    // provided, and that "an empty string is a valid cursor and thus MUST NOT
+    // be treated as the end of results".
+    if (typeof page.nextCursor !== "string") {
       return items;
     }
 

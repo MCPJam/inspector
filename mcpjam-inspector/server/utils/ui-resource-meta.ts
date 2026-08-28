@@ -434,7 +434,8 @@ export async function findListingMetaForUri(
     for (let page = 0; page < LISTING_LOOKUP_MAX_PAGES; page++) {
       const listing = (await manager.listResources(
         serverId,
-        cursor ? { cursor } : undefined
+        // Presence, not truthiness: `""` is a valid continuation cursor.
+        cursor !== undefined ? { cursor } : undefined
       )) as
         | {
             resources?: Array<{ uri?: unknown; _meta?: unknown }>;
@@ -449,8 +450,12 @@ export async function findListingMetaForUri(
 
       const nextCursor = listing?.nextCursor;
       // Found the entry but it carries no `_meta`, or the server is done
-      // paginating — either way there is nothing further to read.
-      if (match || typeof nextCursor !== "string" || nextCursor.length === 0) {
+      // paginating — either way there is nothing further to read. "Done" means
+      // NO cursor: MCP 2026-07-28 `server/utilities/pagination` makes `""` a
+      // valid cursor that MUST NOT be treated as the end of results, so an
+      // empty string keeps the walk going (and joins `seenCursors`, so a
+      // server looping on `""` still trips the repeated-cursor guard below).
+      if (match || typeof nextCursor !== "string") {
         return undefined;
       }
       if (seenCursors.has(nextCursor)) {

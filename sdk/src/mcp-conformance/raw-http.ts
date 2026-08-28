@@ -127,10 +127,19 @@ export async function walkToolsList(options: {
     }
 
     const next = payload?.nextCursor;
-    // Only ABSENT (or empty) means "that was the last page". A non-string
-    // `nextCursor` is a malformed response, not an ending — folding the two
-    // together would let a check certify a listing it stopped reading early.
-    if (next === undefined || next === null || next === "") {
+    // Only ABSENT means "that was the last page". Two things are deliberately
+    // NOT endings:
+    //   - An EMPTY STRING. MCP 2026-07-28 `server/utilities/pagination` makes
+    //     it explicit: clients "MUST NOT" make any determination from a
+    //     cursor's value beyond whether a non-null one was provided, and "an
+    //     empty string is a valid cursor and thus MUST NOT be treated as the
+    //     end of results". `""` is fed back verbatim like any other token; a
+    //     server that keeps answering `""` trips the repeated-cursor guard
+    //     below on the second occurrence instead of spinning.
+    //   - A NON-STRING `nextCursor`, which is a malformed response. Folding
+    //     that into "complete" would let a check certify a listing it stopped
+    //     reading early.
+    if (next === undefined || next === null) {
       termination = "complete";
       break;
     }
