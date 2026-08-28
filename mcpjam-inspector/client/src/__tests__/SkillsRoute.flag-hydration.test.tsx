@@ -23,7 +23,9 @@ vi.mock("../hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => flagState === true,
 }));
 
-// Skills renders the local/cloud toggle off the computers flag; irrelevant here.
+// The route no longer reads this flag — the Local/Cloud browse toggle moved to
+// `skills-enabled` with the rest of the project store. Mocked because App.tsx's
+// module graph still calls it elsewhere.
 vi.mock("../hooks/useComputersEnabled", () => ({
   COMPUTERS_FEATURE_FLAG: "computers-enabled",
   useComputersEnabledState: () => true,
@@ -56,21 +58,6 @@ vi.mock("../components/SkillsTab", () => ({
     />
   ),
 }));
-
-// SkillsRoute resolves hosted server ids through this hook (a name is not an
-// addressable serverId hosted). Irrelevant to the flag, but it must not reach
-// a real Convex query under jsdom.
-vi.mock("../hooks/useViews", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../hooks/useViews")>();
-  return {
-    ...actual,
-    useProjectServers: () => ({
-      serversByName: new Map<string, string>(),
-      serversById: new Map<string, string>(),
-      isLoading: false,
-    }),
-  };
-});
 
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
   ConnectViewHeader: () => <div data-testid="connect-header" />,

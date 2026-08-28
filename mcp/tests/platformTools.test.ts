@@ -137,6 +137,12 @@ const PLAIN_TOOLS = [
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Skills over MCP: a catalog, a verified skill body, and a verified file.
+  // All three can answer with a refusal naming the integrity check that
+  // failed, which is structured evidence to read rather than a card to render.
+  "list_server_skills",
+  "get_server_skill",
+  "read_server_skill_file",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
   // Directory readiness: receipts and run rows are agent-oriented payloads,
@@ -389,6 +395,9 @@ describe("platform tool registration", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "check_host_compatibility",
       "start_claude_readiness_run",
       "start_openai_readiness_run",

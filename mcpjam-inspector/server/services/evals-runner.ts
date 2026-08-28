@@ -307,6 +307,8 @@ export type EvalTestCase = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   expectedOutput?: string;
+  /** Authored analytics grouping label, frozen into each iteration snapshot. */
+  intent?: string;
   promptTurns?: PromptTurn[];
   /**
    * Unified `TestStep[]` model (Phase 3). When present this is the source of
@@ -1430,6 +1432,7 @@ async function createIterationDirectly(
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
@@ -2346,6 +2349,7 @@ const executeTestCase = async (params: {
             expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            ...(test.intent !== undefined ? { intent: test.intent } : {}),
             steps: resolvedStepsForPrecreate,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
@@ -3304,6 +3308,7 @@ const runLocalIteration = async ({
     expectedToolCalls,
     isNegativeTest: test.isNegativeTest,
     expectedOutput,
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     steps: resolvedSteps,
     advancedConfig,
     matchOptions: test.matchOptions,
@@ -4360,6 +4365,7 @@ const runHostedIterationWithBrowser = async (
       expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
       expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       steps: resolvedSteps,
       advancedConfig,
       matchOptions: test.matchOptions,

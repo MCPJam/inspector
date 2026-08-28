@@ -142,6 +142,7 @@ export type JudgeStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  stageMeasurements?: unknown;
   setupSignals?: unknown;
   toolSignals?: unknown;
   scores?: unknown[];
@@ -316,6 +317,7 @@ export type MetadataAttributionStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  stageMeasurements?: unknown;
 };
 
 /**

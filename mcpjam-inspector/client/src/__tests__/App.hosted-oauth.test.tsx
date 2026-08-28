@@ -283,7 +283,6 @@ vi.mock("../hooks/usePostHogOrgContext", () => ({
 
 vi.mock("../lib/config", () => ({
   HOSTED_MODE: true,
-  NON_PROD_LOCKDOWN: false,
 }));
 
 vi.mock("../lib/theme-utils", () => ({

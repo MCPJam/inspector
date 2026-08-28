@@ -220,6 +220,10 @@ vi.mock("../../../utils/skill-tools", () => ({
     tools: {},
     systemPromptSection: "",
   }),
+  // The route scans the local filesystem to build its half of the turn's skill
+  // catalog. These tests run wherever CI does, so the real scan would make the
+  // assertions depend on the machine's `~/.claude/skills`.
+  listLocalRuntimeSkills: vi.fn().mockResolvedValue([]),
 }));
 
 describe("POST /api/mcp/chat-v2", () => {
@@ -909,6 +913,43 @@ describe("POST /api/mcp/chat-v2", () => {
         Object.keys(options.tools).filter((name) => /^ui_/.test(name))
       ).toEqual([]);
       expect(options.system ?? "").not.toContain("MCPJam UI tools");
+    });
+
+    it("offers local skills through the merged catalog, addressed by ref", async () => {
+      // The desktop turn used to get a bare-name local surface. It now gets the
+      // same ref-addressed catalog every other surface has, so a local skill is
+      // `local/<name>` and says where it came from.
+      const { listLocalRuntimeSkills } = await import(
+        "../../../utils/skill-tools"
+      );
+      vi.mocked(listLocalRuntimeSkills).mockResolvedValueOnce([
+        {
+          skillId: "local:/home/u/.claude/skills/code-review",
+          ref: "local/code-review",
+          name: "code-review",
+          description: "Review code, locally.",
+          content: "# Local code-review",
+          aggregateHash: "hash-local",
+          directory: "~/.claude/skills/code-review",
+          files: [],
+        },
+      ] as never);
+      const { streamText } = await import("ai");
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, unknown>;
+        system?: string;
+      };
+      expect(options.system ?? "").toContain("**local/code-review**");
+      expect(options.system ?? "").toContain("~/.claude/skills/code-review");
+      expect(Object.keys(options.tools)).toContain("loadSkill");
     });
 
     it("a server tool named ui_navigate stays executable with ordinary approval — never claimed by a stale UI snapshot", async () => {
