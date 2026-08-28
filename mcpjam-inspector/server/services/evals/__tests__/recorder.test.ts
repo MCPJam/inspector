@@ -36,6 +36,41 @@ describe("startSuiteRunWithRecorder", () => {
     expect("importApprovals" in mutation.mock.calls[0][1]).toBe(false);
   });
 
+  it("forwards the benchmark parent id that licenses the hidden source", async () => {
+    // Same reconstruction hazard as the approvals above, with a sharper edge:
+    // `startTestSuiteRun` refuses `source: 'benchmark'` unless it also receives
+    // the `benchmarkRunId` of a live parent run (mcpjam-backend#1160). A field
+    // nobody names here never reaches Convex, and dropping THIS one fails every
+    // benchmark child at the mutation.
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      source: "benchmark",
+      benchmarkRunId: "brun-1",
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      source: "benchmark",
+      benchmarkRunId: "brun-1",
+    });
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      source: "api",
+    });
+    // Meaningless without the hidden source, so it is absent rather than
+    // `undefined` — the mutation takes an id, not a placeholder.
+    expect("benchmarkRunId" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
   it("forwards tool snapshot metadata when creating a suite run", async () => {
     const mutationMock = vi
       .fn()
