@@ -238,6 +238,144 @@ async function approveServerSkill(
   await (gate as (input: unknown) => Promise<boolean>)(input);
 }
 
+describe("the catalog is in the prompt, not behind a tool call", () => {
+  /**
+   * Level 1 of progressive disclosure. SEP-2640 returns each skill's
+   * frontmatter separately from its content precisely so the catalog can sit
+   * in the model's context without fetching a body — and a model cannot pick
+   * a skill whose description it has never read. The stanza used to name
+   * nothing and say "call `listSkills` to see those", which made choosing a
+   * skill a guess that a relevant one might exist.
+   */
+  it("names every skill and its description", async () => {
+    const manager = await makeManager();
+    const { buildPromptSection } = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const section = await buildPromptSection!();
+
+    expect(section).toContain("acme-billing/refunds");
+    expect(section).toContain("Handle refunds.");
+    // Attributed on every line: these descriptions are third-party text, and
+    // one that reads like an instruction should still show where it came from.
+    expect(section).toContain('MCP server "Acme Billing"');
+    // The affordance comes before the warning, not after three sentences of it.
+    expect(section).toContain("loadSkill");
+  });
+
+  it("shares one skills/list drain with the tools", async () => {
+    const manager = await makeManager();
+    const { tools, buildPromptSection } = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    await buildPromptSection!();
+    await listSkillsExecute(tools)({}, {});
+
+    // Building the prompt and answering `listSkills` must not each pay a
+    // round trip; `ensureCatalog` is memoized for the turn.
+    expect(manager.calls.filter((c) => c === "skills/list")).toHaveLength(1);
+  });
+
+  it("keeps a fast provider's skills when a slow one misses the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = await makeManager();
+      const fast = (manager as unknown as { listServerSkills: Function })
+        .listServerSkills;
+      // srv1 answers at once; srv2 never does.
+      (manager as unknown as { listServerSkills: unknown }).listServerSkills =
+        vi.fn((serverId: string) =>
+          serverId === "srv1"
+            ? (fast as Function)(serverId)
+            : new Promise(() => {})
+        );
+
+      const { buildPromptSection } = withServerSkills(baseTools(), {
+        manager,
+        servers: [
+          { serverId: "srv1", serverLabel: "Acme Billing" },
+          { serverId: "srv2", serverLabel: "Slow Co" },
+        ],
+      });
+      const pending = buildPromptSection!();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Partial, not empty: one stalled server must not make every healthy
+      // server's skills invisible for the turn.
+      await expect(pending).resolves.toContain("Handle refunds.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up on the prompt rather than stalling the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = await makeManager();
+      // A server that never answers. Every turn waits on the prompt catalog
+      // now, so an unresponsive provider must not be able to spend its whole
+      // request timeout of a user's turn on an optional feature.
+      (manager as unknown as { listServerSkills: unknown }).listServerSkills =
+        vi.fn(() => new Promise(() => {}));
+
+      const { buildPromptSection } = withServerSkills(baseTools(), {
+        manager,
+        servers: SERVERS,
+      });
+      const pending = buildPromptSection!();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Empty section, turn proceeds — not a rejection the caller must handle.
+      await expect(pending).resolves.toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("spends only the budget it is given", async () => {
+    const manager = await makeManager();
+    const { buildPromptSection } = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+
+    // The budget is SHARED with the other always-present catalog, so a caller
+    // that has already spent most of it can hand over what is left. Zero is a
+    // real answer: nothing may be named rather than the cap being exceeded.
+    const starved = await buildPromptSection!({ budgetChars: 0 });
+    expect(starved).not.toContain("Handle refunds.");
+
+    const full = await buildPromptSection!();
+    expect(full).toContain("Handle refunds.");
+  });
+
+  it("has no builder at all when no server declares the extension", async () => {
+    const manager = await makeManager({ inactiveServers: ["srv1"] });
+    const result = withServerSkills(baseTools(), { manager, servers: SERVERS });
+
+    // `null`, not an empty string: "no server speaks skills" and "the catalog
+    // came back empty" are different facts, and only the first may suppress
+    // the stanza without anyone looking.
+    expect(result.buildPromptSection).toBeNull();
+  });
+
+  it("marks an unloadable skill in the catalog rather than hiding it", async () => {
+    const manager = await makeManager({ noResources: true });
+    const { buildPromptSection } = withServerSkills(baseTools(), {
+      manager,
+      servers: SERVERS,
+    });
+    const section = await buildPromptSection!();
+
+    // Visible and named, so the model does not keep trying to load it, and a
+    // server author reading the same catalog can see MCPJam declined.
+    expect(section).toContain("acme-billing/refunds");
+    expect(section).toContain("unverifiable");
+  });
+});
+
 describe("slug + ref minting", () => {
   it("slugifies a server LABEL, never a server-supplied name", () => {
     expect(slugifyServerLabel("Acme Billing (prod)")).toBe("acme-billing-prod");
@@ -269,7 +407,7 @@ describe("slug + ref minting", () => {
         { serverId: "srv0", serverLabel: "Acme Billing" },
         { serverId: "srv1", serverLabel: "Acme Billing" },
       ],
-    });
+    }).tools;
     const listed = String(await listSkillsExecute(tools)({}, {}));
     expect(listed).toContain("acme-billing-2/refunds");
     // The shared assigner, run over the full list as the picker runs it,
@@ -291,7 +429,7 @@ describe("slug + ref minting", () => {
       ],
     };
     const manager = await makeManager({ extraSkills: [second] });
-    const tools = withServerSkills(baseTools(), { manager, servers: SERVERS });
+    const tools = withServerSkills(baseTools(), { manager, servers: SERVERS }).tools;
     const listed = String(await listSkillsExecute(tools)({}, {}));
     // Neither gets the bare ref: which one arrived first is a listing-order
     // accident the server controls, and the picker must reach the same answer.
@@ -341,7 +479,7 @@ describe("withServerSkills — attachment", () => {
   it("returns the base object UNCHANGED when no server declares the extension", async () => {
     const base = baseTools();
     const manager = await makeManager({ active: false });
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     // Identity, not deep equality: the orchestration decides whether to add the
     // system-prompt sentence by comparing references.
     expect(wrapped).toBe(base);
@@ -351,13 +489,13 @@ describe("withServerSkills — attachment", () => {
   it("returns the base object unchanged when there are no servers at all", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    expect(withServerSkills(base, { manager, servers: [] })).toBe(base);
+    expect(withServerSkills(base, { manager, servers: [] }).tools).toBe(base);
   });
 
   it("sends ZERO skills/* frames until something asks about skills", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    withServerSkills(base, { manager, servers: SERVERS });
+    withServerSkills(base, { manager, servers: SERVERS }).tools;
     // Discovery is lazy: constructing the wrapper must not touch the wire.
     expect(manager.calls).toEqual([]);
   });
@@ -367,7 +505,7 @@ describe("withServerSkills — listSkills", () => {
   it("returns the server section alone when the base has no listSkills", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     const text = String(await listSkillsExecute(wrapped)({}, {}));
     expect(text).not.toContain("local-skill");
     expect(text).toContain("acme-billing/refunds");
@@ -380,7 +518,7 @@ describe("withServerSkills — listSkills", () => {
   it("says so when no MCP-server-provided skills are available", async () => {
     const base = baseTools();
     const manager = await makeManager({ emptySkills: true });
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     const text = String(await listSkillsExecute(wrapped)({}, {}));
     expect(text).toBe(
       "No MCP-server-provided skills are available for this turn."
@@ -390,7 +528,7 @@ describe("withServerSkills — listSkills", () => {
   it("drains each provider only once per turn", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     const execute = listSkillsExecute(wrapped);
     await execute({}, {});
     await execute({}, {});
@@ -412,7 +550,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (input: unknown) => Promise<boolean>;
     expect(typeof gate).toBe("function");
@@ -430,7 +568,7 @@ describe("withServerSkills — loadSkill", () => {
     const manager = await makeManager();
     const base = baseTools();
     (base.loadSkill as Record<string, unknown>).needsApproval = true;
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (input: unknown) => Promise<boolean>;
     await expect(gate({ name: "acme-billing/refunds" })).resolves.toBe(true);
@@ -444,7 +582,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (input: unknown) => Promise<boolean>;
     await gate({ name: "acme-billing/refunds" });
@@ -464,7 +602,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", { uri });
     const result = String(
       await (wrapped.loadSkill as { execute: Function }).execute({ uri }, {})
@@ -490,7 +628,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     const input = { uri };
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (i: unknown) => Promise<boolean>;
@@ -519,7 +657,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     const input = { uri };
     const gate = (wrapped.loadSkill as { needsApproval?: unknown })
       .needsApproval as (i: unknown) => Promise<boolean>;
@@ -547,7 +685,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", {
       name: "acme-billing/refunds",
     });
@@ -569,7 +707,7 @@ describe("withServerSkills — loadSkill", () => {
   it("delegates a BARE NAME to the base source — no shadowing channel", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     const result = await (wrapped.loadSkill as { execute: Function }).execute(
       { name: "refunds" },
       {}
@@ -589,7 +727,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
@@ -620,7 +758,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", { uri: hiddenUri });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
@@ -641,7 +779,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", { uri: askedFor });
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
@@ -660,7 +798,7 @@ describe("withServerSkills — loadSkill", () => {
         { serverId: "srv1", serverLabel: "Acme" },
         { serverId: "srv2", serverLabel: "Globex" },
       ],
-    });
+    }).tools;
     const text = String(
       await (wrapped.loadSkill as { execute: Function }).execute(
         { uri: "skill://somewhere/else/SKILL.md" },
@@ -678,7 +816,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", {
       name: "acme-billing/refunds",
     });
@@ -697,7 +835,7 @@ describe("withServerSkills — loadSkill", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", {
       name: "acme-billing/refunds",
     });
@@ -720,7 +858,7 @@ describe("withServerSkills — file reads", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "readSkillFile", {
       name: "acme-billing/refunds",
       path: FILE_URI,
@@ -753,7 +891,7 @@ describe("withServerSkills — file reads", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "loadSkill", {
       name: "acme-billing/refunds",
     });
@@ -776,7 +914,7 @@ describe("withServerSkills — file reads", () => {
     const wrapped = withServerSkills(baseTools(), {
       manager,
       servers: SERVERS,
-    });
+    }).tools;
     await approveServerSkill(wrapped, "readSkillFile", {
       name: "acme-billing/refunds",
       path: unlisted,
@@ -797,7 +935,7 @@ describe("withServerSkills — file reads", () => {
   it("delegates file tools for a base-source skill", async () => {
     const base = baseTools();
     const manager = await makeManager();
-    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS }).tools;
     expect(
       await (wrapped.listSkillFiles as { execute: Function }).execute(
         { name: "local-skill" },

@@ -51,10 +51,12 @@ import {
 import {
   caseIntentSchema,
   caseIntentUpdateSchema,
+  evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
   opaqueIdSchema,
 } from "@mcpjam/sdk/contract";
+import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
@@ -4659,6 +4661,186 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
   }
   return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
+
+// GET /v1/projects/:projectId/eval-suites/:suiteId/stage-analytics
+//     ?from=&to=&runGroupId=&cursor=&limit=
+//
+// One materialized `EvalStageAnalyticsV1` document per RUN, newest completion
+// first — where trials fell out of the user-value chain, and whether that
+// differs by intent, by model, or by host.
+//
+// Each item is one run's COMPLETE document, and that is the whole read model:
+// there is no cross-run merge here and none in the SDK, because averaging two
+// funnels is not a funnel. A caller compares by rendering runs side by side
+// under the contract's own parity rules, never by summing these rows.
+//
+// `from`/`to` are INCLUSIVE epoch milliseconds over the run's completion
+// stamp, matching the Convex boundary exactly rather than inventing an ISO
+// dialect this API has no other precedent for. Runs that never completed carry
+// no stamp, sort last, and are excluded by any `from` bound.
+//
+// NOT backfilled: a run that terminalized before the materializer shipped has
+// no row at all, and that absence is the honest "unmeasured" answer. It is
+// never reported as a funnel of zeros.
+const stageAnalyticsQuerySchema = z
+  .object({
+    // Coerced because query strings are strings; `.int()` after coercion is
+    // what rejects `1.5` and `abc` (which coerce to NaN) rather than letting
+    // Convex see a non-integer millisecond.
+    from: z.coerce.number().int().min(0).optional(),
+    to: z.coerce.number().int().min(0).optional(),
+    runGroupId: z.string().trim().min(1).optional(),
+    cursor: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .superRefine((query, ctx) => {
+    // Rejected HERE as well as in Convex. The backend throws on an inverted
+    // window rather than fail-softing to an empty page — an empty page would
+    // read as "this suite has no analytics" and send the reader looking in the
+    // wrong place — and a 400 at the edge names the bad parameter instead of
+    // surfacing a backend error string.
+    if (
+      query.from !== undefined &&
+      query.to !== undefined &&
+      query.from > query.to
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["from"],
+        message:
+          "from must be less than or equal to to (inclusive epoch ms over runCompletedAt)",
+      });
+    }
+  });
+
+evals.get(
+  "/projects/:projectId/eval-suites/:suiteId/stage-analytics",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    // An EMPTY query value means "not supplied", not "supplied as empty".
+    // Without this, `?from=` coerces to `0` — a real lower bound, which
+    // excludes every run that never recorded a completion stamp — so a request
+    // that looks unfiltered would quietly narrow the population it reports on.
+    // That is the one failure this whole contract is built against, so the
+    // blank is dropped here rather than being given a meaning.
+    const optionalQuery = (name: string): string | undefined => {
+      const raw = c.req.query(name);
+      if (raw === undefined) return undefined;
+      return raw.trim() === "" ? undefined : raw;
+    };
+    const query = parseWithSchema(stageAnalyticsQuerySchema, {
+      ...(optionalQuery("from") !== undefined
+        ? { from: optionalQuery("from") }
+        : {}),
+      ...(optionalQuery("to") !== undefined ? { to: optionalQuery("to") } : {}),
+      ...(optionalQuery("runGroupId") !== undefined
+        ? { runGroupId: optionalQuery("runGroupId") }
+        : {}),
+      ...(optionalQuery("cursor") !== undefined
+        ? { cursor: optionalQuery("cursor") }
+        : {}),
+      ...(optionalQuery("limit") !== undefined
+        ? { limit: optionalQuery("limit") }
+        : {}),
+    });
+    const limit = query.limit ?? 25;
+    // `null`, never `undefined`: Convex pagination requires an explicit null
+    // first cursor, and `undefined` would be dropped from the args object.
+    const cursor = query.cursor ?? null;
+    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+    let page: {
+      page: unknown[];
+      isDone: boolean;
+      continueCursor: string;
+    };
+    try {
+      // The suite is read and project-matched FIRST so a valid suite id from
+      // another of the caller's projects reads as NOT_FOUND here, rather than
+      // relying on the backend's tenant-safe empty page — which is defense in
+      // depth, not the answer: an empty page is indistinguishable from "this
+      // suite has no analytics yet".
+      const suite = await convex.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+      requireProjectMatch(suite, projectId, "Eval suite");
+      page = await convex.query("testSuites:listEvalStageAnalytics" as any, {
+        projectId,
+        suiteId,
+        // Omitted rather than sent as `undefined`: the Convex validators are
+        // `v.optional`, and an explicit `undefined` is not the same as absent.
+        ...(query.from !== undefined ? { from: query.from } : {}),
+        ...(query.to !== undefined ? { to: query.to } : {}),
+        ...(query.runGroupId !== undefined
+          ? { runGroupId: query.runGroupId }
+          : {}),
+        paginationOpts: { numItems: limit, cursor },
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval suite not found",
+        );
+      }
+      // The backend's own inverted-window guard. Unreachable while the schema
+      // above holds, and mapped anyway so the contract cannot drift into
+      // answering a caller error with a 500.
+      const data = (error as { data?: unknown } | null)?.data;
+      if (
+        data &&
+        typeof data === "object" &&
+        !Array.isArray(data) &&
+        (data as { code?: unknown }).code === "INVALID_ARGUMENT"
+      ) {
+        const message = (data as { message?: unknown }).message;
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          typeof message === "string"
+            ? message
+            : "Invalid stage analytics window",
+        );
+      }
+      throw error;
+    }
+
+    // Validated at the boundary with the REFINED schema — the structural one
+    // would miss exactly the invariants a reader relies on (one overall slice,
+    // the overall slice agreeing with the row's own trial count). A payload
+    // that fails is an upstream fault: it is answered as a service error, never
+    // as a 200 with the bad row quietly dropped, because a silently shortened
+    // page is a denominator that changed without saying so.
+    const rows: EvalStageAnalyticsV1[] = [];
+    for (const row of page.page ?? []) {
+      const parsed = evalStageAnalyticsSchema.safeParse(row);
+      if (!parsed.success) {
+        logger.warn("[v1 evals] stage analytics row failed contract validation", {
+          projectId,
+          suiteId,
+          // The ISSUE, never the row: the payload can carry intent labels and
+          // host names, and a validation log is not the place for them.
+          issue: parsed.error.issues[0]?.message ?? "unknown",
+          path: parsed.error.issues[0]?.path?.join(".") ?? "",
+        });
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Stage analytics payload failed validation",
+        );
+      }
+      rows.push(parsed.data as EvalStageAnalyticsV1);
+    }
+
+    return v1PageJson(
+      c,
+      rows,
+      page.isDone ? undefined : page.continueCursor,
+    );
+  },
+);
 
 // ── Eval suite/case editing routes ───────────────────────────────────
 
