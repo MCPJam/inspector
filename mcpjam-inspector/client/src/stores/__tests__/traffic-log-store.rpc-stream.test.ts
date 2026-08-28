@@ -174,6 +174,70 @@ describe("traffic-log-store rpc stream (local mode)", () => {
     });
   });
 
+  // `MAX_ITEMS` bounds the row COUNT, and a count is not a memory bound: a
+  // thousand rows just under the per-row cap is a gigabyte in the renderer, and
+  // raising the per-row cap raises that ceiling with it. The total budget is
+  // what actually holds, so the oldest rows go once it is spent.
+  it("evicts the oldest rows once the total retention budget is spent", async () => {
+    const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const unsubscribe = subscribeToRpcStream();
+    const source = FakeEventSource.last!;
+    // Sixteen rows of ~900 KB: each one under the per-row cap and so retained
+    // whole, all sixteen far under MAX_ITEMS, together over the 8 MB budget.
+    for (let i = 0; i < 16; i++) {
+      source.emit({
+        ...rpcFrame(`rpc:bulk:${i}`, i),
+        message: {
+          jsonrpc: "2.0",
+          id: i,
+          method: "tools/call",
+          params: { data: "A".repeat(900_000) },
+        },
+      });
+    }
+    unsubscribe();
+
+    const items = useTrafficLogStore.getState().mcpServerItems;
+    // Every row is intact, so nothing but the budget can have dropped these.
+    expect(items.length).toBeLessThan(16);
+    expect(items.length).toBeGreaterThan(1);
+    expect(isTruncatedRpcPayload(items[0].payload)).toBe(false);
+    // Newest first, and the newest is what a reader is actually looking at.
+    expect(items[0].id).toBe("rpc:bulk:15");
+    const retained = items.reduce(
+      (sum, item) => sum + JSON.stringify(item.payload).length,
+      0,
+    );
+    // The budget, plus the one newest row that is never evicted for it.
+    expect(retained).toBeLessThanOrEqual(8 * 1024 * 1024 + 1024 * 1024);
+  });
+
+  // Hosted rows reach the store from a producer that does not cap them here, so
+  // one can exceed the whole budget by itself. Evicting it would leave the panel
+  // empty, which tells a reader less than a single oversized row does.
+  it("keeps the newest row even when it alone is over the budget", async () => {
+    const { useTrafficLogStore } = await loadStore();
+    useTrafficLogStore.getState().clear();
+
+    const add = (id: string, payload: unknown) =>
+      useTrafficLogStore.getState().addMcpServerLog({
+        id,
+        serverId: "srv-1",
+        direction: "RECEIVE",
+        method: "tools/call",
+        timestamp: "2026-08-02T00:00:00.000Z",
+        payload,
+      });
+    add("small", { jsonrpc: "2.0", id: 1 });
+    add("huge", { jsonrpc: "2.0", id: 2, result: "A".repeat(9_000_000) });
+
+    const items = useTrafficLogStore.getState().mcpServerItems;
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("huge");
+  });
+
   it("keeps the full payload of a frame under the cap", async () => {
     const { subscribeToRpcStream, useTrafficLogStore } = await loadStore();
     useTrafficLogStore.getState().clear();

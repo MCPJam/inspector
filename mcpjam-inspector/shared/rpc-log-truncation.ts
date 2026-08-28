@@ -18,7 +18,7 @@
  */
 export type TruncatedRpcPayload = {
   _truncated: true;
-  /** Exact serialized size, when the producer already had it in hand. */
+  /** Exact size in UTF-8 bytes, when the producer measured it. */
   bytes?: number;
   /** The ceiling that was crossed, when the exact size was never measured. */
   limitBytes?: number;
@@ -58,6 +58,116 @@ const STRING_HEAD_CHARS = 8 * 1024;
 const STRING_MARKER_OVERHEAD = 64;
 
 /**
+ * The names the marker owns.
+ *
+ * {@link truncateRpcPayload} merges what it preserved off the source frame with
+ * the marker, and these have to come from the marker alone:
+ * {@link describeTruncatedRpcPayload} reads them as the marker's account of what
+ * it dropped. A frame carrying a root-level `head` renders as "Showing the first
+ * 2 B" of a payload nothing ever sliced; one carrying `reason` renders the
+ * frame's own string as the reason nothing was recorded.
+ *
+ * None of them is a JSON-RPC field, so a frame losing one off its envelope costs
+ * a reader nothing that a truthful notice does not repay. Spreading the marker
+ * last is not enough on its own — it only overwrites the keys the marker
+ * happens to carry, and `head`, `bytes` and `reason` are exactly the ones it
+ * usually does not.
+ */
+const MARKER_FIELDS = new Set([
+  "_truncated",
+  "bytes",
+  "limitBytes",
+  "reason",
+  "head",
+]);
+
+/**
+ * The two sizes this module measures a string by, counted in one pass.
+ *
+ * `utf8` is the string's own encoded length — what a marker's `bytes` reports,
+ * and what an already-serialized frame is measured by. `json` is what the same
+ * string costs INSIDE serialized JSON: those bytes with JSON's escapes applied
+ * and the surrounding quotes counted. Every budget here is charged `json`.
+ *
+ * `value.length` used to stand in for both and is neither. It counts UTF-16
+ * code units, so `"日本語"` measured 3 where JSON writes 9, and a control
+ * character measured 1 where JSON writes the six of `\u0001`. Undercounting was
+ * documented as the tolerable direction — a cap that lets a big value through —
+ * but no caller uses it that way: `harness-rpc-log-sink` sizes a Convex
+ * document against it, and {@link truncateRpcPayload} promises every caller a
+ * result under `limitBytes`. A 16 KB limit returning 24 KB of CJK is not a
+ * conservative cap, it is a broken one.
+ *
+ * Both counters stop once `utf8` passes `budget`. `json` is never smaller than
+ * `utf8`, so at that point BOTH are over it and a caller comparing either
+ * against the same budget still gets the right answer — while the scan costs at
+ * most the budget rather than the string. Pass `Infinity` when the exact size is
+ * the point.
+ */
+export function measureString(
+  value: string,
+  budget: number,
+): { utf8: number; json: number } {
+  let utf8 = 0;
+  let escapes = 0;
+  for (let i = 0; i < value.length; i++) {
+    if (utf8 > budget) break;
+    const code = value.charCodeAt(i);
+    if (code < 0x80) {
+      utf8 += 1;
+      if (code === 0x22 || code === 0x5c) {
+        escapes += 1; // \" and \\
+      } else if (code < 0x20) {
+        // \b \t \n \f \r have two-character escapes; every other control
+        // character is written as \u00xx.
+        escapes +=
+          code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+            ? 1
+            : 5;
+      }
+      continue;
+    }
+    if (code < 0x800) {
+      utf8 += 2;
+      continue;
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = value.charCodeAt(i + 1);
+      // NaN past the end of the string, so an unpaired trailing high surrogate
+      // falls through to the branch below rather than reading off the end.
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        utf8 += 4;
+        i++;
+        continue;
+      }
+    }
+    if (code >= 0xd800 && code <= 0xdfff) {
+      // An unpaired surrogate encodes as the three-byte replacement character,
+      // but `JSON.stringify` writes it as the six of `\udXXX`.
+      utf8 += 3;
+      escapes += 3;
+      continue;
+    }
+    utf8 += 3;
+  }
+  return { utf8, json: utf8 + escapes + 2 };
+}
+
+/**
+ * The first {@link STRING_HEAD_CHARS} characters of a string, never splitting a
+ * surrogate pair — half of one is not text, it is a `�` in the panel.
+ */
+function headOf(value: string): string {
+  const last = value.charCodeAt(STRING_HEAD_CHARS - 1);
+  return value.slice(
+    0,
+    last >= 0xd800 && last <= 0xdbff
+      ? STRING_HEAD_CHARS - 1
+      : STRING_HEAD_CHARS,
+  );
+}
+
+/**
  * Depth ceiling for the shrink walk. Deep enough for any JSON-RPC frame
  * (`result.content[n].text` is four), shallow enough that a cyclic or
  * adversarially nested value terminates without a stack guard.
@@ -82,9 +192,10 @@ const MAX_PROBE_NODES = 50_000;
  * `Zone::Expand` in the browser process). The walk stops at `budget`, so its
  * cost is bounded by the cap rather than by the value.
  *
- * Counts UTF-16 code units, not UTF-8 bytes, so a CJK payload is undercounted
- * by up to 3x. That is the tolerable direction for a retention cap: it can let
- * an oversized value through, never truncate one that would have fit.
+ * Strings are measured by {@link measureString}, so what is counted is what
+ * `JSON.stringify` would actually write — UTF-8, escapes included. Everything
+ * else is approximated by a flat constant, which is why this is a ceiling
+ * rather than an exact size.
  *
  * Cycles terminate at the node ceiling rather than throwing, so a caller can
  * treat `exceeded` as "do not keep this" without a separate cycle check.
@@ -103,7 +214,7 @@ export function probeSerializedSize(
 
     const node = stack.pop();
     if (typeof node === "string") {
-      bytes += node.length + 2; // surrounding quotes
+      bytes += measureString(node, budget - bytes).json;
       continue;
     }
     if (node === null || typeof node !== "object") {
@@ -128,7 +239,7 @@ export function probeSerializedSize(
     bytes += 2; // braces
     for (const key in node) {
       if (!Object.hasOwn(node, key)) continue;
-      bytes += key.length + 4; // quotes, colon, separator
+      bytes += measureString(key, budget - bytes).json + 2; // colon, separator
       if (bytes > budget) return { bytes, exceeded: true };
       stack.push((node as Record<string, unknown>)[key]);
     }
@@ -211,23 +322,30 @@ export function truncateRpcPayload(
     if (++nodes > MAX_PROBE_NODES) return dropped();
 
     if (typeof value === "string") {
+      const measured = measureString(value, limitBytes - spent);
       if (
         value.length <= MAX_PRESERVED_STRING_CHARS &&
-        spent + value.length + 2 <= limitBytes
+        spent + measured.json <= limitBytes
       ) {
-        spent += value.length + 2;
+        spent += measured.json;
         return value;
       }
-      if (spent + STRING_HEAD_CHARS + STRING_MARKER_OVERHEAD <= limitBytes) {
-        spent += STRING_HEAD_CHARS + STRING_MARKER_OVERHEAD;
-        return {
-          _truncated: true,
-          bytes: value.length,
-          head: value.slice(0, STRING_HEAD_CHARS),
-        };
+      // Past the fits-whole check the marker reports the size either way, and
+      // `measured` stopped at the budget rather than at the end of the string.
+      const bytes = measureString(value, Number.POSITIVE_INFINITY).utf8;
+      const head = headOf(value);
+      // A head equal to the string is not a head. The two constants are equal
+      // today so this only fires on a surrogate pair straddling the cut, but
+      // the honesty of the marker should not rest on their staying equal.
+      if (head.length < value.length) {
+        const headBytes = measureString(head, Number.POSITIVE_INFINITY).json;
+        if (spent + headBytes + STRING_MARKER_OVERHEAD <= limitBytes) {
+          spent += headBytes + STRING_MARKER_OVERHEAD;
+          return { _truncated: true, bytes, head };
+        }
       }
       spent += STRING_MARKER_OVERHEAD;
-      return dropped(value.length);
+      return dropped(bytes);
     }
 
     if (value === null || typeof value !== "object") {
@@ -257,7 +375,7 @@ export function truncateRpcPayload(
     const out: Record<string, unknown> = {};
     for (const key in value as Record<string, unknown>) {
       if (!Object.hasOwn(value, key)) continue;
-      spent += key.length + 4;
+      spent += measureString(key, limitBytes - spent).json + 2;
       if (spent > limitBytes) {
         path.delete(value);
         return dropped();
@@ -269,11 +387,20 @@ export function truncateRpcPayload(
   };
 
   const shrunk = shrink(payload, 0);
-  const preserved =
-    isTruncatedRpcPayload(shrunk) || typeof shrunk !== "object" || shrunk === null
-      ? {}
-      : (shrunk as Record<string, unknown>);
-  // Marker last: it must win over any same-named field on the frame.
+  const preserved: Record<string, unknown> = {};
+  if (
+    !isTruncatedRpcPayload(shrunk) &&
+    typeof shrunk === "object" &&
+    shrunk !== null
+  ) {
+    for (const [key, field] of Object.entries(shrunk)) {
+      // Dropped, not overwritten: the marker does not carry `head`, `bytes` or
+      // `reason` on every frame, so spreading it last leaves whichever of them
+      // the FRAME supplied standing — and the notice then describes the frame's
+      // own field as the marker's account of what was dropped. See MARKER_FIELDS.
+      if (!MARKER_FIELDS.has(key)) preserved[key] = field;
+    }
+  }
   const truncated = { ...preserved, ...marker };
 
   // The loop above bails on the envelope's own size, but the marker fields it
@@ -331,8 +458,11 @@ export function describeTruncatedRpcPayload(
   if (typeof payload.head === "string") {
     // No claim about where the rest is: this module describes frames of every
     // kind, and only SOME of them have a tool-result card holding the original.
+    // Measured, not `head.length`: the sentence next to it reports `bytes` in
+    // UTF-8, and two numbers in different units invite exactly the comparison
+    // that makes a reader think a third of the payload survived.
     return `Payload truncated — ${limit}.${size} Showing the first ${formatBytes(
-      payload.head.length,
+      measureString(payload.head, Number.POSITIVE_INFINITY).utf8,
     )}.`;
   }
   return `Payload not recorded — ${limit}.${size}`;

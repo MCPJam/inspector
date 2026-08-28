@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   describeTruncatedRpcPayload,
   isTruncatedRpcPayload,
+  measureString,
   probeSerializedSize,
   truncateRpcPayload,
 } from "../rpc-log-truncation";
+
+/** What the value really costs on the wire, measured the way a consumer does. */
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
 
 /**
  * An object with `count` enumerable getters that record every read. The probe
@@ -28,6 +34,35 @@ function countingWideObject(count: number): {
   }
   return { value, touched: () => touched };
 }
+
+// Every budget in this module is charged in serialized bytes. `value.length`
+// used to stand in for that and counts UTF-16 code units, which is a different
+// number for everything but ASCII.
+describe("measureString", () => {
+  it("counts exactly what JSON.stringify would write", () => {
+    // `.length` reads these as 3, 1, 1, 2 and 1 respectively.
+    expect(measureString("\u65e5\u672c\u8a9e", Infinity)).toEqual({
+      utf8: 9,
+      json: 11,
+    });
+    expect(measureString("\u0001", Infinity)).toEqual({ utf8: 1, json: 8 });
+    expect(measureString('"', Infinity)).toEqual({ utf8: 1, json: 4 });
+    // An astral code point is one character over two UTF-16 units...
+    expect(measureString("\u{1F600}", Infinity)).toEqual({ utf8: 4, json: 6 });
+    // ...and half of one encodes as the replacement character but serializes
+    // as a six-character escape.
+    expect(measureString("\ud800", Infinity)).toEqual({ utf8: 3, json: 8 });
+  });
+
+  it("leaves both counts over the budget when it stops early", () => {
+    // The early exit is on `utf8`, the smaller of the two, so a caller
+    // comparing EITHER count against the same budget still gets "over".
+    const measured = measureString("\u65e5".repeat(100_000), 1024);
+
+    expect(measured.utf8).toBeGreaterThan(1024);
+    expect(measured.json).toBeGreaterThan(1024);
+  });
+});
 
 describe("probeSerializedSize", () => {
   it("stops walking a very wide object at the budget instead of enqueuing every key", () => {
@@ -57,6 +92,24 @@ describe("probeSerializedSize", () => {
 
     expect(result.exceeded).toBe(false);
     expect(result.bytes).toBeGreaterThan(0);
+  });
+
+  // Regression: `.length` read this frame as ~100 KB and let it through a
+  // 256 KB cap that JSON.stringify blows by 44 KB.
+  it("sizes a CJK payload by its serialized bytes, not its UTF-16 length", () => {
+    const frame = { a: "\u65e5".repeat(100_000) };
+    expect(serializedBytes(frame)).toBeGreaterThan(256 * 1024);
+
+    expect(probeSerializedSize(frame, 256 * 1024).exceeded).toBe(true);
+  });
+
+  // Control characters are the worse direction: JSON writes six characters for
+  // each one, so `.length` undercounted this frame by 6x.
+  it("counts a control character as the escape JSON writes for it", () => {
+    const frame = { a: "\u0001".repeat(100_000) };
+    expect(serializedBytes(frame)).toBeGreaterThan(256 * 1024);
+
+    expect(probeSerializedSize(frame, 256 * 1024).exceeded).toBe(true);
   });
 });
 
@@ -163,6 +216,62 @@ describe("truncateRpcPayload", () => {
     }
   });
 
+  // The ceiling is a PROMISE, not an approximation: `harness-rpc-log-sink`
+  // sizes a Convex document against it. Measured in UTF-16 units a 16 KB limit
+  // came back with 24 KB of CJK on the wire, and the document limit is the next
+  // ceiling up.
+  it("holds its limit in real bytes for a frame that is not ASCII", () => {
+    for (const limit of [512, 16 * 1024, 1024 * 1024]) {
+      const truncated = truncateRpcPayload(
+        {
+          jsonrpc: "2.0",
+          id: 12,
+          result: {
+            text: "\u65e5".repeat(500_000),
+            control: "\u0001".repeat(50_000),
+          },
+        },
+        limit,
+      );
+
+      expect(serializedBytes(truncated)).toBeLessThanOrEqual(limit);
+    }
+  });
+
+  // Regression: the marker was spread over the preserved envelope, which only
+  // overwrites the keys the marker HAS — and it carries neither `head` nor
+  // `reason` on a frame-level truncation. A frame supplying its own read back
+  // as the marker's account of what it dropped.
+  it("never lets a frame's own field supply the marker's truncation metadata", () => {
+    const truncated = truncateRpcPayload(
+      {
+        jsonrpc: "2.0",
+        id: 13,
+        head: "ok",
+        bytes: 7,
+        reason: "not a truncation",
+        result: { data: "x".repeat(5_000_000) },
+      },
+      1024,
+    );
+
+    expect(truncated.head).toBeUndefined();
+    expect(truncated.bytes).toBeUndefined();
+    expect(truncated.reason).toBeUndefined();
+    expect(truncated.limitBytes).toBe(1024);
+    // The notice used to read "Payload not recorded: not a truncation." — the
+    // frame describing itself.
+    expect(describeTruncatedRpcPayload(truncated)).toBe(
+      "Payload not recorded \u2014 over the 1 KB log limit.",
+    );
+    // Everything that is not the marker's to own is still there.
+    expect(truncated.jsonrpc).toBe("2.0");
+    expect(truncated.id).toBe(13);
+    expect(truncated.result).toEqual({
+      data: { _truncated: true, bytes: 5_000_000 },
+    });
+  });
+
   it("terminates on a cyclic frame instead of recursing forever", () => {
     const cyclic: Record<string, unknown> = { jsonrpc: "2.0", id: 11 };
     cyclic.self = cyclic;
@@ -227,6 +336,23 @@ describe("the truncation notice the Logs panel renders", () => {
     ).toBe(
       "Payload truncated — over the 1.0 MB log limit. It was 2.0 MB. " +
         "Showing the first 8 KB.",
+    );
+  });
+
+  it("reports the head in the same unit as the size beside it", () => {
+    // 4096 CJK characters are 12 KB on the wire. Reported as `head.length` the
+    // sentence read "the first 4 KB" next to a size in bytes, and the two
+    // numbers invited exactly the ratio nobody should compute from them.
+    expect(
+      describeTruncatedRpcPayload({
+        _truncated: true,
+        limitBytes: 1024 * 1024,
+        bytes: 3 * 1024 * 1024,
+        head: "\u65e5".repeat(4 * 1024),
+      }),
+    ).toBe(
+      "Payload truncated \u2014 over the 1.0 MB log limit. It was 3.0 MB. " +
+        "Showing the first 12 KB.",
     );
   });
 
