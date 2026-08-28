@@ -1380,7 +1380,9 @@ export async function prepareChatV2(
   // Drained here, sharing ONE `skills/list` with any `loadSkill` later in the
   // same turn.
   //
-  // The metadata budget is SHARED, not per-catalog. Both stanzas are always in
+  // The metadata budget is SHARED, not per-catalog, and the OTHER catalog has
+  // first claim on it — deliberately: a project's own skills should not be
+  // pushed out of the prompt by a connected third party's. Both stanzas are always in
   // context, so giving each the full allowance would let discovery metadata
   // take twice the share the cap exists to hold it to. The other catalog is
   // already built, so what it spent comes off the top — measured on the

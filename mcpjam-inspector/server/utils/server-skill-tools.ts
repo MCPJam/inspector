@@ -309,7 +309,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
       providers.map(async (provider) => {
         let listing;
         try {
-          listing = await listServerSkillCatalog(args.manager, provider.serverId);
+          listing = await listServerSkillCatalog(
+            args.manager,
+            provider.serverId
+          );
         } catch (error) {
           logger.warn("[server-skills] discovery failed", {
             serverId: provider.serverId,
@@ -319,41 +322,40 @@ export function withServerSkills<T extends Record<string, unknown>>(
           return;
         }
         // Refs come from the SHARED assigner, which disambiguates EVERY member
-          // of a duplicated name rather than only the ones after the first — so the
-          // ref a skill gets does not depend on where the server placed it in the
-          // listing, and the picker computes the same answer.
-          const assigned = await assignSkillRefs(
-            provider.serverSlug,
-            listing.skills
-          );
-          for (const { skill, ref } of assigned) {
-            const entry: CatalogEntry = {
-              ...skill,
-              ref,
-              serverLabel: provider.serverLabel,
-            };
-            state.byRef.set(ref, entry);
-            // Two connected servers may legally advertise the same URI. Last-write
-            // -wins would silently pick one, so the second claimant marks the URI
-            // AMBIGUOUS and the direct-URI path refuses it with the qualified
-            // options — the same posture `resolveRef` takes for a bare name.
-            if (state.byUri.has(skill.skillUri)) {
-              state.ambiguousUris.add(skill.skillUri);
-            } else {
-              state.byUri.set(skill.skillUri, entry);
-            }
+        // of a duplicated name rather than only the ones after the first — so
+        // the ref a skill gets does not depend on where the server placed it
+        // in the listing, and the picker computes the same answer.
+        const assigned = await assignSkillRefs(
+          provider.serverSlug,
+          listing.skills
+        );
+        for (const { skill, ref } of assigned) {
+          const entry: CatalogEntry = {
+            ...skill,
+            ref,
+            serverLabel: provider.serverLabel,
+          };
+          state.byRef.set(ref, entry);
+          // Two connected servers may legally advertise the same URI. Last-write
+          // -wins would silently pick one, so the second claimant marks the URI
+          // AMBIGUOUS and the direct-URI path refuses it with the qualified
+          // options — the same posture `resolveRef` takes for a bare name.
+          if (state.byUri.has(skill.skillUri)) {
+            state.ambiguousUris.add(skill.skillUri);
+          } else {
+            state.byUri.set(skill.skillUri, entry);
           }
-          for (const rejection of listing.rejected) {
-            logger.warn("[server-skills] listing entry rejected", {
-              serverId: provider.serverId,
-              skillUri: rejection.skillUri,
-              reason: rejection.reason,
-            });
-          }
+        }
+        for (const rejection of listing.rejected) {
+          logger.warn("[server-skills] listing entry rejected", {
+            serverId: provider.serverId,
+            skillUri: rejection.skillUri,
+            reason: rejection.reason,
+          });
+        }
       })
     );
   }
-
 
   interface LoadSkillInput {
     name?: string | undefined;
@@ -1043,18 +1045,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
  * approaches any tool result, not the way it approaches the system prompt.
  */
 /**
- * The sentence above the catalog.
- *
- * Says what to DO first and how to distrust it second. The previous wording
- * inverted that — one subordinate clause about calling `listSkills`, then
- * three sentences of warning — and a model reading it had no reason to look
- * and every reason not to.
- *
- * The trust wording is unchanged and stays unconditional: a digest match shows
- * the bytes are consistent with what the server advertised, which is not the
- * same as the content being trustworthy.
- */
-/**
  * How long a turn will wait on catalog discovery before giving up on the
  * PROMPT half of it.
  *
@@ -1078,6 +1068,18 @@ function raceWithDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * The sentence above the catalog.
+ *
+ * Says what to DO first and how to distrust it second. The previous wording
+ * inverted that — one subordinate clause about calling `listSkills`, then
+ * three sentences of warning — and a model reading it had no reason to look
+ * and every reason not to.
+ *
+ * The trust wording is unchanged and stays unconditional: a digest match shows
+ * the bytes are consistent with what the server advertised, which is not the
+ * same as the content being trustworthy.
+ */
 const SERVER_SKILLS_TRIGGER =
   `The following skills are provided by connected MCP servers, addressed as ` +
   `\`<server>/<skill>\`. When a task clearly matches one's purpose, load it ` +
