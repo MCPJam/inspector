@@ -765,8 +765,8 @@ if (process.env.NODE_ENV === "production") {
 
       // Guest bootstrap blob: mint a guest bearer server-side and inject it so
       // a cold guest boots with a token already in hand (no render-blocking
-      // POST /api/web/guest-session). Gated on production + hosted + not
-      // locked-down + a host allowlist that includes the hosted app host(s)
+      // POST /api/web/guest-session). Gated on production + hosted + a host
+      // allowlist that includes the hosted app host(s)
       // (mayServeGuestBootstrap), mirroring the session-token discipline.
       //
       // Wrapped in its OWN try/catch so a mint failure never 500s the
@@ -775,7 +775,6 @@ if (process.env.NODE_ENV === "production") {
       if (
         process.env.NODE_ENV === "production" &&
         HOSTED_MODE &&
-        process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
         mayServeGuestBootstrap({
           host,
           forwardedHost,

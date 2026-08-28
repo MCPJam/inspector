@@ -73,7 +73,6 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 }));
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
-  NON_PROD_LOCKDOWN: false,
 }));
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [byokModel]),
