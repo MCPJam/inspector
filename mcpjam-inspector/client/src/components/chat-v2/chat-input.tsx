@@ -1677,16 +1677,10 @@ export function ChatInput({
                             <div className="max-h-48 overflow-y-auto">
                               {Object.entries(allServerConfigs)
                                 .sort(([aName, a], [bName, b]) => {
-                                  // "needs-auth" sorts above "failed": it is
-                                  // the one bucket the user can clear
-                                  // themselves, so it belongs nearer the
-                                  // servers that are working than the ones
-                                  // that are broken.
                                   const statusOrder: Record<string, number> = {
                                     connected: 0,
                                     connecting: 1,
-                                    "needs-auth": 2,
-                                    failed: 3,
+                                    failed: 2,
                                   };
                                   const aOrder =
                                     statusOrder[a.connectionStatus] ?? 3;
@@ -1702,14 +1696,10 @@ export function ChatInput({
                                     server.connectionStatus === "connecting";
                                   const isFailed =
                                     server.connectionStatus === "failed";
-                                  const needsAuth =
-                                    server.connectionStatus === "needs-auth";
                                   const statusColor = isConnected
                                     ? "bg-green-500 dark:bg-green-400"
                                     : isConnecting
                                     ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
-                                    : needsAuth
-                                    ? "bg-amber-500 dark:bg-amber-400"
                                     : isFailed
                                     ? "bg-red-500 dark:bg-red-400"
                                     : "bg-muted-foreground";
@@ -1765,11 +1755,7 @@ export function ChatInput({
                                               );
                                             }}
                                           >
-                                            {needsAuth
-                                              ? "Sign in"
-                                              : isFailed
-                                              ? "Retry"
-                                              : "Connect"}
+                                            {isFailed ? "Retry" : "Connect"}
                                           </button>
                                         )}
                                       </div>

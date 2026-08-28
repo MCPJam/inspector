@@ -667,47 +667,5 @@ describe("useServerState hosted OAuth callback guards", () => {
       failedServerNames: [],
       reauthServerNames: ["asana"],
     });
-
-    // The status split, pinned at its source. This is the auto-connect
-    // path (`allowInteractiveOAuthFlow: false`), so it is what a fresh page
-    // load does to every OAuth server without live tokens. Dispatching
-    // CONNECT_FAILURE here is what used to paint the whole Servers tab red.
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "CONNECT_NEEDS_AUTH",
-        name: "asana",
-      }),
-    );
-    expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_FAILURE", name: "asana" }),
-    );
-  });
-
-  it("still reports a genuine failure when the server 401s AFTER a completed flow", async () => {
-    // A server that rejects us once we DO hold credentials is a config
-    // problem — signing in again cannot help — so it stays `failed`.
-    mockReconnectServer.mockResolvedValue({
-      success: false,
-      error:
-        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
-    });
-    mockEnsureAuthorizedForReconnect.mockResolvedValue({
-      kind: "error",
-      error: "Authorization server rejected the stored grant.",
-    });
-
-    const dispatch = vi.fn();
-    const { result } = renderHostedServerState(dispatch);
-
-    await act(async () => {
-      await result.current.ensureServersReady(["asana"]);
-    });
-
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_FAILURE", name: "asana" }),
-    );
-    expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_NEEDS_AUTH", name: "asana" }),
-    );
   });
 });

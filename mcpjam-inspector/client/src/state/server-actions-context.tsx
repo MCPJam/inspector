@@ -34,16 +34,6 @@ export interface ServerActions {
    */
   setSelectedServerNames: (names: string[]) => void;
   /**
-   * Count a retry attempt against a server, for the auto-connect hook's
-   * bounded retry — it is what turns a repeated bare "Failed" into
-   * "Failed (2)". Status is left alone: the connect path owns
-   * `connecting`, and a synthetic one breaks `ensureServersReady`.
-   *
-   * Optional so existing test harnesses and any surface that doesn't retry
-   * can leave it out.
-   */
-  markServerRetrying?: (serverName: string) => void;
-  /**
    * Resolve selected runtime server names → persisted Convex server ids for a
    * hosted send (persisting ad-hoc/App servers that aren't saved yet). Throws if
    * a name can't be resolved/persisted. Surfaces use this as a preflight before a

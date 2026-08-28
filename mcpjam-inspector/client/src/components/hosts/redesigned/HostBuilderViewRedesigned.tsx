@@ -415,9 +415,8 @@ export function HostBuilderViewRedesigned({
         // We intentionally do NOT append to draftConfig.serverIds here
         // (that's the bypass the audit flagged) and we do NOT open the
         // now-removed Servers focus tab. The new server lands in the
-        // project catalog, and under the project's default
-        // `autoConnectMode: 'all'` the backend's create hook enrolls it and
-        // fans it out on the spot — no toggle round-trip needed.
+        // project catalog; if Auto-connect is ON on the Servers tab,
+        // toggle OFF/ON to refresh and include the new server.
         setSelectedNodeId(`server-card:${serverId}`);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {

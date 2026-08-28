@@ -398,14 +398,9 @@ export function useAppState({
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
     const pendingServer = appState.servers[pendingDashboardOAuth.serverName];
-    // Every TERMINAL outcome clears the pending marker, not just the two
-    // happy/unhappy ones. `needs-auth` is terminal too (the server is
-    // parked waiting on the user), so omitting it would leave the banner
-    // spinning until the timeout for a deferred-consent server.
     if (
       pendingServer?.connectionStatus === "connected" ||
-      pendingServer?.connectionStatus === "failed" ||
-      pendingServer?.connectionStatus === "needs-auth"
+      pendingServer?.connectionStatus === "failed"
     ) {
       setPendingDashboardOAuth(null);
     }
@@ -795,7 +790,6 @@ export function useAppState({
     !!selectedRuntimeServer &&
     !serverState.projectServers[appState.selectedServer] &&
     selectedRuntimeServer.connectionStatus !== "failed" &&
-    selectedRuntimeServer.connectionStatus !== "needs-auth" &&
     selectedRuntimeServer.connectionStatus !== "disconnected";
 
   return {
@@ -861,7 +855,6 @@ export function useAppState({
     connectServerWithResult: serverState.connectServerWithResult,
     reconnectServerForClientSwitch: serverState.reconnectServerForClientSwitch,
     ensureServersReady: serverState.ensureServersReady,
-    markServerRetrying: serverState.markServerRetrying,
     syncAgentStatus: serverState.syncAgentStatus,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,

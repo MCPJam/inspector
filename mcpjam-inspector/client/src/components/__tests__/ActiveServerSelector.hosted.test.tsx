@@ -93,38 +93,6 @@ describe("ActiveServerSelector hosted reconnect guard", () => {
     expect(onReconnect).not.toHaveBeenCalled();
   });
 
-  it("disables reconnect for a hosted stdio server too", () => {
-    // The guard used to be `http://`-only, so a legacy stdio row in a
-    // hosted project kept a live Reconnect button that could only ever
-    // fail — the cloud has no local process to spawn. Rows like this
-    // predate hosted mode's block on CREATING stdio servers.
-    const onReconnect = vi.fn().mockResolvedValue(undefined);
-    render(
-      <ActiveServerSelector
-        {...defaultProps}
-        onReconnect={onReconnect}
-        serverConfigs={{
-          "legacy-stdio": createServer({
-            name: "legacy-stdio",
-            config: { command: "npx", args: ["-y", "some-server"] } as any,
-          }),
-        }}
-      />,
-    );
-
-    const row = screen.getByText("legacy-stdio").closest("button");
-    if (!row) {
-      throw new Error("Server row not found");
-    }
-    const reconnect = within(row).getByTitle(
-      "STDIO servers run a local command, which the cloud deployment cannot do. Run MCPJam locally to connect this server.",
-    );
-    expect(reconnect).toHaveAttribute("aria-disabled", "true");
-
-    fireEvent.click(reconnect);
-    expect(onReconnect).not.toHaveBeenCalled();
-  });
-
   it("keeps reconnect enabled for hosted HTTPS servers", () => {
     const onReconnect = vi.fn().mockResolvedValue(undefined);
     render(

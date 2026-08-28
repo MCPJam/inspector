@@ -40,16 +40,11 @@ import {
   FileText,
   FolderInput,
   Building2,
-  Cloud,
-  KeyRound,
-  PlugZap,
-  Unplug,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
-  formatConnectionStatusLabel,
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerUrl,
@@ -78,14 +73,21 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
-import {
-  getHostedUnsupportedReason,
-  hostedUnsupportedChipLabel,
-  hostedUnsupportedExplanation,
-} from "@/lib/hosted-server-support";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
+
+function isHostedInsecureHttpServer(server: ServerWithName): boolean {
+  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
+    return false;
+  }
+
+  try {
+    return new URL(server.config.url.toString()).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
 
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";
@@ -139,20 +141,6 @@ interface ServerConnectionCardProps {
    * provided — the flag is the rollout door, not the caller's permission.
    */
   onShareToOrgRegistry?: (server: ServerWithName) => void;
-  /**
-   * Whether this server is currently opted out of the project's
-   * auto-connect. Read from `projectServerRefs.autoConnectDisabled`.
-   */
-  autoConnectDisabled?: boolean;
-  /**
-   * Toggle that opt-out. Omitted on surfaces with no project-scoped server
-   * config to write to (the scenario/eval forks), which is why the menu
-   * item is conditional on it rather than on a permission flag.
-   */
-  onSetAutoConnectDisabled?: (
-    serverName: string,
-    disabled: boolean
-  ) => Promise<void> | void;
 }
 
 export function ServerConnectionCard({
@@ -169,8 +157,6 @@ export function ServerConnectionCard({
   onMoveToProject,
   isMovingToProject = false,
   onShareToOrgRegistry,
-  autoConnectDisabled,
-  onSetAutoConnectDisabled,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
   const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
@@ -220,6 +206,7 @@ export function ServerConnectionCard({
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
+    label: connectionStatusLabel,
     indicatorColor,
     Icon: ConnectionStatusIcon,
     iconClassName,
@@ -237,27 +224,14 @@ export function ServerConnectionCard({
   const canManageTunnels = isAuthenticated;
   const showTunnelActions = isConnected && isTunnelEnabled;
   const hasTunnel = Boolean(tunnelUrl);
-  // `failed`-only on purpose. `needs-auth` deliberately does NOT set this,
-  // which is what keeps the Error pill, the ErrorCard and the
-  // troubleshooting link off a card whose only problem is that nobody has
-  // signed in yet.
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
-  const needsAuth = server.connectionStatus === "needs-auth";
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
-  // What this deployment structurally cannot connect at all (hosted stdio
-  // as well as hosted `http://`). Such a server gets a neutral chip
-  // explaining the deployment rather than a red failure blaming it.
-  const hostedUnsupportedReason = getHostedUnsupportedReason(server.config);
+  const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
-  // Also blocked when the deployment cannot reach this transport at all.
-  // A hosted stdio or `http://` server is excluded from auto-connect for
-  // that reason; leaving the manual Reconnect live would let the user
-  // reproduce the same impossible attempt by hand and get a red card back.
-  const isReconnectMenuDisabled =
-    isReconnecting || isPendingConnection || hostedUnsupportedReason !== null;
+  const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
       setTunnelUrl(serverTunnelUrl);
@@ -649,31 +623,6 @@ export function ServerConnectionCard({
                     Error
                   </button>
                 )}
-                {/* Neutral, not red. This server is not broken and not
-                    retryable — the deployment simply cannot run it. Stating
-                    that is the whole affordance; there is no action to
-                    offer beyond running MCPJam locally. */}
-                {hostedUnsupportedReason && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      data-server-card-context-menu-exempt
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground"
-                    >
-                      <Cloud className="h-3 w-3" />
-                      {hostedUnsupportedChipLabel(hostedUnsupportedReason)}
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="top"
-                      sideOffset={4}
-                      variant="muted"
-                      className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-                    >
-                      {hostedUnsupportedExplanation(hostedUnsupportedReason)}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
               </div>
             </div>
 
@@ -692,10 +641,9 @@ export function ServerConnectionCard({
                     />
                   )}
                   <span>
-                    {formatConnectionStatusLabel(
-                      server.connectionStatus,
-                      server.retryCount
-                    )}
+                    {server.connectionStatus === "failed"
+                      ? `${connectionStatusLabel} (${server.retryCount})`
+                      : connectionStatusLabel}
                   </span>
                   {needsReconnect ? (
                     <Tooltip>
@@ -719,42 +667,6 @@ export function ServerConnectionCard({
                   ) : null}
                 </span>
 
-                {/* The primary action for a server that only needs a human.
-                    Runs the same interactive reconnect the kebab's
-                    Reconnect does — `allowInteractiveOAuthFlow: true` is
-                    what lets it redirect, which the auto-connect path
-                    deliberately withholds. */}
-                {needsAuth && !hostedUnsupportedReason ? (
-                  <Button
-                    data-server-card-context-menu-exempt
-                    size="sm"
-                    variant="outline"
-                    disabled={isReconnecting}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      track("authorize_server_clicked", {
-                        location: "server_connection_card",
-                      });
-                      void handleReconnect({
-                        allowInteractiveOAuthFlow: true,
-                      });
-                    }}
-                    className="h-6 gap-1 border-amber-300/60 bg-amber-500/10 px-2 text-[11px] text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200 cursor-pointer"
-                  >
-                    {isReconnecting ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <KeyRound className="h-3 w-3" />
-                    )}
-                    {isReconnecting ? "Authorizing..." : "Authorize"}
-                  </Button>
-                ) : null}
-
-                {/* Left ENABLED on purpose for an impossible-here server.
-                    The chip already says why at a glance; a disabled switch
-                    would swallow the click and explain nothing to someone
-                    who tries anyway. Clicking gets the actionable
-                    sentence. */}
                 <Switch
                   data-server-card-context-menu-exempt
                   checked={server.connectionStatus === "connected"}
@@ -762,9 +674,9 @@ export function ServerConnectionCard({
                     track("connection_switch_toggled", {
                       location: "server_connection_card",
                     });
-                    if (checked && hostedUnsupportedReason) {
+                    if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
-                        hostedUnsupportedExplanation(hostedUnsupportedReason)
+                        "HTTP servers are not supported in hosted mode"
                       );
                       return;
                     }
@@ -794,11 +706,9 @@ export function ServerConnectionCard({
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem
                       onClick={() => {
-                        if (hostedUnsupportedReason) {
+                        if (isHostedHttpReconnectBlocked) {
                           toast.error(
-                            hostedUnsupportedExplanation(
-                              hostedUnsupportedReason
-                            )
+                            "HTTP servers are not supported in hosted mode"
                           );
                           return;
                         }
@@ -957,55 +867,6 @@ export function ServerConnectionCard({
                       >
                         <Building2 className="h-3 w-3 mr-2" />
                         Add to org registry
-                      </DropdownMenuItem>
-                    ) : null}
-                    {/* The per-server escape hatch. A server that is slow,
-                        chronically broken, or simply not wanted on every
-                        page load can be dropped from auto-connect without
-                        turning it off for the whole project — and without
-                        deleting the server, which is the only thing users
-                        could do about it before. */}
-                    {onSetAutoConnectDisabled ? (
-                      <DropdownMenuItem
-                        className="text-xs cursor-pointer"
-                        onClick={() => {
-                          track("server_auto_connect_opt_out_toggled", {
-                            location: "server_connection_card",
-                          });
-                          // Called INSIDE the `.then` so a synchronous
-                          // throw lands in the same `.catch` as a rejected
-                          // promise — the prop is `Promise<void> | void`,
-                          // and `Promise.resolve(fn())` would evaluate
-                          // `fn()` first, letting a sync throw escape the
-                          // handler entirely.
-                          //
-                          // Either way it must be caught: a bare `void`
-                          // would close the menu as if the opt-out had
-                          // saved, the next config read would show it
-                          // unchanged, and the failure would surface only
-                          // as an unhandled rejection.
-                          void Promise.resolve()
-                            .then(() =>
-                              onSetAutoConnectDisabled(
-                                server.name,
-                                !autoConnectDisabled
-                              )
-                            )
-                            .catch(() => {
-                              toast.error(
-                                "Couldn't update auto-connect for this server. Please try again."
-                              );
-                            });
-                        }}
-                      >
-                        {autoConnectDisabled ? (
-                          <PlugZap className="h-3 w-3 mr-2" />
-                        ) : (
-                          <Unplug className="h-3 w-3 mr-2" />
-                        )}
-                        {autoConnectDisabled
-                          ? "Include in auto-connect"
-                          : "Skip on auto-connect"}
                       </DropdownMenuItem>
                     ) : null}
                     <Separator />

@@ -1,5 +1,4 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { ConnectionStatus } from "@/state/app-types";
 import type { HostConfigInputV2, HostStyleId } from "@/lib/client-config-v2";
 import type { ComputerStatus, ComputerView } from "@/hooks/useProjectComputer";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -348,7 +347,13 @@ export interface ServerCardNodeData extends Record<string, unknown> {
    * instead of unconditionally painting every server emerald. `unknown` is
    * used when the host builder has no runtime data (e.g. tests).
    */
-  connectionStatus: ConnectionStatus | "unknown";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "failed"
+    | "disconnected"
+    | "oauth-flow"
+    | "unknown";
 }
 
 export interface AddServerPillNodeData extends Record<string, unknown> {
