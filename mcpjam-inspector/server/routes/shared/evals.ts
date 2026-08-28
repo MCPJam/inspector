@@ -2325,6 +2325,25 @@ export async function prepareEvalRun(
       }
     );
   }
+  // Benchmark write manifests currently enforce argument/prefix ownership in
+  // the in-process tool-policy gate. Native harnesses execute MCP calls in a
+  // separate process, where that gate cannot inspect arguments or harvest
+  // created ids. Refuse this combination until the proxy carries the full
+  // side-effect guard; running it would make a consented write benchmark
+  // unbounded on the target server.
+  if (
+    benchmarkWriteGuard?.requireManifest === true &&
+    harnessAdmission.harness
+  ) {
+    const reason =
+      "benchmark write cases are not supported on an out-of-process harness yet; " +
+      "run this benchmark with an emulated client so argument and cleanup guards apply";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "BENCHMARK_WRITE_UNSUPPORTED",
+      harness: harnessAdmission.harness,
+    });
+  }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
   // `hostConfigId`, so the record cannot disagree with the config the run
