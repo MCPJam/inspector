@@ -205,3 +205,49 @@ describe("BrowserdRequestHandler — outcome mapping", () => {
     });
   });
 });
+
+describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
+  const statusReq = (over: Partial<DaemonRequest> = {}): DaemonRequest => ({
+    method: "GET",
+    path: "/v1/status",
+    origin: undefined,
+    authorization: `Bearer ${TOKEN}`,
+    body: "",
+    ...over,
+  });
+
+  it("returns liveness AND the bootId to an authenticated caller", async () => {
+    const { handler } = makeHandler();
+    const res = await handler.handle(statusReq());
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, bootId: BOOT });
+  });
+
+  it("keeps the bootId out of the unauthenticated healthz, but 401s status without the bearer", async () => {
+    const { handler } = makeHandler();
+    // /healthz stays secret-free (asserted above); /v1/status is the
+    // authenticated counterpart — no bearer, no boot identity.
+    const res = await handler.handle(statusReq({ authorization: undefined }));
+    expect(res.status).toBe(401);
+    expect(res.body).toBeUndefined();
+  });
+
+  it("reports a dead browser as 503 with the bootId, so a session row can still be matched", async () => {
+    const { handler } = makeHandler({
+      health: async () => ({ ok: false, detail: "chromium exited" }),
+    });
+    const res = await handler.handle(statusReq());
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      ok: false,
+      detail: "chromium exited",
+      bootId: BOOT,
+    });
+  });
+
+  it("405s a non-GET /v1/status", async () => {
+    const { handler } = makeHandler();
+    const res = await handler.handle(statusReq({ method: "POST" }));
+    expect(res.status).toBe(405);
+  });
+});

@@ -109,6 +109,26 @@ export class BrowserdRequestHandler {
       return this.handleCommand(req);
     }
 
+    // Authenticated status: liveness PLUS boot identity, in one probe. This is
+    // what the durable-session reuse path polls — presenting the stored bearer
+    // verifies the credential at the same time (a 401 means the row describes
+    // a previous boot's secret), and `bootId` lets the caller distinguish "the
+    // same daemon I recorded" from "something else is listening on that port".
+    // `/healthz` above deliberately stays secret-free; this endpoint is the
+    // authenticated counterpart.
+    if (req.path === "/v1/status") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      const health = await this.driver.health();
+      return health.ok
+        ? { status: 200, body: { ok: true, bootId: this.bootId } }
+        : {
+            status: 503,
+            body: { ok: false, detail: health.detail, bootId: this.bootId },
+          };
+    }
+
     return { status: 404 };
   }
 

@@ -210,6 +210,16 @@ var BrowserdRequestHandler = class {
       }
       return this.handleCommand(req);
     }
+    if (req.path === "/v1/status") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      const health = await this.driver.health();
+      return health.ok ? { status: 200, body: { ok: true, bootId: this.bootId } } : {
+        status: 503,
+        body: { ok: false, detail: health.detail, bootId: this.bootId }
+      };
+    }
     return { status: 404 };
   }
   async handleCommand(req) {

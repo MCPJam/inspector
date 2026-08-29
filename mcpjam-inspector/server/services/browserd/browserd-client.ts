@@ -29,6 +29,15 @@ export interface BrowserdHealth {
   detail?: string;
 }
 
+/** The authenticated `/v1/status` verdict — liveness, boot identity, and the
+ *  bearer's validity in one probe. `unauthorized` means the bearer this client
+ *  holds is not the running daemon's secret (a relaunch signal for the durable
+ *  session path, same as a bootId mismatch). */
+export type BrowserdStatus =
+  | { kind: "ok"; bootId: string }
+  | { kind: "unhealthy"; bootId?: string; detail?: string }
+  | { kind: "unauthorized" };
+
 /** browserd answered with a status the client cannot interpret (e.g. 401/400).
  *  These are bugs in the boot wiring, not normal protocol signals, so they throw
  *  rather than becoming a response variant. */
@@ -77,6 +86,36 @@ export class BrowserdClient {
       ok: res.status === 200 && body?.ok === true,
       detail: typeof body?.detail === "string" ? body.detail : undefined,
     };
+  }
+
+  /** Probe the authenticated `/v1/status`: liveness + bootId + bearer check. */
+  async status(): Promise<BrowserdStatus> {
+    const res = await this.request("/v1/status", { method: "GET" }, true);
+    const body = (await this.json(res)) as {
+      ok?: unknown;
+      bootId?: unknown;
+      detail?: unknown;
+    };
+    const bootId = typeof body.bootId === "string" ? body.bootId : undefined;
+    switch (res.status) {
+      case 200:
+        return bootId
+          ? { kind: "ok", bootId }
+          : { kind: "unhealthy", detail: "status_missing_boot_id" };
+      case 503:
+        return {
+          kind: "unhealthy",
+          bootId,
+          detail: typeof body.detail === "string" ? body.detail : undefined,
+        };
+      case 401:
+        return { kind: "unauthorized" };
+      default:
+        throw new BrowserdClientError(
+          `browserd status probe failed (HTTP ${res.status})`,
+          res.status,
+        );
+    }
   }
 
   /** Send a command and interpret the daemon's reply. */

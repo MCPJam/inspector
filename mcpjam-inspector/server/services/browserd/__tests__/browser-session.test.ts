@@ -1,0 +1,344 @@
+/**
+ * `ensureBrowserSession` — the W2 durable-session orchestration, against fully
+ * fake deps. What these tests pin:
+ *
+ *   - the replica-independence payoff: a verified-live row is reused with ZERO
+ *     sandbox I/O;
+ *   - health-check recovery (not kill-on-wake): only a failed verification —
+ *     unhealthy, unauthorized, bootId mismatch, or transport failure — leads
+ *     to connect → kill → relaunch;
+ *   - every refusal path: a record that does not land stops the daemon; a
+ *     stream failure stops the daemon; a lost boot race falls back to the
+ *     winner's session;
+ *   - the stream password is minted exactly once per relaunch and appears in
+ *     both the record and the handle.
+ */
+import { describe, expect, it, vi } from "vitest";
+import type { BrowserdHandle } from "../boot-browserd";
+import type { BrowserdStatus } from "../browserd-client";
+import type { BrowserSessionLookup } from "../browser-sessions-client";
+import {
+  BROWSERD_PORT,
+  BROWSERD_SCRIPT_PATH,
+  BROWSERD_USER_DATA_DIR,
+  ensureBrowserSession,
+  type BrowserSessionDeps,
+  type SessionSandbox,
+} from "../browser-session";
+
+const COMPUTER = "computer-1";
+const HASH = "bundle-hash-1";
+const ROW = {
+  sessionId: "session-1",
+  computerId: COMPUTER,
+  bootId: "boot-old",
+  browserdToken: "token-old",
+  browserdPort: 8791,
+  publicOrigin: "https://old.example",
+  streamUrl: "https://stream.example/vnc.html",
+  streamPassword: "pw-old",
+  bundleHash: HASH,
+  contextMode: "persistent" as const,
+};
+
+function liveLookup(over?: Partial<typeof ROW>): BrowserSessionLookup {
+  return { reachable: true, session: { ...ROW, ...over } };
+}
+
+interface Fakes {
+  deps: BrowserSessionDeps;
+  sandbox: SessionSandbox & {
+    killBrowserd: ReturnType<typeof vi.fn>;
+    writeBundle: ReturnType<typeof vi.fn>;
+    ensureStream: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+  };
+  bootHandle: BrowserdHandle & { stop: ReturnType<typeof vi.fn> };
+  connect: ReturnType<typeof vi.fn>;
+  boot: ReturnType<typeof vi.fn>;
+  lookup: ReturnType<typeof vi.fn>;
+  record: ReturnType<typeof vi.fn>;
+  touch: ReturnType<typeof vi.fn>;
+  status: ReturnType<typeof vi.fn>;
+}
+
+function makeFakes(over?: {
+  lookups?: BrowserSessionLookup[];
+  status?: () => Promise<BrowserdStatus>;
+  recordResult?: string | null;
+  bootError?: Error;
+  streamError?: Error;
+}): Fakes {
+  const lookups = over?.lookups ?? [{ reachable: true, session: null }];
+  let lookupCalls = 0;
+
+  const bootHandle = {
+    bearer: "token-new",
+    bootId: "boot-new",
+    port: BROWSERD_PORT,
+    publicOrigin: "https://new.example",
+    stop: vi.fn(async () => {}),
+  };
+
+  const sandbox = {
+    writeBundle: vi.fn(async () => {}),
+    browserd: {
+      runBackground: async () => ({
+        kill: async () => {},
+        wait: async () => {},
+      }),
+      getHost: () => "new.example",
+    },
+    killBrowserd: vi.fn(async () => {}),
+    ensureStream: vi.fn(async () => {
+      if (over?.streamError) throw over.streamError;
+      return {
+        streamUrl: "https://stream-new.example/vnc.html",
+        streamPassword: "pw-stream",
+      };
+    }),
+    disconnect: vi.fn(async () => {}),
+  };
+
+  const status = vi.fn(
+    over?.status ??
+      (async (): Promise<BrowserdStatus> => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+      })),
+  );
+  const lookup = vi.fn(async () => {
+    const result = lookups[Math.min(lookupCalls, lookups.length - 1)];
+    lookupCalls += 1;
+    return result;
+  });
+  const record = vi.fn(async () =>
+    over?.recordResult === undefined ? "session-new" : over.recordResult,
+  );
+  const touch = vi.fn(async () => ({ counted: true }));
+  const connect = vi.fn(async () => sandbox);
+  const boot = vi.fn(async () => {
+    if (over?.bootError) throw over.bootError;
+    return bootHandle;
+  });
+
+  const deps: BrowserSessionDeps = {
+    reserveDesktop: vi.fn(async () => ({ computerId: COMPUTER })),
+    resolveSandboxId: vi.fn(async () => "sandbox-1"),
+    connect,
+    boot,
+    createClient: vi.fn(() => ({
+      status,
+      sendCommand: vi.fn(async () => {
+        throw new Error("not under test");
+      }),
+    })),
+    store: { lookup, record, touch },
+    bundle: () => new Uint8Array([1, 2, 3]),
+    bundleHash: () => HASH,
+  };
+
+  return {
+    deps,
+    sandbox,
+    bootHandle,
+    connect,
+    boot,
+    lookup,
+    record,
+    touch,
+    status,
+  };
+}
+
+const ARGS = { bearer: "user-bearer", projectId: "project-1" };
+
+describe("ensureBrowserSession — verified reuse", () => {
+  it("reuses a healthy daemon with matching bootId and NEVER touches the sandbox", async () => {
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe(ROW.bootId);
+    expect(handle.streamUrl).toBe(ROW.streamUrl);
+    expect(handle.streamPassword).toBe(ROW.streamPassword);
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.touch).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: ROW.sessionId, kind: "command" }),
+    );
+  });
+
+  it("asks the store with the CURRENT bundle hash", async () => {
+    const f = makeFakes({ lookups: [liveLookup()] });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        computerId: COMPUTER,
+        expectedBundleHash: HASH,
+      }),
+    );
+  });
+});
+
+describe("ensureBrowserSession — relaunch triggers", () => {
+  async function expectRelaunch(f: Fakes) {
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.reused).toBe(false);
+    expect(handle.bootId).toBe("boot-new");
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+    expect(f.sandbox.writeBundle).toHaveBeenCalledWith(
+      BROWSERD_SCRIPT_PATH,
+      expect.any(Uint8Array),
+    );
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({
+        scriptPath: BROWSERD_SCRIPT_PATH,
+        port: BROWSERD_PORT,
+        userDataDir: BROWSERD_USER_DATA_DIR,
+      }),
+    );
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+    return handle;
+  }
+
+  it("relaunches when no session row exists", async () => {
+    const f = makeFakes();
+    await expectRelaunch(f);
+  });
+
+  it("relaunches on a bootId mismatch (the row describes a previous boot)", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "ok", bootId: "boot-someone-else" }),
+    });
+    await expectRelaunch(f);
+  });
+
+  it("relaunches on an unhealthy daemon", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unhealthy", detail: "chromium exited" }),
+    });
+    await expectRelaunch(f);
+  });
+
+  it("relaunches when the stored bearer is not the daemon's secret", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unauthorized" }),
+    });
+    await expectRelaunch(f);
+  });
+
+  it("relaunches when the status probe cannot reach the daemon at all", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => {
+        throw new Error("network unreachable");
+      },
+    });
+    await expectRelaunch(f);
+  });
+});
+
+describe("ensureBrowserSession — the record is load-bearing", () => {
+  it("starts the stream once and records the password the stream minted", async () => {
+    const f = makeFakes();
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(f.sandbox.ensureStream).toHaveBeenCalledTimes(1);
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        computerId: COMPUTER,
+        bootId: "boot-new",
+        browserdToken: "token-new",
+        browserdPort: BROWSERD_PORT,
+        publicOrigin: "https://new.example",
+        streamUrl: "https://stream-new.example/vnc.html",
+        streamPassword: "pw-stream",
+        bundleHash: HASH,
+        contextMode: "persistent",
+      }),
+    );
+    expect(handle.streamPassword).toBe("pw-stream");
+    // Recorded: the daemon must outlive the call.
+    expect(f.bootHandle.stop).not.toHaveBeenCalled();
+  });
+
+  it("stops the daemon and refuses when the record does not land", async () => {
+    const f = makeFakes({ recordResult: null });
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /record did not land/,
+    );
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("stops the daemon when the stream cannot be started", async () => {
+    const f = makeFakes({ streamError: new Error("no display") });
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      "no display",
+    );
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+    expect(f.record).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureBrowserSession — cross-replica boot race", () => {
+  it("falls back to the winner's verified session when its own boot fails", async () => {
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
+      ],
+      bootError: new Error("port already in use"),
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(f.lookup).toHaveBeenCalledTimes(2);
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("rethrows the boot failure when no winner appears", async () => {
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      bootError: new Error("port already in use"),
+    });
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      "port already in use",
+    );
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("ensureBrowserSession — per-computer serialization", () => {
+  it("runs two ensures for the same computer strictly in sequence", async () => {
+    const order: string[] = [];
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const slowStatus = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        order.push("first-start");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        order.push("first-end");
+        return { kind: "ok", bootId: ROW.bootId };
+      })
+      .mockImplementation(async () => {
+        order.push("second-start");
+        return { kind: "ok", bootId: ROW.bootId };
+      });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: slowStatus, sendCommand: vi.fn() }),
+    );
+
+    await Promise.all([
+      ensureBrowserSession(f.deps, ARGS),
+      ensureBrowserSession(f.deps, ARGS),
+    ]);
+    expect(order).toEqual(["first-start", "first-end", "second-start"]);
+  });
+});
