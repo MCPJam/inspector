@@ -1,10 +1,9 @@
 /**
  * Geometry of the Personas sidebar card — what jsdom cannot measure.
  *
- * `/swarms` is members-only, so the fixture below rebuilds the card from the
- * component's own class strings rather than driving the real app. The drift
- * guard in `renderSidebar` is the price: it fails loudly if those strings
- * leave `SwarmsTab.tsx`. It cannot see the DOM restructured underneath them —
+ * `/swarms` is members-only, so the fixture rebuilds the card from the
+ * component's own class strings rather than driving the real app. It cannot
+ * see the DOM restructured underneath those classes;
  * `SwarmsTab.personaCard.test.tsx` covers that.
  */
 import { readFileSync } from "node:fs";
@@ -15,7 +14,7 @@ import { compile } from "@tailwindcss/node";
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const SOURCE = "client/src/components/swarms/SwarmsTab.tsx";
 
-/** Verbatim from the component. Asserted against the file before use. */
+/** Verbatim from the component. */
 const CLS = {
   aside: "flex w-80 shrink-0 flex-col border-r",
   scroller: "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
@@ -159,7 +158,6 @@ test.describe("personas sidebar column", () => {
   // never fail. `SwarmsTab.personaCard.test.tsx` covers it.
 });
 
-/** Rendered height ÷ line-height. */
 async function lineCount(page: Page, selector: string): Promise<number> {
   return page
     .locator(selector)

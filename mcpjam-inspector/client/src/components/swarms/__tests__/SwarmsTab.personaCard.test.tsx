@@ -1,11 +1,10 @@
 /**
-  * The persona sidebar card.
-  *
-  * jsdom has no layout engine, so truncation is invisible here — the full name
-  * is in the DOM either way. This file asserts the layout classes sit on the
-  * right elements; `e2e/personas-column-layout.spec.ts` measures what they
-  * render to.
-  */
+ * The persona sidebar card.
+ *
+ * jsdom has no layout engine, so truncation is invisible here. This file
+ * asserts the layout classes sit on the right elements;
+ * `e2e/personas-column-layout.spec.ts` measures what they render to.
+ */
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
