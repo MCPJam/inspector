@@ -129,10 +129,14 @@ describe("RunAccuracyHeroBand", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /Run run-2/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Run run-2/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText(/7 passed · 3 failed ·/)).toBeInTheDocument();
-    const band = screen.getByRole("heading", { name: /Run run-2/i }).closest("section");
+    const band = screen
+      .getByRole("heading", { name: /Run run-2/i })
+      .closest("section");
     expect(band).toHaveTextContent("Accuracy");
     expect(band).toHaveTextContent("70%");
   });
@@ -173,6 +177,50 @@ describe("RunInsightRail", () => {
     expect(
       screen.queryByRole("heading", { name: "Latency by test (p50 / p95)" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("stays closed when the chain card is the ONLY thing passed and it has no data", () => {
+    // The reason the card was excluded from the emptiness check to begin
+    // with: the node is truthy even when both of its halves render nothing,
+    // so counting the node would leave a full-height column of dead space.
+    const { container } = render(
+      <RunInsightRail
+        triageCard={null}
+        userValueChainCard={<div data-testid="chain-slot" />}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByTestId("chain-slot")).not.toBeInTheDocument();
+  });
+
+  it("opens for a run whose ONLY insight is its user-value chain", () => {
+    // UVH-IN5, and the bug this fixes: a run with a derived chain but no
+    // judge or triage output rendered no rail at all, so the chain was
+    // invisible on exactly the runs where it was the whole story.
+    render(
+      <RunInsightRail
+        triageCard={null}
+        userValueChainCard={<div data-testid="chain-slot">Funnel</div>}
+        userValueChainHasContent
+      />,
+    );
+
+    expect(screen.getByTestId("chain-slot")).toBeInTheDocument();
+  });
+
+  it("still opens for other insight content when the chain has none", () => {
+    render(
+      <RunInsightRail
+        triageCard={<div data-testid="triage-slot">Insights</div>}
+        userValueChainCard={<div data-testid="chain-slot" />}
+        userValueChainHasContent={false}
+      />,
+    );
+
+    expect(screen.getByTestId("triage-slot")).toBeInTheDocument();
+    // The card is still mounted — it suppresses itself from the inside.
+    expect(screen.getByTestId("chain-slot")).toBeInTheDocument();
   });
 });
 
