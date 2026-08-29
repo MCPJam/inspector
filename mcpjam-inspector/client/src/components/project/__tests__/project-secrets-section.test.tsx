@@ -152,6 +152,13 @@ describe("ProjectSecretsSection — rotate dialog", () => {
 
     expect(screen.queryByText(/Rotation refused/i)).not.toBeInTheDocument();
     expect(rotateField().value).toBe("");
+    // And the reopened dialog is USABLE. The abandoned request skips its own
+    // `setBusy(false)` — it no longer owns the state — so closing has to clear
+    // `busy`, or this component (reused, never unmounted) stays disabled for
+    // good and the user can neither rotate nor cancel.
+    fireEvent.change(rotateField(), { target: { value: "ghp_after" } });
+    expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   });
 
   it("does not let a rotation that SUCCEEDS LATE clear the next secret's field", async () => {
@@ -183,6 +190,7 @@ describe("ProjectSecretsSection — rotate dialog", () => {
     });
 
     expect(rotateField().value).toBe("ghp_fresh");
+    expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled();
   });
 });
 
@@ -209,6 +217,84 @@ describe("ProjectSecretsSection — create dialog", () => {
     expect((screen.getByLabelText(/^value$/i) as HTMLInputElement).value).toBe(
       "",
     );
+  });
+
+  it("leaves the reopened dialog usable after a stale create settles", async () => {
+    // The create-side twin of the rotate race: Escape closes mid-write, the
+    // abandoned request skips its own `setBusy(false)`, and without clearing
+    // `busy` on close the dialog reopens permanently disabled.
+    let resolve!: (value: unknown) => void;
+    mocks.create.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    renderSection();
+
+    const fillDraft = (name: string, value: string) => {
+      fireEvent.change(screen.getByLabelText(/^name$/i), {
+        target: { value: name },
+      });
+      fireEvent.change(screen.getByLabelText(/^value$/i), {
+        target: { value },
+      });
+      // The default delivery is brokered, which needs a host before Save is
+      // reachable at all — otherwise this would assert on `brokerValid`, not
+      // on `busy`.
+      fireEvent.change(screen.getByLabelText(/^hosts$/i), {
+        target: { value: "api.stripe.com" },
+      });
+    };
+
+    openCreate();
+    fillDraft("MY_KEY", "sk_live_typed");
+    fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+
+    openCreate();
+    await act(async () => {
+      resolve({});
+      await Promise.resolve();
+    });
+
+    // Cancel is gated on `busy` ALONE, so it isolates the bug exactly.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    fillDraft("OTHER_KEY", "sk_live_other");
+    expect(screen.getByRole("button", { name: "Save secret" })).toBeEnabled();
+  });
+
+  it("warns that a short MATERIALIZED value will not be redacted", () => {
+    // The scrubber skips values under 8 characters on purpose — replacing a
+    // 4-character string would rewrite unrelated transcript text. That trade is
+    // right and invisible, so the form says it where the value is typed rather
+    // than leaving it to be found later in a saved conversation.
+    renderSection();
+    openCreate();
+
+    fireEvent.click(screen.getByRole("radio", { name: /materialized/i }));
+    fireEvent.change(screen.getByLabelText(/^value$/i), {
+      target: { value: "short" },
+    });
+    expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
+
+    // Gone once the value is long enough to be registered.
+    fireEvent.change(screen.getByLabelText(/^value$/i), {
+      target: { value: "sk_live_long_enough" },
+    });
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
+  });
+
+  it("does not warn for a short BROKERED value, which never enters the box", () => {
+    renderSection();
+    openCreate();
+
+    fireEvent.change(screen.getByLabelText(/^value$/i), {
+      target: { value: "short" },
+    });
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
   });
 
   it("submits nothing when the draft is cancelled", () => {

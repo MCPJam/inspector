@@ -397,6 +397,21 @@ function BrokerFields({
 }
 
 /** Split the comma-separated host field, dropping blanks. */
+/**
+ * Mirrors `MIN_SCRUBBABLE_LENGTH` in
+ * `server/utils/secrets/secret-scrubber.ts`. Values shorter than this are not
+ * registered with the transcript scrubber, because replacing every occurrence
+ * of a four-character value would corrupt unrelated text — a tool result
+ * mentioning `test` coming back as `[secret:MY_KEY]` is a transcript that lies
+ * about what a tool returned.
+ *
+ * That trade is the right one, but it is INVISIBLE, and a materialized secret
+ * below it reaches the box and then the transcript verbatim. The form says so
+ * at the point the value is typed rather than leaving it to be discovered in a
+ * saved conversation.
+ */
+const MIN_SCRUBBABLE_LENGTH = 8;
+
 function parseHosts(raw: string): string[] {
   return raw
     .split(",")
@@ -461,6 +476,12 @@ function CreateSecretDialog({
 
   const close = () => {
     attempt.current += 1;
+    // `busy` has to be cleared HERE, not left to the in-flight request's
+    // `finally`. That block is gated on still owning the attempt, so a request
+    // abandoned by this close skips it — and `busy` would stay true forever on
+    // a component that is reused rather than unmounted, disabling Save and
+    // Cancel on every subsequent open. The dialog is not busy once it is shut.
+    setBusy(false);
     reset();
     onOpenChange(false);
   };
@@ -618,6 +639,22 @@ function CreateSecretDialog({
             </RadioGroup>
           </div>
 
+          {delivery === "materialized" &&
+          value.length > 0 &&
+          value.length < MIN_SCRUBBABLE_LENGTH ? (
+            <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                This value is shorter than {MIN_SCRUBBABLE_LENGTH} characters,
+                so it will <strong>not be redacted</strong> from chat
+                transcripts. Short strings cannot be replaced safely — doing so
+                would rewrite unrelated text wherever those characters appear.
+                The credential still works; it will just be readable in the
+                saved conversation. Use a longer value, or choose brokered.
+              </span>
+            </p>
+          ) : null}
+
           {delivery === "brokered" ? (
             <BrokerFields
               hosts={hosts}
@@ -722,6 +759,10 @@ function RotateSecretDialog({
 
   const close = () => {
     attempt.current += 1;
+    // See the create dialog: the abandoned request will skip its own
+    // `setBusy(false)`, so closing has to do it or the reopened dialog is
+    // permanently disabled.
+    setBusy(false);
     setValue("");
     setError(null);
     onOpenChange(false);
