@@ -721,13 +721,13 @@ function wrapPage(page) {
     async requestAnimationFrame(signal) {
       await Promise.race([
         page.evaluate(
-          "() => new Promise((r) => requestAnimationFrame(() => r()))"
+          "(() => new Promise((r) => requestAnimationFrame(() => r())))()"
         ),
         abortPromise(signal)
       ]);
     },
     domStructureSignal() {
-      return page.evaluate(DOM_SIGNAL_FN);
+      return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
       const buffer = await page.screenshot({ type: "png" });
