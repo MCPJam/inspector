@@ -13,7 +13,7 @@
  * therefore skips whatever reset lives in the Radix handler, and every manual
  * check of "does Esc clear the field?" still passes.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mocks } = vi.hoisted(() => ({
@@ -121,19 +121,68 @@ describe("ProjectSecretsSection — rotate dialog", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("clears a failed rotation's error before the next attempt", () => {
-    // An error left over from a cancelled attempt reads as a fresh failure
-    // against a secret the user has not tried yet.
-    mocks.update.mockRejectedValueOnce(new Error("Rotation refused"));
+  it("does not let a rotation that FAILS LATE blame the next secret", async () => {
+    // Escape closes this dialog even mid-write — only the Cancel *button* is
+    // disabled while busy — so a rotation can still be in flight when the
+    // dialog is reopened against a different row. Its late error must not land
+    // on a secret the user has not tried yet.
+    let reject!: (error: Error) => void;
+    mocks.update.mockReturnValueOnce(
+      new Promise((_resolve, r) => {
+        reject = r;
+      }),
+    );
     renderSection();
 
     openRotate("STRIPE_API_KEY");
     fireEvent.change(rotateField(), { target: { value: "sk_live_typed" } });
     fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Close through Escape, which Radix honours regardless of `busy`.
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
+    openRotate("GH_TOKEN");
+
+    await act(async () => {
+      reject(new Error("Rotation refused"));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText(/Rotation refused/i)).not.toBeInTheDocument();
+    expect(rotateField().value).toBe("");
+  });
+
+  it("does not let a rotation that SUCCEEDS LATE clear the next secret's field", async () => {
+    // The mirror case: the late success path calls setValue("") and closes.
+    // Applied to the reopened dialog it would wipe what the user just typed
+    // and shut the dialog under them.
+    let resolve!: (value: unknown) => void;
+    mocks.update.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    renderSection();
+
+    openRotate("STRIPE_API_KEY");
+    fireEvent.change(rotateField(), { target: { value: "sk_live_typed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+      code: "Escape",
+    });
 
     openRotate("GH_TOKEN");
-    expect(screen.queryByText(/Rotation refused/i)).not.toBeInTheDocument();
+    fireEvent.change(rotateField(), { target: { value: "ghp_fresh" } });
+
+    await act(async () => {
+      resolve({});
+      await Promise.resolve();
+    });
+
+    expect(rotateField().value).toBe("ghp_fresh");
   });
 });
 

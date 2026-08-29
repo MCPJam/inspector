@@ -153,7 +153,19 @@ export function createSecretScrubber(
         // contain the secret and differ ONLY inside it; the later wins, as it
         // would for a duplicate key anywhere else in JS. Losing that key is a
         // strictly better outcome than publishing the credential.
-        out[scrubString(key)] = scrubDeep(item);
+        // `defineProperty`, not `out[key] = …`. A payload with an own
+        // `__proto__` key is legal JSON and a third-party MCP server can emit
+        // one; plain assignment hands it to the prototype SETTER instead of
+        // creating a property, so the field vanishes from the output and the
+        // result silently stops being a plain object — which would then make
+        // the `proto !== Object.prototype` guard above skip it wholesale on any
+        // later pass. `defineProperty` treats every key as data.
+        Object.defineProperty(out, scrubString(key), {
+          value: scrubDeep(item),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       }
       return out as unknown as T;
     }

@@ -149,6 +149,22 @@ describe("scrubDeep", () => {
     expect(scrubber.scrubDeep(input)).toEqual(input);
   });
 
+  it("keeps an own __proto__ key instead of feeding it to the setter", () => {
+    // Legal JSON, and a third-party server can emit it. Plain assignment would
+    // hand it to the prototype setter: the field disappears and the result
+    // stops being a plain object, which the traversal guard then skips whole.
+    const scrubber = createSecretScrubber([STRIPE])!;
+    const input = JSON.parse(
+      `{"__proto__": {"leak": "${STRIPE.value}"}, "keep": "ok"}`,
+    );
+    const out = scrubber.scrubDeep(input) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true);
+    expect(out.keep).toBe("ok");
+    // And the value nested under it is still scrubbed.
+    expect(JSON.stringify(out)).not.toContain(STRIPE.value);
+  });
+
   it("passes non-plain objects through by identity", () => {
     // Rebuilding a Date or a typed array as a plain object would corrupt the
     // payload far more than a missed scrub would.

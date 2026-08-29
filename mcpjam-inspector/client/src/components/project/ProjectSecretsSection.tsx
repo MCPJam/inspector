@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   KeyRound,
@@ -452,12 +452,28 @@ function CreateSecretDialog({
    * that called the prop directly would skip `reset()` and leave a typed
    * credential sitting in component state for the next time the dialog opens.
    */
+  /**
+   * Which attempt is current. Bumped by every close, and captured by every
+   * submit — see `submit` for why an in-flight write must not touch state it
+   * no longer owns.
+   */
+  const attempt = useRef(0);
+
   const close = () => {
+    attempt.current += 1;
     reset();
     onOpenChange(false);
   };
 
   const submit = async () => {
+    // Esc and the overlay close this dialog even mid-write (only the Cancel
+    // BUTTON is disabled while busy), so a create can still be in flight when
+    // the dialog is closed and reopened. Without this token its late `reset()`
+    // would wipe whatever the user had typed into the fresh dialog, and its
+    // late `setError` would show a failure belonging to a secret they are no
+    // longer creating. The write itself still lands — cancelling the UI does
+    // not cancel the request — which is why the guard is on the STATE writes.
+    const mine = attempt.current;
     setBusy(true);
     setError(null);
     try {
@@ -479,16 +495,18 @@ function CreateSecretDialog({
       // The value is gone from this process the moment the dialog closes, and
       // nothing can bring it back — which is why the field is cleared here
       // rather than left populated "in case they want to edit it".
+      if (attempt.current !== mine) return;
       reset();
       onOpenChange(false);
     } catch (caught) {
+      if (attempt.current !== mine) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "Failed to create the secret.",
       );
     } finally {
-      setBusy(false);
+      if (attempt.current === mine) setBusy(false);
     }
   };
 
@@ -699,7 +717,11 @@ function RotateSecretDialog({
    * non-empty. That is a rotation of the wrong credential, committed by someone
    * who never typed anything.
    */
+  /** See the create dialog: which attempt owns the state right now. */
+  const attempt = useRef(0);
+
   const close = () => {
+    attempt.current += 1;
     setValue("");
     setError(null);
     onOpenChange(false);
@@ -707,20 +729,28 @@ function RotateSecretDialog({
 
   const submit = async () => {
     if (!secret) return;
+    // Sharper than on create, for the same reason the reset is: ONE instance
+    // serves every row. A rotation closed with Esc mid-flight and reopened
+    // against a DIFFERENT secret would otherwise have its late `setValue("")`
+    // clear that secret's field, or its late error blame that secret for a
+    // failure belonging to the previous one.
+    const mine = attempt.current;
     setBusy(true);
     setError(null);
     try {
       await updateSecret({ projectId, secretId: secret.secretId, value });
+      if (attempt.current !== mine) return;
       setValue("");
       onOpenChange(false);
     } catch (caught) {
+      if (attempt.current !== mine) return;
       setError(
         caught instanceof Error
           ? caught.message
           : "Failed to rotate the secret.",
       );
     } finally {
-      setBusy(false);
+      if (attempt.current === mine) setBusy(false);
     }
   };
 
