@@ -781,6 +781,99 @@ describe("userValue", () => {
   });
 });
 
+// ── UVH-IN7: an observed tool error makes `response` measurable ──────────────
+//
+// The disagreement class this closes: a case authors only transcript
+// predicates, so `call` and `response` were `notApplicable`; a tool errors on
+// the server during the run; `failOnToolError` fails the legacy verdict. Every
+// applicable stage green, the verdict red, and no row able to say why.
+
+describe("an observed tool error reaches response, even unauthored", () => {
+  /** Authors predicates only — nothing about tools at all. */
+  const predicateOnlyCase = {
+    mode: "model_driven" as const,
+    expectsToolCall: false,
+    assertionCount: 1,
+  };
+
+  const erroredToolSpan = () => ({
+    ...toolSpan(),
+    id: "span-err",
+    status: "error",
+  });
+
+  test("a recovered tool error fails response as toolError / serverData", () => {
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredToolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+    expect(firstFailedStage).toBe("response");
+    expect(failureCategory).toBe("serverData");
+  });
+
+  test("the chain no longer goes all-green while the verdict fails", () => {
+    // The exact shape of the 8 prod trials: every stage the case authored
+    // passed, so nothing in the chain contradicted a red verdict.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredToolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stageResults.some((r) => r.state === "failed")).toBe(true);
+  });
+
+  test("a transport-local error does NOT turn the stage on", () => {
+    // A span carrying an MCP error code never reached the server's handler,
+    // so it is a setup fact rather than the server's answer — and turning
+    // `response` on for it would attribute our own failure to the server.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [{ ...erroredToolSpan(), mcpErrorCode: -32601 }],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("notApplicable");
+  });
+
+  test("no errored span leaves an unauthored response inapplicable", () => {
+    // The floor is unchanged: a case that authors nothing about tools and saw
+    // no tool failure still has nothing for `response` to decide.
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [toolSpan()],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response").state).toBe("notApplicable");
+  });
+
+  test("an authored case is unaffected — it was already applicable", () => {
+    const { stageResults } = derive({
+      evidence: {
+        spans: [erroredToolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+  });
+});
+
 // ── UVH-IN1: tool-call predicates are SELECTION evidence ─────────────────────
 //
 // `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
@@ -889,7 +982,11 @@ describe("tool-call predicates route to selection", () => {
       evidence: {
         spans: [toolSpan()],
         prompts: [
-          { ...cleanTurn, missing: [{ toolName: "fetch_order" }], passed: false },
+          {
+            ...cleanTurn,
+            missing: [{ toolName: "fetch_order" }],
+            passed: false,
+          },
         ],
         predicateResults: [pred("toolNeverCalled", false)],
       },
