@@ -128,9 +128,33 @@ export async function launchBrowserdContext(
     permissions: [],
     ...BROWSERD_CONTEXT_OPTIONS,
   });
+  return adaptContext(context as unknown as AnyContext);
+}
+
+/** The subset of a Playwright BrowserContext the adapter uses. */
+export type AnyContext = {
+  newPage(): Promise<AnyPage>;
+  pages(): AnyPage[];
+  browser(): { isConnected(): boolean } | null;
+  close(): Promise<void>;
+};
+
+/**
+ * Adapt a persistent Playwright context to `DriverContext`. A persistent context
+ * opens with a startup page (about:blank on a fresh profile, restored tabs
+ * otherwise); adopt those first so the FIRST driver tab IS the startup page.
+ * Otherwise `newPage()` would create a second page and leave the startup tab
+ * visible and permanently outside the driver's tab map, where a headed user could
+ * focus it while observations ran against a different tab (P2).
+ */
+export function adaptContext(context: AnyContext): DriverContext {
+  const startup = [...context.pages()];
+  let adopted = 0;
   return {
     async newPage() {
-      return wrapPage((await context.newPage()) as unknown as AnyPage);
+      const page =
+        adopted < startup.length ? startup[adopted++] : await context.newPage();
+      return wrapPage(page);
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;

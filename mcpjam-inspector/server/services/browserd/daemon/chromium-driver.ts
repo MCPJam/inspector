@@ -46,6 +46,18 @@ interface TabEntry {
   navCounter: number;
 }
 
+/**
+ * A tab's URL + DOM signal read together. Both are part of the L3 state token,
+ * so an observation binds its token to the snapshot the OUTPUT was captured
+ * against — never a fresh read — or a change between capture and token (a DOM
+ * mutation OR a same-skeleton client-side route change) would let the token and
+ * the returned frame describe different states (P1).
+ */
+interface FrameSnapshot {
+  url: string;
+  domSignal: string;
+}
+
 export interface ChromiumDriverOptions {
   settle?: SettleOptions;
 }
@@ -109,9 +121,9 @@ export class ChromiumDriver implements BrowserDriver {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
-    const domSignal = await entry.page.domStructureSignal();
+    const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: entry.page.url() }, domSignal),
+      ...this.observation(tabId, entry, { url: frame.url }, frame),
       settled,
     };
   }
@@ -126,14 +138,14 @@ export class ChromiumDriver implements BrowserDriver {
     }
     switch (action.mode) {
       case "url": {
-        const domSignal = await entry.page.domStructureSignal();
-        return this.observation(tabId, entry, { url: entry.page.url() }, domSignal);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(tabId, entry, { url: frame.url }, frame);
       }
       case "dom": {
-        // The token is computed from the SAME read returned as output, so they
-        // cannot disagree.
-        const domSignal = await entry.page.domStructureSignal();
-        return this.observation(tabId, entry, { dom: domSignal }, domSignal);
+        // The token is computed from the SAME snapshot returned as output, so
+        // they cannot disagree.
+        const frame = await this.snapshot(entry.page);
+        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry);
@@ -159,17 +171,20 @@ export class ChromiumDriver implements BrowserDriver {
   ): Promise<BrowserCommandResult> {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
-      const before = await entry.page.domStructureSignal();
+      const before = await this.snapshot(entry.page);
       const screenshot = await entry.page.screenshotBase64();
-      const after = await entry.page.domStructureSignal();
-      if (before === after) {
+      const after = await this.snapshot(entry.page);
+      // Both the URL and the DOM must be unchanged: a same-skeleton client-side
+      // route change moves the URL while `domSignal` holds, and would otherwise
+      // bind a new-route token to an old-route image (P1).
+      if (before.url === after.url && before.domSignal === after.domSignal) {
         return this.observation(tabId, entry, { screenshot }, after);
       }
     }
     // Would not stabilise within budget: hand back the frame but flag it unsettled
     // so nothing pins an act to a possibly-stale image.
     const screenshot = await entry.page.screenshotBase64();
-    const after = await entry.page.domStructureSignal();
+    const after = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, { screenshot }, after),
       settled: false,
@@ -203,22 +218,30 @@ export class ChromiumDriver implements BrowserDriver {
 
   /**
    * Build an observation result whose L3 state token is computed from the SAME
-   * DOM signal the caller captured the output against — passed in, never re-read
-   * here, so the token can never describe a different frame than the output (P1).
+   * frame snapshot (url + DOM) the caller captured the output against — passed
+   * in, never re-read here — so the token can never describe a different state
+   * than the returned output (P1).
    */
   private observation(
     tabId: string,
     entry: TabEntry,
     output: Record<string, unknown>,
-    domSignal: string,
+    frame: FrameSnapshot,
   ): BrowserCommandResult {
     const stateToken = computeStateToken({
       tabId,
       navCounter: entry.navCounter,
-      url: entry.page.url(),
-      domSignal,
+      url: frame.url,
+      domSignal: frame.domSignal,
     });
     return { ok: true, output, stateToken };
+  }
+
+  /** Read a tab's URL and DOM signal together, as one frame snapshot. */
+  private async snapshot(page: DriverPage): Promise<FrameSnapshot> {
+    const url = page.url();
+    const domSignal = await page.domStructureSignal();
+    return { url, domSignal };
   }
 
   private async settle(page: DriverPage): Promise<boolean> {

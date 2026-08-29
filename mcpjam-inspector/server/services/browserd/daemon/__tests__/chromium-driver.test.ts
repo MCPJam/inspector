@@ -14,14 +14,15 @@ function fakePage(init: {
   url?: string;
   dom?: string;
   hangNetwork?: boolean;
-  /** Called inside screenshotBase64 — used to simulate a DOM shift mid-capture. */
-  onScreenshot?: (page: { setDom: (d: string) => void }) => void;
+  /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
+  onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
 } = {}): FakePage {
   let url = init.url ?? "about:blank";
   let dom = init.dom ?? "0BODY";
   let closed = false;
   const calls = { goto: [] as string[], reload: 0, goBack: 0, shots: 0 };
   const setDom = (d: string) => { dom = d; };
+  const setUrl = (u: string) => { url = u; };
   return {
     async goto(u) { calls.goto.push(u); url = u; },
     async reload() { calls.reload++; },
@@ -36,13 +37,13 @@ function fakePage(init: {
     async domStructureSignal() { return dom; },
     async screenshotBase64() {
       calls.shots++;
-      init.onScreenshot?.({ setDom });
+      init.onScreenshot?.({ setDom, setUrl });
       return "BASE64PNG";
     },
     url: () => url,
     close: async () => { closed = true; },
     isClosed: () => closed,
-    setUrl: (u) => { url = u; },
+    setUrl,
     setDom,
     calls,
   };
@@ -161,6 +162,23 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     expect(res.output).toEqual({ screenshot: "BASE64PNG" });
     expect(res.stateToken!.domHash).toBe(shortHash("0BODY>1MAIN")); // matches the frame
     expect(res.settled).toBeUndefined(); // stable capture, not flagged
+  });
+
+  it("flags settled:false when the URL shifts mid-capture even if the DOM skeleton holds (P1)", async () => {
+    // A same-skeleton client-side route change: DOM signal is unchanged, but the
+    // URL moves — the token must not bind a new-route url to an old-route image.
+    let n = 0;
+    const page = fakePage({
+      url: "https://x.test/a",
+      dom: "0BODY>1MAIN", // never changes
+      onScreenshot: ({ setUrl }) => setUrl(`https://x.test/route-${++n}`),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/a" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    expect(res.settled).toBe(false);
+    expect(res.stateToken!.urlHash).toBe(shortHash(`https://x.test/route-${n}`));
   });
 
   it("flags settled:false when the DOM keeps shifting mid-capture (no stale image pinned)", async () => {
