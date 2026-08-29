@@ -17,6 +17,7 @@ import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
+import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -305,6 +306,13 @@ export async function createHonoApp() {
   // judge doorbell above — the ring is a wake-up, and the pass claims from the
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
+  // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
+  // provisions a desktop and boots browserd end to end — and, like the other
+  // internal routes, gated by the service token. Mirror of the mount in
+  // server/index.ts.
+  if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
+    app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
+  }
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from
