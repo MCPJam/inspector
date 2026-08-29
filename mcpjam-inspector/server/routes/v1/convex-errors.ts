@@ -45,7 +45,13 @@ import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
 
-type ConvexErrorData = { code?: unknown; message?: unknown; kind?: unknown };
+type ConvexErrorData = {
+  code?: unknown;
+  message?: unknown;
+  kind?: unknown;
+  /** The stable sub-code a coded refusal carries alongside its prose. */
+  reason?: unknown;
+};
 
 /**
  * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`
@@ -222,6 +228,32 @@ function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   return formatRetryAfterSeconds(retryAfterMs);
 }
 
+/**
+ * An import-ineligibility refusal, translated — or `undefined` for anything else.
+ *
+ * A launch that refuses a selected `approximated`, `unsupported` or
+ * `unresolved` case is the one refusal in this feature a CALLER can act on:
+ * approve the case for this run, or exclude it. Rethrown raw, it reaches the
+ * application-level handler as a 500 on the single route and is flattened to
+ * `INTERNAL_ERROR` by `describeLaunchFailure` on the grouped one, so the person
+ * who could fix it is told the server broke instead.
+ *
+ * Deliberately NARROW. Running every launch failure through the full
+ * translator would re-status unrelated errors that the launch paths have
+ * always surfaced their own way; this touches exactly the code that was
+ * unreachable.
+ */
+export function translateImportIneligibleError(
+  error: unknown
+): WebRouteError | undefined {
+  const data = convexErrorData(error);
+  if (data?.code !== "IMPORT_INELIGIBLE") return undefined;
+  // `resource` is unused on this path — the IMPORT_INELIGIBLE branch returns
+  // before any not-found copy — but the option is required, so name the thing
+  // the caller was trying to start rather than leaving it meaningless.
+  return translateConvexWriteError(error, { resource: "Eval run" });
+}
+
 export function translateConvexWriteError(
   error: unknown,
   options: TranslateConvexWriteErrorOptions
@@ -304,6 +336,35 @@ export function translateConvexWriteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       structuredMessage ?? fallbackMessage
+    );
+  }
+
+  // ── Import eligibility (mcpjam-backend lib/evalImportEligibility.ts) ─────
+  //
+  // A launch refused because an imported case in it cannot run: an
+  // approximation with no approval, an approval naming a case the run does not
+  // execute, an `unsupported` or `unresolved` case among the selected ones.
+  // Every one of them is the caller's to fix — approve it, deselect it, or fix
+  // the file — so 400 rather than the terminal 500 an unrecognized code gets.
+  //
+  // The backend's `message` is customer-facing copy naming the case AND the
+  // remedy, and `reason` is the stable code a program branches on. Both are
+  // forwarded; nothing else from the payload is, because the rest of it is the
+  // backend's internal shape and spreading it would publish whatever it gains
+  // next without anybody deciding to.
+  //
+  // Handled explicitly for the same reason the waiver codes above are: an
+  // unrecognized code falls through to prose sniffing over `error.message`,
+  // which for a ConvexError is the JSON of its data — so it either loses the
+  // message on a 500 or matches a pattern by accident and answers with the
+  // wrong status.
+  if (code === "IMPORT_INELIGIBLE") {
+    const reason = data?.reason;
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      structuredMessage ?? fallbackMessage,
+      typeof reason === "string" && reason.length > 0 ? { reason } : undefined
     );
   }
 

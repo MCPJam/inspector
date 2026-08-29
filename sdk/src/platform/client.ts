@@ -12,6 +12,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalStageAnalytics,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
@@ -31,6 +32,7 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformEvalVerdictPolicyDefaults,
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
@@ -87,6 +89,8 @@ import type {
   PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformServerConnection,
@@ -1346,6 +1350,37 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Cloud Skills ─────────────────────────────────────────────────────
+  //
+  // Read-only: the skills visible to the caller in a project, and one skill's
+  // detail including its SKILL.md body. Authoring stays on the app surface.
+
+  listProjectSkills(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformProjectSkill>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/skills`,
+      {},
+      options,
+    );
+  }
+
+  getProjectSkill(
+    params: { projectId: string; skillId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformProjectSkillDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/skills/${encodeURIComponent(params.skillId)}`,
+      {},
+      options,
+    );
+  }
+
   // ── Agent Plugins ────────────────────────────────────────────────────
   //
   // Read-only: the live plugins installed in a project, and one imported
@@ -1701,9 +1736,22 @@ export class PlatformApiClient {
    * file-owned suite by declared id. Lookup is by declared id within the
    * project, never by name. A UI-authored suite has no declared id and
    * cannot be claimed.
+   *
+   * `verdictPolicyDefaults` is pinned to its type rather than left inside the
+   * untyped bag. It is the one member of this body whose in-memory
+   * counterpart has a DIFFERENT shape — the suite-file loader resolves
+   * `validity.minEligibleTrials` into a `coverage` union — and an untyped body
+   * let the resolved shape reach a strict route validator, which rejected
+   * every hosted `eval run --file` upload. Typing the field makes that
+   * substitution a compile error instead of a runtime rejection.
    */
   syncFileOwnedEvalSuite(
-    params: { projectId: string; body: Record<string, unknown> },
+    params: {
+      projectId: string;
+      body: Record<string, unknown> & {
+        verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+      };
+    },
     options?: RequestOptions,
   ): Promise<PlatformFileOwnedEvalSuiteSynced> {
     return this.request(
@@ -1760,6 +1808,57 @@ export class PlatformApiClient {
       )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
       { query: { cursor: params.cursor, limit: params.limit } },
       options,
+    );
+  }
+
+  /**
+   * One page of a suite's materialized stage analytics, newest run-completion
+   * first — one complete `EvalStageAnalyticsV1` document per RUN.
+   *
+   * Each item stands alone: the overall funnel plus the intent, model and host
+   * MARGINAL slices for that one run. There is deliberately no cross-run merge
+   * here or anywhere in the SDK — two funnels averaged together describe no run
+   * — so a caller that wants a comparison renders runs side by side under
+   * `stageAnalyticsParityBlockers`, never by summing these documents.
+   *
+   * `from`/`to` are INCLUSIVE epoch MILLISECONDS over the run's completion
+   * stamp (not ISO strings), matching the storage boundary exactly; `from`
+   * greater than `to` is a `400`. Runs that never completed carry no stamp and
+   * are excluded by any `from` bound. `runGroupId` narrows to one comparison
+   * group. `limit` is 1..100 and defaults to 25 — these documents are large.
+   *
+   * NEWER than most deployments, and NOT backfilled: an API that predates it
+   * answers `404`, and a run that finished before the materializer shipped has
+   * no row at all. Both mean UNMEASURED and neither is a zeroed funnel — there
+   * is no client-side reconstruction to fall back to, by design.
+   */
+  listEvalSuiteStageAnalytics(
+    params: {
+      projectId: string;
+      suiteId: string;
+      from?: number;
+      to?: number;
+      runGroupId?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalStageAnalytics>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/stage-analytics`,
+      {
+        query: {
+          from: params.from,
+          to: params.to,
+          runGroupId: params.runGroupId,
+          cursor: params.cursor,
+          limit: params.limit,
+        },
+      },
+      options
     );
   }
 
@@ -2611,6 +2710,46 @@ export class PlatformApiClient {
     options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "resources/read", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills` — the server's Agent Skills
+   * catalog (SEP-2640).
+   *
+   * Not a page: the catalog is drained server-side, because duplicate-URI
+   * detection spans the whole listing and a page boundary would make a
+   * contradiction depend on where the caller stopped reading.
+   */
+  listServerSkills(
+    params: ServerScope & { body?: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/get` — one verified skill by uri.
+   *
+   * Reaches skills a partial listing never mentioned, which is the reason
+   * `skills/get` exists in the SEP at all. Answers with `{ skill }` or with a
+   * `{ refusal }` naming the check that failed.
+   */
+  getServerSkill(
+    params: ServerScope & { body: { uri: string } },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/get", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/read-file` — one verified
+   * supporting file, checked against the skill's own manifest.
+   */
+  readServerSkillFile(
+    params: ServerScope & { body: { skillUri: string; resourceUri: string } },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/read-file", options);
   }
 
   /**

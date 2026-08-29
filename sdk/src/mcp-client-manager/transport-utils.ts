@@ -281,6 +281,132 @@ export function wrapFetchForTaskRouting(
   }) as typeof fetch;
 }
 
+/**
+ * Simulates a client that never opens the server→client notification channel
+ * — `hostConfig.mcpProfile.toolListChanged.listens: false`.
+ *
+ * WHY A FETCH WRAPPER. The upstream client opens the standalone GET SSE
+ * stream itself, from inside `StreamableHTTPClientTransport._send`, the moment
+ * the server answers `202` to `notifications/initialized`. It exposes no
+ * option to skip it, so the injected fetch is the only seam we own.
+ *
+ * The refusal is a local `405`, which is exactly what the Streamable HTTP spec
+ * says a server returns when it does not offer a stream, and what the upstream
+ * transport already tolerates: it swallows that status and leaves the
+ * connection healthy on the POST channel. Answering with a network error
+ * instead would surface as a broken connection rather than a client that
+ * chose not to listen.
+ *
+ * NOT APPLICABLE to the legacy HTTP+SSE transport, where the GET stream IS the
+ * connection — a real client on that transport cannot not-listen either, so
+ * the knob is a documented no-op there rather than a connection failure.
+ */
+export function wrapFetchForNoListenChannel(
+  fetchFn?: typeof fetch
+): typeof fetch {
+  const base =
+    fetchFn ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    // The standalone listen stream is the ONLY GET the Streamable HTTP
+    // transport issues; every request carrying a JSON-RPC message is a POST,
+    // so method alone identifies it without sniffing bodies.
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method !== "GET") {
+      return base(input as never, init as never);
+    }
+    const accept = new Headers(init?.headers).get("accept") ?? "";
+    if (!accept.includes("text/event-stream")) {
+      return base(input as never, init as never);
+    }
+    return Promise.resolve(
+      new Response(null, {
+        status: 405,
+        statusText: "Method Not Allowed",
+      })
+    );
+  }) as typeof fetch;
+}
+
+/**
+ * Simulates a client that ignores `notifications/tools/list_changed` —
+ * `hostConfig.mcpProfile.toolListChanged.refetches: false`.
+ *
+ * MECHANISM. mcpjam never registers an auto-refetch handler (we do not pass
+ * `ClientOptions.listChanged`), so the observable "re-fetch" is upstream's
+ * unconditional response-cache eviction: on this notification the client
+ * evicts its cached `tools/list`, and the next `listTools()` therefore goes to
+ * the wire instead of serving cache. Dropping the frame before the client sees
+ * it keeps the cache — and the stale tool list — in place, which is precisely
+ * what a server author sees from a host that ignores the notification.
+ *
+ * Dropping at the transport rather than filtering the handler also stops the
+ * notification reaching the subscription coordinator, so one wrapper covers
+ * every consumer instead of each one remembering to check the knob.
+ *
+ * Compose OUTERMOST for the same reason as the first-page-only wrapper: the
+ * logging transport underneath still records the frame the server really sent,
+ * so the wire log shows the notification arriving and being ignored, not a
+ * server that never sent it.
+ */
+export function wrapTransportForDroppedListChanged(
+  transport: Transport
+): Transport {
+  class DroppedListChangedTransport implements Transport {
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+
+    constructor(private readonly inner: Transport) {
+      this.inner.onmessage = (
+        message: JSONRPCMessage,
+        extra?: MessageExtraInfo
+      ) => {
+        const record = message as { method?: unknown; id?: unknown };
+        // Notifications only: a request carrying an id must never be
+        // swallowed, or the caller would wait forever for a response.
+        if (
+          record.id === undefined &&
+          record.method === "notifications/tools/list_changed"
+        ) {
+          return;
+        }
+        this.onmessage?.(message, extra);
+      };
+      this.inner.onclose = () => this.onclose?.();
+      this.inner.onerror = (error: Error) => this.onerror?.(error);
+    }
+
+    async start(): Promise<void> {
+      if (typeof (this.inner as any).start === "function") {
+        await (this.inner as any).start();
+      }
+    }
+
+    async send(
+      message: JSONRPCMessage,
+      options?: TransportSendOptions
+    ): Promise<void> {
+      await this.inner.send(message as any, options as any);
+    }
+
+    async close(): Promise<void> {
+      await this.inner.close();
+    }
+
+    get sessionId(): string | undefined {
+      return (this.inner as any).sessionId;
+    }
+
+    setProtocolVersion?(version: string): void {
+      if (typeof this.inner.setProtocolVersion === "function") {
+        this.inner.setProtocolVersion(version);
+      }
+    }
+  }
+
+  return new DroppedListChangedTransport(transport);
+}
+
 // ============================================================================
 // Tasks extension: recovering `resultType: "task"` responses from beta.4
 // ============================================================================

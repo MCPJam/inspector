@@ -6,6 +6,7 @@ import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerImagesCommands } from "./images.js";
+import { registerSkillsCommands } from "./skills.js";
 import { registerJourneysCommands } from "./journeys.js";
 import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
@@ -44,6 +45,7 @@ export function registerCloudCommands(program: Command): Command {
   registerClientsCommands(cloud);
   registerEnvironmentsCommands(cloud);
   registerImagesCommands(cloud);
+  registerSkillsCommands(cloud);
 
   cloud.commandsGroup("Swarms and user testing:");
   const journeys = registerJourneysCommands(cloud);

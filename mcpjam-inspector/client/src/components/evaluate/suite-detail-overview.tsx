@@ -40,8 +40,16 @@ import {
   suiteRunBlockedReason,
   type RunHistoryVerdict,
   type SuiteRunHistoryFilters,
+  type SuiteRunHistoryRow,
 } from "./suite-detail-model";
+import { StageAnalyticsPanel } from "./stage-analytics-panel";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import {
+  RunDecisionVerdictBadge,
+  RunDecisionVerdictUnavailable,
+} from "../evals/run-decision-summary-card";
+import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -105,6 +113,8 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  projectId = null,
+  decisionSummaryEnabled = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -127,6 +137,13 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /** Threaded from `EvaluateTab`; never resolved in the browser. */
+  projectId?: string | null;
+  /**
+   * Read D9's canonical verdict for terminal rows. OFF by default: with it
+   * false this table issues no decision-summary requests at all.
+   */
+  decisionSummaryEnabled?: boolean;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [filters, setFilters] = useState<SuiteRunHistoryFilters>({
@@ -410,7 +427,7 @@ export function SuiteDetailOverview({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleRows.map((row) => (
+                {visibleRows.map((row, index) => (
                   <TableRow
                     key={row.runId}
                     data-testid={`suite-run-row-${row.runId}`}
@@ -424,15 +441,35 @@ export function SuiteDetailOverview({
                       {row.dateLabel}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={cn(
-                          "text-xs font-medium uppercase tracking-wide",
-                          VERDICT_TEXT_TONE[row.verdict],
-                        )}
-                      >
-                        {row.verdictLabel}
-                      </span>
+                      <SuiteRunVerdictCell
+                        row={row}
+                        projectId={projectId}
+                        enabled={decisionSummaryEnabled}
+                        // The first page is on screen the moment the table
+                        // paints, so it reads eagerly. Everything "Show all"
+                        // reveals waits to be scrolled to — otherwise one
+                        // click would ask for the entire history at once.
+                        lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
+                      />
                     </TableCell>
+                    {/*
+                      DELIBERATELY still the locally derived rate, and the one
+                      place this surface diverges from the project Runs table.
+
+                      There, the Metric column is the run's own counts, so a
+                      canonical summary replaces the stored aggregate outright.
+                      Here the column is per-TRIAL accuracy shown beside
+                      latency, tokens and tool calls — a row of local operating
+                      metrics, not a restatement of the verdict. Swapping in
+                      case-variant counts would put a different population in
+                      the middle of that row.
+
+                      What it must never do is contradict the verdict, and it
+                      cannot: the verdict cell reads the canonical summary and
+                      this cell has no say in it. Lane D10a keeps this local
+                      context; retiring it is a later change with its own
+                      column design.
+                    */}
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
                     </TableCell>
@@ -484,6 +521,23 @@ export function SuiteDetailOverview({
           </span>
         </div>
       </section>
+      ) : null}
+
+      {/* Where the chain stopped, per run — the measured half of a run, beside
+          its history. Evaluate-only by construction: this file is the Evaluate
+          (New) suite page, so /evals cannot pick it up.
+
+          Gated on `projectId` because it is genuinely nullable here and the
+          read is project-scoped: without one there is no request to make, and
+          rendering the panel anyway would leave it spinning on a fetch that
+          never starts. Same gate the traces export uses above. */}
+      {projectId ? (
+        <StageAnalyticsPanel
+          projectId={projectId}
+          suiteId={suite._id}
+          runCount={runs.length}
+          runsLoading={runsLoading}
+        />
       ) : null}
 
       {showEmptyCasesHero ? (
@@ -739,6 +793,64 @@ function SuiteEmptyCasesHero({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The verdict for one run-history row.
+ *
+ * CANONICAL WINS. `row.verdict` is derived in the browser from iteration rows
+ * — a second reading of a run that already decided for itself — and the moment
+ * a validated summary is in hand it replaces that derivation outright,
+ * `inconclusive` and "no verdict" included. The local label survives only as
+ * the pre-canonical placeholder, and on a non-terminal row (which has no
+ * decision to read) as the lifecycle it always was.
+ */
+function SuiteRunVerdictCell({
+  row,
+  projectId,
+  enabled,
+  lazy,
+}: {
+  row: SuiteRunHistoryRow;
+  projectId: string | null;
+  enabled: boolean;
+  lazy: boolean;
+}) {
+  const [visibilityRef, hasBeenVisible, onScreen] =
+    useHasBeenVisible<HTMLSpanElement>();
+  const terminal = isTerminalEvalRunStatus(row.status);
+  const { status, summary, error } = useEvalRunDecisionBadge({
+    projectId,
+    runId: row.runId,
+    enabled: enabled && terminal && (!lazy || hasBeenVisible),
+    // Eagerly-read first-page rows are on screen by definition; lazy ones
+    // revalidate only while they actually are. See the runs table for why.
+    revalidate: !lazy || onScreen,
+    revision: row.revision,
+  });
+
+  return (
+    <span ref={lazy ? visibilityRef : undefined}>
+      {summary ? (
+        <RunDecisionVerdictBadge summary={summary} />
+      ) : status === "error" ? (
+        // The read SETTLED and there is no verdict to show. `Ship`/`Hold` is
+        // this table's own pass-rate derivation, and leaving it up here — with
+        // nothing saying the run's own answer could not be read — is exactly
+        // the silent disagreement this surface exists to remove.
+        <RunDecisionVerdictUnavailable error={error} />
+      ) : (
+        <span
+          className={cn(
+            "text-xs font-medium uppercase tracking-wide",
+            VERDICT_TEXT_TONE[row.verdict],
+          )}
+        >
+          {row.verdictLabel}
+        </span>
+      )}
+    </span>
   );
 }
 

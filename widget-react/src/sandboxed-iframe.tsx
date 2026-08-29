@@ -13,6 +13,7 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
+import type { BrowserStoragePolicy } from "@mcpjam/sdk/widget-runtime";
 import {
   stableStringifyJson,
   buildOuterAllowAttribute,
@@ -198,6 +199,14 @@ interface SandboxedIframeProps {
   cspDirectives?: Record<string, string[]>;
   /** Probe-derived host policy for individual CSP-backed browser APIs. */
   cspSubtypePolicy?: CspSubtypePolicy;
+  /**
+   * Probe-derived host policy for browser storage inside the widget.
+   * Absent or `true` means available; `false` makes the proxy install a guard
+   * that throws `SecurityError` on access, as a real iframe without
+   * `allow-same-origin` does. Not a CSP concern — applies in permissive mode
+   * too.
+   */
+  browserStorage?: BrowserStoragePolicy;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /**
@@ -255,6 +264,7 @@ export const SandboxedIframe = forwardRef<
     allowFeatures,
     cspDirectives,
     cspSubtypePolicy,
+    browserStorage,
     permissive,
     recordMode,
     onProxyReady,
@@ -412,6 +422,7 @@ export const SandboxedIframe = forwardRef<
         csp: csp ?? null,
         cspDirectives: cspDirectives ?? null,
         cspSubtypePolicy: cspSubtypePolicy ?? null,
+        browserStorage: browserStorage ?? null,
         html: html ?? null,
         permissive: permissive ?? null,
         permissions: permissions ?? null,
@@ -425,6 +436,7 @@ export const SandboxedIframe = forwardRef<
       csp,
       cspDirectives,
       cspSubtypePolicy,
+      browserStorage,
       html,
       permissive,
       permissions,
@@ -464,6 +476,7 @@ export const SandboxedIframe = forwardRef<
           // field.
           cspDirectives,
           cspSubtypePolicy,
+          browserStorage,
           permissive,
           colorScheme,
           recordMode,

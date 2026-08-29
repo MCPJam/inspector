@@ -5,121 +5,51 @@
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        },
+        }
+      ],
+      "summary": "Add the eval-suite stage-analytics route and the /evaluate stage-analytics\npanel, rendering backend-materialized per-run stage analytics.",
+      "id": "evals-d5b-d5c-inspector"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
         }
       ],
-      "summary": "evals: pin an eval baseline by source commit SHA\n\n`GET /eval-runs/:runId/compare` accepts `baseCommitSha`, resolved server-side\nto the completed run in that suite recorded against the commit. The compare\nDTO's `baseline` gains `commit_sha` as a policy, echoes the SHA back, and\nreports `matchCount`/`matchCountTruncated` when uniqueness could not be\nestablished — an absent count means the match was unambiguous, and a truncated\ncount is a floor rather than a total.\n\n`mcpjam cloud eval gate` gains `--baseline-sha` and `eval compare` gains\n`--base-sha`, each mutually exclusive with its run-id counterpart. The kind is\nnamed by the flag rather than inferred: a Convex run id is an opaque string\nwith no documented format, and an abbreviated commit SHA is indistinguishable\nfrom one, so a single guessing flag could silently compare against the wrong\nrun. A SHA passed to `--baseline` is rejected with a pointer to the right flag.\n\nGate provenance now records the requested selector and the run it resolved to,\nso an archived report can answer which run a commit compared against. A SHA\nthat matches no completed run remains `incomplete` (exit 3), never a\nregression.\n\nMalformed baseline selections from the platform (`EVAL_COMPARE_BASELINE_CONFLICT`,\n`EVAL_COMPARE_BASELINE_INVALID`) now answer 400 with the platform's own message\ninstead of a generic 500.",
-      "id": "eval-baseline-commit-sha"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Gate waivers end to end (Evals v2, Lane E, step E5b).\n\nAn eval run's release gate can now be overridden by an authorized user, on the\nrecord, until an expiry they name — and the override is visible everywhere the\ngate is. The Lane E charter's words are \"authorized actor, reason, expiry,\naffected policy/run, visible CI/report status; no silent or permanent waiver.\"\nThe platform (mcpjam-backend #1141) owns the authorization, the required expiry\nand the 30-day cap. This is the half that owns **visible**.\n\n**Nothing here makes a failing run pass.** The run keeps its own `result`, and\nthe waiver is a separate record that every reader consults and reports\nseparately. Two independent computations decide this verdict — the platform\nderives a GitHub Check Run conclusion from the persisted run, and the CLI\nrecomputes its own gate client-side from public v1 GETs — so flipping the\npersisted result would green both with nothing saying why.\n\n`@mcpjam/sdk` widens the gate contract. `GateStatus` gains `waived` and\n`GateReport` gains a `waived` outcome plus a `waiver` field; `StructuredRunVerdict`\ngains `waived`; `StructuredCaseResult` gains `waiver`. New exports:\n`applyGateWaiver`, `isGateWaiverInForce`, `formatGateWaiverLine`,\n`GATE_WAIVER_REASON_NOTICE`, and the `GateWaiver` type. `waived` is deliberately\nNOT folded into `passed`: both exit 0, but collapsing them makes the difference\nunrecoverable one line later, which is the definition of a silent waiver.\n\n`applyGateWaiver` upgrades **only** a real `failed` outcome. `incomplete` and\n`usage_error` are never waived — a waiver granted because the evals regressed is\nnot consent to ship on a cancelled run, a wait timeout, or a flaked fetch, and\nturning exit 3 into exit 0 there is fail-open. The waiver is still attached in\nevery case, so an artifact names it even when it decided nothing.\n\n`@mcpjam/cli`'s `eval gate` reads the waiver off the run projection (no second\nround trip) and names **who** waived, **why**, and **until when** in all four\noutputs: the human report, `--reporter json-summary`, `--reporter junit-xml`\n(as `<skipped>`, JUnit's own third state — it does not fail the build, and it\ndoes not render as a clean green row), and `--reporter html` (its own violet\nbadge and section, neither the green of a pass nor the red of a failure). The\nfour exit codes are unchanged; `waived` joins `passed` at 0.\n\nThe CLI re-derives the waiver's validity from `expiresAt` rather than trusting\nthe platform's `active`. A Convex query is cached against the documents it read\nand time is not a document, so a lapsed waiver can be served as active until\nsomething writes to its row — the one failure that would silently turn a\ntime-boxed waiver into a permanent one, on exactly the path this step builds.\n\nNew subcommands `mcpjam cloud eval gate waive --run <id> --reason <text>\n--expires-in <30m|12h|7d>` and `mcpjam cloud eval gate unwaive --run <id>\n[--waiver <id>]`. Both are manage-tier and server-enforced — the CLI does not\npre-judge authorization — and `waive` prints the unredacted-storage notice\nbefore it accepts a reason. A bare `--expires-in 7` is rejected as ambiguous.\n`eval gate`'s `--run` moved from a commander-required option to one this command\nenforces itself, so the subcommands can dispatch; the exit code for a missing\n`--run` is unchanged at `2`.\n\nNew v1 endpoints (`POST`/`GET` `…/eval-runs/{runId}/gate-waivers`, `DELETE\n…/gate-waivers/{waiverId}`) with strict bodies, and `EvalRun` gains `gateWaiver`\n— `null` rather than omitted, so a caller can tell \"no waiver\" from \"an older\ndeployment\". Reading a waiver is available to anyone who can view the run, not\nonly to those who can grant one. Three agent/MCP operations: `waive_eval_gate`,\n`get_eval_gate_waiver`, `revoke_eval_gate_waiver`.\n\nTwo error-translation fixes in the v1 layer, both of which affect more than\nwaivers. `ConvexError({ kind: 'forbidden' })` — how the platform raises every\neval tier denial — carried no `code` field, so it matched no branch in\n`translateConvexWriteError` and reached the terminal 500: a deliberate refusal\nreported as our own bug, paged for, and handed to the caller as a generic\ninternal error. It now answers 403 with the platform's own message, still\nhonoring `adminFailureIsForbidden` for the resources that deliberately hide\ntheir gate. And the five `gate_waiver_*` refusal codes are recognized as 400s\nthat forward the platform's copy verbatim, rather than falling through to a 500\nthat strips the one sentence telling the caller what to do.\n\n`renderStructuredRunJUnitXml` gains a `skipped` attribute, emitted only when\nsomething was actually waived — never `skipped=\"0\"`, which would be a wire\nchange on every report ever rendered in exchange for saying nothing.",
-      "id": "eval-gate-waivers"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "major"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "major"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "major"
-        }
-      ],
-      "summary": "One canonical eval run decision summary, shared by the API, Platform MCP and the CLI\n\nThe six-stage user-value chain was eval metadata that each client interpreted for\nitself: the API returned stage rows, the CLI counted iterations and produced its\nown verdict, the Platform MCP server returned neither, and a model had to\nreconstruct the chain from raw tool calls. Three readings of one run is three\nchances to disagree about it.\n\nThere is now one versioned contract — `evalRunDecisionSummarySchema` /\n`EvalRunDecisionSummary` in `@mcpjam/sdk/contract`, schema version 1 — assembled\nby a single function that the new API endpoint and every client call:\n\n- `GET /v1/projects/{projectId}/eval-runs/{runId}/decision-summary` returns it,\n  with bounded diagnostic pagination. Additive: every existing run and iteration\n  response field is unchanged.\n- `get_eval_run` returns it on `decisionSummary` for terminal runs and tells the\n  model to read it before step results or a trace.\n- `eval run --wait`, `eval status`, `eval gate` and `eval compare` render it, and\n  human, JSON, JUnit and HTML now agree on the verdict, the counts and their\n  unit, the first failed stage, the failure category, the evidence and the next\n  action. JUnit carries it as `<system-out>` rather than dropping the chain.\n\nWhat the contract fixes, beyond having one of them:\n\n- **Counts say what they count.** `measurementUnit` is `caseVariant` under\n  verdict policy v2 and `trial` on a legacy run. A 3-case suite with 5\n  repetitions is legitimately 3 or 15, and the previous summary called both\n  \"cases\".\n- **The verdict is copied, never recomputed.** Under policy v2 the run's own\n  `EvalVerdictDecision` is the authority; the per-trial diagnostics are evidence\n  beneath it. The old summary derived a verdict by counting iterations, which\n  reported a case that passed 4 of 5 trials as one pass and one failure.\n- **`notEstablished` is a fourth verdict**, for a run that is unfinished, stopped\n  early, or whose decision could not be read — distinct from `inconclusive`,\n  which is a decision the validity phase reached.\n- **Evidence belongs to the claim it supports.** Span ids, prompt indexes and\n  reasons come from the first failed stage's row alone; the old summary unioned\n  them across the whole chain, handing back the evidence of every stage that\n  worked as the explanation of the one that did not.\n- **A partial page says so.** `diagnostics.complete` and `scannedIterations`\n  separate \"nothing failed\" from \"we did not look\".\n- Stage, state, category and reason labels are centralized beside the contract,\n  so human output reads `User value`, not `userValue`.\n\n`PlatformEvalIteration` gains an optional `caseId` — the case's SDK-declared id\nfrom the iteration's frozen snapshot, beside (never merged into) the stored\n`testCaseId`. Omitted, not nulled, when a run recorded none.\n\nCompatibility notes:\n\n- The reporter artifact's `decisionSummary` field now carries the canonical\n  object. It previously held an unversioned per-case summary; a consumer reading\n  `decisionSummary.passRate.percent` and `decisionSummary.cases[]` should read\n  `counts` (with its `measurementUnit`) and `diagnostics.items[]` instead. The\n  object now carries its own `schemaVersion`.\n- `eval status` prints the block for any terminal run that did not pass, rather\n  than only a failed one — `inconclusive` and undecided runs are the ones a\n  reader can least explain unaided — and prints it above the `View:` line.\n- `buildEvalDecisionSummary`, `buildEvalDecisionSummaryFromIterations` and\n  `formatEvalDecisionSummary` are unchanged and still exported, now deprecated.\n  Nothing in this repo calls them.\n- Exit codes are untouched, including `eval gate`'s four-code contract.\n\nDeployment order matters: the endpoint must be live before the new SDK and CLI\nare published. The published clients fall back to the same shared assembler over\n`getEvalRun` + `listEvalRunIterations` when the endpoint is absent, so an older\nor custom API deployment still gets the same object rather than a second\nopinion about the run.",
-      "id": "eval-run-decision-summary-contract"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Evaluate redesign returns as its own tab at `/evaluate`, behind `evaluate-enabled`\n\nThe Evaluate landing page, full-page create-suite flow, and run-history suite\noverview have now been merged into the live `/evals` tab and reverted twice. The\nwork is worth keeping; rewriting the shipped tab in place to get it is not.\n\nSo it ships as a second tab instead. `/evaluate` is a separate route, a separate\nsurface, and a separate sidebar item shown alongside Evaluate — nothing a user\nwithout the flag can reach behaves differently. The screens the redesign\nrewrote are duplicated under `components/evaluate/` rather than refactored into\nshared ones; the queries, mutations, run detail, and case editors are still the\nsame `components/evals/` modules, so eval behaviour cannot drift between them.\n\nThree shared components take small additive changes instead of a fork:\n`SuiteIterationsView` gains an opt-in `suiteDetailOverview` prop (off for every\nexisting caller), `EnvironmentComposer`'s `slots` prop now actually narrows the\nstrip and its servers-pill wording is overridable, and `ServerGroupPicker`\naccepts a test id and an accessible name for its trigger. Every current caller\nrenders exactly what it rendered before.\n\nThe commit-keyed CI review stays on `/evals/runs`. When the redesign replaces\nthe original, the old tab and the duplicated directory are deleted together.",
-      "id": "evaluate-tab-behind-a-flag"
+      "summary": "Add listEvalSuiteStageAnalytics to the Platform client. Requires the deployed\nbackend stage-analytics query (backend D5a); a missing backend surfaces as a\nservice error, never an empty result.",
+      "id": "evals-d5b-sdk"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
         }
       ],
-      "summary": "Report a legacy protocol-version pin mismatch as a version problem instead of \"the server appears to be down\"\n\nPinning a stateful MCP protocol version (e.g. 2025-11-25) against a server that\nanswers with a different one — Slack and HubSpot both answer 2025-06-18 — failed\nthe connect with a generic 502 and \"Couldn't reach the MCP server\". Tools came\nback silently empty and reconnects looked like someone else's outage rather than\nthe version setting they actually were.\n\nThe `ProtocolVersionPinUnsupported` path that already produces a 424, names both\nversions, and offers \"Change protocol version\" only ever fired for modern\n(2026-07-28) pins: the detector bailed out for stateful pins, and the failure\nparser did not recognize the wording the upstream client uses when it refuses a\nserver's `initialize` reply. Both now handle it, and the message names the\nversion the server actually offered.",
-      "id": "protocol-pin-mismatch-error"
+      "summary": "Server-served skills are named in the prompt, so the model can actually choose one\n\nProgressive disclosure has three levels: every skill's **name and description** are always in context, the `SKILL.md` body loads when the model judges it relevant, and supporting files load after that. Level 1 is never lazy — a model cannot choose a skill whose description it has never read.\n\nThe server-skills stanza skipped it. It said *\"call `listSkills` to see those\"* and named nothing, so picking a skill meant guessing that a relevant one might exist and spending a tool call to find out. Most turns never did. Asked how to import a corpus of promptfoo tests — with `mcpjam-eval-import` connected and its description matching almost word for word — the model never called `listSkills` and improvised a conversion process instead.\n\nThat is the irony of the old shape: `skills/list` **is** the progressive-disclosure mechanism. SEP-2640 returns frontmatter separately from content precisely so a host can put the catalog in front of the model without fetching a single body. We implemented that wire correctly and then called it lazily, discarding the thing it was designed for.\n\nThe catalog is now rendered into the system prompt, budgeted and formatted with the same helpers the Cloud Skills catalog uses — so the two halves of one feature cannot drift on wording, sort order, or what happens when metadata outgrows its share of the context. Each line keeps its origin (`MCP server \"…\"`), because these descriptions are third-party text and one that reads like an instruction should still show who wrote it. Unloadable skills stay listed and marked rather than hidden, so the model stops retrying them and a server author can see MCPJam declined.\n\nThe stanza also leads with what to do and follows with how to distrust it. The trust wording is unchanged and still unconditional — a digest match shows the bytes are consistent with what the server advertised, which is not the same as the content being trustworthy — but it no longer buries the only actionable sentence under three warnings.\n\nCost is one `skills/list` per turn per declaring server, shared with any `loadSkill` in the same turn, and the same per-turn catalog fetch Cloud Skills already pay. Caching it against the `ttlMs` servers already send — the worker serves an hour, and we currently surface that TTL and ignore it — would remove even that, and is worth doing for both paths at once.",
+      "id": "skills-catalog-in-the-prompt"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "major",
-      "oldVersion": "2.48.1",
+      "type": "patch",
+      "oldVersion": "3.3.0",
       "changesets": [
-        "eval-baseline-commit-sha",
-        "eval-gate-waivers",
-        "eval-run-decision-summary-contract",
-        "evaluate-tab-behind-a-flag",
-        "protocol-pin-mismatch-error"
+        "evals-d5b-d5c-inspector",
+        "skills-catalog-in-the-prompt"
       ],
-      "newVersion": "3.0.0"
+      "newVersion": "3.3.1"
     },
     {
       "name": "@mcpjam/sdk",
-      "type": "major",
-      "oldVersion": "7.1.1",
+      "type": "patch",
+      "oldVersion": "8.3.0",
       "changesets": [
-        "eval-baseline-commit-sha",
-        "eval-gate-waivers",
-        "eval-run-decision-summary-contract",
-        "protocol-pin-mismatch-error"
+        "evals-d5b-sdk"
       ],
-      "newVersion": "8.0.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "major",
-      "oldVersion": "4.2.0",
-      "changesets": [
-        "eval-baseline-commit-sha",
-        "eval-gate-waivers",
-        "eval-run-decision-summary-contract",
-        "protocol-pin-mismatch-error"
-      ],
-      "newVersion": "5.0.0"
+      "newVersion": "8.3.1"
     },
     {
       "name": "@mcpjam/mcp",
@@ -127,20 +57,6 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/vitest",
-      "type": "patch",
-      "oldVersion": "0.1.3",
-      "changesets": [],
-      "newVersion": "0.1.4"
-    },
-    {
-      "name": "@mcpjam/widget-react",
-      "type": "patch",
-      "oldVersion": "0.1.8",
-      "changesets": [],
-      "newVersion": "0.1.9"
     }
   ]
 }
