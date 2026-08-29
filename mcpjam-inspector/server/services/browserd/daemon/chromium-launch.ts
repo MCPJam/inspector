@@ -20,7 +20,14 @@ import { clearStaleSingletonLock } from "./profile-lock";
 
 const NAV_TIMEOUT_MS = 30_000;
 
-/** A structural skeleton of the DOM — cheap, and changes when structure does. */
+/**
+ * A structural skeleton of the DOM — cheap, and changes when structure does.
+ * NOTE: `page.evaluate(string)` evaluates the string as an EXPRESSION, so this
+ * function literal must be wrapped and self-invoked — `(${DOM_SIGNAL_FN})()` —
+ * at the call site. A bare `() => {…}` string evaluates to the (uncalled)
+ * function, which serializes to `undefined` and breaks every capture. Same for
+ * the requestAnimationFrame string below.
+ */
 const DOM_SIGNAL_FN = `() => {
   const parts = [];
   const walk = (el, depth) => {
@@ -82,13 +89,13 @@ export function wrapPage(page: AnyPage): DriverPage {
     async requestAnimationFrame(signal) {
       await Promise.race([
         page.evaluate<void>(
-          "() => new Promise((r) => requestAnimationFrame(() => r()))",
+          "(() => new Promise((r) => requestAnimationFrame(() => r())))()",
         ),
         abortPromise(signal),
       ]);
     },
     domStructureSignal() {
-      return page.evaluate<string>(DOM_SIGNAL_FN);
+      return page.evaluate<string>(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
       const buffer = await page.screenshot({ type: "png" });
