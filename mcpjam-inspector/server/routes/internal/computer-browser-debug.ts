@@ -27,7 +27,8 @@ import {
   type ProbeSandbox,
 } from "../../services/browserd/browser-debug-probe.js";
 import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "../../services/browserd/dist/mcpjam-browserd-bundle.generated.js";
-import { logger } from "../../utils/logger.js";
+import { withKeyedLock } from "../../services/browserd/probe-lock.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const internalComputerBrowserDebug = new Hono();
 
@@ -101,7 +102,11 @@ internalComputerBrowserDebug.post("/probe", async (c) => {
 
   try {
     const bundle = loadBundle();
-    const result = await runBrowserProbe(
+    // Serialize per user+project so two probes can't collide on the same
+    // sandbox's fixed port/profile. bearer identifies the user; it is used only
+    // as a lock key here and never logged.
+    const result = await withKeyedLock(`${projectId}:${bearer}`, () =>
+      runBrowserProbe(
       {
         reserveDesktop: async () => {
           const reserved = await ensureComputerReady({
@@ -129,11 +134,20 @@ internalComputerBrowserDebug.post("/probe", async (c) => {
         createClient: (baseUrl, boot) => new BrowserdClient({ baseUrl, bearer: boot }),
       },
       { url, bundle },
+      ),
     );
     return c.json({ ok: true, ...result });
   } catch (error) {
+    // Route through the repo's error-origin/Sentry policy, not a bare log
+    // (AGENTS.md). The whole probe is our own infra (control plane, E2B,
+    // browserd), so the hop is internal. Only projectId is safe to attach — the
+    // bearer is a secret.
+    reportRouteFailure("hosted browser debug probe failed", error, {
+      source: "computer-browser-debug.probe",
+      hop: "mcpjam_internal",
+      context: { projectId },
+    });
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn("[computer-browser-debug] probe failed", { error: message });
     return c.json({ ok: false, error: message }, 502);
   }
 });
