@@ -911,8 +911,13 @@ describe("web chat-v2 — turn provenance (P1)", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
-    process.env.CONVEX_URL = originalConvexUrl;
+    // Delete rather than assign when the var was absent: assigning `undefined`
+    // stores the literal string "undefined", which leaks into later suites as
+    // a truthy Convex URL. The two describe blocks above already do this.
+    if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = originalConvexUrl;
   });
 
   async function runEnvironmentTurn() {
@@ -943,6 +948,52 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     // substituted for it.
     expect(persistArgs.turnTrace.turnId).toBe("t");
     expect(persistArgs.turnTrace.spans).toEqual([]);
+  });
+
+  it("records a delivered CAPTURED server skill alongside the authored ones", async () => {
+    // End-to-end wiring for the helper's serverSkills branch: a captured
+    // MCP-server skill reaches the model through the same capability set as an
+    // authored one, so it must appear in the record of what ran.
+    const CAPTURE_PROVENANCE = {
+      serverSkillId: "ss_1",
+      serverSkillVersionId: "ssv_1",
+      serverSkillVersionNumber: 2,
+      name: "refunds",
+      modelRef: "acme/refunds",
+      contentHash: "h_capture",
+      sharing: "project",
+      channels: ["mcp-server"],
+    };
+    convexQueryMock.mockResolvedValue({
+      ...SPEC_WITH_PROVENANCE,
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "env-server-1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "captured body",
+          contentSha256: "raw-digest",
+          contentHash: "h_capture",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          provenance: CAPTURE_PROVENANCE,
+          files: [],
+        },
+      ],
+    });
+
+    const persistArgs = await runEnvironmentTurn();
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([
+      PROVENANCE,
+      CAPTURE_PROVENANCE,
+    ]);
   });
 
   it("never carries skill CONTENT into the record", async () => {

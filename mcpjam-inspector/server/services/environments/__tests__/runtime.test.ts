@@ -452,6 +452,96 @@ describe("turnSkillProvenance", () => {
     ).toBeUndefined();
   });
 
+  it("rejects an EMPTY environment name rather than recording a blank one", () => {
+    // `readScenarioEnvironment` normalizes a missing `environmentRef.name` to
+    // `""`. Recording that would export `mcpjam.environment.name: ""`, which
+    // reads as a real environment called nothing instead of as absent
+    // provenance.
+    expect(
+      turnSkillProvenance({
+        environmentRef: { ...SPEC.environmentRef, name: "" },
+        skills: PROVENANCED.skills,
+      })
+    ).toBeUndefined();
+  });
+
+  it("records CAPTURED server skills too — they are delivered like any other", () => {
+    // `resolveEffectiveCapabilities` puts `serverSkills` into the capability
+    // set and `allEffectiveSkills` hands them to the model, so omitting them
+    // would leave a turn claiming to list what it ran while silently dropping
+    // every captured MCP-server skill that ran.
+    const serverProvenance = {
+      serverSkillId: "ss_1",
+      serverSkillVersionId: "ssv_1",
+      serverSkillVersionNumber: 2,
+      name: "refunds",
+      modelRef: "acme/refunds",
+      contentHash: "h_capture",
+      sharing: "project",
+      channels: ["mcp-server"],
+    };
+    const out = turnSkillProvenance({
+      environmentRef: SPEC.environmentRef,
+      skills: PROVENANCED.skills,
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "srv_1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "CAPTURED SECRET",
+          contentSha256: "raw-digest",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          provenance: serverProvenance,
+          files: [],
+        },
+      ],
+    })!;
+
+    // Authored entries first, captures appended — the order the backend's own
+    // run snapshots pin them in.
+    expect(out.skillsAtTurn).toEqual([
+      PROVENANCED.skills![0].provenance,
+      PROVENANCED.skills![1].provenance,
+      serverProvenance,
+    ]);
+    expect(JSON.stringify(out)).not.toContain("CAPTURED SECRET");
+  });
+
+  it("skips a captured skill the backend attached no provenance to", () => {
+    const out = turnSkillProvenance({
+      environmentRef: SPEC.environmentRef,
+      skills: [],
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "srv_1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "body",
+          contentSha256: "raw-digest",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          files: [],
+        },
+      ],
+    })!;
+    expect(out.skillsAtTurn).toEqual([]);
+  });
+
   it("returns an EMPTY array for an environment that resolves no skills", () => {
     // "Ran with none" is a real answer and a different one from "unknown".
     expect(

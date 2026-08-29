@@ -445,7 +445,10 @@ export function runtimeSkills(
  */
 export function turnSkillProvenance(
   spec:
-    | Pick<ResolvedEnvironmentRuntime, "environmentRef" | "skills">
+    | Pick<
+        ResolvedEnvironmentRuntime,
+        "environmentRef" | "skills" | "serverSkills"
+      >
     | null
     | undefined
 ): TurnSkillProvenance | undefined {
@@ -454,24 +457,38 @@ export function turnSkillProvenance(
     !ref ||
     typeof ref.environmentId !== "string" ||
     typeof ref.name !== "string" ||
+    // An EMPTY name is rejected, not tolerated. `readScenarioEnvironment`
+    // normalizes a missing `environmentRef.name` to `""`, and recording that
+    // would put a blank `mcpjam.environment.name` into an exported trace —
+    // which reads as a real environment called nothing, rather than as absent
+    // provenance. Costs nothing in practice: a payload old enough to omit the
+    // name is old enough that its skills carry no `provenance` rows either, so
+    // `skillsAtTurn` would have been empty anyway.
+    ref.name.length === 0 ||
     typeof ref.revision !== "number"
   ) {
     return undefined;
   }
+  const isProvenanceRow = (
+    provenance: unknown
+  ): provenance is Record<string, unknown> =>
+    !!provenance && typeof provenance === "object" && !Array.isArray(provenance);
   return {
     environmentAtTurn: {
       environmentId: ref.environmentId,
       name: ref.name,
       revision: ref.revision,
     },
-    skillsAtTurn: (spec?.skills ?? [])
-      .map((skill) => skill.provenance)
-      .filter(
-        (provenance): provenance is Record<string, unknown> =>
-          !!provenance &&
-          typeof provenance === "object" &&
-          !Array.isArray(provenance)
-      ),
+    // BOTH delivered channels. `resolveEffectiveCapabilities` puts
+    // `spec.serverSkills` into the capability set and `allEffectiveSkills`
+    // hands them to the model exactly like authored ones — so recording only
+    // `spec.skills` would leave a turn claiming to list what it ran while
+    // omitting every captured MCP-server skill that ran. Appended after, which
+    // is the order the backend's own run snapshots pin them in.
+    skillsAtTurn: [
+      ...(spec?.skills ?? []).map((skill) => skill.provenance),
+      ...(spec?.serverSkills ?? []).map((skill) => skill.provenance),
+    ].filter(isProvenanceRow),
   };
 }
 
