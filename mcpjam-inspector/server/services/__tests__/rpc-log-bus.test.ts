@@ -155,7 +155,7 @@ describe("rpcLogBus", () => {
     const seen: RpcLogEvent[] = [];
     const stop = rpcLogBus.subscribe([serverId], (e) => seen.push(e));
     try {
-      rpcLogBus.publish(bulkyEvent(serverId, 1, 600_000));
+      rpcLogBus.publish(bulkyEvent(serverId, 1, 2_000_000));
     } finally {
       stop();
     }
@@ -181,7 +181,7 @@ describe("rpcLogBus", () => {
         jsonrpc: "2.0",
         id: 42,
         method: "tools/call",
-        params: { data: "A".repeat(600_000) },
+        params: { data: "A".repeat(2_000_000) },
       },
     });
 
@@ -191,24 +191,37 @@ describe("rpcLogBus", () => {
       id: 42,
       method: "tools/call",
       // The key survives even though the body did not — `extractMethod` labels
-      // a response by the PRESENCE of `result`/`error`.
-      params: { _truncated: true },
+      // a response by the PRESENCE of `result`/`error`. Its SHAPE survives too
+      // now, down to the field that was too big and how big it was.
+      params: {
+        data: {
+          _truncated: true,
+          bytes: 2_000_000,
+          head: "A".repeat(8 * 1024),
+        },
+      },
       _truncated: true,
-      limitBytes: 256 * 1024,
+      limitBytes: 1024 * 1024,
     });
   });
 
   it("keeps a truncated response labelled as a response", () => {
     const serverId = `response-label-${crypto.randomUUID()}`;
-    rpcLogBus.publish(bulkyEvent(serverId, 9, 600_000));
+    rpcLogBus.publish(bulkyEvent(serverId, 9, 2_000_000));
 
     const [buffered] = rpcLogBus.getBuffer([serverId], -1);
     expect(messageOf(buffered)).toEqual({
       jsonrpc: "2.0",
       id: 9,
-      result: { _truncated: true },
+      result: {
+        data: {
+          _truncated: true,
+          bytes: 2_000_000,
+          head: "A".repeat(8 * 1024),
+        },
+      },
       _truncated: true,
-      limitBytes: 256 * 1024,
+      limitBytes: 1024 * 1024,
     });
   });
 
@@ -227,7 +240,7 @@ describe("rpcLogBus", () => {
   it("falls back to a bare marker when the preserved envelope is itself oversized", () => {
     const serverId = `wide-frame-${crypto.randomUUID()}`;
     const wide: Record<string, unknown> = { jsonrpc: "2.0", id: 1 };
-    for (let i = 0; i < 5_000; i++) {
+    for (let i = 0; i < 20_000; i++) {
       wide[`field_${i}`] = "y".repeat(200);
     }
 
@@ -239,10 +252,10 @@ describe("rpcLogBus", () => {
     });
 
     const [buffered] = rpcLogBus.getBuffer([serverId], -1);
-    // Not the 5,000 preserved scalars — the whole point of the cap.
+    // Not the 20,000 preserved scalars — the whole point of the cap.
     expect(messageOf(buffered)).toEqual({
       _truncated: true,
-      limitBytes: 256 * 1024,
+      limitBytes: 1024 * 1024,
     });
   });
 
@@ -295,7 +308,7 @@ describe("rpcLogBus", () => {
     const serverId = `stats-truncated-${crypto.randomUUID()}`;
     const before = rpcLogBus.stats();
 
-    rpcLogBus.publish(bulkyEvent(serverId, 1, 600_000));
+    rpcLogBus.publish(bulkyEvent(serverId, 1, 2_000_000));
 
     expect(rpcLogBus.stats().truncatedFrames).toBe(before.truncatedFrames + 1);
   });

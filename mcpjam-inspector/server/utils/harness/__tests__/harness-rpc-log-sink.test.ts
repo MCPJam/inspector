@@ -106,9 +106,15 @@ describe("enqueue + batched flush", () => {
       // stops at the cap rather than serializing the frame to measure it.
       limitBytes: 16 * 1024,
     });
-    // The KEY survives with a nested marker, the 20 KB value does not: a frame
-    // whose field names were dropped too is one nobody can identify afterwards.
-    expect(body.entries[0].message.big).toEqual({ _truncated: true });
+    // The KEY survives, and so does the head of its value and the size it
+    // really was. A frame that dropped its field names cannot be identified
+    // afterwards; one that dropped the size cannot be compared against what the
+    // server actually sent.
+    expect(body.entries[0].message.big).toEqual({
+      _truncated: true,
+      bytes: 20_000,
+      head: "x".repeat(8 * 1024),
+    });
   });
 
   // A cycle used to be caught by the `JSON.stringify` that sized the frame. The
