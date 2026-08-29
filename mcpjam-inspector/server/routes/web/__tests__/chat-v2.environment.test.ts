@@ -1035,6 +1035,15 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     });
 
     const persistArgs = await runEnvironmentTurn();
+
+    // Assert DELIVERY as well as the record — the invariant is that the two
+    // agree, and checking only the record would pass even if the capture had
+    // reached `runtimeSkillsOverride` (which would make the record wrong in
+    // the other direction).
+    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(handlerArgs.runtimeSkillsOverride).toEqual([
+      expect.objectContaining({ skillId: "sk_env", name: "release-notes" }),
+    ]);
     // The authored skill IS delivered by the harness, so it is recorded.
     expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
     // The environment binding is still true and still recorded.
