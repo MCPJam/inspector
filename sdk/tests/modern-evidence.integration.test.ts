@@ -226,7 +226,18 @@ describe("modern-era (2026-07-28) wire evidence", () => {
     // The spec cancellation signal on modern is the aborted per-request
     // stream itself — there must be no explicit notifications/cancelled
     // POST alongside it.
+    //
+    // The settle window is load-bearing: the protocol layer's legacy
+    // cancellation branch POSTs the notification fire-and-forget, so asserting
+    // the instant `callPromise` rejects passes even when the client DID send
+    // one. Give that POST time to land before reading `exchanges`.
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(byMethod("notifications/cancelled")).toHaveLength(0);
+
+    // Positive counterpart: the aborted `tools/call` exchange must have
+    // actually terminated. A client that only rejects locally leaves the
+    // held-open stream running, and the exchange never completes.
+    expect(byMethod("tools/call")).toHaveLength(1);
   });
 });
 
