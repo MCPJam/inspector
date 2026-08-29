@@ -147,6 +147,31 @@ describe("reportCaught", () => {
     );
   });
 
+  // Sentry reads `level`; PostHog error tracking reads `$exception_level`, and
+  // groups, alerts and filters on it. Sending only `level` left every report at
+  // PostHog's `error` default, which silently overrode the one caller that asks
+  // for something quieter.
+  it("declares the level on the key PostHog actually reads", () => {
+    reportCaught(new Error("server under test misbehaved"), {
+      source: "oauth_debugger_step",
+      level: "warning",
+    });
+
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ $exception_level: "warning" }),
+    );
+  });
+
+  it("still defaults to error when the caller names no level", () => {
+    reportCaught(new Error("boom"), { source: "unit" });
+
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ $exception_level: "error" }),
+    );
+  });
+
   it("reports to Sentry but NOT PostHog on a non-capture surface", async () => {
     // `capture_exceptions: false` only disables posthog-js's automatic
     // window.onerror handler — an explicit captureException still sends. A
