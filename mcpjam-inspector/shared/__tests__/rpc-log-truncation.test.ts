@@ -52,6 +52,11 @@ describe("measureString", () => {
     // ...and half of one encodes as the replacement character but serializes
     // as a six-character escape.
     expect(measureString("\ud800", Infinity)).toEqual({ utf8: 3, json: 8 });
+    // `\b \t \n \f \r` are the control characters with a two-character escape;
+    // every other one costs six, like the `\u0001` above.
+    expect(measureString("\n", Infinity)).toEqual({ utf8: 1, json: 4 });
+    // The smallest string there is: nothing but the two quotes.
+    expect(measureString("", Infinity)).toEqual({ utf8: 0, json: 2 });
   });
 
   it("leaves both counts over the budget when it stops early", () => {

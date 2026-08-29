@@ -207,7 +207,8 @@ describe("traffic-log-store rpc stream (local mode)", () => {
     // Newest first, and the newest is what a reader is actually looking at.
     expect(items[0].id).toBe("rpc:bulk:15");
     const retained = items.reduce(
-      (sum, item) => sum + JSON.stringify(item.payload).length,
+      (sum, item) =>
+        sum + new TextEncoder().encode(JSON.stringify(item.payload)).length,
       0,
     );
     // The budget, plus the one newest row that is never evicted for it.
