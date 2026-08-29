@@ -23,9 +23,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const convex = vi.hoisted(() => ({ useQuery: vi.fn() }));
 vi.mock("convex/react", () => convex);
 
-const { ScenarioStageFunnelPanel, SwarmRunStageFunnelPanels } = await import(
-  "../StageFunnelPanels"
-);
+const {
+  ScenarioStageFunnelPanel,
+  SuiteRunStageFunnelAvailability,
+  SwarmRunStageFunnelPanels,
+} = await import("../StageFunnelPanels");
 import type { ChatSessionStageFunnel } from "../user-value-chain-types";
 
 const STAGES = [
@@ -98,7 +100,7 @@ describe("ScenarioStageFunnelPanel — the query answers", () => {
     for (const value of [undefined, null]) {
       convex.useQuery.mockReturnValue(value);
       const { container } = render(
-        <ScenarioStageFunnelPanel scenarioId="scenario-1" />
+        <ScenarioStageFunnelPanel scenarioId="scenario-1" />,
       );
       expect(container.textContent).toBe("");
     }
@@ -109,7 +111,7 @@ describe("ScenarioStageFunnelPanel — the query cannot answer", () => {
   it("renders nothing instead of throwing", () => {
     queryThrows();
     const { container } = render(
-      <ScenarioStageFunnelPanel scenarioId="scenario-1" />
+      <ScenarioStageFunnelPanel scenarioId="scenario-1" />,
     );
     expect(container.textContent).toBe("");
   });
@@ -122,7 +124,7 @@ describe("ScenarioStageFunnelPanel — the query cannot answer", () => {
       <div>
         <span data-testid="sibling">the rest of the page</span>
         <ScenarioStageFunnelPanel scenarioId="scenario-1" />
-      </div>
+      </div>,
     );
     expect(getByTestId("sibling").textContent).toBe("the rest of the page");
   });
@@ -158,7 +160,7 @@ describe("SwarmRunStageFunnelPanels — the query answers", () => {
       <SwarmRunStageFunnelPanels
         journeyRunIds={[]}
         className="shrink-0 space-y-2 px-4 pt-3"
-      />
+      />,
     );
     expect(container.innerHTML).toBe("");
   });
@@ -168,7 +170,7 @@ describe("SwarmRunStageFunnelPanels — the query cannot answer", () => {
   it("renders nothing instead of throwing", () => {
     queryThrows();
     const { container } = render(
-      <SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />
+      <SwarmRunStageFunnelPanels journeyRunIds={["run-1", "run-2"]} />,
     );
     expect(container.textContent).toBe("");
   });
@@ -179,8 +181,103 @@ describe("SwarmRunStageFunnelPanels — the query cannot answer", () => {
       <div>
         <span data-testid="sibling">the rest of the page</span>
         <SwarmRunStageFunnelPanels journeyRunIds={["run-1"]} />
-      </div>
+      </div>,
     );
     expect(getByTestId("sibling").textContent).toBe("the rest of the page");
+  });
+});
+
+describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", () => {
+  it("reports true only when the rollup actually answered", () => {
+    convex.useQuery.mockReturnValue(SUMMARY);
+    const onChange = vi.fn();
+    render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenCalledWith("run-1", true);
+  });
+
+  it.each([
+    ["still loading", undefined],
+    ["a run with no rollup", null],
+  ])("reports false while %s", (_label, value) => {
+    convex.useQuery.mockReturnValue(value);
+    const onChange = vi.fn();
+    render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenCalledWith("run-1", false);
+  });
+
+  it("renders nothing and never reports when the query throws", () => {
+    // The dark-ship state. Undeployed must read as "no funnel", and the probe
+    // must not take the run-detail page down with it.
+    queryThrows();
+    const onChange = vi.fn();
+    const { container } = render(
+      <div>
+        <span data-testid="sibling">the rest of the page</span>
+        <SuiteRunStageFunnelAvailability
+          suiteRunId="run-1"
+          onChange={onChange}
+        />
+      </div>,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(container.textContent).toBe("the rest of the page");
+  });
+
+  it("names the run each answer is about, so a stale one is detectable", () => {
+    // The run selector reuses one view across runs. An answer that did not
+    // name its run could not be told apart from the previous run's, and a
+    // stale `true` would open an empty rail on the run you switched to.
+    convex.useQuery.mockReturnValue(SUMMARY);
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenLastCalledWith("run-1", true);
+
+    convex.useQuery.mockReturnValue(null);
+    rerender(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-2"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenLastCalledWith("run-2", false);
+  });
+
+  it("re-arms after a failing run: a later run is still probed", () => {
+    // An ErrorBoundary that has caught stays in its fallback for the life of
+    // the element, so the boundary is keyed by run. Without the key, one
+    // transient failure would hide the chain on every run after it.
+    queryThrows();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+
+    convex.useQuery.mockReturnValue(SUMMARY);
+    rerender(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-2"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenCalledWith("run-2", true);
   });
 });

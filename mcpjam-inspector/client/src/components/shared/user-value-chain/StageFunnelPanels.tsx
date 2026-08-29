@@ -173,10 +173,20 @@ export function SuiteRunStageFunnelAvailability({
   onChange,
 }: {
   suiteRunId: string | undefined;
-  onChange: (hasFunnel: boolean) => void;
+  /**
+   * Called with the run the answer is ABOUT, not just the answer. The caller
+   * renders one run at a time from a component the run selector REUSES, so an
+   * answer that does not name its run cannot be told apart from the previous
+   * run's — and a stale `true` opens an empty rail on the run you switched to.
+   */
+  onChange: (suiteRunId: string | undefined, hasFunnel: boolean) => void;
 }) {
   return (
-    <ErrorBoundary fallback={null}>
+    // KEYED by the run. An ErrorBoundary that has caught stays in its fallback
+    // for the life of the element, so an unkeyed one would swallow the probe
+    // for every LATER run too: one transient failure would hide the chain on
+    // every run after it until the whole view remounted.
+    <ErrorBoundary key={suiteRunId ?? "no-run"} fallback={null}>
       <SuiteRunStageFunnelProbe suiteRunId={suiteRunId} onChange={onChange} />
     </ErrorBoundary>
   );
@@ -187,7 +197,7 @@ function SuiteRunStageFunnelProbe({
   onChange,
 }: {
   suiteRunId: string | undefined;
-  onChange: (hasFunnel: boolean) => void;
+  onChange: (suiteRunId: string | undefined, hasFunnel: boolean) => void;
 }) {
   const funnel = useQuery(
     "evalStageRollups:getSuiteRunStageFunnel" as never,
@@ -199,8 +209,8 @@ function SuiteRunStageFunnelProbe({
   // rail open.
   const hasFunnel = Boolean(funnel);
   useEffect(() => {
-    onChange(hasFunnel);
-  }, [hasFunnel, onChange]);
+    onChange(suiteRunId, hasFunnel);
+  }, [suiteRunId, hasFunnel, onChange]);
 
   return null;
 }

@@ -582,10 +582,26 @@ export function RunDetailView({
   /**
    * Whether this run has a stage funnel to draw, reported by the probe below.
    *
-   * Starts `false` so a run without one never flashes an empty rail on the way
-   * to finding out; the probe flips it once the rollup query resolves.
+   * Stored WITH the run it describes, and read only when that run is the one
+   * on screen. This component is reused across runs by the run selector, so a
+   * bare boolean would survive a switch and a stale `true` would open an empty
+   * rail on the run you moved to. Starting empty also means a run without a
+   * funnel never flashes one on the way to finding out.
    */
-  const [hasStageFunnel, setHasStageFunnel] = useState(false);
+  const [stageFunnelFor, setStageFunnelFor] = useState<{
+    suiteRunId: string | undefined;
+    hasFunnel: boolean;
+  }>({ suiteRunId: undefined, hasFunnel: false });
+
+  const handleStageFunnelAvailability = useCallback(
+    (suiteRunId: string | undefined, hasFunnel: boolean) =>
+      setStageFunnelFor({ suiteRunId, hasFunnel }),
+    [],
+  );
+
+  const hasStageFunnel =
+    stageFunnelFor.suiteRunId === selectedRunDetails._id &&
+    stageFunnelFor.hasFunnel;
 
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
@@ -800,7 +816,7 @@ export function RunDetailView({
   const stageFunnelProbe = (
     <SuiteRunStageFunnelAvailability
       suiteRunId={selectedRunDetails._id}
-      onChange={setHasStageFunnel}
+      onChange={handleStageFunnelAvailability}
     />
   );
 
