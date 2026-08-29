@@ -67,9 +67,18 @@ async function setHidden(next: boolean) {
   });
 }
 
-function mount() {
-  const getBaseUrl = () => "http://127.0.0.1:11434";
-  return renderHook(() => useDetectedOllamaModels(getBaseUrl));
+const DEFAULT_URL = "http://127.0.0.1:11434";
+const defaultGetUrl = () => DEFAULT_URL;
+
+/**
+ * Rendered through props so a test can swap the getter the way settings does:
+ * the effect keys on it, so a new identity is what tears the old chain down.
+ */
+function mount(getUrl: () => string = defaultGetUrl) {
+  return renderHook(
+    (props: { getUrl: () => string }) => useDetectedOllamaModels(props.getUrl),
+    { initialProps: { getUrl } },
+  );
 }
 
 const spyCleanups: Array<() => void> = [];
@@ -313,6 +322,46 @@ describe("useDetectedOllamaModels", () => {
     await advance(BASE);
     expect(result.current.isOllamaRunning).toBe(true);
     expect(result.current.ollamaModels).toEqual([]);
+  });
+
+  it("abandons the in-flight probe when the base URL changes", async () => {
+    // Editing the Ollama base URL in settings re-runs the effect. Without the
+    // cancelled flag the probe still in flight against the old daemon would
+    // write its models over the new state, and its `finally` would schedule a
+    // follow-up belonging to a torn-down effect — one immortal chain per edit.
+    let releaseStale: (value: {
+      isRunning: boolean;
+      availableModels: string[];
+    }) => void = () => {};
+    detectModels.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseStale = resolve;
+        }),
+    );
+    unreachable();
+
+    const movedGetUrl = () => "http://127.0.0.1:22222";
+    const { result, rerender } = mount();
+    await advance(0);
+    expect(probes()).toBe(1);
+
+    // The URL moves while the first probe is still unresolved.
+    rerender({ getUrl: movedGetUrl });
+    await advance(0);
+    expect(detectModels).toHaveBeenLastCalledWith("http://127.0.0.1:22222");
+
+    // The stale probe answers late, claiming a running daemon with models.
+    await act(async () => {
+      releaseStale({ isRunning: true, availableModels: ["stale-model"] });
+    });
+    expect(result.current.isOllamaRunning).toBe(false);
+    expect(result.current.ollamaModels).toEqual([]);
+
+    // And it never gets a follow-up slot: a surviving stale chain would land a
+    // second probe in each of these windows.
+    await expectNextProbeAfter(BASE);
+    await expectNextProbeAfter(2 * BASE);
   });
 
   it("stops probing after unmount", async () => {
