@@ -208,6 +208,26 @@ function pickReadinessStartBody(params: {
   return body;
 }
 
+/**
+ * Strip every trailing `/` from a base URL.
+ *
+ * `replace(/\/+$/, "")` is the shorter spelling and what the rest of the SDK
+ * uses, but CodeQL rates it `js/polynomial-redos` (high): on input shaped like
+ * `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from each position, so
+ * the match is O(n²) in the length of a caller-supplied `baseUrl`. Not a
+ * practical attack here — the caller owns the string — but this is the one
+ * occurrence CodeQL surfaces on a PR that edits this file, and a linear scan
+ * costs nothing.
+ *
+ * Behaviour is identical to the regex: every trailing slash removed, nothing
+ * else touched, `"/"`-only input collapsing to `""`.
+ */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") end -= 1;
+  return url.slice(0, end);
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -216,9 +236,8 @@ export class PlatformApiClient {
   private readonly userAgent?: string;
 
   constructor(options: PlatformApiClientOptions) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL).replace(
-      /\/+$/,
-      ""
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
     this.getAuth = options.getAuth;
     // Native fetch must run with `this` bound to the global scope. Storing the
