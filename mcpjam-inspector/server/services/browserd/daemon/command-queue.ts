@@ -28,6 +28,7 @@ import {
   BrowserCommandResult,
   CommandQueueOptions,
   DEFAULT_COMMAND_QUEUE_OPTIONS,
+  DEFAULT_QUEUE_KEY,
 } from "../protocol";
 
 /**
@@ -41,7 +42,7 @@ export type CommandExecutor = (
 
 /** Which FIFO a command belongs to: its tab, or the session if tab-less. */
 function queueKeyFor(command: BrowserCommand): string {
-  return command.tabId ?? "@session";
+  return command.tabId ?? DEFAULT_QUEUE_KEY;
 }
 
 function normalizeError(err: unknown): BrowserCommandResult {
