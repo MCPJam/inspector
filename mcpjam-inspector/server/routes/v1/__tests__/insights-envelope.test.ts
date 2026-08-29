@@ -312,6 +312,7 @@ describe("eval-run detail — judges envelope", () => {
       cases: [
         {
           caseKey: "ui_abc",
+          iterationId: "it_1",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -344,6 +345,9 @@ describe("eval-run detail — judges envelope", () => {
           // The persisted AUTHORED-case identity, kept under its own name so
           // nobody joins it against a case row id.
           caseKey: "ui_abc",
+          // The join key. Without it a caller can only pair a judge case with
+          // its iteration by array POSITION.
+          iterationId: "it_1",
           score: 0.9,
           passed: true,
           reason: "named the right tool",
@@ -351,6 +355,38 @@ describe("eval-run detail — judges envelope", () => {
         },
       ],
     });
+  });
+
+  it("omits iterationId on a judge result persisted without one", async () => {
+    // Rows written before the join key was projected must not grow a key
+    // whose value would be a guess.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_legacy",
+              score: 0.4,
+              passed: false,
+              reason: "missed the goal",
+              rubricHits: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.goalCompletion.cases[0].caseKey).toBe("ui_legacy");
   });
 
   it("reports a never-requested judge as status null, not as an absent field", async () => {
