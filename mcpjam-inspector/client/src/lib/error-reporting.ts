@@ -22,6 +22,16 @@ export interface ReportOptions {
   source: string;
   level?: ReportLevel;
   extra?: Record<string, unknown>;
+  /**
+   * Indexed dimensions, merged alongside `source`. Unlike `extra`, these are
+   * searchable in Sentry. Keep the cardinality low.
+   */
+  tags?: Record<string, string>;
+  /**
+   * Override Sentry's stack-based grouping. Required of any caller that builds
+   * its `Error` in one place, since every failure would share one stack.
+   */
+  fingerprint?: string[];
 }
 
 /**
@@ -166,8 +176,11 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   try {
     Sentry.captureException(normalized, {
       level: options.level ?? "error",
-      tags: { source: options.source },
+      // `source` last: it names the call site, and a caller must not be able
+      // to relabel which one it is by passing a `source` tag of its own.
+      tags: { ...(options.tags ?? {}), source: options.source },
       ...(options.extra ? { extra: options.extra } : {}),
+      ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
     });
   } catch {
     // ignore — see doc comment
@@ -187,9 +200,12 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   try {
     if (isErrorCaptureSurface() && !isCredentialBearingPath()) {
       posthog.captureException(normalized, {
+        // No tag namespace in PostHog, so both flatten into properties. Order
+        // mirrors Sentry: tags beat extra, and source/level stay authoritative.
+        ...(options.extra ?? {}),
+        ...(options.tags ?? {}),
         source: options.source,
         level: options.level ?? "error",
-        ...(options.extra ?? {}),
       });
     }
   } catch {

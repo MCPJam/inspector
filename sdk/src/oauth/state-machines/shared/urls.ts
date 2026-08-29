@@ -1,3 +1,14 @@
+/**
+ * Summarize what metadata discovery probed, for the error thrown when none of
+ * the candidates served usable metadata.
+ */
+export function describeMetadataProbes(probes: string[]): string {
+  if (probes.length === 0) {
+    return "No candidate metadata endpoints were derived from the authorization server URL.";
+  }
+  return `Probed ${probes.length} endpoint(s): ${probes.join("; ")}`;
+}
+
 export function buildResourceMetadataUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   if (url.pathname !== "/" && url.pathname !== "") {

@@ -40,7 +40,10 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
-import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  buildResourceMetadataUrl,
+  describeMetadataProbes,
+} from "./shared/urls.js";
 import {
   AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   selectAuthorizationServerFromResourceMetadata,
@@ -814,7 +817,10 @@ export const createDebugOAuthStateMachine = (
               state.authorizationServerUrl,
             );
             let authServerMetadata = null;
-            let lastError = null;
+            // Every probe's outcome. Replaces a `lastError` the 4xx branch
+            // never wrote to, so an all-404 run (the ordinary case) threw
+            // `Last error: null`.
+            const metadataProbes: string[] = [];
             let finalResponseHeaders: Record<string, string> = {};
             let finalResponseData: any = null;
 
@@ -856,24 +862,29 @@ export const createDebugOAuthStateMachine = (
                   authServerMetadata = response.body;
                   finalResponseHeaders = response.headers;
                   finalResponseData = response;
+                  metadataProbes.push(
+                    `${url}: HTTP ${response.status}${
+                      authServerMetadata ? "" : " (no metadata in body)"
+                    }`,
+                  );
 
                   break;
-                } else if (response.status >= 400 && response.status < 500) {
-                  // Client error, try next URL
-                  continue;
-                } else {
-                  // Server error, might be temporary
-                  lastError = new Error(`HTTP ${response.status} from ${url}`);
                 }
+
+                metadataProbes.push(`${url}: HTTP ${response.status}`);
+                // Client error, try next URL
+                continue;
               } catch (error) {
-                lastError = error;
+                metadataProbes.push(
+                  `${url}: ${error instanceof Error ? error.message : String(error)}`,
+                );
                 continue;
               }
             }
 
             if (!authServerMetadata || !finalResponseData) {
               throw new Error(
-                `Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+                `Could not discover authorization server metadata. ${describeMetadataProbes(metadataProbes)}`,
               );
             }
 

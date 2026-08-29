@@ -17,6 +17,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { sanitizeStepError } from "./trace-redaction";
+import { oauthStepFailureFingerprint } from "./step-failure-fingerprint";
 
 /**
  * Re-exported so the debugger's existing callers (and its tests) keep importing
@@ -262,7 +263,7 @@ function createHostedClientSecretResolver({
  * built wrong. Every machine enforces it, yet only 2026-07-28 reads the field
  * afterwards (it compares the issuer to the authorization-server URL and to the
  * callback `iss`), so on the older three the report is another project's spec
- * violation arriving as an MCPJam alert. The check itself stays — RFC 8414
+ * violation arriving as an MCPJam alert. The check itself stays  RFC 8414
  * makes `issuer` REQUIRED, and the message stays on screen where it belongs.
  *
  * The SDK owns the message and exports it, so matching here cannot drift out of
@@ -276,7 +277,7 @@ const UNREPORTED_STEP_FAILURES = new Set([
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
- * errors internally and never rethrows — it writes the message into flow state
+ * errors internally and never rethrows  it writes the message into flow state
  * and returns normally. Without this, a debugger step that failed for everyone
  * (a broken metadata fetch, a 401 exchange) produced no signal at all outside
  * the user's own screen.
@@ -285,7 +286,7 @@ const UNREPORTED_STEP_FAILURES = new Set([
  * misbehaving, which is exactly what a debugger is for. The value is the
  * aggregate trend, not a page.
  *
- * `Warning: `-prefixed messages are skipped entirely — those are advisories the
+ * `Warning: `-prefixed messages are skipped entirely  those are advisories the
  * flow recovers from (an optional metadata field the server left out), not step
  * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
  */
@@ -293,7 +294,7 @@ function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
   context: { protocolVersion: OAuthProtocolVersion; getStep: () => string },
 ): InspectorOAuthStateMachineConfig["updateState"] {
-  let lastReportedError: string | undefined;
+  let lastReportedKey: string | undefined;
 
   return (updates) => {
     const error = updates.error;
@@ -304,29 +305,43 @@ function withStepFailureReporting(
       // Not ours to act on: the message is already on screen, and reporting
       // these buries real step failures under server-under-test nits.
       // Still counts as replacing the previous message, so a failure that
-      // recurs after it is a new failure — same as an explicit clear below.
-      lastReportedError = undefined;
+      // recurs after it is a new failure  same as an explicit clear below.
+      lastReportedKey = undefined;
       updateState(updates);
       return;
     }
-    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
-      lastReportedError = error;
-      reportCaught(new Error(sanitizeStepError(error)), {
+    if (typeof error === "string" && error !== "") {
+      // Prefer the step this update moves TO, or an update that both advances
+      // and carries an error gets attributed to the PREVIOUS step.
+      const step =
+        (updates as { currentStep?: string }).currentStep ?? context.getStep();
+      // The memo keys on the step as well, because the fingerprint does: the
+      // same message at a later step is a different issue, not a duplicate.
+      const key = `${step} ${error}`;
+      if (key === lastReportedKey) {
+        updateState(updates);
+        return;
+      }
+      lastReportedKey = key;
+      const message = sanitizeStepError(error);
+      reportCaught(new Error(message), {
         source: "oauth_debugger_step",
         level: "warning",
+        // Also as tags, so triage can filter by them; `extra` is not indexed.
+        tags: {
+          oauth_step: step,
+          oauth_protocol_version: context.protocolVersion,
+        },
+        // Without this, every failure shares one stack and one issue.
+        fingerprint: oauthStepFailureFingerprint(step, message),
         extra: {
-          // Prefer the step this update is moving TO. An update that both
-          // advances the step and carries an error would otherwise be
-          // attributed to the PREVIOUS step, making the dimension misleading.
-          step:
-            (updates as { currentStep?: string }).currentStep ??
-            context.getStep(),
+          step,
           protocolVersion: context.protocolVersion,
         },
       });
     } else if (!error && "error" in updates) {
       // Cleared: the next occurrence of the same message is a new failure.
-      lastReportedError = undefined;
+      lastReportedKey = undefined;
     }
     updateState(updates);
   };

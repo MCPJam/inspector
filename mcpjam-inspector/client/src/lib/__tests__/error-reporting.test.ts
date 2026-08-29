@@ -147,6 +147,24 @@ describe("reportCaught", () => {
     );
   });
 
+  it("flattens PostHog props with source/level authoritative over tags and extra", () => {
+    reportCaught(new Error("x"), {
+      source: "unit",
+      level: "warning",
+      tags: { surface: "playground", shared: "from-tags" },
+      extra: { source: "spoofed", level: "info", shared: "from-extra" },
+    });
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        source: "unit",
+        level: "warning",
+        surface: "playground",
+        shared: "from-tags",
+      }),
+    );
+  });
+
   it("reports to Sentry but NOT PostHog on a non-capture surface", async () => {
     // `capture_exceptions: false` only disables posthog-js's automatic
     // window.onerror handler — an explicit captureException still sends. A
