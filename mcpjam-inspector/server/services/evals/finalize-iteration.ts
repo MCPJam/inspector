@@ -32,6 +32,7 @@ import {
   type EvalSuiteFileToolPolicy,
   type StageAuthoredCase,
   type StageEvidence,
+  type StagePredicateResultLike,
   type StageResultRow,
   type StageSetupSignals,
   type IterationStatus as ContractIterationStatus,
@@ -139,10 +140,12 @@ function buildStageEvidence(args: {
     ...(hasPrompts ? { prompts: args.prompts } : {}),
     ...(args.predicateResults?.length
       ? {
-          predicateResults: args.predicateResults as ReadonlyArray<{
-            passed?: boolean;
-            reason?: string;
-          }>,
+          // The `predicate` discriminator crosses with the row. It was always
+          // present at runtime — `PredicateResult` carries the whole predicate
+          // — and this cast used to drop it, which is why UVH-IN1's routing
+          // could not tell a tool-selection assertion from a user-value one.
+          predicateResults:
+            args.predicateResults as ReadonlyArray<StagePredicateResultLike>,
         }
       : {}),
     ...(args.widgetRenderObservations?.length

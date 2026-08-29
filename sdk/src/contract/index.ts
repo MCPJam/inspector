@@ -165,6 +165,8 @@ export {
   STAGE_METADATA_KEYS,
   STAGE_REASONS,
   deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,

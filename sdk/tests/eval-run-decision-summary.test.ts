@@ -25,6 +25,7 @@ import {
   EVAL_VERDICT_DECISION_REASON_LABELS,
   evalRunDecisionSummarySchema,
   FAILURE_CATEGORY_LABELS,
+  STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
@@ -245,9 +246,14 @@ describe("evidence is attached to the claim it supports", () => {
     // Version-ahead is FLAGGED, not rejected.
     expect(ahead!.chain.status).toBe("verified");
     if (ahead!.chain.status === "verified") {
+      // `known` is whatever analyzer THIS build ships, asserted by meaning
+      // rather than by a literal: pinning both numbers here duplicated the
+      // fixture comparison above and turned every analyzer bump into an edit
+      // in two places. `reported` stays a far-future constant so the case keeps
+      // exercising version-ahead as the analyzer advances.
       expect(ahead!.chain.analyzerVersionAhead).toEqual({
-        reported: 6,
-        known: 5,
+        reported: 99,
+        known: STAGE_ANALYZER_VERSION,
       });
       expect(ahead!.chain.firstFailedStage).toBe("call");
     }

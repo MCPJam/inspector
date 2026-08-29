@@ -781,6 +781,164 @@ describe("userValue", () => {
   });
 });
 
+// ── UVH-IN1: tool-call predicates are SELECTION evidence ─────────────────────
+//
+// `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
+// so these three kinds arrive as predicate results and used to be graded as
+// user value — the chain saying the user did not get what they asked for, when
+// what happened is the model picked the wrong tool.
+
+describe("tool-call predicates route to selection", () => {
+  /** One predicate row, with the discriminator the producer now preserves. */
+  const pred = (type: string, passed: boolean, reason = `${type} says so`) => ({
+    passed,
+    reason,
+    predicate: { type, toolName: "get_project" },
+  });
+
+  /** No matcher evidence at all — the predicate is the only selection signal. */
+  const predicateOnly = (rows: ReturnType<typeof pred>[]) =>
+    derive({
+      evidence: { spans: [toolSpan()], predicateResults: rows },
+    });
+
+  test.each([
+    ["toolCalledAtLeastOnce", "missingToolCall"],
+    ["firstToolWas", "unexpectedToolCall"],
+    ["toolNeverCalled", "unexpectedToolCall"],
+  ])("%s fails at selection with %s", (kind, reason) => {
+    const { stageResults, firstFailedStage, failureCategory } = predicateOnly([
+      pred(kind, false),
+    ]);
+
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason,
+      evidence: { predicateReasons: [`${kind} says so`] },
+    });
+    expect(firstFailedStage).toBe("selection");
+    // The D7 metadata judge gates on exactly this, so routing here widens its
+    // candidate population — intended, and named in the PR.
+    expect(failureCategory).toBe("selection");
+    // Routed, not copied: filing it in both places would double-count one
+    // defect and make `firstFailedStage` depend on read order.
+    expect(stateOf(stageResults, "userValue").reason).not.toBe(
+      "predicateFailed"
+    );
+  });
+
+  test.each(["toolCalledAtLeastOnce", "firstToolWas", "toolNeverCalled"])(
+    "%s that PASSED is selection evidence, not silence",
+    (kind) => {
+      const { stageResults } = predicateOnly([pred(kind, true)]);
+      expect(stateOf(stageResults, "selection")).toMatchObject({
+        state: "passed",
+        reason: "observed",
+      });
+    }
+  );
+
+  test("a missing required call outranks a forbidden one that fired", () => {
+    // Both can fail at once. "The tool you needed was never called" is the
+    // more specific and more actionable of the two.
+    const { stageResults } = predicateOnly([
+      pred("toolNeverCalled", false),
+      pred("toolCalledAtLeastOnce", false),
+    ]);
+    expect(stateOf(stageResults, "selection").reason).toBe("missingToolCall");
+  });
+
+  test("a row with NO discriminator is still graded as user value", () => {
+    // Backward compatibility, and the reason this bump changed no recorded
+    // row in the parity corpus: producers that never carried the predicate —
+    // and every row stored before UVH-IN1 — grade exactly as before.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        predicateResults: [{ passed: false, reason: "no discriminator" }],
+      },
+    });
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+    });
+  });
+
+  test("toolCalledWith is deliberately left to the matcher", () => {
+    // It is already promoted to `expectedToolCalls` and adjudicated there.
+    // Re-reading its point-in-time predicate row here would let a raw residual
+    // contradict the verdict the matcher path produced.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [pred("toolCalledWith", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+    });
+  });
+
+  test("MIXED: a matcher `missing` outranks a predicate failure", () => {
+    // The matcher's verdict is the most specific signal about selection, and
+    // it is fatal in every match mode.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          { ...cleanTurn, missing: [{ toolName: "fetch_order" }], passed: false },
+        ],
+        predicateResults: [pred("toolNeverCalled", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "missingToolCall",
+      evidence: { promptIndexes: [0] },
+    });
+  });
+
+  test("MIXED: a predicate failure surfaces even when every turn passed", () => {
+    // The conflicting case. The turn tolerated its extras, so the matcher path
+    // would have reported `selection: passed` and the authored assertion would
+    // have been filed as a user-value failure instead.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [pred("firstToolWas", false)],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "failed",
+      reason: "unexpectedToolCall",
+    });
+    expect(firstFailedStage).toBe("selection");
+  });
+
+  test("user-value predicates still reach userValue alongside a routed one", () => {
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          pred("toolNeverCalled", true),
+          { passed: false, reason: "expected 'Refunded' on screen" },
+        ],
+      },
+    });
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "failed",
+      reason: "predicateFailed",
+      evidence: { predicateReasons: ["expected 'Refunded' on screen"] },
+    });
+  });
+});
+
 // ── precedence ───────────────────────────────────────────────────────────────
 
 describe("precedence when signals conflict", () => {
