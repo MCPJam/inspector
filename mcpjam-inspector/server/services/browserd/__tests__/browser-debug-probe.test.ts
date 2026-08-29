@@ -92,6 +92,28 @@ describe("runBrowserProbe", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it("fails when navigate is admitted but the browser operation failed (result.ok=false)", async () => {
+    const { deps, stop, disconnect } = makeDeps({
+      responses: [
+        { status: "ok", result: { ok: false, error: "cdp exploded" }, bootId: "boot-1" },
+      ],
+    });
+    await expect(runBrowserProbe(deps, INPUT)).rejects.toThrow(/navigate failed: cdp exploded/);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("fails when the screenshot is admitted but the capture failed (result.ok=false)", async () => {
+    const { deps, stop } = makeDeps({
+      responses: [
+        okResponse(),
+        { status: "ok", result: { ok: false, error: "capture boom" }, bootId: "boot-1" },
+      ],
+    });
+    await expect(runBrowserProbe(deps, INPUT)).rejects.toThrow(/screenshot failed: capture boom/);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("does not release a connection it never opened (connect throws)", async () => {
     const disconnect = vi.fn(async () => {});
     const deps = makeDeps().deps;

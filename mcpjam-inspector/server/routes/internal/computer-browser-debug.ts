@@ -14,8 +14,6 @@
  * BrowserdSandbox adapter, the real client) and the bundle bytes.
  */
 import { Hono } from "hono";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { Sandbox } from "e2b";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
 import {
@@ -28,20 +26,24 @@ import {
   runBrowserProbe,
   type ProbeSandbox,
 } from "../../services/browserd/browser-debug-probe.js";
+import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "../../services/browserd/dist/mcpjam-browserd-bundle.generated.js";
 import { logger } from "../../utils/logger.js";
 
 const internalComputerBrowserDebug = new Hono();
 
 internalComputerBrowserDebug.use("*", internalServiceAuthMiddleware());
 
-/** The checked-in daemon bundle, read once and cached. */
+/**
+ * The daemon bundle bytes. Decoded from the const that the bundler embeds INTO
+ * the server build (base64), so it is always present in the production Docker
+ * image — a sibling `.mjs` resolved by path would be absent, since the final
+ * Docker stage copies only `dist/`.
+ */
 let cachedBundle: Uint8Array | null = null;
-async function loadBundle(): Promise<Uint8Array> {
-  if (cachedBundle) return cachedBundle;
-  const bundlePath = fileURLToPath(
-    new URL("../../services/browserd/dist/mcpjam-browserd.mjs", import.meta.url),
-  );
-  cachedBundle = new Uint8Array(await readFile(bundlePath));
+function loadBundle(): Uint8Array {
+  if (!cachedBundle) {
+    cachedBundle = new Uint8Array(Buffer.from(MCPJAM_BROWSERD_BUNDLE_BASE64, "base64"));
+  }
   return cachedBundle;
 }
 
@@ -98,7 +100,7 @@ internalComputerBrowserDebug.post("/probe", async (c) => {
   }
 
   try {
-    const bundle = await loadBundle();
+    const bundle = loadBundle();
     const result = await runBrowserProbe(
       {
         reserveDesktop: async () => {

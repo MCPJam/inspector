@@ -101,8 +101,15 @@ export async function runBrowserProbe(
       inspectorCommand({ kind: "navigate", url: input.url }),
       handle.bootId,
     );
+    // Two layers can fail independently: the command can be REJECTED (busy,
+    // expired, …) with a non-"ok" transport status, OR it can be admitted
+    // (status "ok") but the browser OPERATION itself failed — the queue
+    // normalizes a Chromium throw to `result.ok === false`. Both are failures.
     if (nav.status !== "ok") {
       throw new Error(`browserd navigate rejected: ${nav.status}`);
+    }
+    if (!nav.result.ok) {
+      throw new Error(`browserd navigate failed: ${nav.result.error ?? "unknown"}`);
     }
     const shot = await client.sendCommand(
       inspectorCommand({ kind: "observe", mode: "screenshot" }),
@@ -110,6 +117,9 @@ export async function runBrowserProbe(
     );
     if (shot.status !== "ok") {
       throw new Error(`browserd screenshot rejected: ${shot.status}`);
+    }
+    if (!shot.result.ok) {
+      throw new Error(`browserd screenshot failed: ${shot.result.error ?? "unknown"}`);
     }
 
     const screenshot = (shot.result.output as { screenshot?: string })?.screenshot ?? "";
