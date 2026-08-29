@@ -1067,7 +1067,10 @@ export function SwarmsTab({
         ) : viewMode === "journeys" ? (
           <>
             {/* Personas sidebar — Personas tab only */}
-            <aside className="flex w-72 shrink-0 flex-col border-r">
+            <aside
+              className="flex w-80 shrink-0 flex-col border-r"
+              data-testid="swarm-persona-sidebar"
+            >
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <h2 className="text-sm font-semibold">Personas</h2>
                 <div className="flex items-center gap-1.5">
@@ -1115,7 +1118,7 @@ export function SwarmsTab({
                   />
                 </div>
               ) : null}
-              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
                 {personas === undefined ? (
                   <div className="p-4 text-sm text-muted-foreground">
                     Loading…
@@ -1170,7 +1173,8 @@ export function SwarmsTab({
                         <button
                           type="button"
                           onClick={() => setSelectedPersonaId(p._id)}
-                          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+                          /* Room for a two-line name on every card. */
+                          className="flex min-h-[82px] min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
                         >
                           <PersonaPixelAvatar
                             seed={p._id}
@@ -1179,11 +1183,19 @@ export function SwarmsTab({
                             size="md"
                             state={runningSet.has(p._id) ? "running" : "idle"}
                           />
-                          <span className="flex min-w-0 flex-col items-start gap-0.5">
-                            <span className="truncate text-sm font-medium">
+                          {/* Stretch, not items-start: the lines need the column's
+                              width for the clamp to wrap against. */}
+                          <span className="flex min-w-0 flex-col gap-0.5">
+                            <span
+                              className="line-clamp-2 w-full min-w-0 break-words text-sm font-medium"
+                              title={p.name}
+                            >
                               {p.name}
                             </span>
-                            <span className="truncate text-xs text-muted-foreground">
+                            <span
+                              className="w-full min-w-0 truncate text-xs text-muted-foreground"
+                              title={p.role}
+                            >
                               {p.role}
                             </span>
                           </span>
