@@ -1312,7 +1312,7 @@ function toRunJudgesDto(run: RunDoc) {
       run.goalCompletion,
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
-        ...(typeof row.iterationId === "string"
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
           ? { iterationId: row.iterationId }
           : {}),
         score: typeof row.score === "number" ? row.score : null,
@@ -1332,7 +1332,7 @@ function toRunJudgesDto(run: RunDoc) {
       // Projected off the persisted fields rather than forced into one shape.
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
-        ...(typeof row.iterationId === "string"
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
           ? { iterationId: row.iterationId }
           : {}),
         score: typeof row.score === "number" ? row.score : null,

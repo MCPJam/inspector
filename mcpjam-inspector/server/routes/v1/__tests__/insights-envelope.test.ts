@@ -443,6 +443,7 @@ describe("eval-run detail — judges envelope", () => {
           cases: [
             {
               caseKey: "ui_abc",
+              iterationId: "it_9",
               score: 0.2,
               passed: false,
               reason: "invented a total",
@@ -460,12 +461,73 @@ describe("eval-run detail — judges envelope", () => {
     expect(body.judges.groundedness.cases).toEqual([
       {
         caseKey: "ui_abc",
+        // Groundedness projects through its OWN callback, so the join key
+        // needs its own assertion — a regression in one mapper must not pass
+        // because the other is covered.
+        iterationId: "it_9",
         score: 0.2,
         passed: false,
         reason: "invented a total",
         unsupportedClaims: ["the 42 figure"],
       },
     ]);
+  });
+
+  it.each([
+    ["null", null],
+    ["an empty string", ""],
+    ["a non-string", 42],
+  ])("omits a %s iterationId on both judges", async (_label, persisted) => {
+    // The DTO promises a join key a caller can use. `""` is a string but joins
+    // to nothing, and a non-string is not a key at all — all three have to be
+    // ABSENT rather than echoed, so "no join key on this row" stays one state.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        goalCompletionStatus: "completed",
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.9,
+              passed: true,
+              reason: "named the right tool",
+              rubricHits: [],
+            },
+          ],
+        },
+        groundednessStatus: "completed",
+        groundedness: {
+          summary: "One answer overreached.",
+          generatedAt: 11,
+          modelUsed: "openai/gpt-5.4-mini",
+          threshold: 0.6,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.2,
+              passed: false,
+              reason: "invented a total",
+              unsupportedClaims: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.groundedness.cases[0]).not.toHaveProperty("iterationId");
   });
 });
 
