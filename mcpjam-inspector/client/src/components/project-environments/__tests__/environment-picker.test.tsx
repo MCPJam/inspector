@@ -10,18 +10,23 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockEnvironments } = vi.hoisted(() => ({
+const { mockEnvironments, environmentsEnabled } = vi.hoisted(() => ({
   mockEnvironments: { value: [] as unknown[] },
+  environmentsEnabled: { value: true },
 }));
 
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => mockEnvironments.value,
+}));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => environmentsEnabled.value,
 }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { environments: "/environments" },
 }));
 
+import { navigateApp } from "@/lib/app-navigation";
 import { EnvironmentPicker } from "../environment-picker";
 
 function env(id: string, name: string, extra: Record<string, unknown> = {}) {
@@ -40,6 +45,7 @@ function env(id: string, name: string, extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockEnvironments.value = [env("env_1", "Staging"), env("env_2", "Prod")];
+  environmentsEnabled.value = true;
 });
 
 describe("EnvironmentPicker — controlled contract", () => {
@@ -301,5 +307,49 @@ describe("EnvironmentPicker — ad-hoc rows", () => {
         screen.queryByTestId("picker-footer-action")
       ).not.toBeInTheDocument()
     );
+  });
+});
+
+describe("EnvironmentPicker — Manage link", () => {
+  it("offers the link when Environments is available", () => {
+    render(
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    fireEvent.click(screen.getByText("Manage environments \u2192"));
+    expect(navigateApp).toHaveBeenCalledWith("/environments");
+  });
+
+  it("hides the link when it is not, rather than pointing at a redirect", () => {
+    environmentsEnabled.value = false;
+    render(
+      <EnvironmentPicker projectId="p_1" value={[]} onChange={vi.fn()} multi />
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.queryByText("Manage environments \u2192")).toBeNull();
+    expect(screen.getByLabelText("Staging")).toBeInTheDocument();
+  });
+
+  it("keeps a caller footer slot when the link is hidden", () => {
+    environmentsEnabled.value = false;
+    render(
+      <EnvironmentPicker
+        projectId="p_1"
+        value={[]}
+        onChange={vi.fn()}
+        multi
+        footerSlot={
+          <button type="button" data-testid="picker-footer-action">
+            Save as environment
+          </button>
+        }
+      />
+    );
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("picker-footer-action")).toBeInTheDocument();
+    expect(screen.queryByText("Manage environments \u2192")).toBeNull();
   });
 });

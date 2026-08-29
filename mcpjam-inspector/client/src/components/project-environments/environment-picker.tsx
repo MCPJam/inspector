@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 
 /** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
@@ -100,6 +101,7 @@ export function EnvironmentPicker({
     includeArchived: true,
     includeAdhoc: true,
   });
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
 
   const [open, setOpen] = useState(false);
 
@@ -337,6 +339,7 @@ export function EnvironmentPicker({
             Cap reached — at most {max} environments.
           </p>
         ) : null}
+        {footerSlot || environmentsEnabled ? (
         <div className="mt-0.5 border-t pt-0.5">
           {footerSlot ? (
             // Close on the bubbled CLICK only. A keydown handler here would fire
@@ -347,18 +350,22 @@ export function EnvironmentPicker({
               {footerSlot}
             </div>
           ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              navigateApp(routePaths.environments);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          >
-            <ExternalLink className="size-3.5 shrink-0" />
-            Manage environments →
-          </button>
+          {/* With the flag off, /environments redirects to /servers. */}
+          {environmentsEnabled ? (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                navigateApp(routePaths.environments);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <ExternalLink className="size-3.5 shrink-0" />
+              Manage environments →
+            </button>
+          ) : null}
         </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
