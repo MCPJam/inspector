@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
-import { useConvex } from "convex/react";
+import { useConvex, useQuery } from "convex/react";
 import { toast } from "@/lib/toast";
 import type {
   HttpServerConfig,
@@ -92,7 +92,12 @@ import {
 } from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { useServerMutations, type RemoteServer } from "./useProjects";
+import {
+  shouldQueryProjectId,
+  useServerMutations,
+  type RemoteServer,
+} from "./useProjects";
+import type { ProjectServerConfigDto } from "@/lib/project-server-config";
 import { writeCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
@@ -1130,6 +1135,64 @@ export function useServerState({
     return activeProject?.servers || {};
   }, [activeProject]);
 
+  // Control-plane source for per-server protocol-version pins. The pin is
+  // WRITTEN here (`projectServerConfig:setConfig`, via the modal's
+  // `applyMcpProtocolVersionOverride`) and only mirrored onto
+  // `activeHostConfig.serverConnectionOverrides` through Convex fan-out —
+  // a separate subscription that lands later. Reading the mirror alone means
+  // a reconnect fired right after a save can miss the pin the user just set
+  // and silently connect on the host default (issue #3453). Convex dedupes
+  // identical subscriptions, so sharing this query with `App.tsx` /
+  // `ServersTab` / `ServerDetailModal` costs no extra traffic.
+  // Gated on auth + db-user readiness on top of the id-shape guard:
+  // `getConfig` is a `userQuery` that resolves project membership off
+  // `ctx.actor.userId` and throws "Not a member of this project" without
+  // one. Retained project state can carry a real `sharedProjectId` into a
+  // pre-auth or local-fallback render, so the id guard alone would fire
+  // the query before the scope is authorized. Same gate `ServersTab` uses.
+  const sharedProjectIdForServerConfig = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig =
+    isAuthenticated &&
+    isUserReady &&
+    !!sharedProjectIdForServerConfig &&
+    shouldQueryProjectId(sharedProjectIdForServerConfig);
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as never,
+    canQueryProjectServerConfig
+      ? ({ projectId: sharedProjectIdForServerConfig } as never)
+      : "skip"
+  ) as ProjectServerConfigDto | null | undefined;
+
+  /**
+   * Resolve a server's pinned wire version override, control-plane first.
+   *
+   * Precedence mirrors `App.tsx`'s hosted pin map: the `projectServerConfig`
+   * DTO is the row the save actually wrote, so once it has LOADED it is
+   * authoritative — including an explicit absence. Clearing an override
+   * writes that absence to the control plane, so falling through to the
+   * mirror on a miss would keep reconnecting on the version the user just
+   * removed until the host mirror caught up. The mirror is consulted only
+   * while the DTO is `undefined` — still in flight, or skipped entirely in
+   * local/unauthenticated mode, where the control plane isn't readable and
+   * the mirror is the only source. Each candidate is membership-gated so a
+   * typo on either layer can't reach the SDK's open-routing predicate.
+   */
+  const resolveServerProtocolOverride = useCallback(
+    (serverId: string | undefined): McpProtocolVersion | undefined => {
+      if (!serverId) return undefined;
+      const raw =
+        projectServerConfigDto === undefined
+          ? activeHostConfig?.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : projectServerConfigDto?.overrides?.[serverId]
+              ?.mcpProtocolVersionOverride;
+      return typeof raw === "string" && isKnownProtocolVersion(raw)
+        ? raw
+        : undefined;
+    },
+    [projectServerConfigDto, activeHostConfig]
+  );
+
   const connectedOrConnectingServerConfigs = useMemo(
     () =>
       Object.fromEntries(
@@ -1397,23 +1460,12 @@ export function useServerState({
           (v): v is string => typeof v === "string" && v.trim() !== ""
         );
       }
-      // Effective pinned MCP protocol version: per-server override
-      // (from `activeHostConfig.serverConnectionOverrides[serverId]
-      // .mcpProtocolVersionOverride`) wins, otherwise the host default
-      // from `mcpProfile.mcpProtocolVersion`, otherwise undefined
-      // (preserves "SDK chooses" semantics). Membership-gate each
-      // candidate via `isKnownProtocolVersion` so a typo on either
-      // layer doesn't slip past to the SDK's open-routing predicate.
-      const rawServerOverride =
-        serverId && activeHostConfig
-          ? activeHostConfig.serverConnectionOverrides?.[serverId]
-              ?.mcpProtocolVersionOverride
-          : undefined;
-      const serverOverride: McpProtocolVersion | undefined =
-        typeof rawServerOverride === "string" &&
-        isKnownProtocolVersion(rawServerOverride)
-          ? rawServerOverride
-          : undefined;
+      // Effective pinned MCP protocol version: per-server override wins,
+      // otherwise the host default from `mcpProfile.mcpProtocolVersion`,
+      // otherwise undefined (preserves "SDK chooses" semantics). The
+      // override is resolved control-plane-first so a reconnect fired
+      // immediately after a save doesn't read a stale host mirror.
+      const serverOverride = resolveServerProtocolOverride(serverId);
       const rawHostPin = mcpProfile?.mcpProtocolVersion;
       const hostPin: McpProtocolVersion | undefined =
         typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
@@ -1469,7 +1521,7 @@ export function useServerState({
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    [activeHostConfig]
+    [activeHostConfig, resolveServerProtocolOverride]
   );
 
   const buildStatelessProtocolConnectMetadata = useCallback(
@@ -1486,14 +1538,10 @@ export function useServerState({
         appStateServersRef.current[serverName];
       const usesOAuth = server?.useOAuth === true;
       const hasBearerToken = getServerBearerTokenState(server) === true;
-      const rawServerOverride =
-        activeHostConfig?.serverConnectionOverrides?.[serverId]
-          ?.mcpProtocolVersionOverride;
-      const serverOverride =
-        typeof rawServerOverride === "string" &&
-        isKnownProtocolVersion(rawServerOverride)
-          ? rawServerOverride
-          : undefined;
+      // Same control-plane-first resolution the connect payload used, so
+      // `protocol_pin_source` attributes to `server_override` rather than
+      // falling through to `unknown` while the host mirror catches up.
+      const serverOverride = resolveServerProtocolOverride(serverId);
       const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
       const hostPin =
         typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
@@ -1535,7 +1583,7 @@ export function useServerState({
         had_synced_oauth_retry: telemetry?.hadSyncedOAuthRetry ?? false,
       };
     },
-    [activeHostConfig, activeMcpProfile]
+    [activeHostConfig, activeMcpProfile, resolveServerProtocolOverride]
   );
 
   const guardedTestConnection = useCallback(
@@ -2605,15 +2653,11 @@ export function useServerState({
 
       const resolved = tryResolveProjectServer(name);
       const serverId = resolved?.serverId;
-      const rawOverride =
-        serverId && activeHostConfig
-          ? activeHostConfig.serverConnectionOverrides?.[serverId]
-              ?.mcpProtocolVersionOverride
-          : undefined;
-      const serverOverride: McpProtocolVersion | undefined =
-        typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
-          ? rawOverride
-          : undefined;
+      // Control-plane-first, same as the connect payload — otherwise the
+      // host mirror landing a moment later reads as a version CHANGE and
+      // triggers a redundant re-probe of a server already connected on the
+      // right wire mode.
+      const serverOverride = resolveServerProtocolOverride(serverId);
       // Same precedence as the connect resolver (shared helper) so the
       // "did the effective version change?" decision matches what we would
       // actually connect with — including the config pin and the 2026 era
@@ -2704,6 +2748,7 @@ export function useServerState({
     appState.servers,
     activeMcpProfile?.mcpProtocolVersion,
     activeHostConfig,
+    resolveServerProtocolOverride,
     dispatch,
     guardedReconnectServer,
     storeInitInfo,

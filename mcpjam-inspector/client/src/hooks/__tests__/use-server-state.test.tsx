@@ -84,6 +84,9 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
   }),
+  // `useServerState` subscribes to `projectServerConfig:getConfig` for
+  // per-server protocol-version pins; these suites don't exercise pins.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -160,7 +163,10 @@ vi.mock("@/stores/ui-playground-store", () => ({
   },
 }));
 
-vi.mock("../useProjects", () => ({
+vi.mock("../useProjects", async (importOriginal) => ({
+  shouldQueryProjectId: (
+    await importOriginal<typeof import("../useProjects")>()
+  ).shouldQueryProjectId,
   useServerMutations: () => ({
     createServer: mockCreateServer,
     createServerIfMissing: mockCreateServerIfMissing,
