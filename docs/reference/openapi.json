@@ -13957,6 +13957,10 @@
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
           },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
+          },
           "score": {
             "type": ["number", "null"]
           },
@@ -13975,6 +13979,10 @@
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
+          },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
           },
           "score": {
             "type": ["number", "null"]
@@ -14007,6 +14015,10 @@
           "caseKey": {
             "type": "string",
             "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id — do not join it against the ids the per-case routes take."
+          },
+          "iterationId": {
+            "type": "string",
+            "description": "The iteration this case graded. The join key between a judge case and the iterations the run returns; `caseKey` is a storage key and joins to nothing. Absent on judge results written before it was persisted."
           },
           "score": {
             "type": ["number", "null"]

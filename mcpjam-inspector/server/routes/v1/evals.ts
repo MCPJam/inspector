@@ -1270,6 +1270,15 @@ function toRunEnvironmentDto(run: RunDoc) {
  * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
  * not a Convex row id; calling it `caseId` at this boundary would invite
  * callers to join it against the case ids the case routes take.
+ *
+ * `iterationId` is what a caller joins on. Without it the only way to pair a
+ * judge case with the iteration it graded was POSITION — `caseKey` is a random
+ * `ui_*` storage key that matches nothing the case or iteration routes return,
+ * so every consumer had to assume the judge's array order equals the
+ * iterations' and hope. It is persisted on the judge case already (the save
+ * mutation patches the iteration through it), so this exposes an existing
+ * join key rather than inventing one. Optional in the DTO because rows written
+ * before it was persisted carry none.
  */
 function toRunJudgeDto(
   status: unknown,
@@ -1303,6 +1312,9 @@ function toRunJudgesDto(run: RunDoc) {
       run.goalCompletion,
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
+          ? { iterationId: row.iterationId }
+          : {}),
         score: typeof row.score === "number" ? row.score : null,
         passed: row.passed === true,
         reason: typeof row.reason === "string" ? row.reason : null,
@@ -1320,6 +1332,9 @@ function toRunJudgesDto(run: RunDoc) {
       // Projected off the persisted fields rather than forced into one shape.
       (row) => ({
         caseKey: String(row.caseKey ?? ""),
+        ...(typeof row.iterationId === "string" && row.iterationId.length > 0
+          ? { iterationId: row.iterationId }
+          : {}),
         score: typeof row.score === "number" ? row.score : null,
         passed: row.passed === true,
         reason: typeof row.reason === "string" ? row.reason : null,
