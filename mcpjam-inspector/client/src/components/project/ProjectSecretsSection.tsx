@@ -412,6 +412,40 @@ function BrokerFields({
  */
 const MIN_SCRUBBABLE_LENGTH = 8;
 
+/**
+ * The "this value is too short to redact" warning, shared by the create form
+ * and the rotate form.
+ *
+ * ONE component rather than the same JSX twice: a value enters the system by
+ * both routes, and a warning that lived only on the create path would leave
+ * rotation — where nobody is re-reading the delivery explanation — as the
+ * silent one. Renders nothing unless the value is genuinely unscrubbable, and
+ * nothing at all for brokered, whose value never enters the box.
+ */
+function ShortValueWarning({
+  delivery,
+  value,
+}: {
+  delivery: SecretDelivery;
+  value: string;
+}) {
+  if (delivery !== "materialized") return null;
+  if (value.length === 0 || value.length >= MIN_SCRUBBABLE_LENGTH) return null;
+  return (
+    <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+      <span>
+        This value is shorter than {MIN_SCRUBBABLE_LENGTH} characters, so it
+        will <strong>not be redacted</strong> from chat transcripts. Short
+        strings cannot be replaced safely — doing so would rewrite unrelated
+        text wherever those characters appear. The credential still works; it
+        will just be readable in the saved conversation. Use a longer value, or
+        switch this secret to brokered.
+      </span>
+    </p>
+  );
+}
+
 function parseHosts(raw: string): string[] {
   return raw
     .split(",")
@@ -639,21 +673,7 @@ function CreateSecretDialog({
             </RadioGroup>
           </div>
 
-          {delivery === "materialized" &&
-          value.length > 0 &&
-          value.length < MIN_SCRUBBABLE_LENGTH ? (
-            <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              <span>
-                This value is shorter than {MIN_SCRUBBABLE_LENGTH} characters,
-                so it will <strong>not be redacted</strong> from chat
-                transcripts. Short strings cannot be replaced safely — doing so
-                would rewrite unrelated text wherever those characters appear.
-                The credential still works; it will just be readable in the
-                saved conversation. Use a longer value, or choose brokered.
-              </span>
-            </p>
-          ) : null}
+          <ShortValueWarning delivery={delivery} value={value} />
 
           {delivery === "brokered" ? (
             <BrokerFields
@@ -828,6 +848,9 @@ function RotateSecretDialog({
             onChange={(event) => setValue(event.target.value)}
           />
         </div>
+        {secret ? (
+          <ShortValueWarning delivery={secret.delivery} value={value} />
+        ) : null}
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={close}>

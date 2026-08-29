@@ -111,6 +111,29 @@ describe("ProjectSecretsSection — rotate dialog", () => {
     expect(rotateField().value).toBe("");
   });
 
+  it("warns when ROTATING a materialized secret to a short value", () => {
+    // A value enters the system by two routes, and this is the one where nobody
+    // is re-reading the delivery explanation. GH_TOKEN is materialized.
+    renderSection();
+    openRotate("GH_TOKEN");
+
+    fireEvent.change(rotateField(), { target: { value: "short" } });
+    expect(screen.getByText(/not be redacted/i)).toBeInTheDocument();
+
+    fireEvent.change(rotateField(), { target: { value: "ghp_long_enough" } });
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
+  });
+
+  it("does not warn when rotating a BROKERED secret to a short value", () => {
+    // STRIPE_API_KEY is brokered: the value never enters the box, so there is
+    // nothing for the transcript scrubber to have missed.
+    renderSection();
+    openRotate("STRIPE_API_KEY");
+
+    fireEvent.change(rotateField(), { target: { value: "short" } });
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
+  });
+
   it("submits nothing when the rotation is cancelled", () => {
     renderSection();
 
