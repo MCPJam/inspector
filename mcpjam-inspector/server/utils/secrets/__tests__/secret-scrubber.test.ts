@@ -165,6 +165,41 @@ describe("scrubDeep", () => {
     expect(JSON.stringify(out)).not.toContain(STRIPE.value);
   });
 
+  it("does not corrupt serialized JSON by matching its punctuation", () => {
+    // The raw form of a value must not be searched inside an already-serialized
+    // document. Real string content is escaped there, so the raw form can only
+    // match by coincidence — including against the document's own structure.
+    // This value never appears in the payload; it matches the braces around it.
+    const structural = { name: "ODD", value: '","foo":' };
+    const scrubber = createSecretScrubber([structural])!;
+    const body = JSON.stringify({ a: "", foo: "x" });
+
+    const scrubbed = scrubber.scrubSerializedJson(body);
+    expect(() => JSON.parse(scrubbed)).not.toThrow();
+    expect(JSON.parse(scrubbed)).toEqual({ a: "", foo: "x" });
+  });
+
+  it("still redacts a real value inside serialized JSON", () => {
+    // The guard on the guard: refusing the raw form must not stop it finding
+    // the value where it genuinely occurs, in escaped form.
+    const scrubber = createSecretScrubber([STRIPE])!;
+    const body = JSON.stringify({ note: `key is ${STRIPE.value} ok` });
+
+    const scrubbed = scrubber.scrubSerializedJson(body);
+    expect(scrubbed).not.toContain(STRIPE.value);
+    expect(JSON.parse(scrubbed).note).toBe("key is [secret:STRIPE_API_KEY] ok");
+  });
+
+  it("finds a value whose escaped form differs, inside serialized JSON", () => {
+    // A newline-bearing credential looks nothing like itself once serialized.
+    const pem = { name: "PEM_KEY", value: "-----BEGIN-----\nabc\n" };
+    const scrubber = createSecretScrubber([pem])!;
+    const body = JSON.stringify({ blob: pem.value });
+
+    const scrubbed = scrubber.scrubSerializedJson(body);
+    expect(JSON.parse(scrubbed).blob).toBe("[secret:PEM_KEY]");
+  });
+
   it("passes non-plain objects through by identity", () => {
     // Rebuilding a Date or a typed array as a plain object would corrupt the
     // payload far more than a missed scrub would.

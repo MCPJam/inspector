@@ -59,6 +59,18 @@ export type SecretScrubber = {
    * Arrays and objects are rebuilt; non-string leaves pass through untouched.
    */
   scrubDeep<T>(value: T): T;
+  /**
+   * Replace every registered value inside an ALREADY-SERIALIZED JSON document.
+   *
+   * Distinct from `scrubString` because the raw form of a value must NOT be
+   * searched here. Inside serialized JSON, real string content is escaped, so
+   * a genuine occurrence appears in its escaped form and the raw form can only
+   * match by coincidence — including against the document's own punctuation.
+   * A value of `","foo":` matches `{"a":"","foo":"x"}` structurally and
+   * replacing it yields invalid JSON, corrupting a payload that never
+   * contained the secret at all.
+   */
+  scrubSerializedJson(input: string): string;
   /** How many values are registered — for tests and diagnostics only. */
   readonly size: number;
 };
@@ -97,18 +109,26 @@ export function createSecretScrubber(
   //      containing a quote, a backslash or a newline looks nothing like itself
   //      in that form, and searching only for the raw text would sail past it.
   const needles: { search: string; replace: string }[] = [];
+  // The escaped-only set, for scrubbing a document that is ALREADY serialized
+  // JSON. Searching the raw form there cannot find real content — it is escaped
+  // by definition — and can match the document's structure instead.
+  const jsonNeedles: { search: string; replace: string }[] = [];
   for (const entry of entries) {
     const replace = replacementFor(entry.name);
     needles.push({ search: entry.value, replace });
     const escaped = JSON.stringify(entry.value).slice(1, -1);
+    jsonNeedles.push({ search: escaped, replace });
     if (escaped !== entry.value) {
       needles.push({ search: escaped, replace });
     }
   }
 
-  function scrubString(input: string): string {
+  function applyNeedles(
+    input: string,
+    list: readonly { search: string; replace: string }[],
+  ): string {
     let out = input;
-    for (const needle of needles) {
+    for (const needle of list) {
       // `split`/`join` rather than `replace`: a `String.replace` with a string
       // pattern replaces only the FIRST occurrence, and its replacement string
       // expands `$&` / `$1` patterns — so a credential containing `$&` would be
@@ -118,6 +138,14 @@ export function createSecretScrubber(
       }
     }
     return out;
+  }
+
+  function scrubString(input: string): string {
+    return applyNeedles(input, needles);
+  }
+
+  function scrubSerializedJson(input: string): string {
+    return applyNeedles(input, jsonNeedles);
   }
 
   function scrubDeep<T>(value: T): T {
@@ -172,5 +200,5 @@ export function createSecretScrubber(
     return value;
   }
 
-  return { scrubString, scrubDeep, size: entries.length };
+  return { scrubString, scrubSerializedJson, scrubDeep, size: entries.length };
 }

@@ -74,7 +74,7 @@ type ValueOptions = {
  * an explicit `--value` is taken verbatim, because there the caller typed
  * exactly what they meant.
  */
-function resolveSecretValue(
+export function resolveSecretValue(
   options: ValueOptions,
   { required }: { required: boolean }
 ): string | undefined {
@@ -123,15 +123,31 @@ function resolveSecretValue(
     }
   };
 
+  // A FILE IS READ VERBATIM; ONLY STDIN LOSES ONE TRAILING NEWLINE.
+  //
+  // Stripping unconditionally was wrong, and wrong in the way the backend's own
+  // `validateSecretValue` warns about: a PEM block's final LF is part of the
+  // credential, so a `--value-file key.pem` that quietly dropped it stored a
+  // DIFFERENT secret than the file holds, and the failure surfaces much later
+  // as "the API key is wrong" with nothing to look at. The REST schema and
+  // `--value-env` both preserve whitespace; a file should agree with them.
+  //
+  // Stdin keeps the strip because there the newline is almost always the
+  // shell's rather than the credential's — `echo tok | mcpjam ...` is the
+  // dominant idiom — and it is documented on the flags as such.
+  const stripOneTrailingNewline = (text: string): string =>
+    text.replace(/\r?\n$/, "");
+
   if (options.valueFile !== undefined) {
-    const text = readStdinOrFile(options.valueFile).replace(/\r?\n$/, "");
+    const raw = readStdinOrFile(options.valueFile);
+    const text = options.valueFile === "-" ? stripOneTrailingNewline(raw) : raw;
     if (text === "") throw usageError("The secret value is empty.");
     return text;
   }
 
   // `--value -` is the stdin spelling most people reach for first.
   if (options.value === "-") {
-    const text = readStdinOrFile("-").replace(/\r?\n$/, "");
+    const text = stripOneTrailingNewline(readStdinOrFile("-"));
     if (text === "") throw usageError("The secret value is empty.");
     return text;
   }
@@ -241,7 +257,7 @@ export function registerSecretsCommands(program: Command): void {
     )
     .option(
       "--value-file <path>",
-      "Read the value from a file; `-` reads stdin. Preferred."
+      "Read the value from a file, VERBATIM — a trailing newline is kept, because in a PEM block it is part of the credential. `-` reads stdin instead, which drops one trailing newline. Preferred."
     )
     .option("--value-env <VAR>", "Read the value from an environment variable.")
     .option(
@@ -336,7 +352,7 @@ export function registerSecretsCommands(program: Command): void {
     .option("--project <id-or-name>", "Project name or ID")
     .option(
       "--value-file <path>",
-      "Read the new value from a file; `-` reads stdin. Preferred."
+      "Read the new value from a file, VERBATIM — a trailing newline is kept. `-` reads stdin instead, which drops one trailing newline. Preferred."
     )
     .option(
       "--value-env <VAR>",

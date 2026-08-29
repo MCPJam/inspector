@@ -565,8 +565,12 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
   //
   // Byte-identity across retries is preserved: the scrub is deterministic and
   // runs once, outside the retry loop, exactly like the stringify it follows.
+  // `scrubSerializedJson`, not `scrubString`: this input is a JSON document, so
+  // only the ESCAPED form of a value can appear in real content. Searching the
+  // raw form here could match the document's own punctuation and produce
+  // invalid JSON out of a payload that never held the secret.
   return options.secretScrubber
-    ? options.secretScrubber.scrubString(body)
+    ? options.secretScrubber.scrubSerializedJson(body)
     : body;
 }
 
