@@ -1,0 +1,178 @@
+# Hosted Browser + WebMCP Runtime — W2–W7 handoff
+
+Self-contained brief for continuing this initiative. Assumes both repos are
+available: **inspector** (this repo) and **mcpjam-backend** (Convex). W1 is
+shipped; W2–W7 remain.
+
+---
+
+## 0. Preconditions & working rules (read first)
+
+- **W1's live path is UNPROVEN in staging.** Everything past the unit lane —
+  `Sandbox.connect`, the daemon-bundle upload, the E2B→`BrowserdSandbox` adapter
+  in `chromium-launch.ts` — is validated *only* via the debug route in staging,
+  never CI. Before building W2+ on it, run the probe once (see §7) and fix
+  whatever breaks. The review bots found a real bug in this live-glue surface in
+  *every* W1 review round; expect the same and pre-empt it by keeping logic in
+  testable seams.
+- **Backend `main` auto-deploys to staging on merge.** In both repos: **open PRs,
+  do not merge.** Merge is the operator's call.
+- **Regenerate the daemon bundle after editing `server/services/browserd/daemon/*`.**
+  `npm run bundle:browserd` regenerates the checked-in `dist/mcpjam-browserd.mjs`
+  + `dist/mcpjam-browserd-bundle.generated.ts` (the base64 the server build
+  embeds). It is now wired into `build` and `pretest`, so a stale bundle can't
+  reach prod or CI — but commit the regenerated files when they change.
+- **One reviewable step per PR; STOP for review+merge before the next** — unless
+  two pieces are genuinely independent and in different repos, in which case
+  build them in parallel (that's how W1's inspector∥backend slices shipped).
+- **Testable-seam discipline.** Pure logic gets unit tests; live Playwright/E2B
+  code is quarantined behind a narrow interface and validated in staging. This is
+  the only reason W1 progressed without live infra in CI.
+- **`gh pr create` hits a GraphQL secondary rate limit; use REST:**
+  `gh api --method POST repos/<owner>/<repo>/pulls --input payload.json`.
+
+---
+
+## 1. What this is
+
+Make the browser a **capability of MCPJam Computers on E2B Desktop**, driven by a
+sandbox-local **`mcpjam-browserd`** daemon: durable replica-independent browser
+sessions, six `browser_*` model tools, an embedded Browser Panel with human
+handoff, and evals/swarm support. It is the hosted follow-on to the shipped local
+WebMCP Inspector V1 (`server/services/webmcp-inspector/`), which reserves
+`remote-interactive-url` in its `viewportTransport` union for exactly this.
+
+## 2. Settled decisions — do not relitigate
+
+- **E2B is justified for BOTH** unattended evals/swarms/CI *and* hosted-chat devs
+  who won't run the local inspector. **Build eval/unattended-first.**
+- **Claude is NOT a WebMCP consumer; MCPJam is its own consumer** (via CDP).
+  Consumers today: ChatGPT Desktop, Chrome/Edge/Brave agents. Benchmark/position
+  against those, never "how Claude sees your page."
+- **WebMCP is the cooperation layer, not the drive mechanism.**
+  `browser_navigate/act/observe` are the substance; `browser_webmcp` is the
+  optional when-the-page-cooperates layer.
+- **Cloud path uses login HANDOFF** (human signs in inside the sandbox), NOT
+  cookie-import — importing a user's live cookies into a shared sandbox worsens
+  the co-tenancy trust gap.
+- **Token architecture (settled while building e3):** browserd's own bearer is an
+  **inspector-minted shared secret in `envs`** (like the plugin shimToken). The
+  RS256 `computer-browser` token + `/computers/browser-jwks` (already built in
+  backend, dark) are **client→inspector auth for the Browser Panel = W4**. Do NOT
+  build the JWKS verifier or the mint action before W4.
+- **`runtimeKind` value is `'desktop-browser'`** (not `'desktop'`). Desktop
+  provisioning **refuses** (throws) when the desktop template config is unset —
+  **no fallback to a terminal image**.
+
+## 3. The L1–L12 learnings (from a production browser operator) and where they land
+
+| L | Learning | Owning wave |
+|---|---|---|
+| L1 | Fold observation into the act result (act/navigate return post-settle observation inline) | **W3** tool contract |
+| L2 | Settle before capture (`settled` flag), no `wait` verb | shipped in W1 (`settle.ts`) |
+| L3 | Page-state token; reject act on stale targeting | shipped in W1; extend onto the act contract in **W3** |
+| L4 | Hardening Chrome flags (`--disable-dev-shm-usage`, anti-bot-detect, etc.) + adblocker | shipped in W1 (`launch-args.ts`); adblocker still TODO |
+| L5 | Pin one model-facing coordinate space + determinism (scale/locale/tz/reduced-motion) | shipped in W1 (`launch-args.ts`) |
+| L6 | Loud resume — forced fresh observation + "state may have changed" note | **W4** handoff |
+| L7 | Trusted-caller Playwright escape hatch (Okta/SSO) | **roadmap** — needs a security position; not a wave yet |
+| L8 | `--user-data-dir` singleton: clear `SingletonLock` before relaunch | shipped in W1 (`profile-lock.ts`) |
+| L9 | Omit-don't-truncate structured payloads (whole subtree or a retrieval verb) | **W3** observe formatting |
+| L10 | Live view by default + coalesced video/annotations | **W4** panel |
+| L11 | Reword localhost story: "same computer, not your laptop" | **W7** exposure docs |
+| L12 | Granular approval relaxation — reuse the `{readOnly?, originAllowlist?}` policy object; build `classifyBrowserToolApprovals` with policy as a param (mirror `classifyPageToolApprovals`) | **W3** approval |
+
+## 4. What W1 built (the code to build on)
+
+**Inspector `server/services/browserd/`:**
+- `protocol.ts` — wire types: `BrowserCommand`/`Action`/`Result`/`Outcome`,
+  `ObservationStateToken`, `DEFAULT_QUEUE_KEY`. The single source of truth.
+- `daemon/command-queue.ts` — at-most-once queue (per-tab FIFO, LRU/TTL, boot-long
+  tombstones, capacity backpressure).
+- `daemon/request-handler.ts` + `server.ts` — HTTP control plane: bearer auth,
+  `bootId` + `command_unknown_boot`, outcome→status map, thin Node-http adapter.
+- `daemon/browser-driver.ts` — `BrowserDriver` seam + `guardStaleness` (L3).
+- `daemon/chromium-driver.ts` — the driver: **navigate/back/reload/observe are
+  implemented; `act` and `webmcp_*` return `unimplemented_in_w1` — W3 fills them.**
+- `daemon/chromium-launch.ts` — the ONLY Playwright file (persistent context,
+  L4/L5, L8, `adaptContext`, `wrapPage`). Untested in CI.
+- `daemon/{launch-args,state-token,profile-lock,settle,config,main}.ts` — the
+  daemon foundations + entrypoint.
+- `boot-browserd.ts` — inspector-side boot (background, envs, ready-line, reap).
+- `browserd-client.ts` — inspector→browserd HTTP client.
+- `browser-debug-probe.ts` + `probe-lock.ts` — the W1 end-to-end assembly.
+- `scripts/bundle-browserd.mjs` — esbuild bundler (playwright external).
+- `server/routes/internal/computer-browser-debug.ts` — the debug route
+  (`POST /api/internal/computer-browser-debug/probe`), gated by
+  `COMPUTER_BROWSER_DEBUG_ENABLED=1` + `internalServiceAuthMiddleware`.
+
+**Backend (mcpjam-backend):** `templates/desktop/`, `convex/lib/computerBrowserToken.ts`
++ `GET /computers/browser-jwks`, `projectComputers` `runtimeKind` +
+`bootedRuntimeCapabilities` + `computerRuntimeTemplateConfig` singleton +
+`reserveComputerForUser({runtimeKind})` threading + kind-aware owner ops.
+
+## 5. Wave briefs
+
+- **W2 — durable `browserSessions` + two-replica tests (backend-heavy).** A durable
+  session row surviving replica failover, modeled on `pluginRuntimeSessions`.
+  **Open gap:** the sweep must be wired to `crons.ts` (the plan's model has an
+  `internalSweepIdleSessions` that is tested but dormant). **Billing gap:**
+  panel-open keepalive is unbounded — gate the heartbeat on
+  `visibilityState==='visible'` + a hard ceiling. convex-test is Node-only, no
+  live infra needed.
+- **W3 — the six `browser_*` tools + full approval design.** Implement `act` +
+  `webmcp_*` in `chromium-driver.ts` (mirror V1's `playwright-provider` for the
+  webmcp CDP calls). Lands L1, L9, L12, and L3-on-the-act-contract. **Open gap
+  (approval threading, fail-closed):** four surfaces build toolsets via
+  `prepareChatV2` with no `uiToolApprovals` — `routes/v1/agent.ts`,
+  `routes/v1/chat-session-turn.ts`, `sessionSimulation/runner.ts`,
+  `evals-runner.ts` — an unthreaded browser tool would classify as FREE and
+  auto-execute ungated; make `buildBrowserTools` refuse interactive tools unless
+  approval delivery is attested. **Security co-tenancy (open):** bash + browser
+  share one uid; take a position before a model can drive the box. Catalog
+  invariant changes 1 built-in id → 6 tool names. Build
+  `classifyBrowserToolApprovals` mirroring the shipped `classifyPageToolApprovals`.
+- **W4 — Browser Panel + human handoff.** Lands L6 (loud resume) + L10 (view by
+  default, coalesced video/annotations). `423` on observe during a lease (nothing
+  enters the trace); lease timeout PARKS, never auto-resumes. **This is where the
+  RS256 `computer-browser` token verifier + mint action land** (client→inspector
+  auth), mirroring `server/utils/computers/terminal-token.ts`.
+- **W5 — convert the local WebMCP Inspector V1 to the hosted runtime** (shared
+  package). V1's protocol is re-derived from `browserd`'s `protocol.ts`, not the
+  other way round. Local keeps `native-window`; the panel adapts on
+  `viewportTransport`.
+- **W6 — evals / swarms / scenarios.** Unattended runs never pause → they REQUIRE
+  a declared `toolPolicy` (allow_all | read_only | origin/tool allowlist) and must
+  refuse without one. W6.0 (evals→resolver) is independent and cherry-pickable
+  early.
+- **W7 — gradual hosted exposure.** Lands L11 (localhost reword). **Launch blocker
+  from the M0 spike:** stock E2B desktop is 8 vCPU / 8 GB = 4× the standard 2vCPU
+  computer the 10 cr/hr rate assumes — wire a desktop credit rate before any
+  public exposure.
+
+## 6. Hard constraints (non-negotiable, carry into every wave)
+
+- **Approval:** interactive surfaces default approval ON for
+  `browser_act`/`navigate`/`webmcp`; relaxation only via explicit per-session
+  opt-in (L12: reuse the policy object, scoped grant in the trace). Unattended
+  runs REQUIRE a declared `toolPolicy` and refuse without one. Never unattended +
+  no-policy + no-approval.
+- **Handoff privacy:** no frames/screenshots into traces during a human lease
+  (enforced at browserd); lease timeout PARKS.
+- **Profiles:** persistent profile only for playground/inspector; evals/swarms get
+  isolated ephemeral contexts, fresh per iteration.
+- **No new `GatedFeatureKey`** — browser rides `projectComputers` under the
+  existing `computers` gate.
+- **One protocol:** browserd's API is canonical; retire `page_*` only after
+  approval parity on all engines.
+
+## 7. First tasks, in order
+
+1. **Validate W1 live in staging.** Set the desktop template config on the backend
+   (`setDesktopRuntimeTemplate`, deploy-key/internal — the probe refuses without
+   it), flip `COMPUTER_BROWSER_DEBUG_ENABLED=1` on a staging inspector, and
+   `POST /api/internal/computer-browser-debug/probe` with the internal service
+   token + `{projectId, bearer, url}`. Confirm it returns a non-empty screenshot.
+   Fix any live-adapter bug before proceeding.
+2. Delete the throwaway E2B spike template `webmcp-desktop-spike`.
+3. Then start **W2** (or **W6.0**, which is independent). Keep W3's tool PRs
+   sequential — stacking coupled PRs caused squash-conflicts twice in W1.
