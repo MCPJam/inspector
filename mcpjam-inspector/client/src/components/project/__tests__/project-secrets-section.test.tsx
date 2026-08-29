@@ -122,6 +122,13 @@ describe("ProjectSecretsSection — rotate dialog", () => {
 
     fireEvent.change(rotateField(), { target: { value: "ghp_long_enough" } });
     expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
+
+    // Cleared back to empty is its own branch in `ShortValueWarning`, and it
+    // has to stay silent: an empty field is someone who has not typed a value
+    // yet, not someone about to save an unscrubbable one. Warning there would
+    // put a red box on every freshly-opened rotate dialog.
+    fireEvent.change(rotateField(), { target: { value: "" } });
+    expect(screen.queryByText(/not be redacted/i)).not.toBeInTheDocument();
   });
 
   it("does not warn when rotating a BROKERED secret to a short value", () => {
