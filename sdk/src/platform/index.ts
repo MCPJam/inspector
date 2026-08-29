@@ -124,6 +124,7 @@ export type {
   PlatformReadinessSubmissionMode,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalStageAnalytics,
   PlatformGateWaiver,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,

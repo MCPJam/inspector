@@ -1121,7 +1121,10 @@ const PAGE_CURSOR_DESCRIPTION =
   "Opaque pagination cursor from a previous response.";
 
 const serverPagedInput = serverScopedInput.extend({
-  cursor: z.string().min(1).optional().describe(PAGE_CURSOR_DESCRIPTION),
+  // No `.min(1)`: `""` is a legitimate MCP cursor (2026-07-28
+  // `server/utilities/pagination`), and rejecting it would refuse to page a
+  // conforming server.
+  cursor: z.string().optional().describe(PAGE_CURSOR_DESCRIPTION),
 });
 
 export type ServerPagedInput = z.infer<typeof serverPagedInput>;
@@ -1150,13 +1153,17 @@ async function runServerListing(
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {}
+    // Presence, not truthiness, in BOTH directions: this is a passthrough of
+    // the MCP server's cursor, and `""` is a valid one.
+    input.cursor !== undefined ? { cursor: input.cursor } : {}
   );
   return {
     project: toSelectedProjectInfo(project),
     server: toServerInfo(server),
     items: page.items,
-    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    ...(typeof page.nextCursor === "string"
+      ? { nextCursor: page.nextCursor }
+      : {}),
   };
 }
 
@@ -1754,14 +1761,20 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
     let truncated = false;
+    // No repeated-cursor guard: comparing two cursors for equality is itself
+    // a determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The cap below is
+    // the bound, and it already flags the read as incomplete.
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
-        { ...scope, body: cursor ? { cursor } : {} },
+        // Presence, not truthiness: `""` is a valid MCP continuation cursor.
+        { ...scope, body: cursor !== undefined ? { cursor } : {} },
         { signal }
       );
       rawTools.push(...result.items);
-      cursor = result.nextCursor;
-      if (!cursor) break;
+      cursor =
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+      if (cursor === undefined) break;
       // Hit the cap with tools still pending — don't pretend the report is
       // complete (a later page could hold widgets that change a verdict).
       if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;

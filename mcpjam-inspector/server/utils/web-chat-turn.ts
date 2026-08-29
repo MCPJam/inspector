@@ -932,6 +932,23 @@ export async function streamWebChatTurn(
           : {}),
         scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
+        // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
+        // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
+        // replays.
+        //
+        // Those are different questions and the hosted path only ever answered
+        // the second, so Raw showed the bare host prompt while the model had
+        // been given more: the skills catalog, widget model context, the
+        // environment block. A debugger that cannot show what the model was
+        // told cannot answer "did it even know that skill existed?" — which is
+        // the first question anyone asks when an agent ignores a skill.
+        //
+        // Resume must NOT read this one. Turn-injected content is true of the
+        // turn that happened, not of the next one: replaying "your sandbox was
+        // reset" long after the fact is the confabulation `resumeConfig`'s raw
+        // prompt exists to prevent. Hence two fields, both already on the
+        // ingest contract — the local route has always filled this one.
+        systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],

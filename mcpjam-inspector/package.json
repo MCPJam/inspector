@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.2.0",
+  "version": "3.3.1",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -69,6 +69,7 @@
     "bundle:sandbox-proxies": "node scripts/bundle-sandbox-proxy-html.js",
     "bundle:browser-harness": "node scripts/bundle-browser-harness.mjs",
     "bundle:plugin-shim": "node scripts/bundle-plugin-shim.mjs",
+    "bundle:browserd": "node scripts/bundle-browserd.mjs",
     "clean": "rm -rf dist out .vite client/dist",
     "clean:all": "rm -rf dist out .vite client/dist node_modules sdk/node_modules",
     "deps:ci": "npm --prefix .. ci --legacy-peer-deps --cache .npm-cache",
@@ -133,7 +134,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^8.2.0",
+    "@mcpjam/sdk": "^8.3.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",

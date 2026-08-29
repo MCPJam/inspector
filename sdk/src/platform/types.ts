@@ -15,6 +15,7 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
   EvalVerdictDecision,
   FailureCategory,
@@ -34,6 +35,23 @@ import type {
  * recreate exactly the drift this lane removed.
  */
 export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
+
+/**
+ * One item of
+ * `GET /projects/{p}/eval-suites/{suiteId}/stage-analytics` — one RUN's
+ * complete materialized stage-analytics document.
+ *
+ * An ALIAS, for the same reason the decision summary is one: the shape is owned
+ * by `@mcpjam/sdk/contract` (`evalStageAnalyticsSchema`), and re-declaring it
+ * here would produce two hand-mirrored descriptions of one contract that drift
+ * the first time a field is added.
+ *
+ * Rates are NOT on this object. It carries counts, and every rate is derived by
+ * the contract's own helpers (`measuredPassRate`, `measurementCoverageRate`,
+ * `reachRate`, `latencyMeanMs`) so a zero denominator stays `notMeasured`
+ * instead of becoming a `0%` nobody can act on.
+ */
+export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -801,6 +819,16 @@ export interface PlatformEvalRunJudgeCase {
    * not join it against the ids the per-case routes take.
    */
   caseKey: string;
+  /**
+   * The iteration this case graded — the join key between a judge case and
+   * the iterations the run returns, since `caseKey` is a storage key and
+   * joins to nothing.
+   *
+   * Optional because judge results written before it was persisted carry
+   * none: a caller must be able to tell "this run predates the join key"
+   * from a value it could act on.
+   */
+  iterationId?: string;
   score: number | null;
   passed: boolean;
   reason: string | null;

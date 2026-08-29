@@ -19,6 +19,7 @@ import {
   getTask,
   getTaskCapabilities,
   getTasksBatch,
+  listTasks,
   updateTask,
 } from "../mcp-tasks-api";
 
@@ -119,6 +120,68 @@ describe("mcp-tasks-api (hosted mode)", () => {
     await cancelTask("my-server", "t1");
 
     expect(lastCall().path).toBe("/api/web/tasks/cancel");
+  });
+
+  it("omits the cursor entirely when the caller supplies none", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse({ wire: "legacy", tasks: [] }));
+
+    await listTasks("my-server");
+
+    expect(lastCall().path).toBe("/api/web/tasks/list");
+    expect("cursor" in lastCall().body).toBe(false);
+  });
+
+  it("carries an empty-string cursor to the hosted route instead of dropping it", async () => {
+    // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+    // cursor and thus MUST NOT be treated as the end of results". Dropping it
+    // here did not end a caller's walk so much as restart it at page one.
+    authFetchMock.mockResolvedValue(jsonResponse({ wire: "legacy", tasks: [] }));
+
+    await listTasks("my-server", "");
+
+    expect(lastCall().path).toBe("/api/web/tasks/list");
+    expect(lastCall().body.cursor).toBe("");
+  });
+
+  it("walks past an empty-string nextCursor and re-sends it on the follow-up", async () => {
+    authFetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ wire: "legacy", tasks: [{ taskId: "t1" }], nextCursor: "" }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ wire: "legacy", tasks: [{ taskId: "t2" }] }),
+      );
+
+    const first = await listTasks("my-server");
+    // ABSENCE ends a walk, not emptiness — so this page continues it.
+    expect(typeof (first as any).nextCursor).toBe("string");
+
+    const second = await listTasks("my-server", (first as any).nextCursor);
+
+    expect(second.tasks.map((task: any) => task.taskId)).toEqual(["t2"]);
+    expect(authFetchMock.mock.calls).toHaveLength(2);
+    expect(JSON.parse(authFetchMock.mock.calls[0][1].body).cursor).toBeUndefined();
+    expect(JSON.parse(authFetchMock.mock.calls[1][1].body).cursor).toBe("");
+  });
+
+  it("keeps forwarding a cursor a server repeats across pages", async () => {
+    // A server holding its pagination state server-side may legally hand back
+    // one constant opaque handle, and comparing two cursors for equality is
+    // itself a determination based on cursor value — so there is no
+    // repeated-cursor guard anywhere on this path. Every page goes out.
+    authFetchMock.mockResolvedValue(
+      jsonResponse({ wire: "legacy", tasks: [{ taskId: "t1" }], nextCursor: "" }),
+    );
+
+    await listTasks("my-server");
+    await listTasks("my-server", "");
+    await listTasks("my-server", "");
+
+    expect(
+      authFetchMock.mock.calls.map(
+        ([, init]: [string, RequestInit]) => JSON.parse(init.body as string).cursor,
+      ),
+    ).toEqual([undefined, "", ""]);
   });
 
   it("reports no progress hosted without touching the network", async () => {
