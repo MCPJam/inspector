@@ -1,3 +1,4 @@
+import { REGISTRATION_FAILURE_PREFIX } from "./shared/dynamic-client-registration.js";
 import {
   extractResponseErrorReason,
   toSingleLine,
@@ -255,7 +256,7 @@ function usesRecoveredDynamicClientRegistrationFallback(
   }
 
   return (
-    state.error.startsWith("Dynamic Client Registration failed") ||
+    state.error.startsWith(REGISTRATION_FAILURE_PREFIX) ||
     state.error.startsWith("Client registration failed:")
   );
 }

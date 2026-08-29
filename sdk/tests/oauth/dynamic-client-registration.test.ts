@@ -1,7 +1,9 @@
 import {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isClientRegistrationRefusal,
   redactDynamicClientRegistrationResponse,
+  restatesWithFallbackHint,
 } from "../../src/oauth/state-machines/shared/dynamic-client-registration.js";
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
@@ -242,6 +244,100 @@ describe("executeDynamicClientRegistration", () => {
       "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server."
     );
   });
+
+  it.each([400, 401, 403, 404, 422, 499])(
+    "classifies a %i registration as a refusal",
+    async (status) => {
+      const outcome = await executeDynamicClientRegistration({
+        request: buildRequest(),
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: false,
+          status,
+          statusText: "Rejected",
+          headers: {},
+          body: { error: "invalid_client_metadata" },
+        }),
+        httpHistory: history(),
+      });
+      expect(outcome.status).toBe("http_error");
+      if (outcome.status === "registered") return;
+      // Both strings the machines can put in state, not just the bare one.
+      expect(isClientRegistrationRefusal(outcome.error)).toBe(true);
+      expect(isClientRegistrationRefusal(outcome.errorWithFallbackHint)).toBe(
+        true
+      );
+    }
+  );
+
+  it.each([500, 502, 503])(
+    "does not classify a %i registration as a refusal",
+    async (status) => {
+      const outcome = await executeDynamicClientRegistration({
+        request: buildRequest(),
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: false,
+          status,
+          statusText: "Server Error",
+          headers: {},
+          body: {},
+        }),
+        httpHistory: history(),
+      });
+      expect(outcome.status).toBe("http_error");
+      if (outcome.status === "registered") return;
+      expect(isClientRegistrationRefusal(outcome.error)).toBe(false);
+      expect(isClientRegistrationRefusal(outcome.errorWithFallbackHint)).toBe(
+        false
+      );
+    }
+  );
+
+  it("does not classify a transport failure as a refusal", async () => {
+    const outcome = await executeDynamicClientRegistration({
+      request: buildRequest(),
+      requestExecutor: jest.fn().mockRejectedValue(new Error("boom")),
+      httpHistory: history(),
+    });
+    expect(outcome.status).toBe("network_error");
+    if (outcome.status === "registered") return;
+    expect(isClientRegistrationRefusal(outcome.error)).toBe(false);
+  });
+
+  it.each(["", "Some other step failed (400).", "Dynamic Client Registration"])(
+    "does not claim the unrelated message %p",
+    (message) => {
+      expect(isClientRegistrationRefusal(message)).toBe(false);
+    }
+  );
+
+  it("pairs a registration failure with its hint-appended twin", async () => {
+    const outcome = await executeDynamicClientRegistration({
+      request: buildRequest(),
+      requestExecutor: jest.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        headers: {},
+        body: {},
+      }),
+      httpHistory: history(),
+    });
+    expect(outcome.status).toBe("http_error");
+    if (outcome.status === "registered") return;
+    expect(
+      restatesWithFallbackHint(outcome.errorWithFallbackHint, outcome.error)
+    ).toBe(true);
+  });
+
+  it.each([
+    ["Token request failed: 400 Bad Request", "invalid_grant"],
+    ["Authenticated request failed: 401", "token expired"],
+  ])(
+    "does not pair %p with a message that merely extends it",
+    (bare, detail) => {
+      expect(restatesWithFallbackHint(`${bare}: ${detail}`, bare)).toBe(false);
+    }
+  );
 
   it("synthesizes a status-0 network_error on executor rejection", async () => {
     const outcome = await executeDynamicClientRegistration({

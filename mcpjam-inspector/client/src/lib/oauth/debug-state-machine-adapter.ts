@@ -3,7 +3,9 @@ import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
+  isClientRegistrationRefusal,
   isLoopbackOAuthUrl,
+  restatesWithFallbackHint,
   type OAuthFlowState,
   type OAuthProtocolVersion,
   type OAuthRequestExecutor,
@@ -273,6 +275,37 @@ const UNREPORTED_STEP_FAILURES = new Set([
 ]);
 
 /**
+ * Failures the server under test owns, matched on shape rather than by exact
+ * string because the message carries the status code.
+ *
+ * A 4xx from the registration endpoint is that server declining to register a
+ * client — DCR unimplemented behind an advertised endpoint, an allowlist, an
+ * initial access token we were never given. The debugger exists to show that;
+ * reporting it files a bug against MCPJam for another project's policy.
+ */
+function isUnreportedStepFailure(error: string): boolean {
+  return (
+    UNREPORTED_STEP_FAILURES.has(error) || isClientRegistrationRefusal(error)
+  );
+}
+
+/**
+ * Is this message the previous report restated rather than a new failure?
+ *
+ * Plain inequality treats a registration failure's bare message and its
+ * hint-appended twin as two failures, so one rejection filed two issues.
+ */
+function restatesLastReport(
+  error: string,
+  lastReported: string | undefined,
+): boolean {
+  if (lastReported === undefined) return false;
+  return (
+    error === lastReported || restatesWithFallbackHint(error, lastReported)
+  );
+}
+
+/**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
@@ -287,7 +320,7 @@ const UNREPORTED_STEP_FAILURES = new Set([
  *
  * `Warning: `-prefixed messages are skipped entirely — those are advisories the
  * flow recovers from (an optional metadata field the server left out), not step
- * failures. So are the messages in `UNREPORTED_STEP_FAILURES`.
+ * failures. So are the messages `isUnreportedStepFailure` claims.
  */
 function withStepFailureReporting(
   updateState: InspectorOAuthStateMachineConfig["updateState"],
@@ -299,7 +332,7 @@ function withStepFailureReporting(
     const error = updates.error;
     if (
       typeof error === "string" &&
-      (error.startsWith("Warning: ") || UNREPORTED_STEP_FAILURES.has(error))
+      (error.startsWith("Warning: ") || isUnreportedStepFailure(error))
     ) {
       // Not ours to act on: the message is already on screen, and reporting
       // these buries real step failures under server-under-test nits.
@@ -309,7 +342,11 @@ function withStepFailureReporting(
       updateState(updates);
       return;
     }
-    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
+    if (
+      typeof error === "string" &&
+      error !== "" &&
+      !restatesLastReport(error, lastReportedError)
+    ) {
       lastReportedError = error;
       reportCaught(new Error(sanitizeStepError(error)), {
         source: "oauth_debugger_step",
