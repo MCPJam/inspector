@@ -996,6 +996,55 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     ]);
   });
 
+  it("does NOT record a capture on a HARNESS turn, which cannot deliver it", async () => {
+    // The reviewer's finding, at the route level: a harness adapter receives
+    // only the flat `runtimeSkillsOverride` (authored + plugin). A capture's
+    // address is `<serverSlug>/<name>` and `isValidSkillName` rejects `/`, so
+    // the adapter skips it. Recording it would make the trace claim a skill the
+    // model never received.
+    convexQueryMock.mockResolvedValue({
+      ...SPEC_WITH_PROVENANCE,
+      host: {
+        ...SPEC_WITH_PROVENANCE.host,
+        runtimeConfig: {
+          ...SPEC_WITH_PROVENANCE.host.runtimeConfig,
+          harness: "claude-code",
+        },
+      },
+      serverSkills: [
+        {
+          serverSkillId: "ss_1",
+          versionId: "ssv_1",
+          serverId: "env-server-1",
+          serverSlug: "acme",
+          serverLabel: "Acme",
+          ref: "acme/refunds",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          name: "refunds",
+          description: "Handle refunds",
+          content: "captured body",
+          contentSha256: "raw-digest",
+          contentHash: "h_capture",
+          versionHash: "vh_1",
+          versionNumber: 2,
+          capturedAt: 1,
+          provenance: { name: "refunds", contentHash: "h_capture" },
+          files: [],
+        },
+      ],
+    });
+
+    const persistArgs = await runEnvironmentTurn();
+    // The authored skill IS delivered by the harness, so it is recorded.
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+    // The environment binding is still true and still recorded.
+    expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
+      environmentId: "env_1",
+      name: "Staging",
+      revision: 7,
+    });
+  });
+
   it("never carries skill CONTENT into the record", async () => {
     convexQueryMock.mockResolvedValue(SPEC_WITH_PROVENANCE);
     const persistArgs = await runEnvironmentTurn();

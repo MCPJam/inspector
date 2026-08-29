@@ -437,11 +437,32 @@ export function runtimeSkills(
  * record reflects what actually ran rather than what the environment would
  * resolve on its own.
  *
+ * DELIVERY DECIDES WHAT IS RECORDED. `skillsAtTurn` asserts "this turn ran with
+ * exactly these", so it must describe what the model RECEIVED, not what the
+ * environment resolved — the two differ per channel, and recording the resolved
+ * set would make the trace claim a skill the model never saw:
+ *
+ *   - `emulated` — every channel is delivered. `getEffectiveSkillToolsAndPrompt`
+ *     mints a tool per entry of `allEffectiveSkills`, captures included and
+ *     addressed by their namespaced `ref`. Record everything.
+ *   - `harness` — only `runtimeSkills(spec)` reaches the adapter, and that is
+ *     `spec.skills` alone. Captured MCP-server skills are NOT delivered: their
+ *     runtime address is `<serverSlug>/<name>`, and `isValidSkillName` rejects
+ *     a name containing `/`, so an adapter would skip every one as
+ *     `invalid-skill-name`. Record authored + plugin only.
+ *   - `unsupported` — the resolved harness has no skill channel at all (Codex
+ *     today). Nothing is delivered, so record an empty list.
+ *
+ * Wiring captures into the harness channel is a DELIVERY change blocked on that
+ * addressing question — see the P2 skill-delivery work. Until it lands, the
+ * honest record is the narrower one.
+ *
  * `undefined` when there is no environment — a plain Playground chat has
- * nothing to record. An empty `skillsAtTurn` when the environment resolved
- * none, because "ran with none" is a real answer. Entries whose `provenance`
- * the backend did not supply are skipped: on an older deployment that yields
- * an empty array, which is honest about what this side can prove.
+ * nothing to record. An empty `skillsAtTurn` when nothing was delivered,
+ * because "ran with none" is a real answer and a different one from "unknown".
+ * Entries whose `provenance` the backend did not supply are skipped: on an
+ * older deployment that yields an empty array, which is honest about what this
+ * side can prove.
  */
 export function turnSkillProvenance(
   spec:
@@ -450,7 +471,8 @@ export function turnSkillProvenance(
         "environmentRef" | "skills" | "serverSkills"
       >
     | null
-    | undefined
+    | undefined,
+  options: { delivery: EnvironmentSkillDelivery }
 ): TurnSkillProvenance | undefined {
   const ref = spec?.environmentRef;
   if (
@@ -479,16 +501,18 @@ export function turnSkillProvenance(
       name: ref.name,
       revision: ref.revision,
     },
-    // BOTH delivered channels. `resolveEffectiveCapabilities` puts
-    // `spec.serverSkills` into the capability set and `allEffectiveSkills`
-    // hands them to the model exactly like authored ones — so recording only
-    // `spec.skills` would leave a turn claiming to list what it ran while
-    // omitting every captured MCP-server skill that ran. Appended after, which
-    // is the order the backend's own run snapshots pin them in.
-    skillsAtTurn: [
-      ...(spec?.skills ?? []).map((skill) => skill.provenance),
-      ...(spec?.serverSkills ?? []).map((skill) => skill.provenance),
-    ].filter(isProvenanceRow),
+    // Exactly the channels this delivery mode hands to the model — see the
+    // header. Captures are appended after authored entries, the order the
+    // backend's own run snapshots pin them in.
+    skillsAtTurn:
+      options.delivery === "unsupported"
+        ? []
+        : [
+            ...(spec?.skills ?? []).map((skill) => skill.provenance),
+            ...(options.delivery === "emulated"
+              ? (spec?.serverSkills ?? []).map((skill) => skill.provenance)
+              : []),
+          ].filter(isProvenanceRow),
   };
 }
 
