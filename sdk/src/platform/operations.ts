@@ -11077,8 +11077,11 @@ const updateSecretInput = z.object({
   description: z
     .string()
     .max(500)
+    .nullable()
     .optional()
-    .describe("Replacement description."),
+    .describe(
+      "Replacement description. `null` CLEARS it; omit to leave it unchanged. The tri-state matches the REST route and the SDK client, which have accepted `null` since this resource shipped — without it here, an operation caller could set a description and then never remove it."
+    ),
   delivery: z
     .enum(["brokered", "materialized"])
     .optional()

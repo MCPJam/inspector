@@ -1219,10 +1219,18 @@ chatV2.post("/", async (c) => {
     //
     // Tri-state: on failure this is `null`, and every consumer treats that as
     // "leave whatever state exists alone" rather than "there are no secrets".
+    //
+    // `environmentServers` — not `environmentSpec` — because an ENV-BACKED
+    // SCENARIO turn resolves its environment into `scenarioEnvironment`
+    // instead, exactly as the server set and the skill union above already
+    // account for. Reading only `environmentSpec` would hand those turns no
+    // secrets at all, and it would do it silently: the box simply would not
+    // have the credential, and the failure would surface as a `stripe` command
+    // exiting non-zero with nothing to connect it back to.
     const secretsFetch = await fetchRuntimeSecrets(bearerToken, {
       projectId: hostedBody.projectId,
-      ...(environmentSpec
-        ? { environmentId: environmentSpec.environmentRef.environmentId }
+      ...(environmentServers
+        ? { environmentId: environmentServers.environmentRef.environmentId }
         : {}),
       ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
     });

@@ -348,6 +348,10 @@ export function registerSecretsCommands(program: Command): void {
     )
     .option("--description <text>", "Replacement description.")
     .option(
+      "--clear-description",
+      "Remove the description entirely, leaving the secret with none."
+    )
+    .option(
       "--delivery <mode>",
       "brokered or materialized. Switching to brokered needs --host/--header/--template in the same call; switching to materialized clears them."
     )
@@ -361,6 +365,7 @@ export function registerSecretsCommands(program: Command): void {
             project?: string;
             secret: string;
             description?: string;
+            clearDescription?: boolean;
             delivery?: string;
             host?: string[];
             header?: string;
@@ -369,11 +374,22 @@ export function registerSecretsCommands(program: Command): void {
         command
       ) => {
         const globalOptions = getGlobalOptions(command);
+        // The two flags say opposite things about the same field, and picking a
+        // winner would silently discard half of what was asked for.
+        if (options.description !== undefined && options.clearDescription) {
+          throw usageError(
+            "Provide either --description or --clear-description, not both."
+          );
+        }
         const value = resolveSecretValue(options, { required: false });
         const input = updateSecretOperation.inputSchema.safeParse({
           project: resolveCloudProjectArgs(options).project,
           secret: options.secret,
           ...(value !== undefined ? { value } : {}),
+          // `--clear-description` is the flag spelling of the `null` the REST
+          // route and the SDK client already accept. Distinct from
+          // `--description ""`, which SETS an empty description.
+          ...(options.clearDescription ? { description: null } : {}),
           ...(options.description !== undefined
             ? { description: options.description }
             : {}),

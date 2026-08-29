@@ -444,6 +444,19 @@ function CreateSecretDialog({
     setError(null);
   };
 
+  /**
+   * The ONLY way this dialog closes.
+   *
+   * Radix fires its own `onOpenChange` for user-initiated closes (Esc, overlay,
+   * the X) but NOT for a close driven by the `open` prop — so a Cancel button
+   * that called the prop directly would skip `reset()` and leave a typed
+   * credential sitting in component state for the next time the dialog opens.
+   */
+  const close = () => {
+    reset();
+    onOpenChange(false);
+  };
+
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -496,7 +509,10 @@ function CreateSecretDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) reset();
+        if (!next) {
+          close();
+          return;
+        }
         onOpenChange(next);
       }}
     >
@@ -640,11 +656,7 @@ function CreateSecretDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" disabled={busy} onClick={close}>
             Cancel
           </Button>
           <Button disabled={!canSubmit} onClick={() => void submit()}>
@@ -677,6 +689,22 @@ function RotateSecretDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * The ONLY way this dialog closes.
+   *
+   * Sharper here than on create: ONE instance is reused for every row, so a
+   * value left behind by a cancelled rotation is shown pre-filled the next time
+   * the dialog opens — against whichever secret was picked then — and the
+   * Rotate button is enabled, because it only checks that the field is
+   * non-empty. That is a rotation of the wrong credential, committed by someone
+   * who never typed anything.
+   */
+  const close = () => {
+    setValue("");
+    setError(null);
+    onOpenChange(false);
+  };
+
   const submit = async () => {
     if (!secret) return;
     setBusy(true);
@@ -701,8 +729,8 @@ function RotateSecretDialog({
       open={secret !== null}
       onOpenChange={(next) => {
         if (!next) {
-          setValue("");
-          setError(null);
+          close();
+          return;
         }
         onOpenChange(next);
       }}
@@ -731,11 +759,7 @@ function RotateSecretDialog({
         </div>
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
         <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => onOpenChange(false)}
-          >
+          <Button variant="outline" disabled={busy} onClick={close}>
             Cancel
           </Button>
           <Button

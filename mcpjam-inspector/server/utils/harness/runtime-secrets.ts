@@ -69,16 +69,34 @@ export async function fetchRuntimeSecrets(
 /**
  * Deterministic fingerprint over the delivered set, order-independent.
  *
- * The value participates — it has to, because ROTATION is precisely "same name,
- * new value" and that is the event that must fork a session — but it
- * participates as a digest, never as itself. The runtime DTO carries no
- * `updatedAt` to use instead (the resolver returns the minimum a delivery
- * needs), so the digest is what stands in for one.
+ * ## No credential material participates, at any strength
  *
- * Not a cryptographic claim, and not asked to be one: the only consumer is "is
- * this the same runtime as last turn". FNV-1a over `name value`, and the result
- * is folded into another hash by `harnessRuntimeFingerprint` before anything is
- * stored — so no digest of a credential is ever persisted on its own.
+ * The obvious spelling is to hash the values: rotation is precisely "same name,
+ * new value", so the value looks like the only thing that distinguishes the two
+ * runtimes. It is also the wrong spelling, and unsalted-hashing it is not a
+ * repair. This fingerprint is folded into `harnessRuntimeFingerprint` and
+ * PERSISTED in session state, so anyone who reads that metadata and knows the
+ * secret name plus the rest of the runtime config can score guesses offline
+ * against it. For a credential with real entropy that is nothing; for the PIN,
+ * the short password, the four-digit account code someone stored here anyway,
+ * it is a working oracle — and the point of the encrypted store is that such a
+ * secret is not brute-forceable from anything we keep.
+ *
+ * So the ROTATION MARKER travels instead: `updatedAt`, which the backend
+ * resolver already has on the row and which moves on exactly the event that
+ * must fork a session. A timestamp reveals when the row was written and nothing
+ * about what it holds.
+ *
+ * A backend that predates the marker sends none, and such a secret contributes
+ * its name alone: the session keeps resuming, and stops forking on rotation
+ * until that backend ships. Backend deploys first, so the window is the deploy.
+ * Degrading to a stale-value risk is the right trade against re-introducing a
+ * guessing oracle, and it is the same "rotation reaches new runs only" rule
+ * brokered secrets live under permanently.
+ *
+ * Not a cryptographic claim and not asked to be one — the only consumer is "is
+ * this the same runtime as last turn", and FNV-1a over non-secret material is
+ * exactly the right size for that.
  *
  * Empty list ⇒ `""`, so a project with no secrets hashes identically to one
  * where this dimension does not exist and its sessions keep resuming.
@@ -88,15 +106,11 @@ export function deliveredSecretsFingerprint(
 ): string {
   if (secrets.length === 0) return "";
   const canon = secrets
-    .map((secret) => {
-      let v = 0x811c9dc5;
-      const material = `${secret.name} ${secret.value}`;
-      for (let i = 0; i < material.length; i++) {
-        v ^= material.charCodeAt(i);
-        v = Math.imul(v, 0x01000193);
-      }
-      return `${secret.name}:${(v >>> 0).toString(16)}`;
-    })
+    .map((secret) =>
+      secret.updatedAt === undefined
+        ? secret.name
+        : `${secret.name}:${secret.updatedAt}`,
+    )
     .sort()
     .join("\n");
   let h = 0x811c9dc5;

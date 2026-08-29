@@ -127,15 +127,26 @@ describe("scrubDeep", () => {
     });
   });
 
-  it("does not rewrite object KEYS", () => {
-    // A key is a field name, not a payload. Rewriting one would reshape a
-    // structure the caller then cannot address.
+  it("rewrites a credential that appears as an object KEY", () => {
+    // The producers are third-party MCP servers, so "no payload puts a secret
+    // in key position" is not a property this process can assert. A tool that
+    // groups by API key or echoes a header map does exactly that, and an
+    // unscrubbed key reaches the transcript in plaintext.
     const scrubber = createSecretScrubber([STRIPE])!;
     const out = scrubber.scrubDeep({ [STRIPE.value]: "value" }) as Record<
       string,
       string
     >;
-    expect(Object.keys(out)).toEqual([STRIPE.value]);
+    expect(Object.keys(out)).toEqual(["[secret:STRIPE_API_KEY]"]);
+    expect(JSON.stringify(out)).not.toContain(STRIPE.value);
+  });
+
+  it("leaves ordinary keys byte-identical", () => {
+    // Scrubbing keys must not reshape a payload that holds no credential —
+    // otherwise every caller downstream loses the fields it addresses by name.
+    const scrubber = createSecretScrubber([STRIPE])!;
+    const input = { id: "1", nested: { "weird key": [1, 2] }, "": "empty" };
+    expect(scrubber.scrubDeep(input)).toEqual(input);
   });
 
   it("passes non-plain objects through by identity", () => {

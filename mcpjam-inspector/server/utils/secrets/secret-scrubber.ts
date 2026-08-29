@@ -137,11 +137,23 @@ export function createSecretScrubber(
       for (const [key, item] of Object.entries(
         value as Record<string, unknown>,
       )) {
-        // Keys are NOT scrubbed. A key is a field name, not a payload; a
-        // credential appearing as an object key would mean the producer built
-        // the key from the value, which no MCP payload does — and rewriting keys
-        // would silently reshape a structure the caller then cannot address.
-        out[key] = scrubDeep(item);
+        // KEYS ARE SCRUBBED TOO. The tempting rule is that a key is a field
+        // name rather than a payload, so no producer would ever build one out
+        // of a credential — but the producers here are third-party MCP servers,
+        // and "no server does that" is not a property this process can assert
+        // about code it did not write. A tool that groups results by API key,
+        // echoes a request header map, or dumps a cache keyed by token puts the
+        // credential in key position, and an unscrubbed key reaches the
+        // transcript in plaintext, which is the exact leak this module exists
+        // to prevent.
+        //
+        // A key holding no registered value is returned by `scrubString`
+        // unchanged and re-assigned identically, so ordinary payloads keep
+        // their exact shape. Two keys can only collide after scrubbing if both
+        // contain the secret and differ ONLY inside it; the later wins, as it
+        // would for a duplicate key anywhere else in JS. Losing that key is a
+        // strictly better outcome than publishing the credential.
+        out[scrubString(key)] = scrubDeep(item);
       }
       return out as unknown as T;
     }

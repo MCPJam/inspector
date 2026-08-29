@@ -33,6 +33,22 @@ export interface RuntimeSecret {
   /** The env-var name. Backend-validated `^[A-Z_][A-Z0-9_]*$`. */
   name: string;
   value: string;
+  /**
+   * The secret row's last write — the ROTATION MARKER, and metadata about the
+   * row rather than about the credential.
+   *
+   * It exists so `deliveredSecretsFingerprint` can tell "same credential as
+   * last turn" from "this was rotated" without hashing the value. A digest of a
+   * credential, once folded into persisted session state, is an offline oracle
+   * against any secret with guessable entropy; a timestamp is not.
+   *
+   * Optional only for the deploy window: a backend older than the change that
+   * added it sends nothing, and the fingerprint falls back to a name-only
+   * identity, which resumes sessions correctly but does not fork them on a
+   * rotation until the backend catches up. Backend ships first, so the window
+   * is the deploy itself.
+   */
+  updatedAt?: number;
 }
 
 /** Convex function names — one place, so a rename is one edit. */

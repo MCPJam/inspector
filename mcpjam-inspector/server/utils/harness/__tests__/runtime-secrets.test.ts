@@ -83,59 +83,89 @@ describe("deliveredSecretsFingerprint", () => {
     expect(deliveredSecretsFingerprint([])).toBe("");
   });
 
-  it("changes when a VALUE rotates under the same name", () => {
+  it("changes when a secret ROTATES under the same name", () => {
+    // Rotation is the event that must fork a resumable session, and the
+    // backend's `updatedAt` is what marks it.
     const before = deliveredSecretsFingerprint([
-      { name: "STRIPE_API_KEY", value: "sk_live_old" },
+      { name: "STRIPE_API_KEY", value: "sk_live_old", updatedAt: 1_000 },
     ]);
     const after = deliveredSecretsFingerprint([
-      { name: "STRIPE_API_KEY", value: "sk_live_new" },
+      { name: "STRIPE_API_KEY", value: "sk_live_new", updatedAt: 2_000 },
     ]);
     expect(after).not.toBe(before);
   });
 
+  it("IGNORES the value entirely — the same row hashes the same either way", () => {
+    // The security property, stated as an assertion rather than a comment.
+    // Hashing the credential (at any strength, unsalted) would put a scoring
+    // oracle for a low-entropy secret into persisted session state, and folding
+    // that digest into a second hash would not remove it.
+    const withOne = deliveredSecretsFingerprint([
+      { name: "PIN", value: "0000", updatedAt: 7 },
+    ]);
+    const withAnother = deliveredSecretsFingerprint([
+      { name: "PIN", value: "9999", updatedAt: 7 },
+    ]);
+    expect(withAnother).toBe(withOne);
+  });
+
   it("changes when a secret is added or removed", () => {
-    const one = deliveredSecretsFingerprint([{ name: "A_KEY", value: "v1" }]);
+    const one = deliveredSecretsFingerprint([
+      { name: "A_KEY", value: "v1", updatedAt: 1 },
+    ]);
     const two = deliveredSecretsFingerprint([
-      { name: "A_KEY", value: "v1" },
-      { name: "B_KEY", value: "v2" },
+      { name: "A_KEY", value: "v1", updatedAt: 1 },
+      { name: "B_KEY", value: "v2", updatedAt: 1 },
     ]);
     expect(two).not.toBe(one);
   });
 
   it("is order-independent", () => {
     const forward = deliveredSecretsFingerprint([
-      { name: "A_KEY", value: "v1" },
-      { name: "B_KEY", value: "v2" },
+      { name: "A_KEY", value: "v1", updatedAt: 1 },
+      { name: "B_KEY", value: "v2", updatedAt: 2 },
     ]);
     const reversed = deliveredSecretsFingerprint([
-      { name: "B_KEY", value: "v2" },
-      { name: "A_KEY", value: "v1" },
+      { name: "B_KEY", value: "v2", updatedAt: 2 },
+      { name: "A_KEY", value: "v1", updatedAt: 1 },
     ]);
     expect(forward).toBe(reversed);
   });
 
   it("does not contain the value it fingerprints", () => {
-    // The digest is folded into another hash before anything is stored, but the
-    // first hop must not be the credential itself either.
     const fp = deliveredSecretsFingerprint([
-      { name: "STRIPE_API_KEY", value: "sk_live_51H8xQ2abcdef" },
+      { name: "STRIPE_API_KEY", value: "sk_live_51H8xQ2abcdef", updatedAt: 5 },
     ]);
     expect(fp).not.toContain("sk_live");
     expect(fp).toMatch(/^[0-9a-f]+$/);
   });
 
-  it("distinguishes two secrets whose values were swapped between names", () => {
-    // A digest keyed only on the value set would collide here, and the two are
-    // materially different environments.
+  it("distinguishes two names whose rotation markers were swapped", () => {
+    // The marker is per-NAME, so moving markers between names is a different
+    // delivered set even though the multiset of markers matches.
     const a = deliveredSecretsFingerprint([
-      { name: "A_KEY", value: "one" },
-      { name: "B_KEY", value: "two" },
+      { name: "A_KEY", value: "one", updatedAt: 1 },
+      { name: "B_KEY", value: "two", updatedAt: 2 },
     ]);
     const b = deliveredSecretsFingerprint([
-      { name: "A_KEY", value: "two" },
-      { name: "B_KEY", value: "one" },
+      { name: "A_KEY", value: "one", updatedAt: 2 },
+      { name: "B_KEY", value: "two", updatedAt: 1 },
     ]);
     expect(a).not.toBe(b);
+  });
+
+  it("still resumes against a backend that sends no rotation marker", () => {
+    // The deploy window: name-only identity, so the session keeps resuming and
+    // simply does not fork on rotation until the backend ships. Never a throw,
+    // and never a fingerprint that churns every turn.
+    const first = deliveredSecretsFingerprint([
+      { name: "LEGACY_KEY", value: "v1" },
+    ]);
+    const second = deliveredSecretsFingerprint([
+      { name: "LEGACY_KEY", value: "v2" },
+    ]);
+    expect(second).toBe(first);
+    expect(first).toMatch(/^[0-9a-f]+$/);
   });
 });
 
