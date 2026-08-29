@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   planScenarioSandbox,
   readComputerSandboxMode,
+  shouldWarnSecretsUndelivered,
 } from "../scenario-runtime-config.js";
 
 /**
@@ -124,5 +125,68 @@ describe("planScenarioSandbox", () => {
         ephemeralCloudAvailable: false,
       })
     ).toEqual({ action: "none" });
+  });
+});
+
+/**
+ * MATERIALIZED secrets resolved with nowhere legitimate to put them.
+ *
+ * The drop itself is correct and must stay: `resolveHostTools` reads
+ * `secretEnv` only inside its `sandboxBinding` branch, because a materialized
+ * value becomes a real environment variable in whatever box runs the command,
+ * and a project's credential belongs only in a box the project provisioned. A
+ * direct (non-scenario) environment chat's bash runs on the member's own
+ * machine or a shared remote runner.
+ *
+ * What these pin is that the drop is NARRATED. Silence is what turned a
+ * deliberate refusal into a tester debugging a 401 against a credential they
+ * can see selected in the environment editor.
+ */
+describe("shouldWarnSecretsUndelivered", () => {
+  const base = {
+    secretCount: 2,
+    hasSandboxBinding: false,
+    harness: null as string | null,
+  };
+
+  it("warns for a direct environment chat — the case that went silent", () => {
+    expect(shouldWarnSecretsUndelivered(base)).toBe(true);
+  });
+
+  it("stays quiet when a project-provisioned box will receive them", () => {
+    // The scenario path: the secrets are delivered, so a notice would be a lie.
+    expect(
+      shouldWarnSecretsUndelivered({ ...base, hasSandboxBinding: true })
+    ).toBe(false);
+  });
+
+  it("stays quiet on a harness turn, which delivers them another way", () => {
+    // `run-harness-turn` fetches its own secrets and hands them over as
+    // `sessionEnv`, with no `sandboxBinding` involved. Keying the warning on
+    // the binding alone would fire on EVERY harness turn — the loudest possible
+    // false alarm, on the path where delivery actually works.
+    expect(
+      shouldWarnSecretsUndelivered({ ...base, harness: "claude-code" })
+    ).toBe(false);
+    expect(
+      shouldWarnSecretsUndelivered({
+        ...base,
+        harness: "claude-code",
+        hasSandboxBinding: true,
+      })
+    ).toBe(false);
+  });
+
+  it("stays quiet when there was nothing to deliver", () => {
+    // The overwhelmingly common turn: no materialized secrets at all. A notice
+    // here would tell every user their secrets went missing when they have
+    // none, and brokered-only environments are exactly this case — brokered
+    // values are injected outside the box and never enter `secretEnv`.
+    expect(shouldWarnSecretsUndelivered({ ...base, secretCount: 0 })).toBe(
+      false
+    );
+    expect(shouldWarnSecretsUndelivered({ ...base, secretCount: -1 })).toBe(
+      false
+    );
   });
 });

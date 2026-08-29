@@ -236,6 +236,8 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
     "This conversation is still running on the computer image it started with; a newer build is available and will be used by your next conversation.",
   sandbox_unavailable:
     "This conversation's bash runs in a disposable cloud sandbox, but this inspector can't execute disposable sandboxes. The conversation continues without bash.",
+  secrets_undelivered:
+    "This environment's materialized secrets weren't delivered: they are only set in a sandbox the project provisions, and this conversation doesn't have one. Commands that need them will fail.",
 };
 
 // SEP-1865 App-Provided Tools: opaque alias shape minted by

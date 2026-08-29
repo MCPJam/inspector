@@ -132,6 +132,13 @@ const SANDBOX_NOTICE_MODEL_CONTEXT: Record<SandboxNoticeReason, string> = {
     "bash tool this conversation. Do not claim to have run commands or " +
     "inspected files; if a step needs a shell, say plainly that it can't be " +
     "done here.",
+  secrets_undelivered:
+    "This environment selects one or more MATERIALIZED project secrets, but " +
+    "this conversation has no project-provisioned sandbox to receive them, so " +
+    "they were NOT set and no command you run can see them. Do not try to " +
+    "work around it by asking the user to paste a credential into the chat. " +
+    "If a step needs one of those secrets, say plainly that it is unavailable " +
+    "in this conversation.",
 };
 
 /**

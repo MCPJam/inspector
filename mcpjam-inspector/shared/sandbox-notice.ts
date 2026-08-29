@@ -33,7 +33,28 @@ export type SandboxNoticeReason =
    * Unlike the two reasons above, this one is minted by the INSPECTOR, not the
    * control plane — there is no backing Convex notice row and nothing to ack.
    */
-  | "sandbox_unavailable";
+  | "sandbox_unavailable"
+  /**
+   * The environment selected MATERIALIZED secrets, they were resolved for this
+   * turn, and there is no project-provisioned box to put them in — so they were
+   * NOT delivered and no command this turn can see them.
+   *
+   * Not delivering is the correct behaviour, not a bug to route around: a
+   * materialized value becomes a real environment variable in whatever box runs
+   * the command, and the only boxes allowed to hold a project's credential are
+   * the ones the project provisioned. A direct chat's bash runs on the member's
+   * own machine or a shared remote runner, so putting it there would leak the
+   * credential onto hardware the project does not control.
+   *
+   * What was wrong was doing it in silence. A tester who selected
+   * `STRIPE_API_KEY` and watched `stripe` fail with a 401 has no way to learn
+   * that the value was fetched and then dropped by design.
+   *
+   * INSPECTOR-minted, like `sandbox_unavailable`: no backing Convex row, and
+   * nothing to ack. Brokered secrets are unaffected — they are injected outside
+   * the box and never travel this path.
+   */
+  | "secrets_undelivered";
 
 export interface SandboxNoticeInfo {
   reason: SandboxNoticeReason;
@@ -50,6 +71,7 @@ const SANDBOX_NOTICE_REASONS: ReadonlySet<SandboxNoticeReason> = new Set([
   "sandbox_reset",
   "stale_image",
   "sandbox_unavailable",
+  "secrets_undelivered",
 ]);
 
 export function isSandboxNoticeReason(

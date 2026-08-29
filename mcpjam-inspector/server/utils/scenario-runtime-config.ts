@@ -185,6 +185,46 @@ export function readComputerSandboxMode(
   return mode === "ephemeral" || mode === "unavailable" ? mode : null;
 }
 
+/**
+ * Whether this turn resolved MATERIALIZED secrets it then has nowhere to put.
+ *
+ * `resolveHostTools` reads `secretEnv` only inside its `sandboxBinding` branch,
+ * deliberately: a materialized value becomes a real environment variable in
+ * whatever box runs the command, and the only boxes allowed to hold a project's
+ * credential are the ones the project provisioned. A direct (non-scenario)
+ * environment chat never gets one — `planScenarioSandbox` provisions for
+ * scenario sessions only — so its bash runs on the member's own machine or a
+ * shared remote runner, where a project credential must not go.
+ *
+ * The drop is therefore correct. Doing it in SILENCE was not: the value is
+ * fetched, handed over and discarded with nothing said, so a tester who
+ * selected `STRIPE_API_KEY` sees `stripe` fail with a 401 and no way to connect
+ * the two.
+ *
+ * Pure, and separate from the mint, for the reason `planScenarioSandbox` is:
+ * the effect is one assignment, while getting the CONDITION wrong is either a
+ * false alarm on every harness turn or silence on the case that needs the
+ * warning. The predicate is the part worth testing.
+ *
+ * Harness turns are excluded because they are not affected — `run-harness-turn`
+ * delivers its own secrets as `sessionEnv`. Brokered secrets never reach this
+ * decision at all: they are injected outside the box and never enter the
+ * inspector's `secretEnv`.
+ */
+export function shouldWarnSecretsUndelivered(args: {
+  /** How many MATERIALIZED secrets this turn resolved. */
+  secretCount: number;
+  /** Whether a project-provisioned box is bound to this turn. */
+  hasSandboxBinding: boolean;
+  /** The harness this turn runs, if any — harness delivery is a separate path. */
+  harness: string | null | undefined;
+}): boolean {
+  if (args.secretCount <= 0) return false;
+  if (args.hasSandboxBinding) return false;
+  if (args.harness) return false;
+  return true;
+}
+
 export interface ScenarioSandboxPlan {
   /**
    * `provision` — reserve the per-conversation box, then bind bash to it.

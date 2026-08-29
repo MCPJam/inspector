@@ -63,9 +63,11 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
   planScenarioSandbox,
+  shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
   type ScenarioEnvironmentRuntime,
@@ -1360,6 +1362,47 @@ chatV2.post("/", async (c) => {
         );
         suppressComputerResource = true;
       }
+    }
+
+    // MATERIALIZED secrets resolved, and nowhere legitimate to put them.
+    //
+    // `resolveHostTools` reads `secretEnv` ONLY inside its `sandboxBinding`
+    // branch, on purpose: a materialized value becomes a real environment
+    // variable in whatever box runs the command, and the only boxes allowed to
+    // hold a project's credential are the ones the project provisioned. A
+    // direct (non-scenario) environment chat never gets one — `planScenarioSandbox`
+    // provisions for scenario sessions only — so its bash runs on the member's
+    // own machine or a shared remote runner, and delivering there would put the
+    // project's credential on hardware the project does not control.
+    //
+    // So the DROP is correct and stays. What was wrong is that it happened in
+    // silence: the value was fetched, handed over, and discarded with nothing
+    // said, leaving a tester to debug a 401 from a credential they can see
+    // selected in the environment editor.
+    //
+    // Harness turns are excluded because they are not affected: `run-harness-turn`
+    // fetches its own secrets and delivers them as `sessionEnv`, so a notice
+    // there would be a false alarm. Brokered secrets never reach this code at
+    // all — they are injected outside the box — so this speaks only for the
+    // mode that actually went missing.
+    if (
+      shouldWarnSecretsUndelivered({
+        secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
+        hasSandboxBinding: Boolean(sandboxBinding),
+        harness: resolvedExecution.harness,
+      })
+    ) {
+      getRequestLogger(c, "routes.web.chat-v2").event(
+        "chat.secrets.undelivered",
+        {
+          // COUNT ONLY. Never a name, and never a value: this row is one
+          // `secretScrubber` miss away from being the leak the whole feature
+          // exists to prevent, and a count answers the operational question.
+          secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
+          isScenarioSession,
+        },
+      );
+      sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
     }
 
     const builtInTools = resolveHostTools(
