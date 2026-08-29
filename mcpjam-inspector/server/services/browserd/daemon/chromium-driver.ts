@@ -15,10 +15,11 @@
  * L2 (settle-before-capture) and L3 (state token on every observation) are wired
  * in here from the pure helpers in PR (c1).
  */
-import type {
-  BrowserAction,
-  BrowserCommand,
-  BrowserCommandResult,
+import {
+  DEFAULT_QUEUE_KEY,
+  type BrowserAction,
+  type BrowserCommand,
+  type BrowserCommandResult,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { DriverContext, DriverPage } from "./browser-page";
@@ -30,8 +31,13 @@ import {
   type SettleSteps,
 } from "./settle";
 
-/** The tab a tab-less (whole-session) command operates on. */
-const DEFAULT_TAB = "@default";
+/**
+ * The tab a tab-less (whole-session) command operates on. It MUST equal the
+ * command queue's `queueKeyFor` default (`DEFAULT_QUEUE_KEY`): otherwise an
+ * explicit `tabId` equal to either name would drive this same page from a
+ * separate FIFO and race the tab-less commands (P1).
+ */
+const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
 
 interface TabEntry {
   page: DriverPage;
@@ -59,11 +65,27 @@ export class ChromiumDriver implements BrowserDriver {
     const action = command.action;
     switch (action.kind) {
       case "navigate":
-        return this.afterNavigation(tabId, async (page) => page.goto(action.url));
+        // `navigate` is the only verb that may CREATE a tab. `newTab` (open a
+        // distinct tab) is multi-tab territory deferred to W3; reject it rather
+        // than silently replacing the current tab's page (P2).
+        if (action.newTab) {
+          return { ok: false, error: "unimplemented_in_w1: navigate/newTab" };
+        }
+        return this.navigateVerb(tabId, await this.getOrCreateTab(tabId), (page) =>
+          page.goto(action.url),
+        );
       case "back":
-        return this.afterNavigation(tabId, async (page) => page.goBack());
-      case "reload":
-        return this.afterNavigation(tabId, async (page) => page.reload());
+      case "reload": {
+        // back/reload act on an EXISTING tab only — an unknown tabId is an error,
+        // not a reason to conjure a fresh about:blank page (P2).
+        const entry = this.tabs.get(tabId);
+        if (!entry || entry.page.isClosed()) {
+          return { ok: false, error: `unknown_tab: ${tabId}` };
+        }
+        return this.navigateVerb(tabId, entry, (page) =>
+          action.kind === "back" ? page.goBack() : page.reload(),
+        );
+      }
       case "observe":
         return this.observe(tabId, action);
       case "act":
@@ -74,22 +96,24 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   /**
-   * Run a navigation, bump the tab's nav counter, settle the page (L2), and
-   * return the post-settle observation with its state token (L3). Every W1
-   * navigating verb funnels through here so settle + token are never skipped.
+   * Run a navigation on an already-resolved tab, bump its nav counter, settle
+   * the page (L2), and return the post-settle observation with its state token
+   * (L3). Every W1 navigating verb funnels through here so settle + token are
+   * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  private async afterNavigation(
+  private async navigateVerb(
     tabId: string,
+    entry: TabEntry,
     navigate: (page: DriverPage) => Promise<void>,
   ): Promise<BrowserCommandResult> {
-    const entry = await this.getOrCreateTab(tabId);
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
-    const result = await this.observation(tabId, entry, {
-      url: entry.page.url(),
-    });
-    return { ...result, settled };
+    const domSignal = await entry.page.domStructureSignal();
+    return {
+      ...this.observation(tabId, entry, { url: entry.page.url() }, domSignal),
+      settled,
+    };
   }
 
   private async observe(
@@ -97,25 +121,59 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "observe" }>,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
-    if (!entry) {
+    if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     switch (action.mode) {
-      case "url":
-        return this.observation(tabId, entry, { url: entry.page.url() });
+      case "url": {
+        const domSignal = await entry.page.domStructureSignal();
+        return this.observation(tabId, entry, { url: entry.page.url() }, domSignal);
+      }
+      case "dom": {
+        // The token is computed from the SAME read returned as output, so they
+        // cannot disagree.
+        const domSignal = await entry.page.domStructureSignal();
+        return this.observation(tabId, entry, { dom: domSignal }, domSignal);
+      }
       case "screenshot":
-        return this.observation(tabId, entry, {
-          screenshot: await entry.page.screenshotBase64(),
-        });
-      case "dom":
-        return this.observation(tabId, entry, {
-          dom: await entry.page.domStructureSignal(),
-        });
+        return this.observeScreenshot(tabId, entry);
       case "a11y":
       case "console":
       case "webmcp_tools":
         return { ok: false, error: `unimplemented_in_w1: observe/${action.mode}` };
     }
+  }
+
+  /**
+   * Capture a screenshot whose state token provably describes the SAME frame the
+   * image shows (P1). The DOM is sampled before and after the capture; if it
+   * shifted mid-capture, the image and a fresh token would disagree — an act
+   * chosen from the stale image could then slip past `guardStaleness` — so we
+   * retry, and if the page will not hold still we return the frame with
+   * `settled: false` (its token from the post-capture read) so the caller
+   * re-observes rather than pinning an act to it.
+   */
+  private async observeScreenshot(
+    tabId: string,
+    entry: TabEntry,
+  ): Promise<BrowserCommandResult> {
+    const STABLE_ATTEMPTS = 2;
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      const before = await entry.page.domStructureSignal();
+      const screenshot = await entry.page.screenshotBase64();
+      const after = await entry.page.domStructureSignal();
+      if (before === after) {
+        return this.observation(tabId, entry, { screenshot }, after);
+      }
+    }
+    // Would not stabilise within budget: hand back the frame but flag it unsettled
+    // so nothing pins an act to a possibly-stale image.
+    const screenshot = await entry.page.screenshotBase64();
+    const after = await entry.page.domStructureSignal();
+    return {
+      ...this.observation(tabId, entry, { screenshot }, after),
+      settled: false,
+    };
   }
 
   async currentStateToken(tabId: string | undefined) {
@@ -143,17 +201,22 @@ export class ChromiumDriver implements BrowserDriver {
     await this.context.close().catch(() => {});
   }
 
-  /** Build an observation result carrying the tab's fresh L3 state token. */
-  private async observation(
+  /**
+   * Build an observation result whose L3 state token is computed from the SAME
+   * DOM signal the caller captured the output against — passed in, never re-read
+   * here, so the token can never describe a different frame than the output (P1).
+   */
+  private observation(
     tabId: string,
     entry: TabEntry,
     output: Record<string, unknown>,
-  ): Promise<BrowserCommandResult> {
+    domSignal: string,
+  ): BrowserCommandResult {
     const stateToken = computeStateToken({
       tabId,
       navCounter: entry.navCounter,
       url: entry.page.url(),
-      domSignal: await entry.page.domStructureSignal(),
+      domSignal,
     });
     return { ok: true, output, stateToken };
   }

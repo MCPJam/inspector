@@ -19,7 +19,6 @@ import {
 import { clearStaleSingletonLock } from "./profile-lock";
 
 const NAV_TIMEOUT_MS = 30_000;
-const NETWORK_IDLE_TIMEOUT_MS = 8_000;
 
 /** A structural skeleton of the DOM — cheap, and changes when structure does. */
 const DOM_SIGNAL_FN = `() => {
@@ -46,7 +45,7 @@ function abortPromise(signal: AbortSignal): Promise<never> {
 // Playwright's Page is structurally richer than DriverPage needs; type the
 // handle loosely and adapt, rather than dragging Playwright's types across the
 // boundary.
-type AnyPage = {
+export type AnyPage = {
   goto(url: string, options?: unknown): Promise<unknown>;
   reload(options?: unknown): Promise<unknown>;
   goBack(options?: unknown): Promise<unknown>;
@@ -58,7 +57,7 @@ type AnyPage = {
   isClosed(): boolean;
 };
 
-function wrapPage(page: AnyPage): DriverPage {
+export function wrapPage(page: AnyPage): DriverPage {
   return {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
@@ -70,14 +69,15 @@ function wrapPage(page: AnyPage): DriverPage {
       await page.goBack({ waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
     async waitForNetworkIdle(signal) {
-      // A network that never idles must not throw here — settle's maxWait is the
-      // real backstop, and its abort (via abortPromise) is what ends the wait.
-      await Promise.race([
-        page
-          .waitForLoadState("networkidle", { timeout: NETWORK_IDLE_TIMEOUT_MS })
-          .catch(() => {}),
-        abortPromise(signal),
-      ]);
+      // settle's maxWait (via the abort signal) is the SOLE budget — no inner
+      // timeout. A page that never idles stays pending until the signal aborts,
+      // and then this rejects, so `settlePage` reports `settled: false`. The
+      // earlier version gave the wait its own 8s timeout and swallowed it, which
+      // turned a never-quiet page into a false `settled: true` (P1). Guard the
+      // losing promise so it does not surface as an unhandled rejection.
+      const idle = page.waitForLoadState("networkidle", { timeout: 0 });
+      idle.catch(() => {});
+      await Promise.race([idle, abortPromise(signal)]);
     },
     async requestAnimationFrame(signal) {
       await Promise.race([

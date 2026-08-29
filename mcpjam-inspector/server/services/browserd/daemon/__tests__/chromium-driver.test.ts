@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
+import { shortHash } from "../state-token";
 import type { DriverContext, DriverPage } from "../browser-page";
 import type { BrowserCommand } from "../../protocol";
 
@@ -9,11 +10,18 @@ interface FakePage extends DriverPage {
   readonly calls: { goto: string[]; reload: number; goBack: number; shots: number };
 }
 
-function fakePage(init: { url?: string; dom?: string; hangNetwork?: boolean } = {}): FakePage {
+function fakePage(init: {
+  url?: string;
+  dom?: string;
+  hangNetwork?: boolean;
+  /** Called inside screenshotBase64 — used to simulate a DOM shift mid-capture. */
+  onScreenshot?: (page: { setDom: (d: string) => void }) => void;
+} = {}): FakePage {
   let url = init.url ?? "about:blank";
   let dom = init.dom ?? "0BODY";
   let closed = false;
   const calls = { goto: [] as string[], reload: 0, goBack: 0, shots: 0 };
+  const setDom = (d: string) => { dom = d; };
   return {
     async goto(u) { calls.goto.push(u); url = u; },
     async reload() { calls.reload++; },
@@ -26,12 +34,16 @@ function fakePage(init: { url?: string; dom?: string; hangNetwork?: boolean } = 
     },
     async requestAnimationFrame() {},
     async domStructureSignal() { return dom; },
-    async screenshotBase64() { calls.shots++; return "BASE64PNG"; },
+    async screenshotBase64() {
+      calls.shots++;
+      init.onScreenshot?.({ setDom });
+      return "BASE64PNG";
+    },
     url: () => url,
     close: async () => { closed = true; },
     isClosed: () => closed,
     setUrl: (u) => { url = u; },
-    setDom: (d) => { dom = d; },
+    setDom,
     calls,
   };
 }
@@ -67,7 +79,21 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     expect(res.ok).toBe(true);
     expect(res.output).toEqual({ url: "https://x.test/" });
     expect(res.settled).toBe(true);
-    expect(res.stateToken).toMatchObject({ tabId: "@default", navCounter: 1 });
+    // tab-less commands resolve to the shared session key, which MUST match the
+    // queue's default key so they cannot race an explicit tabId of the same name.
+    expect(res.stateToken).toMatchObject({ tabId: "@session", navCounter: 1 });
+  });
+
+  it("uses the queue's default key for tab-less commands, so an explicit @session is the SAME tab (P1)", async () => {
+    const page = fakePage();
+    const { context, created } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" })); // tab-less
+    const viaExplicit = await driver.execute(
+      cmd({ kind: "observe", mode: "url" }, "@session"),
+    );
+    expect(created).toHaveLength(1); // one page, not two racing FIFOs
+    expect(viaExplicit.output).toEqual({ url: "https://x.test/" });
   });
 
   it("dispatches back and reload to the page", async () => {
@@ -122,6 +148,60 @@ describe("ChromiumDriver — observe", () => {
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
     expect(res).toMatchObject({ ok: false, error: "unimplemented_in_w1: observe/a11y" });
+  });
+});
+
+describe("ChromiumDriver — screenshot token binds to the captured frame (P1)", () => {
+  it("returns a token computed from the DOM the image was captured against", async () => {
+    const page = fakePage({ url: "https://x.test/", dom: "0BODY>1MAIN" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    expect(res.output).toEqual({ screenshot: "BASE64PNG" });
+    expect(res.stateToken!.domHash).toBe(shortHash("0BODY>1MAIN")); // matches the frame
+    expect(res.settled).toBeUndefined(); // stable capture, not flagged
+  });
+
+  it("flags settled:false when the DOM keeps shifting mid-capture (no stale image pinned)", async () => {
+    let n = 0;
+    const page = fakePage({
+      dom: "A",
+      onScreenshot: ({ setDom }) => setDom(`B${++n}`), // a new layout on every shot
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    expect(res.ok).toBe(true);
+    expect(res.settled).toBe(false); // caller must re-observe, not pin an act
+    // the token still describes the post-capture DOM, never an earlier one
+    expect(res.stateToken!.domHash).toBe(shortHash(`B${n}`));
+  });
+});
+
+describe("ChromiumDriver — only navigate may create or replace a tab (P2)", () => {
+  it("rejects navigate newTab:true instead of silently replacing the current tab", async () => {
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/", newTab: true }),
+    );
+    expect(res).toMatchObject({ ok: false, error: "unimplemented_in_w1: navigate/newTab" });
+  });
+
+  it("returns unknown_tab for back/reload on a tab that was never created", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    expect(await driver.execute(cmd({ kind: "back" }, "ghost"))).toMatchObject({
+      ok: false,
+      error: "unknown_tab: ghost",
+    });
+    expect(await driver.execute(cmd({ kind: "reload" }, "ghost"))).toMatchObject({
+      ok: false,
+      error: "unknown_tab: ghost",
+    });
+    expect(created).toHaveLength(0); // no about:blank page was conjured
   });
 });
 

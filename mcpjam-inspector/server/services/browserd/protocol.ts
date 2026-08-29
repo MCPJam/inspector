@@ -25,6 +25,15 @@ export type BootId = string;
 /** Where a command originated. All sources share one per-tab queue and timeline. */
 export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
 
+/**
+ * The FIFO/tab key a tab-less (whole-session) command uses. The command queue
+ * and the driver MUST agree on this: if the queue serialized tab-less commands
+ * under one key while the driver drove them on a differently-named page, an
+ * explicit `tabId` equal to either name could target the same page from two
+ * independent FIFOs and race. One constant, both layers.
+ */
+export const DEFAULT_QUEUE_KEY = "@session";
+
 /** A selector target for a `browser_act` verb. */
 export type BrowserActTarget =
   | { coordinates: [number, number] }
