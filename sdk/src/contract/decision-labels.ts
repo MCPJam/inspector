@@ -122,11 +122,18 @@ export const STAGE_REASON_LABELS = Object.freeze({
   predicateFailed: "a check on the result did not hold",
   observed: "the evidence was inspected and the stage held",
   impliedByLaterEvidence: "a later stage's success implies it",
-  judgeObserved: "the judge scored at or above the threshold",
-  judgePartial: "the judge scored inside the partial band",
-  judgeFailed: "the judge scored below the partial floor",
-  judgePending: "a judge verdict is owed and has not arrived",
-  judgeNotRequested: "no judge verdict was ever owed",
+  // "LLM judge", not "judge". These five are the only reasons in the
+  // vocabulary decided by a model rather than by a deterministic rule, and a
+  // reader who cannot tell the two apart cannot weigh the row: an assertion
+  // that failed and an advisory verdict that came in low are different kinds
+  // of claim. The provenance belongs in the label because these strings are
+  // the ONE place all four renderers read from.
+  judgeObserved: "the LLM judge scored at or above the threshold",
+  judgePartial:
+    "the LLM judge scored inside the partial band — above the floor, below the threshold",
+  judgeFailed: "the LLM judge scored below the partial floor",
+  judgePending: "an LLM judge verdict is owed and has not arrived",
+  judgeNotRequested: "no LLM judge verdict was ever owed",
 } satisfies Record<StageReason, string>);
 
 /**
