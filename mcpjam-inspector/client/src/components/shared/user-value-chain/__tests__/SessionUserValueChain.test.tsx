@@ -9,6 +9,7 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { STAGE_REASON_LABELS } from "@mcpjam/sdk/contract";
 import { SessionUserValueChain } from "../SessionUserValueChain";
 import type {
   ChatSessionStageDerivation,
@@ -122,8 +123,12 @@ describe("the six rows", () => {
 
   it("shows the reason a stage landed where it did", () => {
     render(<SessionUserValueChain derivation={derivation()} />);
+    // Asserted against the LABEL, not a copy of its wording. The claim is that
+    // the row renders its reason's published label — which is what makes the
+    // four renderers say the same thing — and a hardcoded sentence pins the
+    // copy instead, so polishing the words breaks a test about the plumbing.
     expect(document.body.textContent).toContain(
-      "no judge verdict was ever owed"
+      STAGE_REASON_LABELS.judgeNotRequested
     );
   });
 
