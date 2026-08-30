@@ -18,6 +18,7 @@ import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -314,6 +315,14 @@ export async function createHonoApp() {
     app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
   }
   app.route("/api/web", webRoutes);
+  // Browser Panel data plane (W4): watch the browser an agent is driving, and
+  // take control when a login or a challenge needs a person. Auth is the
+  // Convex-minted browser token, so it is mounted like the other computer
+  // routes rather than inside the web router's session auth. Dark until the
+  // W7 exposure gate: the panel is only reachable once a desktop computer
+  // exists, and nothing links to it yet. Mirror of the mount in server/index.ts.
+  app.route("/api/web/computers/browser", computerBrowserPanel);
+
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from
   // `createNodeWebSocket`; the upload route carries its own 30MB bodyLimit (the

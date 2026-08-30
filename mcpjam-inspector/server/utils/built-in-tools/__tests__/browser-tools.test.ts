@@ -359,3 +359,93 @@ describe("buildBrowserTools — command shapes", () => {
     expect(out.note).toContain("still loading");
   });
 });
+
+describe("buildBrowserTools — a human has the browser (W4/L6)", () => {
+  const LEASE_BLOCKED: SendResult = {
+    status: "lease_blocked",
+    bootId: "boot-1",
+  };
+
+  it("tells the model to WAIT, and says nothing was observed", async () => {
+    // A bare "blocked" reads as a transient error and models retry it in a
+    // loop; the useful information is that a person is mid-flow and that no
+    // frame was captured, so waiting is correct and re-observing is required.
+    const { result } = build({}, async () => LEASE_BLOCKED);
+    const out = await run(result!.tools, "browser_observe", {});
+    expect(out.error).toContain("browser_in_use");
+    expect(out.error).toContain("Wait");
+    expect(out.error).toMatch(/nothing was observed/i);
+  });
+
+  it("drops cached page tokens, so the next act cannot be pinned to a pre-handoff page", async () => {
+    const commands: any[] = [];
+    let reply: SendResult = OK;
+    const { result } = build({}, async (command) => {
+      commands.push(command);
+      return reply;
+    });
+
+    // 1. Observe normally — the turn now holds a token for this tab.
+    await run(result!.tools, "browser_observe", {});
+    // 2. An act while nothing has happened IS pinned to it (L3 working).
+    await run(result!.tools, "browser_act", {
+      verb: "click",
+      coordinates: [1, 2],
+    });
+    expect(commands.at(-1).action.expectedState).toBeDefined();
+
+    // 3. A person takes the browser.
+    reply = LEASE_BLOCKED;
+    await run(result!.tools, "browser_observe", {});
+
+    // 4. The next act must NOT carry the pre-handoff token: whatever we saw
+    //    describes a page a human has since navigated or logged into.
+    reply = OK;
+    await run(result!.tools, "browser_act", {
+      verb: "click",
+      coordinates: [1, 2],
+    });
+    expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
+  it("drops cached tokens when the daemon reports the handoff on the way back", async () => {
+    const commands: any[] = [];
+    let reply: SendResult = OK;
+    const { result } = build({}, async (command) => {
+      commands.push(command);
+      return reply;
+    });
+    await run(result!.tools, "browser_observe", {});
+
+    // The daemon attaches the note to the FIRST result after a resume.
+    reply = {
+      status: "ok",
+      result: {
+        ok: true,
+        output: { url: "https://x.test", handoffNote: "A person took control…" },
+        stateToken: {
+          tabId: "@session",
+          navCounter: 9,
+          urlHash: "u9",
+          domHash: "d9",
+        },
+      },
+    };
+    const noted = await run(result!.tools, "browser_observe", {});
+    // The note is presented to the model at the top level, like every other
+    // observation field — it is something the model must read, not metadata.
+    expect(noted).toMatchObject({ handoffNote: expect.any(String) });
+
+    // That observation is FRESH, so its own token survives the drop and the
+    // very next act is pinned again — the turn is caught up in one step, not
+    // left with L3 disabled for the rest of it.
+    reply = OK;
+    await run(result!.tools, "browser_act", {
+      verb: "click",
+      coordinates: [1, 2],
+    });
+    expect(commands.at(-1).action.expectedState).toMatchObject({
+      navCounter: 9,
+    });
+  });
+});

@@ -22,7 +22,11 @@ export type BrowserdCommandResponse =
   | { status: "expired"; bootId: string }
   | { status: "at_capacity"; bootId: string }
   | { status: "stale_observation"; result?: BrowserCommandResult; bootId: string }
-  | { status: "unknown_boot"; bootId: string };
+  | { status: "unknown_boot"; bootId: string }
+  /** A person is holding (or has parked) the browser — see `daemon/lease.ts`.
+   *  Not an error: the correct response is to wait and tell the user, which is
+   *  why it is a normal outcome variant rather than a thrown client error. */
+  | { status: "lease_blocked"; lease: "held" | "parked"; holder?: string; bootId: string };
 
 export interface BrowserdHealth {
   ok: boolean;
@@ -37,6 +41,12 @@ export type BrowserdStatus =
   | { kind: "ok"; bootId: string }
   | { kind: "unhealthy"; bootId?: string; detail?: string }
   | { kind: "unauthorized" };
+
+/** The daemon's handoff-lease state, as this client reports it. */
+export type BrowserdLeaseState =
+  | { state: "free"; bootId: string }
+  | { state: "held"; holder: string; expiresAt?: number; bootId: string }
+  | { state: "parked"; holder: string; bootId: string };
 
 /** browserd answered with a status the client cannot interpret (e.g. 401/400).
  *  These are bugs in the boot wiring, not normal protocol signals, so they throw
@@ -118,6 +128,75 @@ export class BrowserdClient {
     }
   }
 
+  /** Read the handoff lease without changing it. */
+  async lease(): Promise<BrowserdLeaseState> {
+    const res = await this.request("/v1/lease", { method: "GET" }, true);
+    return this.leaseFrom(res, await this.json(res));
+  }
+
+  /**
+   * Act on the handoff lease. `acquire` can legitimately fail (someone else
+   * holds it), and that is reported as `{ took: false }` rather than thrown:
+   * a UI that treated a refusal as an error would be as wrong as one that
+   * treated it as success.
+   */
+  async leaseAction(args: {
+    action: "acquire" | "heartbeat" | "resume";
+    holder: string;
+    ttlMs?: number;
+  }): Promise<{ took: boolean; lease: BrowserdLeaseState }> {
+    const res = await this.request(
+      "/v1/lease",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      },
+      true,
+    );
+    const body = await this.json(res);
+    const lease = this.leaseFrom(res, body);
+    if (res.status === 200) return { took: true, lease };
+    if (res.status === 409) return { took: false, lease };
+    throw new BrowserdClientError(
+      `browserd rejected the lease action (HTTP ${res.status}${
+        typeof body.error === "string" ? `, ${body.error}` : ""
+      })`,
+      res.status,
+    );
+  }
+
+  /** Parse a `{ lease, bootId }` body, failing closed to `free` only on a 2xx. */
+  private leaseFrom(
+    res: Response,
+    body: Record<string, unknown>,
+  ): BrowserdLeaseState {
+    if (res.status !== 200 && res.status !== 409) {
+      throw new BrowserdClientError(
+        `browserd lease read failed (HTTP ${res.status})`,
+        res.status,
+      );
+    }
+    const bootId = typeof body.bootId === "string" ? body.bootId : "";
+    const raw = body.lease;
+    if (!raw || typeof raw !== "object") return { state: "free", bootId };
+    const lease = raw as { state?: unknown; holder?: unknown; expiresAt?: unknown };
+    const holder = typeof lease.holder === "string" ? lease.holder : undefined;
+    if (lease.state === "held" && holder) {
+      return {
+        state: "held",
+        holder,
+        expiresAt:
+          typeof lease.expiresAt === "number" ? lease.expiresAt : undefined,
+        bootId,
+      };
+    }
+    if (lease.state === "parked" && holder) {
+      return { state: "parked", holder, bootId };
+    }
+    return { state: "free", bootId };
+  }
+
   /** Send a command and interpret the daemon's reply. */
   async sendCommand(
     command: BrowserCommand,
@@ -146,6 +225,15 @@ export class BrowserdClient {
         return { status: "busy", bootId };
       case 503:
         return { status: "at_capacity", bootId };
+      case 423:
+        // The privacy gate: a person has the browser. Nothing ran and — the
+        // point of enforcing it at the daemon — nothing was observed.
+        return {
+          status: "lease_blocked",
+          lease: body.error === "lease_parked" ? "parked" : "held",
+          holder: typeof body.holder === "string" ? body.holder : undefined,
+          bootId,
+        };
       case 409:
         if (body.error === "stale_observation") {
           return {

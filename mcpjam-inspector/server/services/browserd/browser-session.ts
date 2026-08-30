@@ -186,6 +186,33 @@ export async function ensureBrowserSession(
   );
 }
 
+/**
+ * Same as `ensureBrowserSession`, but for a computer the caller has ALREADY
+ * proven it owns — the Browser Panel, whose short-lived token names the
+ * computer and whose route re-checks the row's owner before calling here.
+ *
+ * It deliberately does not reserve. Reserving is a provisioning and billing
+ * action that belongs to whatever asked for a browser in the first place (a
+ * chat turn, an eval); a panel someone opened to LOOK at a machine must not be
+ * able to conjure one. If the box is merely asleep, the sandbox connect below
+ * resumes it, which is the case the panel actually needs.
+ */
+export async function attachBrowserSession(
+  deps: BrowserSessionDeps,
+  args: {
+    computerId: string;
+    contextMode?: BrowserContextMode;
+    signal?: AbortSignal;
+  },
+): Promise<BrowserSessionHandle> {
+  const contextMode = args.contextMode ?? "persistent";
+  return withKeyedLock(`browser-session:${args.computerId}`, () =>
+    ensureOnComputer(deps, args.computerId, contextMode, {
+      ...(args.signal ? { signal: args.signal } : {}),
+    }),
+  );
+}
+
 /** Verify a looked-up row against the daemon itself; a handle on success. */
 async function tryReuse(
   deps: BrowserSessionDeps,
@@ -235,7 +262,9 @@ async function ensureOnComputer(
   deps: BrowserSessionDeps,
   computerId: string,
   contextMode: BrowserContextMode,
-  args: EnsureBrowserSessionArgs,
+  // Only the signal: the reserve's inputs are consumed by the caller, so this
+  // function cannot accidentally reserve anything.
+  args: { signal?: AbortSignal },
 ): Promise<BrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const lookupArgs = {

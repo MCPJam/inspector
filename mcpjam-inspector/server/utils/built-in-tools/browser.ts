@@ -146,6 +146,20 @@ function unwrapCommand(response: {
       output: response.result?.output,
     };
   }
+  if (response.status === "lease_blocked") {
+    // A person is using this browser right now. Nothing ran and nothing was
+    // observed — the daemon refused before capturing a frame. Say so plainly:
+    // "wait" is the correct behavior, and a model told only "blocked" tends to
+    // retry in a loop.
+    return {
+      ok: false,
+      error:
+        "browser_in_use: a person has taken control of this browser " +
+        "(for example to sign in or solve a challenge). Nothing was run and " +
+        "nothing was observed. Wait for them to hand it back, then re-observe " +
+        "before acting — the page will have moved.",
+    };
+  }
   if (response.status !== "ok") {
     return { ok: false, error: transportError(response.status) };
   }
@@ -165,6 +179,15 @@ function unwrapCommand(response: {
     stateToken: result.stateToken,
     settled: result.settled,
   };
+}
+
+/** Does this result carry the daemon's post-handoff note? (`daemon/lease.ts`) */
+function carriesHandoffNote(output: unknown): boolean {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    typeof (output as { handoffNote?: unknown }).handoffNote === "string"
+  );
 }
 
 function transportError(status: string): string {
@@ -205,7 +228,12 @@ class BrowserTurnState {
   }
 
   rememberToken(tabId: string | undefined, token?: ObservationStateToken): void {
-    if (token) this.tokens.set(tabId ?? "@session", token);
+    if (!token) return;
+    this.tokens.set(tabId ?? "@session", token);
+    // A token minted AFTER the handoff describes the page as it is now, so the
+    // turn is caught up. Leaving the flag set would disable L3 for the rest of
+    // the turn — the opposite of what the loud resume is for.
+    this.staleAfterHandoff = false;
   }
 
   /**
@@ -219,9 +247,21 @@ class BrowserTurnState {
     return this.tokens.get(tabId ?? "@session");
   }
 
+  /**
+   * Drop every cached page token (W4/L6). Called when a person took the
+   * browser: whatever this turn observed before the handoff describes a page
+   * that a human has since navigated, logged into, or closed. Acting on it is
+   * exactly the mistake L3 exists to prevent, and unlike a normal DOM shift
+   * the daemon cannot detect this one for us — the tokens we hold are still
+   * internally consistent, just about the wrong moment.
+   */
   forgetTokens(): void {
     this.tokens.clear();
     this.staleAfterHandoff = true;
+  }
+
+  get handoffPending(): boolean {
+    return this.staleAfterHandoff;
   }
 }
 
@@ -322,6 +362,14 @@ export function buildBrowserTools(
       handle.bootId,
     );
     const outcome = unwrapCommand(response);
+    // W4/L6 — a handoff invalidates everything this turn cached. Two signals
+    // reach us: a refusal while the person still holds the browser, and the
+    // note the daemon attaches to the first result after they hand it back.
+    // Order matters: forget BEFORE remembering, so the fresh token from the
+    // post-handoff observation survives and the turn is immediately caught up.
+    if (response.status === "lease_blocked" || carriesHandoffNote(outcome.output)) {
+      state.forgetTokens();
+    }
     state.rememberToken(args.tabId, outcome.stateToken);
     return { ...outcome, tabId };
   };
