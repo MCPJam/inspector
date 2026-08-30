@@ -72,6 +72,7 @@ export default defineConfig({
     // Tests that exercise SDK host-style seed paths need this defined or the
     // codex/mcpjam templates throw a `ReferenceError`.
     __APP_VERSION__: JSON.stringify("test"),
+    __BUILD_SURFACE__: JSON.stringify("local"),
   },
   plugins: [
     {
