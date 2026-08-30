@@ -515,6 +515,98 @@ describe("judgeEvidenceFromVerdict", () => {
     });
   });
 
+  test("names the partial floor when the floor decided the band", () => {
+    // Review finding: with only the threshold shown, 0.5 against 0.7 reads as
+    // a plain miss and says nothing about why it failed rather than landing in
+    // the partial band. The floor is one of the numbers the decision turned
+    // on, so evidence that omits it cannot explain the claim it supports.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.5,
+        threshold: 0.7,
+        partialFloor: 0.6,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "fail",
+      reasons: [
+        "LLM judge scored 0.5 against a 0.7 threshold and a 0.6 partial floor",
+      ],
+    });
+  });
+
+  test("leaves the floor out of a band it did not decide", () => {
+    // A pass is settled by the threshold alone. Naming a floor there would put
+    // a number in front of a reader that had no part in the outcome.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "pass",
+        score: 0.9,
+        threshold: 0.7,
+        partialFloor: 0.6,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "pass",
+      reasons: ["LLM judge scored 0.9 against a 0.7 threshold"],
+    });
+  });
+
+  test("never rounds a score onto the boundary it fell short of", () => {
+    // Review finding: at two decimals, 0.699 against a 0.7 threshold rendered
+    // as "scored 0.7 against a 0.7 threshold" — evidence flatly contradicting
+    // the `fail` band beside it, with no way for a reader to tell which was
+    // wrong. Precision grows only as far as it must to keep the comparison
+    // true.
+    const evidence = judgeEvidenceFromVerdict({
+      status: "scored",
+      verdict: "fail",
+      score: 0.699,
+      threshold: 0.7,
+    });
+    const [line] = (evidence as { reasons: string[] }).reasons;
+    expect(line).toBe("LLM judge scored 0.699 against a 0.7 threshold");
+    expect(line).not.toContain("scored 0.7 against");
+  });
+
+  test("still reads equal when the score IS the threshold", () => {
+    // The other half: growing precision must not manufacture a difference
+    // where none exists. A score exactly on its threshold should say so.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "pass",
+        score: 0.7,
+        threshold: 0.7,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "pass",
+      reasons: ["LLM judge scored 0.7 against a 0.7 threshold"],
+    });
+  });
+
+  test("still trims float noise from a model-supplied score", () => {
+    // The reason rounding existed at all. A judge can return
+    // 0.42000000000000004, and showing that to a person displays precision the
+    // verdict never had.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "partial",
+        score: 0.42000000000000004,
+        threshold: 0.7,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "partial",
+      reasons: ["LLM judge scored 0.42 against a 0.7 threshold"],
+    });
+  });
+
   test("the judge's own rationale wins over the numbers", () => {
     // Not written by the backend today — a scored case's `reason` is dropped
     // — but read here so the gap closes the moment it is persisted, without
