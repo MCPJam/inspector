@@ -478,3 +478,133 @@ describe("narrowHostComputer", () => {
     });
   });
 });
+
+/**
+ * W3: the `browser` capability. The gates here are what keep a model from
+ * driving a real, signed-in browser on a surface that never thought about
+ * approval — and what keeps a shell off the same box.
+ */
+describe("resolveHostTools — browser", () => {
+  const browserCtx = {
+    ...ctx,
+    browserApprovalDelivery: { kind: "attested" as const },
+  };
+
+  function withFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("is not advertised while the runtime flag is off", () => {
+    withFlag(undefined, () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeUndefined();
+    });
+  });
+
+  it("builds the six verbs when enabled, attested and computer-backed", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        browserCtx,
+      );
+      expect(Object.keys(tools ?? {}).sort()).toEqual([
+        "browser_act",
+        "browser_navigate",
+        "browser_observe",
+        "browser_tabs",
+        "browser_webmcp_invoke",
+        "browser_webmcp_tools",
+      ]);
+    });
+  });
+
+  it("hands the caller the approval classification to merge", () => {
+    withFlag("1", () => {
+      let approvals: { requiredNames: ReadonlySet<string> } | undefined;
+      resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...browserCtx,
+          onBrowserApprovals: (value) => {
+            approvals = value;
+          },
+        },
+      );
+      expect(approvals?.requiredNames.has("browser_act")).toBe(true);
+    });
+  });
+
+  it("advertises NOTHING on a surface that did not attest approval delivery", () => {
+    // The five prepareChatV2 call sites that thread no approvals are safe
+    // BECAUSE of this, without any edit to them.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...ctx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.some((s) => s.id === "browser")).toBe(true);
+    });
+  });
+
+  it("suppresses browser when bash is attached to the same computer", () => {
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx, onToolSuppressed: (info) => suppressed.push(info) },
+      );
+      // bash is KEPT (behavior-preserving for hosts that already had it) and
+      // browser is dropped: one uid, one box — a shell can read the browser's
+      // cookies and its daemon token out of the process environment.
+      expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+      expect(
+        suppressed.find((s) => s.id === "browser")?.reason,
+      ).toContain("same computer");
+    });
+  });
+
+  it("allows the pair when the deployment accepted the trust boundary", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...browserCtx, allowComputerToolCoTenancy: true },
+      );
+      expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+      expect(Object.keys(tools ?? {})).toContain("browser_act");
+    });
+  });
+
+  it("requires a computer, refuses guests, and refuses unbound journey sessions", () => {
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"] }, browserCtx),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isGuest: true },
+        ),
+      ).toBeUndefined();
+      expect(
+        resolveHostTools(
+          { builtInToolIds: ["browser"], computer },
+          { ...browserCtx, isJourneySession: true },
+        ),
+      ).toBeUndefined();
+    });
+  });
+});
