@@ -36,6 +36,31 @@ export function slugifyServerLabel(label: string): string {
   return slug.length > 0 ? slug : "server";
 }
 
+/**
+ * The namespace the desktop filesystem family addresses its skills under.
+ *
+ * Lives here, beside the server slugs, because it is the one prefix those
+ * slugs must never take — see {@link RESERVED_SERVER_SLUGS}.
+ */
+export const LOCAL_SKILL_REF_NAMESPACE = "local";
+
+/**
+ * Namespaces a server slug may not occupy.
+ *
+ * A merged catalog classifies a ref by its first segment, so a server the user
+ * labelled "Local" would slugify straight onto `local/` and every ref of the
+ * form `local/<name>` would resolve to that server. The local skills are then
+ * unreachable and the server's skills answer to a name that is not theirs —
+ * the same squatting that per-origin namespacing exists to prevent, arriving
+ * from our side of the boundary instead of the server's.
+ *
+ * Reserved slugs are seeded into the taken set, so the collision suffix
+ * already in place handles them: a server labelled "Local" gets `local-2`.
+ */
+export const RESERVED_SERVER_SLUGS: readonly string[] = [
+  LOCAL_SKILL_REF_NAMESPACE,
+];
+
 export interface ServerSlugAssignment<T> {
   server: T;
   serverSlug: string;
@@ -75,7 +100,7 @@ export interface ServerSlugAssignment<T> {
 export function assignServerSlugs<
   T extends { serverId: string; serverLabel: string }
 >(servers: readonly T[]): Array<ServerSlugAssignment<T>> {
-  const taken = new Set<string>();
+  const taken = new Set<string>(RESERVED_SERVER_SLUGS);
   const slugById = new Map<string, string>();
   const canonical = [...servers].sort((a, b) =>
     a.serverId < b.serverId ? -1 : a.serverId > b.serverId ? 1 : 0

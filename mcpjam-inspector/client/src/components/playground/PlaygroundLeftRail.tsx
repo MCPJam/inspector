@@ -143,7 +143,8 @@ function ToolsBody({
   // When the previewed host runs a harness (e.g. Claude Code), surface its
   // native built-in tools so the panel isn't empty/tool-less. Resolved once
   // here and fed into BOTH the multi-server pane and the zero-server fallback.
-  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
+  const { tools: harnessBuiltinTools } =
+    useHarnessBuiltinTools(previewedHostId);
   // ENVIRONMENT MODE: the panes below read the browser's own connections,
   // which environment turns never create (the backend connects per message) —
   // so they'd report "No tools found" while tools execute fine in chat. Read

@@ -70,6 +70,19 @@ export type PromoteSessionDetailState = {
   error: string | null;
   usedServerIds: string[];
   selectedServers: string[];
+  /**
+   * D8f2. True when promoting this session copies a THIRD PARTY's real words
+   * into a durable, member-owned artifact — a real User Testing transcript.
+   *
+   * SERVER-DERIVED (`chatSessionPromote:getChatSessionPromoteDetail`), never
+   * inferred here from a source type: the carve-out for synthetic sessions is
+   * a policy decision and belongs where the policy lives. Absent on adapters
+   * that predate the field and on surfaces the question does not apply to —
+   * a Playground session is the promoter's own words, and asking someone to
+   * acknowledge copying those is a dialog nobody reads, which teaches people
+   * to click past the one that matters.
+   */
+  requiresContentTransferAcknowledgement?: boolean;
 };
 
 type ConvertSessionDialogCoreProps = {
@@ -166,6 +179,13 @@ export function ConvertSessionDialogCore({
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [newSuiteName, setNewSuiteName] = useState("");
   const [updateSuiteEnvironment, setUpdateSuiteEnvironment] = useState(false);
+  /**
+   * Never pre-ticked, and reset whenever the dialog closes or the session
+   * changes. A box that arrives already ticked records a decision nobody
+   * made, and the whole value of the audit stamp is that someone made one.
+   */
+  const [contentTransferAcknowledged, setContentTransferAcknowledged] =
+    useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const suiteDefaultsAppliedForSessionId = useRef<string | null>(null);
   // New-suite-branch picker state. Only consulted when
@@ -261,11 +281,13 @@ export function ConvertSessionDialogCore({
     setDestinationMode("new");
     setSelectedSuiteId("");
     setUpdateSuiteEnvironment(false);
+    setContentTransferAcknowledged(false);
   }, [open, summary]);
 
   useEffect(() => {
     if (!open) {
       setUpdateSuiteEnvironment(false);
+      setContentTransferAcknowledged(false);
       setIsSubmitting(false);
       setServerAttachmentId(null);
       setHostAttachments([]);
@@ -347,6 +369,10 @@ export function ConvertSessionDialogCore({
   const canSubmit =
     Boolean(summary) &&
     Boolean(effectiveProjectId) &&
+    // The acknowledgement is a REQUIRED input, not a nudge: an unticked box
+    // disables submit rather than showing a warning someone can push past.
+    (detail.requiresContentTransferAcknowledgement !== true ||
+      contentTransferAcknowledged) &&
     !attachmentPickersPending &&
     !detail.loading &&
     !detail.error &&
@@ -356,6 +382,9 @@ export function ConvertSessionDialogCore({
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
       : Boolean(selectedSuiteId) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
+
+  const requiresContentTransferAck =
+    detail.requiresContentTransferAcknowledgement === true;
 
   const handleSubmit = async () => {
     if (!summary || !effectiveProjectId || !canSubmit) {
@@ -385,6 +414,12 @@ export function ConvertSessionDialogCore({
                 : {}),
             }),
         testCaseTitle: caseTitle.trim(),
+        // Sent ONLY when it was actually asked for and ticked. Sending `true`
+        // unconditionally would stamp an audit record saying a person decided
+        // something they were never shown.
+        ...(requiresContentTransferAck && contentTransferAcknowledged
+          ? { contentTransferAcknowledged: true }
+          : {}),
       })) as {
         suiteId: string;
         testCaseId: string;
@@ -655,6 +690,52 @@ export function ConvertSessionDialogCore({
               </div>
             )}
           </div>
+
+          {/* D8f2. Rendered for a real User Testing transcript and nothing
+              else, because the server said so — see
+              `requiresContentTransferAcknowledgement`. Outside the
+              destination branch: whose words these are does not depend on
+              which suite they land in.
+
+              Accessibility: a real <label htmlFor> bound to the checkbox's
+              own id, so the whole sentence is the hit target and the control
+              is reachable and toggleable by keyboard alone. `aria-describedby`
+              points at the consequence, which is the part worth hearing
+              before the box is ticked. */}
+          {requiresContentTransferAck ? (
+            <div className="mt-4">
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Someone else wrote this transcript</AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <p id="content-transfer-consequence">
+                    This is a real User Testing session. Promoting it copies a
+                    tester&apos;s own words into a test case your project keeps
+                    — outside the User Testing surface they were written on.
+                  </p>
+                  <label
+                    className="flex items-start gap-3"
+                    htmlFor="content-transfer-ack"
+                  >
+                    <Checkbox
+                      id="content-transfer-ack"
+                      checked={contentTransferAcknowledged}
+                      onCheckedChange={(checked) =>
+                        setContentTransferAcknowledged(checked === true)
+                      }
+                      aria-describedby="content-transfer-consequence"
+                      disabled={isSubmitting}
+                      className="mt-0.5"
+                    />
+                    <span className="text-sm">
+                      I understand this copies a tester&apos;s content into a
+                      durable test case.
+                    </span>
+                  </label>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
         </div>
 
         <DialogFooter className="border-t border-border/50 px-6 py-4">
