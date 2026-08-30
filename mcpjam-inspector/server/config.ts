@@ -30,7 +30,18 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
-export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
+/**
+ * WebMCP Inspector (a managed Chromium the user points at a page, so its
+ * WebMCP tools can be listed and invoked) — server-side kill switch. FORCED
+ * off in hosted mode: the browser runs on the machine running this inspector,
+ * and a hosted replica must never open one. `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false`
+ * is the emergency/managed-install off switch; default is on for local
+ * inspectors. The routes live under `/api/mcp/*`, which is itself mounted only
+ * when `!HOSTED_MODE`, so this is the second of two independent gates; the
+ * client-side gate is the `webmcp-inspector-enabled` PostHog flag.
+ */
+export const WEBMCP_INSPECTOR_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
 
 /**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
@@ -43,30 +54,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
-
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
-
-  const emailDomain = normalizedEmail.slice(atIndex + 1);
-  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
-}
 
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")
@@ -212,3 +199,80 @@ export const SCORE_LANDING_HOSTS = new Set(
     .map((h) => h.trim().toLowerCase())
     .filter((h) => h.length > 0)
 );
+
+/** A bare DNS hostname: dot-separated labels of letters, digits, and hyphens. */
+const BARE_HOSTNAME =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+/**
+ * The hostnames in a SANDBOX_HOSTS value, lowercased, with anything that is
+ * not one dropped.
+ *
+ * The partition compares against a `Host` header with its port stripped, so an
+ * entry carrying a scheme, a port, or a path can never match it. Kept, such an
+ * entry would leave that hostname serving the whole app while
+ * `resolveSandboxIsolation` still answered "ok" — an isolation nobody checked,
+ * which is the exact failure this file exists to make loud. Dropped, a value
+ * of nothing but malformed entries reports "unset" and the boot check says so.
+ */
+function parseSandboxHosts(raw: string): Set<string> {
+  return new Set(
+    raw
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter((h) => BARE_HOSTNAME.test(h))
+  );
+}
+
+// DNS names that serve the MCP Apps widget sandbox and nothing else. The
+// sandbox is a second hostname on THIS service rather than a separate deploy,
+// so without a partition the origin whose whole job is holding untrusted
+// widget content also serves the app shell, its bundle, and /api. See
+// middleware/sandbox-host-partition.ts for what the partition allows.
+//
+// Rollback is SANDBOX_HOSTS="" on the service: an empty set partitions nothing.
+export const SANDBOX_HOSTS = parseSandboxHosts(
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
+);
+
+/**
+ * Whether widget content is isolated from the app, as far as the DEPLOY can
+ * tell.
+ *
+ *   "ok"          — at least one sandbox hostname, none of them the app's own.
+ *   "same-origin" — the app's own host is listed as a sandbox host. Widgets
+ *                   share cookies and storage with the app, and the partition
+ *                   makes that hostname stop serving the app.
+ *   "unset"       — no sandbox hostname is configured, or MCPJAM_HOSTED_ORIGIN
+ *                   could not be parsed to compare against. Either way the
+ *                   isolation is unconfirmed.
+ */
+export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
+
+/**
+ * A browser cannot answer this. A page served at sandbox.mcpjam.com with
+ * SANDBOX_ORIGIN=https://sandbox.mcpjam.com is indistinguishable, from inside
+ * the tab, from an app.mcpjam.com deploy pointing its sandbox at itself — and
+ * only the second is a regression. Which hostname the app was supposed to be
+ * served as is known to the process and to nothing else, which is why the
+ * check lives on the server.
+ */
+export function resolveSandboxIsolation(
+  sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
+  hostedOrigin: string = MCPJAM_HOSTED_ORIGIN
+): SandboxIsolationStatus {
+  if (sandboxHosts.size === 0) {
+    return "unset";
+  }
+
+  let appHost: string;
+  try {
+    appHost = new URL(hostedOrigin).hostname.toLowerCase();
+  } catch {
+    // A hosted origin we cannot parse (a bare hostname, say) is a comparison
+    // we cannot make. Reporting "ok" would claim an isolation nobody checked.
+    return "unset";
+  }
+
+  return sandboxHosts.has(appHost) ? "same-origin" : "ok";
+}

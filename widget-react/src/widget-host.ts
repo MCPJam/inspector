@@ -7,6 +7,10 @@
 //
 // These types are STRUCTURAL replicas of the inspector shapes (the profile/store
 // systems stay in the inspector by design, so the package can't import them).
+import type {
+  BrowserStoragePolicy,
+  ToolResultPolicy,
+} from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
 // contract, so any source-shape drift fails typecheck there.
@@ -149,6 +153,11 @@ export type ResolvedMcpAppsCapabilities = {
   cspBaseUriDomains: boolean;
   cspConnectDomains?: McpAppsCspConnectDomains;
   cspResourceDomains?: McpAppsCspResourceDomains;
+  /**
+   * Which halves of a tool result reach a widget. Optional like the CSP
+   * subtype records above: absent means the host forwards everything.
+   */
+  toolResult?: ToolResultPolicy;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
@@ -466,6 +475,13 @@ export interface WidgetHostProfileSandbox {
   permissions?: SandboxPermissionsPolicy;
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
+  /**
+   * Probe-measured browser-storage availability inside the widget iframe.
+   * Absent or `true` = available; `false` makes the sandbox proxy throw
+   * `SecurityError` on access. This projection is minimal by design, so a
+   * field missing here silently disappears before reaching the renderer.
+   */
+  browserStorage?: BrowserStoragePolicy;
 }
 
 /**
