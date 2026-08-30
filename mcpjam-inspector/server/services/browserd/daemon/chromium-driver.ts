@@ -34,6 +34,7 @@ import {
   type ConsoleBudget,
 } from "./observation-budget";
 import { WebMcpBridgeError } from "./webmcp-bridge";
+import { RESUMED_AFTER_HANDOFF_NOTE, type HandoffLease } from "./lease";
 import {
   DEFAULT_SETTLE_OPTIONS,
   settlePage,
@@ -70,6 +71,12 @@ interface FrameSnapshot {
 
 export interface ChromiumDriverOptions {
   settle?: SettleOptions;
+  /**
+   * The human-handoff lease, shared with the request handler. The driver only
+   * READS it, to make the first observation after a handoff loud (L6) — the
+   * blocking itself happens at the handler, before anything is captured.
+   */
+  lease?: Pick<HandoffLease, "consumeResumedDirty">;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
@@ -113,6 +120,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly lease: Pick<HandoffLease, "consumeResumedDirty"> | undefined;
   private readonly tabs = new Map<string, TabEntry>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
@@ -122,6 +130,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.lease = options.lease;
   }
 
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
@@ -223,9 +232,15 @@ export class ChromiumDriver implements BrowserDriver {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
         // Hand back the CURRENT state anyway: a failed act still moves the
-        // model forward if it can see what the page actually looks like.
+        // model forward if it can see what the page actually looks like. It
+        // carries the handoff note too — an act that failed right after a
+        // person used the browser most likely failed BECAUSE the page is now
+        // somewhere else, and "your click missed" would be the wrong lesson.
         ...(frame
-          ? { stateToken: this.tokenFor(tabId, entry, frame), output: { url: frame.url } }
+          ? {
+              stateToken: this.tokenFor(tabId, entry, frame),
+              output: this.withHandoffNote({ url: frame.url }),
+            }
           : {}),
       };
     }
@@ -543,9 +558,22 @@ export class ChromiumDriver implements BrowserDriver {
   ): BrowserCommandResult {
     return {
       ok: true,
-      output,
+      output: this.withHandoffNote(output),
       stateToken: this.tokenFor(tabId, entry, frame),
     };
+  }
+
+  /**
+   * L6 — LOUD RESUME. The first result after a person handed the browser back
+   * says so, explicitly naming auth and cookies: the common handoff is a
+   * login, and "something may have changed" would understate exactly the
+   * change that just happened. Consumed once, so it marks the result that
+   * actually crossed the handoff rather than every later one.
+   */
+  private withHandoffNote(output: Record<string, unknown>) {
+    return this.lease?.consumeResumedDirty()
+      ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE }
+      : output;
   }
 
   /** The L3 token for a frame snapshot the caller already captured. */

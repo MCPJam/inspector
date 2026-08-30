@@ -12,6 +12,7 @@
 import { buildBrowserdStack } from "./server";
 import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
+import { HandoffLease } from "./lease";
 import {
   extraArgsFor,
   formatReadyLine,
@@ -30,8 +31,12 @@ async function main(): Promise<void> {
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,
   });
-  const driver = new ChromiumDriver(context);
-  const stack = buildBrowserdStack(driver, { token: config.token });
+  // One lease, shared by the handler (which blocks commands while a person
+  // holds the browser) and the driver (which makes the first observation after
+  // they hand it back loud).
+  const lease = new HandoffLease();
+  const driver = new ChromiumDriver(context, { lease });
+  const stack = buildBrowserdStack(driver, { token: config.token, lease });
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {

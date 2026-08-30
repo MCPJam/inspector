@@ -178,17 +178,106 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/lease.ts
+var DEFAULT_TTL_MS = 5 * 60 * 1e3;
+var MAX_TTL_MS = 30 * 60 * 1e3;
+var HandoffLease = class {
+  current = { state: "free" };
+  /**
+   * Set by `resume`, consumed once by the next observation. This is what makes
+   * the resume LOUD: the model is told the state may have changed — including
+   * logins and cookies — instead of continuing against a page it last saw
+   * before a human touched it.
+   */
+  resumedDirty = false;
+  now;
+  defaultTtlMs;
+  maxTtlMs;
+  constructor(options = {}) {
+    this.now = options.now ?? Date.now;
+    this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
+    this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+  }
+  /**
+   * The lease as of NOW. Expiry is evaluated lazily on every read — there is
+   * no timer to miss, and a state read after a restart or a long pause is
+   * still correct.
+   */
+  state() {
+    if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
+      this.current = { state: "parked", holder: this.current.holder };
+    }
+    return this.current;
+  }
+  /** True while any model-driven command (and every observation) is blocked. */
+  isBlocking() {
+    return this.state().state !== "free";
+  }
+  acquire(holder, ttlMs) {
+    const state = this.state();
+    if (state.state !== "free" && state.holder !== holder) {
+      return state;
+    }
+    const ttl = Math.min(
+      Math.max(1e3, ttlMs ?? this.defaultTtlMs),
+      this.maxTtlMs
+    );
+    this.current = {
+      state: "held",
+      holder,
+      expiresAt: this.now() + ttl
+    };
+    return this.current;
+  }
+  /** Extend the holder's own lease; a no-op for anyone else. */
+  heartbeat(holder, ttlMs) {
+    const state = this.state();
+    if (state.state !== "held" || state.holder !== holder) return state;
+    return this.acquire(holder, ttlMs);
+  }
+  /**
+   * Hand control back. Only the holder may — including from `parked`, which
+   * is the ordinary "I'm done, carry on" path after a lease ran out while a
+   * person was still working.
+   */
+  resume(holder) {
+    const state = this.state();
+    if (state.state === "free") return state;
+    if (state.holder !== holder) return state;
+    this.current = { state: "free" };
+    this.resumedDirty = true;
+    return this.current;
+  }
+  /** `resume` under its user-facing name; identical semantics. */
+  release(holder) {
+    return this.resume(holder);
+  }
+  /**
+   * Whether the next observation must carry the loud-resume note, consumed
+   * once. The daemon asks this AFTER a command runs, so the note rides the
+   * first result a human handoff could have invalidated.
+   */
+  consumeResumedDirty() {
+    const dirty = this.resumedDirty;
+    this.resumedDirty = false;
+    return dirty;
+  }
+};
+var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
+
 // server/services/browserd/daemon/request-handler.ts
 var BrowserdRequestHandler = class {
   queue;
   driver;
   bootId;
   token;
+  lease;
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
+    this.lease = deps.lease ?? new HandoffLease();
   }
   async handle(req) {
     if (req.path === "/healthz") {
@@ -220,6 +309,12 @@ var BrowserdRequestHandler = class {
         body: { ok: false, detail: health.detail, bootId: this.bootId }
       };
     }
+    if (req.path === "/v1/lease") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleLease(req);
+    }
     return { status: 404 };
   }
   async handleCommand(req) {
@@ -235,6 +330,17 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_command", bootId: this.bootId }
       };
     }
+    const leaseState = this.lease.state();
+    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+      return {
+        status: 423,
+        body: {
+          error: leaseState.state === "held" ? "lease_held" : "lease_parked",
+          holder: leaseState.holder,
+          bootId: this.bootId
+        }
+      };
+    }
     if (parsed.expectedBootId !== void 0 && parsed.expectedBootId !== this.bootId) {
       return {
         status: 409,
@@ -243,6 +349,55 @@ var BrowserdRequestHandler = class {
     }
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Lease control. Every action names its `holder` so one person's lease
+   * cannot be released by another tab that happens to know the endpoint.
+   */
+  handleLease(req) {
+    if (req.method === "GET") {
+      return { status: 200, body: this.leaseBody(this.lease.state()) };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body);
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
+    if (!holder) {
+      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+    }
+    const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
+    let state;
+    switch (parsed?.action) {
+      case "acquire":
+        state = this.lease.acquire(holder, ttlMs);
+        break;
+      case "heartbeat":
+        state = this.lease.heartbeat(holder, ttlMs);
+        break;
+      case "resume":
+      case "release":
+        state = this.lease.resume(holder);
+        break;
+      default:
+        return {
+          status: 400,
+          body: { error: "invalid_lease_action", bootId: this.bootId }
+        };
+    }
+    const took = parsed.action !== "acquire" || state.state === "held" && state.holder === holder;
+    return {
+      status: took ? 200 : 409,
+      body: this.leaseBody(state)
+    };
+  }
+  leaseBody(state) {
+    return {
+      lease: state,
+      bootId: this.bootId
+    };
   }
   /** Map a queue outcome to an HTTP response. */
   mapOutcome(outcome) {
@@ -392,16 +547,18 @@ function headerValue(value) {
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
   const queue = new CommandQueue(guardStaleness(driver), bootId);
+  const lease = config.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
     bootId,
-    token: config.token
+    token: config.token,
+    lease
   });
   const server = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes
   });
-  return { server, handler, queue, bootId };
+  return { server, handler, queue, bootId, lease };
 }
 
 // server/services/browserd/daemon/state-token.ts
@@ -838,6 +995,7 @@ var ChromiumDriver = class {
   a11yBudget;
   consoleBudget;
   webmcpOutputBudgetBytes;
+  lease;
   tabs = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
@@ -845,6 +1003,7 @@ var ChromiumDriver = class {
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.lease = options.lease;
   }
   async execute(command) {
     const tabId = command.tabId ?? DEFAULT_TAB;
@@ -930,8 +1089,14 @@ var ChromiumDriver = class {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
         // Hand back the CURRENT state anyway: a failed act still moves the
-        // model forward if it can see what the page actually looks like.
-        ...frame2 ? { stateToken: this.tokenFor(tabId, entry, frame2), output: { url: frame2.url } } : {}
+        // model forward if it can see what the page actually looks like. It
+        // carries the handoff note too — an act that failed right after a
+        // person used the browser most likely failed BECAUSE the page is now
+        // somewhere else, and "your click missed" would be the wrong lesson.
+        ...frame2 ? {
+          stateToken: this.tokenFor(tabId, entry, frame2),
+          output: this.withHandoffNote({ url: frame2.url })
+        } : {}
       };
     }
     const settled = await this.settle(page);
@@ -1187,9 +1352,19 @@ var ChromiumDriver = class {
   observation(tabId, entry, output, frame) {
     return {
       ok: true,
-      output,
+      output: this.withHandoffNote(output),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
+  }
+  /**
+   * L6 — LOUD RESUME. The first result after a person handed the browser back
+   * says so, explicitly naming auth and cookies: the common handoff is a
+   * login, and "something may have changed" would understate exactly the
+   * change that just happened. Consumed once, so it marks the result that
+   * actually crossed the handoff rather than every later one.
+   */
+  withHandoffNote(output) {
+    return this.lease?.consumeResumedDirty() ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE } : output;
   }
   /** The L3 token for a frame snapshot the caller already captured. */
   tokenFor(tabId, entry, frame) {
@@ -1549,8 +1724,9 @@ async function main() {
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode
   });
-  const driver = new ChromiumDriver(context);
-  const stack = buildBrowserdStack(driver, { token: config.token });
+  const lease = new HandoffLease();
+  const driver = new ChromiumDriver(context, { lease });
+  const stack = buildBrowserdStack(driver, { token: config.token, lease });
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;

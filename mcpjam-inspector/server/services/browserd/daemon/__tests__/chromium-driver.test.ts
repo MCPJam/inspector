@@ -3,6 +3,7 @@ import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
 import type { DriverContext, DriverPage } from "../browser-page";
 import type { BrowserCommand } from "../../protocol";
+import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
 
 /** Every act the fake page recorded, in order, as `verb:detail` strings. */
 type ActLog = string[];
@@ -609,5 +610,75 @@ describe("ChromiumDriver — tabs, state token, health, close", () => {
     await driver.close();
     expect(page.isClosed()).toBe(true);
     expect(fc.wasClosed()).toBe(true);
+  });
+});
+
+describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
+  it("attaches the handoff note to the FIRST observation after a resume, once", async () => {
+    const page = fakePage({ url: "https://bank.test/", dom: "0BODY" });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // A person takes the browser (an SSO login), then hands it back.
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+
+    const first = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(first.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+    // The note marks the observation that actually crossed the handoff — a
+    // note on every later result would be noise the model learns to ignore.
+    const second = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(second.output).not.toHaveProperty("handoffNote");
+  });
+
+  it("says nothing when no handoff happened", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease: new HandoffLease() });
+    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    expect(res.output).not.toHaveProperty("handoffNote");
+  });
+
+  it("rides an act's inline observation too (L1 + L6 together)", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+    const acted = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [4, 5] } }),
+    );
+    expect(acted.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+  });
+
+  it("works without a lease at all (the daemon can run leaseless)", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    expect(res.ok).toBe(true);
+    expect(res.output).not.toHaveProperty("handoffNote");
+  });
+});
+
+describe("ChromiumDriver — a FAILED act still reports the handoff (L6)", () => {
+  it("carries the note on the failure result, so the model re-reads the page", async () => {
+    const page = fakePage({ url: "https://x.test/", actError: new Error("no element") });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("panel-a", 60_000);
+    lease.resume("panel-a");
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { selector: "#gone" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
   });
 });
