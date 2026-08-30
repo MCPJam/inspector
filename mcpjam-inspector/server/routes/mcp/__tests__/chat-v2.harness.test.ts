@@ -9,10 +9,12 @@ const {
   resolveHostToolsMock,
   validateAppToolEntriesMock,
   validateUiToolEntriesMock,
+  validatePageToolEntriesMock,
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   AppToolValidationErrorMock,
   UiToolValidationErrorMock,
+  PageToolValidationErrorMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
@@ -22,10 +24,12 @@ const {
   resolveHostToolsMock: vi.fn(() => ({})),
   validateAppToolEntriesMock: vi.fn(() => []),
   validateUiToolEntriesMock: vi.fn(() => []),
+  validatePageToolEntriesMock: vi.fn(() => []),
   validateWidgetModelContextEntriesMock: vi.fn(() => []),
   buildWidgetModelContextSystemPromptMock: vi.fn(() => ""),
   AppToolValidationErrorMock: class AppToolValidationError extends Error {},
   UiToolValidationErrorMock: class UiToolValidationError extends Error {},
+  PageToolValidationErrorMock: class PageToolValidationError extends Error {},
   WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {},
 }));
 
@@ -53,6 +57,11 @@ vi.mock("../../../utils/chat-v2-orchestration", () => ({
   AppToolValidationError: AppToolValidationErrorMock,
   validateUiToolEntries: validateUiToolEntriesMock,
   UiToolValidationError: UiToolValidationErrorMock,
+  // This mock replaces the module wholesale, so an export the route calls but
+  // this object omits is `undefined(...)` at runtime — a 500 that looks like a
+  // routing bug rather than a missing mock entry.
+  validatePageToolEntries: validatePageToolEntriesMock,
+  PageToolValidationError: PageToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,
