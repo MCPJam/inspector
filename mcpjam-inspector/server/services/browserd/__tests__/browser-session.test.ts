@@ -16,11 +16,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserdHandle } from "../boot-browserd";
 import type { BrowserdStatus } from "../browserd-client";
-import type { BrowserSessionLookup } from "../browser-sessions-client";
+import type {
+  BrowserSessionLookup,
+  BrowserSessionRecord,
+  BrowserSessionRecordResult,
+} from "../browser-sessions-client";
 import {
   BROWSERD_PORT,
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
+  BrowserContextModeUnsupportedError,
   ensureBrowserSession,
   type BrowserSessionDeps,
   type SessionSandbox,
@@ -41,8 +46,15 @@ const ROW = {
   contextMode: "persistent" as const,
 };
 
-function liveLookup(over?: Partial<typeof ROW>): BrowserSessionLookup {
-  return { reachable: true, session: { ...ROW, ...over } };
+function liveLookup(
+  over?: Partial<BrowserSessionRecord>,
+): BrowserSessionLookup {
+  const session = { ...ROW, ...over };
+  return {
+    reachable: true,
+    session,
+    observedSessionId: session.sessionId,
+  };
 }
 
 interface Fakes {
@@ -65,7 +77,7 @@ interface Fakes {
 function makeFakes(over?: {
   lookups?: BrowserSessionLookup[];
   status?: () => Promise<BrowserdStatus>;
-  recordResult?: string | null;
+  recordResult?: BrowserSessionRecordResult;
   bootError?: Error;
   streamError?: Error;
 }): Fakes {
@@ -112,8 +124,9 @@ function makeFakes(over?: {
     lookupCalls += 1;
     return result;
   });
-  const record = vi.fn(async () =>
-    over?.recordResult === undefined ? "session-new" : over.recordResult,
+  const record = vi.fn(
+    async (): Promise<BrowserSessionRecordResult> =>
+      over?.recordResult ?? { status: "recorded", sessionId: "session-new" },
   );
   const touch = vi.fn(async () => ({ counted: true }));
   const connect = vi.fn(async () => sandbox);
@@ -267,8 +280,35 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
     expect(f.bootHandle.stop).not.toHaveBeenCalled();
   });
 
+  it("passes the observed row id so the record is a compare-and-swap", async () => {
+    // A relaunch after a STALE row must name that row; the backend refuses
+    // the write if the current row is no longer it.
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "bundle_changed",
+          observedSessionId: "session-old",
+        },
+      ],
+    });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({ replacesSessionId: "session-old" }),
+    );
+
+    // A relaunch after NO row must omit it — absence is the claim "there was
+    // nothing here", which the backend checks just as strictly.
+    const fresh = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await ensureBrowserSession(fresh.deps, ARGS);
+    expect(fresh.record).toHaveBeenCalledWith(
+      expect.not.objectContaining({ replacesSessionId: expect.anything() }),
+    );
+  });
+
   it("stops the daemon and refuses when the record does not land", async () => {
-    const f = makeFakes({ recordResult: null });
+    const f = makeFakes({ recordResult: { status: "failed" } });
     await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
       /record did not land/,
     );
@@ -286,7 +326,77 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
   });
 });
 
+describe("ensureBrowserSession — contextMode", () => {
+  it("refuses an ephemeral request before reserving anything", async () => {
+    const f = makeFakes({ lookups: [liveLookup()] });
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toBeInstanceOf(BrowserContextModeUnsupportedError);
+    // Nothing was reserved, looked up, or connected: a caller that asked for
+    // isolation we cannot provide must not silently get a shared profile.
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+    expect(f.lookup).not.toHaveBeenCalled();
+    expect(f.connect).not.toHaveBeenCalled();
+  });
+
+  it("asks the store for the mode it intends to run in", async () => {
+    const f = makeFakes({ lookups: [liveLookup()] });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedContextMode: "persistent" }),
+    );
+  });
+
+  it("never reuses a daemon running the other profile mode", async () => {
+    // Defence in depth: even if the backend handed back a mismatched row, the
+    // orchestration relaunches rather than handing an eval a logged-in profile.
+    const f = makeFakes({
+      lookups: [liveLookup({ contextMode: "ephemeral" })],
+    });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.reused).toBe(false);
+    expect(f.status).not.toHaveBeenCalled();
+    expect(f.boot).toHaveBeenCalled();
+  });
+});
+
 describe("ensureBrowserSession — cross-replica boot race", () => {
+  it("adopts the winner's session when its record loses the compare-and-swap", async () => {
+    // Both replicas missed the row and booted. Ours records SECOND: the
+    // backend refuses (the row is no longer the one we observed), so our
+    // daemon — which the winner's pkill may already have reaped — must be
+    // stopped, and the winner's session adopted instead of overwriting it.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("fails loudly when it loses the race AND the winner does not verify", async () => {
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({ kind: "unhealthy", detail: "chromium exited" }),
+    });
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /lost a boot race/,
+    );
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+  });
+
   it("falls back to the winner's verified session when its own boot fails", async () => {
     const f = makeFakes({
       lookups: [

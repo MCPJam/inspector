@@ -35,8 +35,10 @@ import type {
 } from "./browserd-client";
 import type { BrowserCommand } from "./protocol";
 import type {
+  BrowserContextMode,
   BrowserSessionLookup,
   BrowserSessionRecord,
+  BrowserSessionRecordResult,
 } from "./browser-sessions-client";
 import { withKeyedLock } from "./probe-lock";
 
@@ -81,6 +83,7 @@ export interface SessionStore {
   lookup(args: {
     computerId: string;
     expectedBundleHash: string;
+    expectedContextMode?: BrowserContextMode;
     signal?: AbortSignal;
   }): Promise<BrowserSessionLookup>;
   record(args: {
@@ -92,9 +95,10 @@ export interface SessionStore {
     streamUrl: string;
     streamPassword: string;
     bundleHash: string;
-    contextMode: "persistent" | "ephemeral";
+    contextMode: BrowserContextMode;
+    replacesSessionId?: string;
     signal?: AbortSignal;
-  }): Promise<string | null>;
+  }): Promise<BrowserSessionRecordResult>;
   touch(args: {
     sessionId: string;
     kind: "command" | "panel";
@@ -136,9 +140,30 @@ export interface EnsureBrowserSessionArgs {
   /** The USER whose desktop is reserved (their control-plane bearer). */
   bearer: string;
   projectId: string;
-  /** Persistent Chrome profile (playground/inspector) unless stated. */
-  contextMode?: "persistent" | "ephemeral";
+  /**
+   * Persistent Chrome profile (playground/inspector) unless stated.
+   *
+   * `ephemeral` is REFUSED here today: the daemon has one profile mode (a
+   * persistent user-data-dir), so recording a row as ephemeral would promise
+   * an isolation the runtime does not provide — an eval would silently
+   * inherit a previous iteration's cookies. W6 adds the daemon's ephemeral
+   * launch path and lifts this refusal; until then the type exists so the
+   * session row, the lookup and the reuse check are already mode-aware.
+   */
+  contextMode?: BrowserContextMode;
   signal?: AbortSignal;
+}
+
+/** Thrown when a caller asks for a mode the runtime cannot yet honor. */
+export class BrowserContextModeUnsupportedError extends Error {
+  constructor(mode: BrowserContextMode) {
+    super(
+      `browser sessions cannot run in '${mode}' mode yet: the daemon launches a ` +
+        `persistent profile, so an ephemeral session would not actually be ` +
+        `isolated. Evals/swarms get isolation in W6.`,
+    );
+    this.name = "BrowserContextModeUnsupportedError";
+  }
 }
 
 export interface BrowserSessionHandle {
@@ -148,7 +173,7 @@ export interface BrowserSessionHandle {
   client: SessionClient;
   streamUrl: string;
   streamPassword: string;
-  contextMode: "persistent" | "ephemeral";
+  contextMode: BrowserContextMode;
   /** True when an existing daemon was verified and reused (no sandbox I/O). */
   reused: boolean;
 }
@@ -163,13 +188,20 @@ export async function ensureBrowserSession(
   deps: BrowserSessionDeps,
   args: EnsureBrowserSessionArgs,
 ): Promise<BrowserSessionHandle> {
+  const contextMode = args.contextMode ?? "persistent";
+  // Refuse BEFORE reserving a box: a caller asking for isolation we cannot
+  // provide should fail immediately and loudly, not burn a desktop reserve
+  // and then receive a session that quietly shares state.
+  if (contextMode !== "persistent") {
+    throw new BrowserContextModeUnsupportedError(contextMode);
+  }
   const { computerId } = await deps.reserveDesktop({
     bearer: args.bearer,
     projectId: args.projectId,
     signal: args.signal,
   });
   return withKeyedLock(`browser-session:${computerId}`, () =>
-    ensureOnComputer(deps, computerId, args),
+    ensureOnComputer(deps, computerId, contextMode, args),
   );
 }
 
@@ -177,10 +209,16 @@ export async function ensureBrowserSession(
 async function tryReuse(
   deps: BrowserSessionDeps,
   lookup: BrowserSessionLookup,
+  contextMode: BrowserContextMode,
   signal?: AbortSignal,
 ): Promise<BrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
+  // Belt-and-braces against the backend's own mode filter: a daemon running
+  // the other profile mode is never reusable, whatever the row says, because
+  // its browser state is the wrong kind (a persistent profile's cookies for
+  // an eval, or an ephemeral one's blank slate for a signed-in user).
+  if (session.contextMode !== contextMode) return null;
   const client = deps.createClient(session.publicOrigin, session.browserdToken);
   // Any transport failure counts as "not verified" — the relaunch path is the
   // recovery, so there is nothing better to do with the error.
@@ -215,17 +253,19 @@ function handleFromRecord(
 async function ensureOnComputer(
   deps: BrowserSessionDeps,
   computerId: string,
+  contextMode: BrowserContextMode,
   args: EnsureBrowserSessionArgs,
 ): Promise<BrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
-  const contextMode = args.contextMode ?? "persistent";
-
-  const lookup = await deps.store.lookup({
+  const lookupArgs = {
     computerId,
     expectedBundleHash: bundleHash,
-    signal: args.signal,
-  });
-  const reusedHandle = await tryReuse(deps, lookup, args.signal);
+    expectedContextMode: contextMode,
+    ...(args.signal ? { signal: args.signal } : {}),
+  };
+
+  const lookup = await deps.store.lookup(lookupArgs);
+  const reusedHandle = await tryReuse(deps, lookup, contextMode, args.signal);
   if (reusedHandle) return reusedHandle;
 
   // Relaunch. Everything below touches the sandbox; the connection is always
@@ -246,19 +286,19 @@ async function ensureOnComputer(
       // Another replica may have won the boot race for this computer (the
       // keyed lock is per-process only): before failing, ask the store once
       // more and reuse a daemon that verifies.
-      const retry = await deps.store.lookup({
-        computerId,
-        expectedBundleHash: bundleHash,
-        signal: args.signal,
-      });
-      const raced = await tryReuse(deps, retry, args.signal);
+      const retry = await deps.store.lookup(lookupArgs);
+      const raced = await tryReuse(deps, retry, contextMode, args.signal);
       if (raced) return raced;
       throw bootError;
     }
 
     const { streamUrl, streamPassword } = await sandbox.ensureStream();
 
-    const sessionId = await deps.store.record({
+    // Compare-and-swap against the row observed at lookup: if another replica
+    // booted and recorded in the meantime, OUR daemon is the loser — the
+    // winner's `pkill` may already have reaped it — so we must not overwrite
+    // their credentials with a dead one.
+    const recorded = await deps.store.record({
       computerId,
       bootId: handle.bootId,
       browserdToken: handle.bearer,
@@ -268,9 +308,25 @@ async function ensureOnComputer(
       streamPassword,
       bundleHash,
       contextMode,
-      signal: args.signal,
+      ...(lookup.observedSessionId
+        ? { replacesSessionId: lookup.observedSessionId }
+        : {}),
+      ...(args.signal ? { signal: args.signal } : {}),
     });
-    if (!sessionId) {
+    if (recorded.status === "conflict") {
+      // Stop our own daemon first (the `finally` would do it anyway, but the
+      // winner's session must be verified against a box we are no longer
+      // fighting over), then adopt the winner.
+      await handle.stop().catch(() => {});
+      handle = undefined;
+      const winner = await deps.store.lookup(lookupArgs);
+      const adopted = await tryReuse(deps, winner, contextMode, args.signal);
+      if (adopted) return adopted;
+      throw new Error(
+        "browser session record lost a boot race and the winning session did not verify",
+      );
+    }
+    if (recorded.status !== "recorded") {
       throw new Error(
         "browser session record did not land — refusing a runtime no replica could find",
       );
@@ -279,7 +335,7 @@ async function ensureOnComputer(
     const booted = handle;
     handle = undefined; // recorded: the daemon now outlives this call
     return {
-      sessionId,
+      sessionId: recorded.sessionId,
       computerId,
       bootId: booted.bootId,
       client: deps.createClient(booted.publicOrigin, booted.bearer),

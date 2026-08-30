@@ -22,8 +22,12 @@ import { logger } from "../../utils/logger.js";
 export type BrowserSessionStale =
   /** The daemon bundle shipped new bytes: the running daemon is old code. */
   | "bundle_changed"
+  /** The live daemon runs the OTHER profile mode (persistent vs ephemeral). */
+  | "context_mode_changed"
   /** The box the session named is gone, hibernating, or never live. */
   | "box_unavailable";
+
+export type BrowserContextMode = "persistent" | "ephemeral";
 
 export interface BrowserSessionRecord {
   sessionId: string;
@@ -35,7 +39,7 @@ export interface BrowserSessionRecord {
   streamUrl: string;
   streamPassword: string;
   bundleHash: string;
-  contextMode: "persistent" | "ephemeral";
+  contextMode: BrowserContextMode;
 }
 
 export interface BrowserSessionLookup {
@@ -49,6 +53,13 @@ export interface BrowserSessionLookup {
   reachable: boolean;
   session: BrowserSessionRecord | null;
   stale?: BrowserSessionStale;
+  /**
+   * The row id the backend saw for this computer, present even when the row
+   * is stale or unusable. Passed back as `replacesSessionId` on a relaunch
+   * record so that write is a compare-and-swap against THIS observation; its
+   * absence means "no row existed", which is equally load-bearing.
+   */
+  observedSessionId?: string;
 }
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
@@ -57,6 +68,10 @@ const TOUCH_PATH = "/browser-runtime/session/touch";
 
 /** Above the backend's own latency and far below any turn deadline. */
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/** A lost compare-and-swap on `record` — a normal answer, not a failure. */
+const CONFLICT_STATUS = 409;
+const CONFLICT = Symbol("browser-session-record-conflict");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -78,6 +93,35 @@ async function postServiceAuthorized(
   const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN?.trim();
   if (!base || !serviceToken) return null;
 
+  // Every request here carries the service token, and the responses carry a
+  // daemon bearer and a stream password. The destination comes from an env
+  // var, so refuse to put those on the wire unless it is HTTPS — a
+  // misconfigured `http://` deployment would otherwise ship credentials in
+  // cleartext, and the failure would look like "sessions don't work" rather
+  // than "we leaked". Loopback is exempt: local dev runs the backend on
+  // `http://127.0.0.1`, where there is no network to intercept.
+  let target: URL;
+  try {
+    target = new URL(path, base);
+  } catch {
+    logger.warn("[browser-runtime] CONVEX_HTTP_URL is not a valid URL", {
+      path,
+    });
+    return null;
+  }
+  const loopback =
+    target.hostname === "localhost" ||
+    target.hostname === "127.0.0.1" ||
+    target.hostname === "[::1]" ||
+    target.hostname === "::1";
+  if (target.protocol !== "https:" && !loopback) {
+    logger.warn(
+      "[browser-runtime] refusing to send session credentials over a non-HTTPS control plane",
+      { path, protocol: target.protocol },
+    );
+    return null;
+  }
+
   // `addEventListener("abort")` never fires on a signal that already aborted.
   if (signal?.aborted) return null;
 
@@ -86,16 +130,24 @@ async function postServiceAuthorized(
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const response = await fetch(new URL(path, base).toString(), {
+    const response = await fetch(target.toString(), {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-inspector-service-token": serviceToken,
       },
       body: JSON.stringify(body),
+      // Never follow a redirect: the header IS the credential, and a redirect
+      // hop is a destination nobody reviewed. (Fetch strips `authorization`
+      // cross-origin, but this token rides a custom header, which is not
+      // covered by that rule.)
+      redirect: "error",
       signal: controller.signal,
     });
     if (!response.ok) {
+      // 409 on `record` is a lost boot race, not a failure — the caller
+      // handles it. Keep it out of the warn stream but let the caller see it.
+      if (response.status === CONFLICT_STATUS) return CONFLICT;
       logger.warn("[browser-runtime] session route rejected the request", {
         path,
         status: response.status,
@@ -177,6 +229,9 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
 export async function lookupBrowserSession(args: {
   computerId: string;
   expectedBundleHash: string;
+  /** The profile mode the caller intends to run in; a row in the other mode
+   *  comes back as `stale: "context_mode_changed"` rather than reusable. */
+  expectedContextMode?: BrowserContextMode;
   signal?: AbortSignal;
 }): Promise<BrowserSessionLookup> {
   const raw = await postServiceAuthorized(
@@ -184,27 +239,47 @@ export async function lookupBrowserSession(args: {
     {
       computerId: args.computerId,
       expectedBundleHash: args.expectedBundleHash,
+      ...(args.expectedContextMode
+        ? { expectedContextMode: args.expectedContextMode }
+        : {}),
     },
     args.signal,
   );
   if (!isRecord(raw)) return { reachable: false, session: null };
   const stale = raw.stale;
+  const observedSessionId = raw.observedSessionId;
   return {
     reachable: true,
     session: parseSession(raw.session),
-    ...(stale === "bundle_changed" || stale === "box_unavailable"
+    ...(stale === "bundle_changed" ||
+    stale === "context_mode_changed" ||
+    stale === "box_unavailable"
       ? { stale }
+      : {}),
+    ...(typeof observedSessionId === "string" && observedSessionId
+      ? { observedSessionId }
       : {}),
   };
 }
 
 /**
- * Publish a freshly booted daemon. Replaces any prior session for the same
- * computer.
- *
- * `null` means the record did not land — the caller must then STOP the daemon
- * it just booted and refuse, because an unrecorded runtime is one no replica
- * can later find, and its stream password is one nothing can ever recover.
+ * The three ways a record can end. `conflict` is the compare-and-swap loss —
+ * another replica booted and recorded first — and is a NORMAL answer: the
+ * caller stops its own daemon and adopts the winner's session. `failed` means
+ * the write did not land at all, and the caller must refuse, because an
+ * unrecorded runtime is one no replica can later find and whose stream
+ * password nothing can ever recover.
+ */
+export type BrowserSessionRecordResult =
+  | { status: "recorded"; sessionId: string }
+  | { status: "conflict" }
+  | { status: "failed" };
+
+/**
+ * Publish a freshly booted daemon, replacing exactly the row the caller
+ * observed at lookup (`replacesSessionId`; omit when it observed none). The
+ * backend refuses the write when the current row disagrees — see
+ * `internalRecordSession`'s compare-and-swap.
  */
 export async function recordBrowserSession(args: {
   computerId: string;
@@ -215,9 +290,10 @@ export async function recordBrowserSession(args: {
   streamUrl: string;
   streamPassword: string;
   bundleHash: string;
-  contextMode: "persistent" | "ephemeral";
+  contextMode: BrowserContextMode;
+  replacesSessionId?: string;
   signal?: AbortSignal;
-}): Promise<string | null> {
+}): Promise<BrowserSessionRecordResult> {
   const raw = await postServiceAuthorized(
     RECORD_PATH,
     {
@@ -230,11 +306,17 @@ export async function recordBrowserSession(args: {
       streamPassword: args.streamPassword,
       bundleHash: args.bundleHash,
       contextMode: args.contextMode,
+      ...(args.replacesSessionId
+        ? { replacesSessionId: args.replacesSessionId }
+        : {}),
     },
     args.signal,
   );
-  if (!isRecord(raw) || typeof raw.sessionId !== "string") return null;
-  return raw.sessionId;
+  if (raw === CONFLICT) return { status: "conflict" };
+  if (!isRecord(raw) || typeof raw.sessionId !== "string") {
+    return { status: "failed" };
+  }
+  return { status: "recorded", sessionId: raw.sessionId };
 }
 
 /**

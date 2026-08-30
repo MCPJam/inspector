@@ -186,7 +186,14 @@ export class BrowserdClient {
 
   private async json(res: Response): Promise<Record<string, unknown>> {
     try {
-      return (await res.json()) as Record<string, unknown>;
+      const parsed: unknown = await res.json();
+      // A daemon that answers `null`, a scalar, or an array is not speaking
+      // this protocol — but neither is it a reason to throw a TypeError from a
+      // field read three lines later (the session reuse path reads `bootId`
+      // straight off this). Normalize every non-record body to "no fields".
+      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
     } catch {
       return {};
     }
