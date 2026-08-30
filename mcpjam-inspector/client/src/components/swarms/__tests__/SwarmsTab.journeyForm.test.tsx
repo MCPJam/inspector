@@ -1,16 +1,12 @@
 /**
- * New-journey form: requires ≥1 environment; writes env-shaped createJourney
- * payloads (`environmentIds` + compat `hostIds`, no `serverAttachmentId`).
+ * New-goal form: the goal text is the only field. Where it runs and how hard
+ * it pushes follow the same defaults the swarm create flow and Generate use.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
-}));
-
-vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
-  useProjectEnvironmentsEnabled: () => true,
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -29,32 +25,42 @@ const host = {
   name: "Host One",
   modelId: "openai/gpt-4o-mini",
   ownerScope: { type: "journeys" },
+  serverCount: 2,
 };
-const hostTwo = {
-  hostId: "host-2",
-  name: "Host Two",
-  modelId: "anthropic/claude-haiku-4.5",
-  ownerScope: { type: "journeys" },
-};
+// Carries a server group, so the composed default (client, no group) does not
+// match it — the resolver reuses an equivalent row when there is one.
 const environments = [
   {
     environmentId: "env-1",
     projectId: "proj-1",
     name: "Prod-like",
     hostId: "host-1",
-    revision: 1,
-  },
-  {
-    environmentId: "env-2",
-    projectId: "proj-1",
-    name: "Staging-like",
-    hostId: "host-2",
+    serverAttachmentId: "att-env-1",
     revision: 1,
   },
 ];
 
-const { createJourneyMutation } = vi.hoisted(() => ({
-  createJourneyMutation: vi.fn(),
+/** The row the backend mints for the composed client + server group. */
+const ADHOC = {
+  environmentId: "env-adhoc-1",
+  projectId: "proj-1",
+  hostId: "host-1",
+  origin: "adhoc" as const,
+  revision: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const { createJourneyMutation, ensureAdhocMock, environmentsEnabled } =
+  vi.hoisted(() => ({
+    createJourneyMutation: vi.fn(),
+    ensureAdhocMock: vi.fn(),
+    environmentsEnabled: { value: false },
+  }));
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => environmentsEnabled.value,
+  useProjectEnvironmentsEnabledState: () => environmentsEnabled.value,
 }));
 
 vi.mock("convex/react", () => ({
@@ -66,7 +72,7 @@ vi.mock("convex/react", () => ({
       case "journeys:listJourneysByPersona":
         return [];
       case "hosts:listHosts":
-        return [host, hostTwo];
+        return [host];
       case "projectEnvironments:listEnvironments":
         return environments;
       default:
@@ -75,6 +81,8 @@ vi.mock("convex/react", () => ({
   },
   useMutation: (name: string) => {
     if (name === "journeys:createJourney") return createJourneyMutation;
+    if (name === "projectEnvironments:ensureAdhocEnvironments")
+      return ensureAdhocMock;
     return vi.fn().mockResolvedValue(undefined);
   },
   usePaginatedQuery: () => ({
@@ -97,10 +105,7 @@ vi.mock("@/hooks/useViews", () => ({
 
 vi.mock("@/lib/swarm-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/swarm-api")>();
-  return {
-    ...actual,
-    launchJourneyRun: vi.fn(),
-  };
+  return { ...actual, launchJourneyRun: vi.fn() };
 });
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
@@ -121,89 +126,103 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  environmentsEnabled.value = false;
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
+  ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
 });
 
-async function pickEnvironment(name: string | RegExp) {
-  fireEvent.click(screen.getByTestId("journey-environments-picker"));
-  fireEvent.click(await screen.findByRole("checkbox", { name }));
+async function openGoalForm(): Promise<void> {
+  render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+  openPersonasTab();
+  fireEvent.click(await screen.findByRole("button", { name: /new goal/i }));
+  await screen.findByLabelText("Goal");
 }
 
-describe("SwarmsTab — new journey form", () => {
-  it("keeps Create disabled until an environment is picked", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
-    fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+async function createGoal(text: string): Promise<void> {
+  fireEvent.change(screen.getByLabelText("Goal"), { target: { value: text } });
+  fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
+}
 
-    const createBtn = screen.getByRole("button", { name: /create goal/i });
-    expect(createBtn).toBeDisabled();
+describe("SwarmsTab — new goal form", () => {
+  it("offers the goal text and nothing else", async () => {
+    await openGoalForm();
 
-    fireEvent.change(screen.getByLabelText("Goal"), {
-      target: { value: "Draw a dog" },
-    });
-    expect(createBtn).toBeDisabled();
-
-    await pickEnvironment(/prod-like/i);
-    expect(createBtn).not.toBeDisabled();
+    expect(screen.queryByTestId("journey-environments-picker")).toBeNull();
+    expect(screen.queryByLabelText("Sessions")).toBeNull();
+    expect(screen.queryByLabelText("Turns")).toBeNull();
+    expect(screen.queryByRole("button", { name: /advanced/i })).toBeNull();
+    expect(screen.queryByText(/add check/i)).toBeNull();
   });
 
-  it("passes environmentIds into createJourney", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
-    fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+  it("gates Create on the goal text alone", async () => {
+    await openGoalForm();
+    const create = screen.getByRole("button", { name: /create goal/i });
+    expect(create).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText("Goal"), {
-      target: { value: "Draw a dog" },
+      target: { value: "buy a plan" },
     });
-    await pickEnvironment(/prod-like/i);
-    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
+    expect(create).not.toBeDisabled();
+  });
+
+  it("runs the goal against the composed default", async () => {
+    await openGoalForm();
+    await createGoal("buy a plan");
 
     await waitFor(() => {
-      expect(createJourneyMutation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "proj-1",
-          personaRefId: "persona-1",
-          goal: "Draw a dog",
-          hostIds: [],
-          environmentIds: ["env-1"],
-          config: { sessionsPerTarget: 2, maxTurns: 6 },
-        })
+      expect(ensureAdhocMock).toHaveBeenCalledWith(
+        expect.objectContaining({ stacks: [{ hostId: "host-1" }] })
       );
+    });
+    const payload = createJourneyMutation.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(payload.environmentIds).toEqual(["env-adhoc-1"]);
+    // The environments are the source of truth for what runs.
+    expect(payload.hostIds).toEqual([]);
+    expect("serverAttachmentId" in payload).toBe(false);
+  });
+
+  it("stamps the same run config the generated goals get", async () => {
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
     });
     expect(
-      "serverAttachmentId" in (createJourneyMutation.mock.calls[0]![0] as object)
-    ).toBe(false);
+      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>).config
+    ).toEqual({ sessionsPerTarget: 1, maxTurns: 6 });
   });
 
-  it("lets you toggle multiple environments without closing the picker", async () => {
-    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openPersonasTab();
-    fireEvent.click(screen.getAllByText("Persona One")[0]);
-    fireEvent.click(screen.getByRole("button", { name: /new goal/i }));
+  it("leaves a new goal ungraded, to be scored from its card", async () => {
+    await openGoalForm();
+    await createGoal("buy a plan");
 
-    fireEvent.change(screen.getByLabelText("Goal"), {
-      target: { value: "Draw a dog" },
-    });
-
-    fireEvent.click(screen.getByTestId("journey-environments-picker"));
-    const one = await screen.findByRole("checkbox", { name: /prod-like/i });
-    const two = await screen.findByRole("checkbox", { name: /staging-like/i });
-    fireEvent.click(one);
-    fireEvent.click(two);
-
-    expect(one).toHaveAttribute("aria-checked", "true");
-    expect(two).toHaveAttribute("aria-checked", "true");
-
-    fireEvent.click(screen.getByRole("button", { name: /create goal/i }));
     await waitFor(() => {
-      expect(createJourneyMutation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          environmentIds: ["env-1", "env-2"],
-          hostIds: [],
-        })
-      );
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
     });
+    const payload = createJourneyMutation.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect("judgeConfig" in payload).toBe(false);
+    expect("rubric" in payload).toBe(false);
+  });
+
+  it("prefers a saved environment when Environments is available", async () => {
+    environmentsEnabled.value = true;
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
+        .environmentIds
+    ).toEqual(["env-1"]);
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
 });

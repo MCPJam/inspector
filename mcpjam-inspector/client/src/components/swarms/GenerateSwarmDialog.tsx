@@ -16,7 +16,7 @@
  * every existing validation applies and the results land as real, editable
  * rows. Running them stays a separate explicit click.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -28,24 +28,9 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
-import { useConvexAuth } from "convex/react";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
-import {
-  composerHasTarget,
-  defaultComposerState,
-  emptyComposerState,
-  type EnvironmentComposerState,
-} from "@/components/environment-composer/environment-stack";
-import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
-import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
-import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
-import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { useDbUserReady } from "@/contexts/db-user-ready-context";
-import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { mostRecentlyConnectedAttachmentId } from "@/components/swarms/generate-target-recency";
-import { useOptionalSharedAppState } from "@/state/app-state-context";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   generateSwarmJourneys,
@@ -133,20 +118,18 @@ export function GenerateSwarmDialog({
   onCreateJourney,
   onPersonaCreated,
 }: GenerateSwarmDialogProps) {
-  const [targetState, setTargetState] =
-    useState<EnvironmentComposerState>(emptyComposerState);
   const journeyCount = DEFAULT_JOURNEY_COUNT;
-  const envList = useMemo(() => environments ?? [], [environments]);
-  const { isAuthenticated } = useConvexAuth();
-  const { serverAttachments, isLoading: attachmentsLoading } =
-    useProjectServerAttachments({ isAuthenticated, projectId });
-  const isUserReady = useDbUserReady();
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
-  // Null outside an AppStateProvider — then there is no connection history.
-  const appState = useOptionalSharedAppState();
-  const resolveTargets = useComposerResolver(projectId);
-  /** One-shot per opening; a later render must not overwrite an edit. */
-  const seededRef = useRef(false);
+  const target = useSwarmDefaultTarget({
+    projectId,
+    active: open,
+    environments,
+    hosts,
+  });
+  const {
+    state: targetState,
+    setState: setTargetState,
+    noServers,
+  } = target;
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Latched once the persona row is written. Re-running generation after that
@@ -162,57 +145,12 @@ export function GenerateSwarmDialog({
 
   useEffect(() => {
     if (!open) {
-      seededRef.current = false;
-      setTargetState(emptyComposerState());
       setPending(false);
       setErrorMessage(null);
       setPersonaCommitted(false);
       generateInFlightRef.current = false;
     }
   }, [open]);
-
-  // Seed a target so the dialog opens ready to submit.
-  useEffect(() => {
-    if (!open || seededRef.current) return;
-    if (environmentsEnabled && environments === undefined) return;
-    // The attachments query reports an empty list while it loads; seeding off
-    // that would latch the default to "no server group".
-    if (attachmentsLoading) return;
-    if (isAuthenticated && shouldQueryProjectId(projectId) && !isUserReady) {
-      return;
-    }
-    const next = defaultComposerState({
-      environments: environmentsEnabled ? envList : [],
-      hosts,
-      serverAttachments,
-      environmentsEnabled,
-    });
-    // Latch only once something was seeded; `hosts` can still be empty here.
-    if (!next) return;
-    seededRef.current = true;
-    // Only on the composed branch: a saved environment carries its own server
-    // group, and overriding it would silently retarget the environment.
-    if (next.environmentIds.length === 0) {
-      const recent = mostRecentlyConnectedAttachmentId(
-        serverAttachments,
-        appState?.servers
-      );
-      if (recent) next.stack.serverAttachmentId = recent;
-    }
-    setTargetState(next);
-  }, [
-    appState?.servers,
-    attachmentsLoading,
-    isAuthenticated,
-    isUserReady,
-    projectId,
-    envList,
-    environments,
-    environmentsEnabled,
-    hosts,
-    open,
-    serverAttachments,
-  ]);
 
   const countValid =
     Number.isInteger(journeyCount) &&
@@ -224,15 +162,7 @@ export function GenerateSwarmDialog({
   // mode stays disabled until the count is known.
   const personaCountKnown =
     mode !== "persona" || typeof personaCount === "number";
-  // The resolver rejects a target with no servers (`ENV_NO_SERVERS`), and the
-  // same queries can answer that here, before the round-trip.
-  const readiness = useCloudServerReadiness({
-    projectId,
-    state: targetState,
-    environments: envList,
-  });
-  const noServers = readiness.status === "no_servers" ? readiness : null;
-  const targetsValid = composerHasTarget(targetState) && !noServers;
+  const targetsValid = target.ready;
   const canSubmit =
     !pending &&
     !personaCommitted &&
@@ -303,31 +233,24 @@ export function GenerateSwarmDialog({
     setErrorMessage(null);
     try {
       // Before generating, so a failure here costs no generation.
-      const resolved = await resolveTargets({
-        state: targetState,
-        liveEnvironments: envList,
-        max: MAX_ENVIRONMENTS_PER_JOURNEY,
-      });
-      const groundingEnvironmentId = resolved.environmentIds[0];
-      if (!groundingEnvironmentId) {
-        throw new Error("Could not resolve where these goals should run.");
-      }
+      const environmentIds = await target.resolve();
+      const groundingEnvironmentId = environmentIds[0]!;
       // Snapshot targets at submit. Generation is a slow round-trip and the
       // pickers stay mounted, so reading live state after the await would let a
       // mid-flight change retarget the created rows — or clear the selection and
       // fail every mutation — after the quota was already spent.
-      const target = {
+      const journeyTarget = {
         hostIds: [] as string[],
-        environmentIds: [...resolved.environmentIds],
+        environmentIds: [...environmentIds],
       };
 
       if (mode === "persona") {
         track("swarm_generate_persona_started", {
           location: "swarms",
           journeyCount,
-          hostCount: target.hostIds.length,
+          hostCount: journeyTarget.hostIds.length,
           targetMode: "environments",
-          environmentCount: target.environmentIds.length,
+          environmentCount: journeyTarget.environmentIds.length,
         });
         const result = await generateSwarmPersona({
           projectId,
@@ -351,7 +274,7 @@ export function GenerateSwarmDialog({
         const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
-          target
+          journeyTarget
         );
         // The persona landed either way — select it so the new row is visible
         // even when every journey write failed.
@@ -386,9 +309,9 @@ export function GenerateSwarmDialog({
       track("swarm_generate_journeys_started", {
         location: "swarms",
         journeyCount,
-        hostCount: target.hostIds.length,
+        hostCount: journeyTarget.hostIds.length,
         targetMode: "environments",
-        environmentCount: target.environmentIds.length,
+        environmentCount: journeyTarget.environmentIds.length,
       });
       const result = await generateSwarmJourneys({
         projectId,
@@ -406,7 +329,7 @@ export function GenerateSwarmDialog({
       const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
-        target
+        journeyTarget
       );
       // Every write failed (archived environment, rejected goals, …): surface
       // the mutation error instead of closing on a "0 of N" success toast —

@@ -1,9 +1,10 @@
 /**
- * Which server group to preselect: the one whose servers connected most
- * recently. Same ordering `ActiveServerSelector` uses to pick a server.
+ * Which server group to preselect.
  *
- * `lastConnectionTime` lives in client runtime state, so a viewer with no
- * connection history gets `null` and the caller keeps its own default.
+ * Connection time alone cannot carry "most recently connected": auto-connect
+ * stamps every server at startup in whatever order they settle, so between two
+ * groups the newest stamp is arbitrary. Usage wins instead — `lastUsedAt` is
+ * the setup the user last worked against — and connection time breaks the tie.
  */
 
 export type RecencyAttachment = {
@@ -51,4 +52,42 @@ export function mostRecentlyConnectedAttachmentId(
     }
   }
   return best?.id ?? null;
+}
+
+export type RecencyEnvironment = {
+  /** Absent on a client-default setup, which names no group. */
+  serverAttachmentId?: string | null;
+  /** Absent on an older backend — no signal, which is not "never used". */
+  lastUsedAt?: number;
+};
+
+/** The group behind the most recently used setup. */
+export function mostRecentlyUsedAttachmentId(
+  attachments: readonly RecencyAttachment[],
+  environments: readonly RecencyEnvironment[]
+): string | null {
+  const known = new Set(attachments.map((a) => a._id));
+  let best: { id: string; at: number } | null = null;
+  for (const environment of environments) {
+    const id = environment.serverAttachmentId;
+    const at = environment.lastUsedAt;
+    if (!id || !known.has(id) || typeof at !== "number") continue;
+    if (best === null || at > best.at) best = { id, at };
+  }
+  return best?.id ?? null;
+}
+
+export function preferredAttachmentId({
+  attachments,
+  environments,
+  servers,
+}: {
+  attachments: readonly RecencyAttachment[];
+  environments: readonly RecencyEnvironment[];
+  servers: Record<string, RecencyServer> | undefined;
+}): string | null {
+  return (
+    mostRecentlyUsedAttachmentId(attachments, environments) ??
+    mostRecentlyConnectedAttachmentId(attachments, servers)
+  );
 }

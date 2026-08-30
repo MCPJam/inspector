@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  preferredAttachmentId,
   attachmentConnectedAt,
   mostRecentlyConnectedAttachmentId,
 } from "../generate-target-recency";
@@ -75,5 +76,83 @@ describe("mostRecentlyConnectedAttachmentId", () => {
     const groups = [group("att-1", "shared"), group("att-2", "shared")];
     expect(mostRecentlyConnectedAttachmentId(groups, servers)).toBe("att-1");
     expect(mostRecentlyConnectedAttachmentId(groups, servers)).toBe("att-1");
+  });
+});
+
+const used = (id: string, at?: number) => ({
+  serverAttachmentId: id,
+  ...(at === undefined ? {} : { lastUsedAt: at }),
+});
+
+describe("preferredAttachmentId", () => {
+  it("prefers the group last worked against, not the one that connected last", () => {
+    // Auto-connect stamps every server at startup, in whatever order they
+    // settle, so connection time alone makes the default arbitrary.
+    const servers = {
+      stdio: at("2026-08-30T10:00:05Z"),
+      remote: at("2026-08-30T10:00:01Z"),
+    };
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-stdio", "stdio"), group("att-remote", "remote")],
+        environments: [used("att-remote", 1788100000000)],
+        servers,
+      })
+    ).toBe("att-remote");
+  });
+
+  it("falls back to connection recency when nothing has been used yet", () => {
+    const servers = {
+      alpha: at("2026-08-01T10:00:00Z"),
+      beta: at("2026-08-29T10:00:00Z"),
+    };
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-1", "alpha"), group("att-2", "beta")],
+        environments: [],
+        servers,
+      })
+    ).toBe("att-2");
+  });
+
+  it("treats an absent lastUsedAt as no signal, not as never used", () => {
+    const servers = { beta: at("2026-08-29T10:00:00Z") };
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-1", "alpha"), group("att-2", "beta")],
+        environments: [used("att-1")],
+        servers,
+      })
+    ).toBe("att-2");
+  });
+
+  it("ignores a setup that names no group", () => {
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-1", "alpha")],
+        environments: [{ lastUsedAt: 1788100000000 }],
+        servers: {},
+      })
+    ).toBeNull();
+  });
+
+  it("ignores a used group the project no longer has", () => {
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-1", "alpha")],
+        environments: [used("att-gone", 1788100000000)],
+        servers: {},
+      })
+    ).toBeNull();
+  });
+
+  it("returns null with neither signal, leaving the caller's default", () => {
+    expect(
+      preferredAttachmentId({
+        attachments: [group("att-1", "alpha")],
+        environments: [],
+        servers: {},
+      })
+    ).toBeNull();
   });
 });

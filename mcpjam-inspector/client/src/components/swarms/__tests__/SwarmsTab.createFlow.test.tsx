@@ -577,7 +577,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
     const notice = screen.getByTestId("new-swarm-server-unreachable");
-    expect(notice).toHaveTextContent(/only has servers this run can't reach/i);
+    expect(notice).toHaveTextContent(/has servers this run can't reach/i);
     expect(notice).toHaveTextContent(/Fetch/);
   });
 

@@ -64,11 +64,28 @@ describe("assessCloudServerReadiness", () => {
     });
   });
 
-  it("passes a mixed catalog — one reachable server is enough to run", () => {
+  // The runner refuses a stdio server on its own; a reachable sibling does not
+  // rescue it.
+  it("reports a target carrying a stdio server, naming just that one", () => {
     expect(
       assessCloudServerReadiness({
         targets: [client("Claude", 2)],
         servers: [STDIO, REMOTE],
+      })
+    ).toEqual({
+      status: "local_only",
+      labels: ["Claude"],
+      serverNames: ["Fetch"],
+    });
+  });
+
+  // Only stdio is confirmed to fail on its own. A loopback URL alongside a
+  // reachable server stays unblocked rather than blocked on a guess.
+  it("passes a mixed target whose unreachable server is a loopback url", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("Claude", 2)],
+        servers: [LOOPBACK, REMOTE],
       })
     ).toEqual({ status: "ok" });
   });

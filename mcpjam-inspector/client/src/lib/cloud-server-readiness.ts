@@ -64,10 +64,32 @@ export type CloudServerReadiness =
   /** Every server a target resolves to is unreachable from the cloud. */
   | { status: "local_only"; labels: string[]; serverNames: string[] };
 
-function classifyLocalOnly(
+/**
+ * The servers in this set that would sink the run, or none.
+ *
+ * One stdio server is enough: the runner refuses it whatever else the target
+ * resolves to. Locality short of that only counts for the set as a whole — a
+ * loopback URL beside a reachable server has not been observed to fail, and
+ * blocking on it would be a guess.
+ */
+export function unrunnableServers(
+  servers: readonly CloudServerCatalogEntry[]
+): CloudServerCatalogEntry[] {
+  const unreachable = servers.filter((server) =>
+    isLocalOnlyMcpServerConfig(server)
+  );
+  if (unreachable.length === 0) return [];
+  // Nothing here can run: name them all, or the user fixes one and fails again.
+  if (unreachable.length === servers.length) return unreachable;
+  // Otherwise only a stdio member sinks an otherwise-fine set.
+  return unreachable.filter((server) => typeof server.command === "string");
+}
+
+/** Whether a cloud run against exactly these servers can start. */
+export function serversAreRunnable(
   servers: readonly CloudServerCatalogEntry[]
 ): boolean {
-  return servers.every((server) => isLocalOnlyMcpServerConfig(server));
+  return unrunnableServers(servers).length === 0;
 }
 
 /**
@@ -118,9 +140,10 @@ export function assessCloudServerReadiness(args: {
     }
 
     if (candidates.length === 0) continue;
-    if (!classifyLocalOnly(candidates)) continue;
+    const unrunnable = unrunnableServers(candidates);
+    if (unrunnable.length === 0) continue;
     localOnlyLabels.push(target.label);
-    for (const server of candidates) localOnlyServerNames.add(server.name);
+    for (const server of unrunnable) localOnlyServerNames.add(server.name);
   }
 
   if (emptyLabels.length > 0) {
@@ -164,7 +187,7 @@ export function describeCloudServerBlock(readiness: CloudServerReadiness): {
     };
   }
   return {
-    message: `${subject} only ${verb} servers this run can't reach: ${joinLabels(readiness.serverNames)}.`,
+    message: `${subject} ${verb} servers this run can't reach: ${joinLabels(readiness.serverNames)}.`,
     detail:
       "Sessions run in MCPJam's cloud, which can't reach a stdio server or a localhost/private-address URL. Expose the server over HTTPS (Create tunnel on its card does this) and point the client at that URL, or run it from a local surface instead.",
   };
