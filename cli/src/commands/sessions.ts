@@ -283,7 +283,11 @@ export function registerSessionsCommands(program: Command): void {
         { min: 0, max: 16 }
       ),
       temperature: parseFloatOption(options.temperature),
-    })
+    }),
+    // A Playground turn runs a model, and often tools with it. The 30s program
+    // default expired mid-turn while the turn kept running and spending, which
+    // reads to the caller as "it failed" when it had not.
+    { defaultTimeoutMs: 300_000 }
   );
 
   bindOperation(

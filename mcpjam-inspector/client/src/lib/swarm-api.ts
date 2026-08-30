@@ -763,6 +763,19 @@ export interface SwarmSessionPromoteDetail {
     selectedServerIds: string[];
     serverNames: string[];
   } | null;
+  /**
+   * D8f1. True when promoting this session copies a THIRD PARTY's real words
+   * — a real User Testing transcript — into a durable, member-owned artifact.
+   * Server-derived; the synthetic carve-out is a policy decision and lives
+   * with the policy, not here.
+   *
+   * Optional on the wire so the dialog keeps working against a backend that
+   * predates the field, in which case nothing is asked and nothing is
+   * stamped.
+   */
+  requiresContentTransferAcknowledgement?: boolean;
+  /** The policy version an acknowledgement given now is recorded against. */
+  contentTransferPolicyVersion?: number;
 }
 
 /**
