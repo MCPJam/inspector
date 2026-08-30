@@ -1,30 +1,69 @@
+/**
+ * The eval decision summary: the canonical contract's platform-typed entry, its
+ * human renderer, and the compatibility surface that preceded it.
+ *
+ * ── Where the contract lives ─────────────────────────────────────────────────
+ *
+ * {@link EvalRunDecisionSummary} — the versioned shape the API returns, the
+ * Platform MCP server hands to a model, and every CLI reporter restates — is
+ * defined in `./contract/decision-summary.ts` and assembled by
+ * {@link assembleEvalRunDecisionSummary}. This module adds two things the
+ * contract subpath deliberately cannot have: types from `./platform/types.js`
+ * (the contract stays free of them so it can be bundled into a browser), and
+ * the prose renderer.
+ *
+ * ── What is kept for compatibility ───────────────────────────────────────────
+ *
+ * {@link buildEvalDecisionSummary}, {@link buildEvalDecisionSummaryFromIterations}
+ * and {@link formatEvalDecisionSummary} are the SHIPPED per-case summary. They
+ * are deprecated, unchanged, and still exported: `@mcpjam/sdk` has consumers on
+ * them and removing an export is a break, not a cleanup. Nothing inside this
+ * repo calls them any more — the CLI, the reporters and the API all assemble
+ * the canonical contract instead — because their verdict is computed from
+ * ITERATION COUNTS, which is a second, disagreeing answer to a question the
+ * run's own `EvalVerdictDecision` already answered. Two verdict engines over
+ * one run is the drift the canonical contract exists to remove; keeping this
+ * one reachable but unused is how that is done without breaking anybody.
+ */
 import {
-  stageDerivationSchema,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+  EVAL_RUN_DECISION_VERDICT_LABELS,
+  EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
+  EVAL_VERDICT_DECISION_REASON_LABELS,
+  FAILURE_CATEGORY_LABELS,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
   STAGE_ANALYZER_VERSION,
+  STAGE_REASON_LABELS,
+  USER_VALUE_STAGE_LABELS,
+  assembleEvalRunDecisionSummary,
+  measurementUnitLabel,
+  stageDerivationSchema,
+  type EvalRunDecisionDiagnostic,
+  type EvalRunDecisionSummary,
   type FailureCategory,
   type StageResultRow,
   type UserValueStage,
 } from "./contract/index.js";
-import type { PlatformEvalIteration } from "./platform/types.js";
+import type {
+  PlatformEvalIteration,
+  PlatformEvalRun,
+} from "./platform/types.js";
+import type { PlatformApiClient } from "./platform/client.js";
+
+const DECISION_SUMMARY_FALLBACK_PAGE_LIMIT = 200;
+const DECISION_SUMMARY_FALLBACK_MAX_PAGES = 100;
 
 /**
- * THE extension point for later decision-summary actions (D7).
+ * The operator action for one failure category, and the words used when no
+ * category was established.
  *
- * `satisfies Record<FailureCategory, string>` makes adding a category to D1
- * fail this module's compilation until its operator action is written.
+ * RELOCATED to `./contract/decision-labels.ts` — the remediation copy now sits
+ * beside the vocabularies it is keyed on, so a new category fails compilation
+ * there rather than silently rendering as a missing action. Re-exported under
+ * their published names because both are part of `@mcpjam/sdk`'s surface.
  */
-export const NEXT_ACTION_BY_FAILURE_CATEGORY = Object.freeze({
-  setup: "check the server connection and environment configuration",
-  metadata: "review the tool metadata and descriptions in the server catalog",
-  selection: "review tool selection and the tool catalog",
-  arguments: "review the authored arguments against the tool input schema",
-  serverData: "inspect the tool response returned by the server",
-  userValue: "review whether the response answered the user's goal",
-  evaluator: "check the evaluator configuration; the case was not graded",
-} satisfies Record<FailureCategory, string>);
-
-export const DECISION_SUMMARY_FALLBACK_NEXT_ACTION =
-  "inspect the case trace; no failure category was recorded";
+export { DECISION_SUMMARY_FALLBACK_NEXT_ACTION, NEXT_ACTION_BY_FAILURE_CATEGORY };
 
 export type EvalDecisionVerdict = "passed" | "failed" | "incomplete";
 export type StageChainStatus = "verified" | "unverified" | "absent";
@@ -214,6 +253,14 @@ function summaryCase(row: NormalizedEvalDecisionCase): EvalDecisionSummaryCase {
   };
 }
 
+/**
+ * @deprecated Use {@link buildEvalRunDecisionSummary} (or
+ * `assembleEvalRunDecisionSummary` from `@mcpjam/sdk/contract`). This computes a
+ * verdict by counting iterations, which disagrees with the run's own
+ * `EvalVerdictDecision` whenever a case has repetitions: it reads N trials as N
+ * cases, and a case that passed 4 of 5 trials reads here as one pass and one
+ * failure. Kept exported and unchanged for existing consumers.
+ */
 export function buildEvalDecisionSummary(
   input: EvalDecisionSummaryInput
 ): EvalDecisionSummary {
@@ -242,6 +289,11 @@ export function buildEvalDecisionSummary(
   };
 }
 
+/**
+ * @deprecated Use {@link buildEvalRunDecisionSummary}, which takes the run as
+ * well as its iterations and therefore reports the verdict the platform
+ * actually reached. See {@link buildEvalDecisionSummary}.
+ */
 export function buildEvalDecisionSummaryFromIterations(
   iterations: PlatformEvalIteration[],
   input: {
@@ -281,6 +333,10 @@ function formatValueList(values: string[] | number[]): string {
   return values.join(", ");
 }
 
+/**
+ * @deprecated Use {@link formatEvalRunDecisionSummary}. This renders raw wire
+ * enums (`userValue`, `argumentMismatch`) at a human.
+ */
 export function formatEvalDecisionSummary(
   summary: EvalDecisionSummary
 ): string {
@@ -357,4 +413,266 @@ export function formatEvalDecisionSummary(
     lines.push(`    next action: ${item.nextAction}`);
   }
   return lines.join("\n");
+}
+
+// ── the canonical contract, platform-typed ───────────────────────────────────
+
+/**
+ * Assemble the canonical summary from a platform run and ONE page of its
+ * iterations.
+ *
+ * A thin, typed wrapper over {@link assembleEvalRunDecisionSummary}: the DTOs
+ * satisfy the contract's structural inputs by construction, and going through
+ * one function is what makes the API's summary and a client's fallback summary
+ * byte-equivalent for the same input. Fetching and pagination stay OUT of it —
+ * the caller decides how much of the run it walked and says so in `page`.
+ */
+export function buildEvalRunDecisionSummary(input: {
+  projectId: string;
+  run: PlatformEvalRun;
+  iterations: readonly PlatformEvalIteration[];
+  page: { complete: boolean; nextCursor?: string };
+}): EvalRunDecisionSummary {
+  return assembleEvalRunDecisionSummary({
+    projectId: input.projectId,
+    run: input.run,
+    iterations: input.iterations,
+    page: input.page,
+  });
+}
+
+/**
+ * Read the canonical summary with one compatibility path for older API
+ * deployments.
+ *
+ * The endpoint is preferred because it can return a bounded diagnostic page.
+ * If it is absent, the fallback walks the same iteration resource and hands
+ * the rows to the same shared assembler. An opaque cursor cannot be replayed
+ * locally, so a cursored request returns no fallback rather than silently
+ * returning the wrong page.
+ */
+export async function readEvalRunDecisionSummary(
+  client: Pick<
+    PlatformApiClient,
+    "getEvalRunDecisionSummary" | "listEvalRunIterations"
+  >,
+  signal: AbortSignal | undefined,
+  projectId: string,
+  run: PlatformEvalRun,
+  options: { cursor?: string; limit?: number } = {}
+): Promise<EvalRunDecisionSummary | undefined> {
+  try {
+    return await client.getEvalRunDecisionSummary(
+      {
+        projectId,
+        runId: run.id,
+        ...(options.cursor ? { cursor: options.cursor } : {}),
+        limit: options.limit ?? DECISION_SUMMARY_FALLBACK_PAGE_LIMIT,
+      },
+      { signal }
+    );
+  } catch {
+    if (options.cursor !== undefined || signal?.aborted) return undefined;
+  }
+
+  try {
+    const items: PlatformEvalIteration[] = [];
+    let cursor: string | undefined;
+    let nextCursor: string | undefined;
+    for (let page = 0; page < DECISION_SUMMARY_FALLBACK_MAX_PAGES; page += 1) {
+      const result = await client.listEvalRunIterations(
+        {
+          projectId,
+          runId: run.id,
+          ...(cursor ? { cursor } : {}),
+          limit: DECISION_SUMMARY_FALLBACK_PAGE_LIMIT,
+        },
+        { signal }
+      );
+      items.push(...result.items);
+      if (!result.nextCursor) {
+        return buildEvalRunDecisionSummary({
+          projectId,
+          run,
+          iterations: items,
+          page: { complete: true },
+        });
+      }
+      nextCursor = result.nextCursor;
+      cursor = result.nextCursor;
+    }
+
+    return buildEvalRunDecisionSummary({
+      projectId,
+      run,
+      iterations: items,
+      page: { complete: false, ...(nextCursor ? { nextCursor } : {}) },
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+// ── the human renderer ───────────────────────────────────────────────────────
+
+/**
+ * Render the canonical summary as prose.
+ *
+ * Every enum passes through the label maps beside the contract, so a terminal
+ * says `User value` and `the call arguments did not match what the case
+ * expects` rather than `userValue` and `argumentMismatch`. Nothing here
+ * inspects the run again: this is presentation over an already-decided object.
+ */
+export function formatEvalRunDecisionSummary(
+  summary: EvalRunDecisionSummary
+): string {
+  const lines: string[] = [formatDecisionHeadline(summary)];
+
+  if (summary.undecided) {
+    lines.push(
+      `  Why: ${EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS[summary.undecided.reason]}`
+    );
+    if (summary.undecided.detail) {
+      lines.push(`  Detail: ${summary.undecided.detail}`);
+    }
+  }
+
+  for (const reason of summary.decision?.reasons ?? []) {
+    lines.push(`  Why: ${EVAL_VERDICT_DECISION_REASON_LABELS[reason]}`);
+  }
+
+  lines.push(formatDiagnosticsHeadline(summary));
+  for (const item of summary.diagnostics.items) {
+    lines.push(...formatDecisionDiagnostic(item));
+  }
+  return lines.join("\n");
+}
+
+function formatDecisionHeadline(summary: EvalRunDecisionSummary): string {
+  const verdict = EVAL_RUN_DECISION_VERDICT_LABELS[summary.verdict];
+  const source = EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS[summary.verdictSource];
+  const counts = summary.counts;
+  if (counts === undefined) {
+    return summary.verdictSource === "none"
+      ? `Decision summary: ${verdict}`
+      : `Decision summary: ${verdict} (${source}) — no counts were recorded`;
+  }
+  // The unit is printed with the numbers, never inferred from them: a legacy
+  // run's "3 passed" counts trials and a policy-v2 run's counts case
+  // execution variants, and the same suite reports different totals for each.
+  if (counts.measurementUnit === "caseVariant") {
+    const unit = measurementUnitLabel("caseVariant", counts.total);
+    const inconclusive =
+      counts.inconclusive > 0 ? `, ${counts.inconclusive} inconclusive` : "";
+    return (
+      `Decision summary: ${verdict} (${source}) — ${counts.passed}/${counts.total} ` +
+      `${unit} passed, ${counts.failed} failed${inconclusive}`
+    );
+  }
+  const parts = [
+    counts.total !== undefined && counts.passed !== undefined
+      ? `${counts.passed}/${counts.total} ${measurementUnitLabel("trial", counts.total)} passed`
+      : counts.passed !== undefined
+        ? `${counts.passed} passed`
+        : undefined,
+    counts.failed !== undefined ? `${counts.failed} failed` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return `Decision summary: ${verdict} (${source})${
+    parts.length > 0 ? ` — ${parts.join(", ")}` : ""
+  }`;
+}
+
+/**
+ * How much of the run these diagnostics came from.
+ *
+ * Printed even when there are none, because "we examined 40 trials and none of
+ * them failed" and "we did not look" render identically otherwise — and only
+ * one of them means the list below is the whole story.
+ */
+function formatDiagnosticsHeadline(summary: EvalRunDecisionSummary): string {
+  const { items, scannedIterations, complete } = summary.diagnostics;
+  const scope = complete
+    ? "the complete set"
+    : "a PARTIAL page — more trials were not examined";
+  return (
+    `  Diagnostics: ${items.length} non-passing of ${scannedIterations} ` +
+    `${measurementUnitLabel("trial", scannedIterations)} examined (${scope})`
+  );
+}
+
+function formatDecisionDiagnostic(item: EvalRunDecisionDiagnostic): string[] {
+  const identity = [item.caseId ?? item.testCaseId, `iteration ${item.iterationNumber}`]
+    .filter((part): part is string => !!part)
+    .join(", ");
+  const lines = [
+    `  ${item.title ?? item.iterationId} (${identity}) — ${
+      item.result ?? item.status
+    }`,
+  ];
+
+  if (item.chain.status === "verified") {
+    const stage = item.chain.firstFailedStage;
+    if (stage) {
+      const row = item.chain.stages.find((entry) => entry.stage === stage);
+      const because = row?.reason
+        ? ` — ${STAGE_REASON_LABELS[row.reason]}`
+        : "";
+      lines.push(
+        `    First failed stage: ${USER_VALUE_STAGE_LABELS[stage]}${because}`
+      );
+    } else {
+      lines.push(
+        "    First failed stage: none was established — the run never reached the server's stages"
+      );
+    }
+    lines.push(
+      item.chain.failureCategory
+        ? `    Failure category: ${FAILURE_CATEGORY_LABELS[item.chain.failureCategory]}`
+        : "    Failure category: not reported"
+    );
+  } else if (item.chain.status === "unverified") {
+    lines.push(
+      "    First failed stage: not established — the recorded stage chain did not validate, so it is withheld"
+    );
+  } else {
+    lines.push(
+      "    First failed stage: not established — this run recorded no stage chain"
+    );
+  }
+
+  if (item.chain.status !== "absent" && item.chain.analyzerVersionAhead) {
+    lines.push(
+      `    Stage chain came from a newer analyzer (version ${item.chain.analyzerVersionAhead.reported}; this build knows ${item.chain.analyzerVersionAhead.known})`
+    );
+  }
+  if (item.expected) {
+    lines.push(`    Expected tool calls: ${item.expected.toolNames.join(", ")}`);
+  }
+  if (item.observed?.toolNames) {
+    lines.push(`    Observed tool calls: ${item.observed.toolNames.join(", ")}`);
+  }
+  if (item.observed?.failure) {
+    lines.push(`    Observed failure: ${item.observed.failure}`);
+  }
+  const evidence = [
+    ...(item.evidence.spanIds
+      ? [`span ids ${item.evidence.spanIds.join(", ")}`]
+      : []),
+    ...(item.evidence.promptIndexes
+      ? [`prompt indexes ${item.evidence.promptIndexes.join(", ")}`]
+      : []),
+    ...(item.evidence.reasons ? [`reasons ${item.evidence.reasons.join(", ")}`] : []),
+  ];
+  if (evidence.length > 0) {
+    // Named with the stage it was read from, because that is the only stage it
+    // is evidence ABOUT — the passing stages have their own spans and they are
+    // not an explanation of this failure.
+    const stage = item.evidence.stage
+      ? ` at ${USER_VALUE_STAGE_LABELS[item.evidence.stage]}`
+      : "";
+    lines.push(`    Evidence${stage}: ${evidence.join("; ")}`);
+  }
+  lines.push(`    Trace: ${item.evidence.tracePath}`);
+  lines.push(`    Next action: ${item.nextAction}`);
+  return lines;
 }

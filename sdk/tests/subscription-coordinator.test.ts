@@ -328,6 +328,37 @@ describe("SubscriptionCoordinator — modern (subscriptions/listen)", () => {
     expect(delivered.map((d) => d.kind)).toEqual(["tools-list-changed"]);
   });
 
+  // The rejection history grows on input the PEER controls, and nothing used to
+  // evict from it: a server that keeps pushing an unacknowledged type adds a
+  // record per notification for the life of the connection.
+  it("caps the retained rejection history without hiding rejections from the consumer", async () => {
+    const { client, coordinator, rejected } = makeHarness("modern");
+    const original = client.listen;
+    client.listen = async (filter) => {
+      const handle = await original(filter);
+      client.listens.at(-1)!.acknowledge({ toolsListChanged: true });
+      return {
+        ...handle,
+        honoredFilter: { toolsListChanged: true },
+      } as McpSubscriptionHandle;
+    };
+    await coordinator.setDesiredInterests({ toolsListChanged: true });
+
+    for (let i = 0; i < 250; i++) {
+      client.emitOnStream("listen:1", "notifications/prompts/list_changed");
+    }
+
+    // Every rejection still reaches `onRejectedNotification`. The cap is on what
+    // the coordinator RETAINS, not on what it reports.
+    expect(rejected).toHaveLength(250);
+
+    const retained = coordinator.getRejectedNotifications();
+    expect(retained).toHaveLength(200);
+    // Oldest evicted: what survives is the tail, which is what describes
+    // whatever is wrong right now.
+    expect(retained).toEqual(rejected.slice(-200));
+  });
+
   it("keeps request-scoped progress/log notifications out of the store", async () => {
     const { client, coordinator, delivered, rejected } = makeHarness("modern");
     await coordinator.setDesiredInterests({ toolsListChanged: true });

@@ -615,6 +615,10 @@ export function TopicMapPanel({
     if (scopeProp.kind === "swarm") {
       return { kind: "swarm", projectId: scopeProp.projectId };
     }
+    // A benchmark run has no map to render — see `topicMapScopeFromInsights`.
+    // Null lands on the panel's own empty state rather than on a scenario
+    // query with no scenario.
+    if (scopeProp.kind === "benchmark") return null;
     return { kind: "scenario", scenarioId: scopeProp.scenarioId };
   }, [scopeProp]);
 

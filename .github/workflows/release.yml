@@ -365,6 +365,28 @@ jobs:
       - name: Build Inspector package
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: npm run build -w @mcpjam/inspector
+        env:
+          # This tarball is the bundle every `npx @mcpjam/inspector` user runs,
+          # and it reports to Sentry under the app version like every other
+          # build. It had no token here, so `sentryVitePlugin` injected debug
+          # ids and uploaded nothing, and those events symbolicated against
+          # whatever artifacts another build had published for the same
+          # release. (The globs were broken too — see client/vite.config.ts —
+          # so a token alone would not have been enough.) The upload itself is
+          # best-effort: the plugin reports upload failures without failing the
+          # build, and Sentry being down must not fail a release. The assert
+          # below is what is allowed to.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          MCPJAM_BUILD_SURFACE: npm
+
+      # The plugin above treats a sourcemap glob that matched nothing as a
+      # warning, which is how 2.47.0 published with its maps still in the
+      # tarball and its Sentry frames pointing at another build. Fail here
+      # instead. This asserts the maps were PROCESSED, not that Sentry stored
+      # them — see the script.
+      - name: Assert client source maps were processed
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
+        run: node .github/scripts/assert-client-sourcemaps-processed.mjs
 
       - name: Smoke packed npm packages
         run: node .github/scripts/smoke-packed-npm-packages.mjs
