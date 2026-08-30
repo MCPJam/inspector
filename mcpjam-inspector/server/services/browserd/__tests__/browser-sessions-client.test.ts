@@ -48,6 +48,7 @@ describe("browser-sessions-client", () => {
     const result = await lookupBrowserSession({
       computerId: "computer-1",
       expectedBundleHash: "hash-1",
+      expectedContextMode: "any",
     });
     expect(result.reachable).toBe(true);
     expect(result.session).toMatchObject(SESSION);
@@ -56,6 +57,7 @@ describe("browser-sessions-client", () => {
     const stale = await lookupBrowserSession({
       computerId: "computer-1",
       expectedBundleHash: "hash-2",
+      expectedContextMode: "any",
     });
     expect(stale).toEqual({
       reachable: true,
@@ -69,6 +71,7 @@ describe("browser-sessions-client", () => {
     await lookupBrowserSession({
       computerId: "computer-1",
       expectedBundleHash: "hash-1",
+      expectedContextMode: "any",
     });
     const [url, init] = impl.mock.calls[0] as unknown as [
       string,
@@ -109,6 +112,7 @@ describe("browser-sessions-client", () => {
       const result = await lookupBrowserSession({
         computerId: "computer-1",
         expectedBundleHash: "hash-1",
+        expectedContextMode: "any",
       });
       expect(result.reachable).toBe(true);
       expect(result.session).toBeNull();
@@ -145,6 +149,7 @@ describe("browser-sessions-client", () => {
       await lookupBrowserSession({
         computerId: "c",
         expectedBundleHash: "h",
+        expectedContextMode: "any",
       }),
     ).toEqual({ reachable: false, session: null });
     expect(impl).not.toHaveBeenCalled();
@@ -158,6 +163,7 @@ describe("browser-sessions-client", () => {
         await lookupBrowserSession({
           computerId: "c",
           expectedBundleHash: "h",
+          expectedContextMode: "any",
         })
       ).reachable,
     ).toBe(true);
@@ -166,7 +172,7 @@ describe("browser-sessions-client", () => {
 
   it("never follows a redirect — the custom auth header would ride along", async () => {
     const impl = stubFetch(200, { session: SESSION });
-    await lookupBrowserSession({ computerId: "c", expectedBundleHash: "h" });
+    await lookupBrowserSession({ computerId: "c", expectedBundleHash: "h", expectedContextMode: "any" });
     const [, init] = impl.mock.calls[0] as unknown as [
       string,
       { redirect: string },
@@ -180,6 +186,7 @@ describe("browser-sessions-client", () => {
       await lookupBrowserSession({
         computerId: "c",
         expectedBundleHash: "h",
+        expectedContextMode: "any",
       }),
     ).toEqual({ reachable: false, session: null });
 
@@ -193,6 +200,7 @@ describe("browser-sessions-client", () => {
       await lookupBrowserSession({
         computerId: "c",
         expectedBundleHash: "h",
+        expectedContextMode: "any",
       }),
     ).toEqual({ reachable: false, session: null });
 
@@ -201,6 +209,7 @@ describe("browser-sessions-client", () => {
       await lookupBrowserSession({
         computerId: "c",
         expectedBundleHash: "h",
+        expectedContextMode: "any",
       }),
     ).toEqual({ reachable: false, session: null });
   });

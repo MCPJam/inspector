@@ -83,7 +83,9 @@ export interface SessionStore {
   lookup(args: {
     computerId: string;
     expectedBundleHash: string;
-    expectedContextMode?: BrowserContextMode;
+    /** Required: see `lookupBrowserSession`. `"any"` is the explicit
+     *  opt-out; omission is rejected by the control plane. */
+    expectedContextMode: BrowserContextMode | "any";
     signal?: AbortSignal;
   }): Promise<BrowserSessionLookup>;
   record(args: {

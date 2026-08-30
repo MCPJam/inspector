@@ -229,9 +229,16 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
 export async function lookupBrowserSession(args: {
   computerId: string;
   expectedBundleHash: string;
-  /** The profile mode the caller intends to run in; a row in the other mode
-   *  comes back as `stale: "context_mode_changed"` rather than reusable. */
-  expectedContextMode?: BrowserContextMode;
+  /**
+   * The profile mode the caller intends to run in; a row in the other mode
+   * comes back as `stale: "context_mode_changed"` rather than reusable.
+   *
+   * REQUIRED, and `"any"` is the explicit opt-out for a diagnostic reader.
+   * The backend rejects a lookup that names no mode: when omission meant
+   * "skip the check", an eval that forgot to declare itself was handed a
+   * persistent daemon carrying someone's live cookies.
+   */
+  expectedContextMode: BrowserContextMode | "any";
   signal?: AbortSignal;
 }): Promise<BrowserSessionLookup> {
   const raw = await postServiceAuthorized(
@@ -239,9 +246,7 @@ export async function lookupBrowserSession(args: {
     {
       computerId: args.computerId,
       expectedBundleHash: args.expectedBundleHash,
-      ...(args.expectedContextMode
-        ? { expectedContextMode: args.expectedContextMode }
-        : {}),
+      expectedContextMode: args.expectedContextMode,
     },
     args.signal,
   );
