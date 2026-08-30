@@ -211,14 +211,20 @@ export const DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION =
 /**
  * The same disagreement on a run whose chain predates analyzer 7.
  *
- * Here the cause IS known, and knowable from the row itself rather than
- * guessed: before 7, a case that authored nothing about tools left `response`
- * inapplicable, so a tool that errored during the run had no stage able to
- * report it — every applicable stage green, the verdict red. Newer runs
- * attribute it, which makes "re-run" a real instruction rather than a shrug.
+ * What the version proves is NARROW, and the first draft of this line over-read
+ * it. A pre-7 analyzer could not report an errored tool call on a case that
+ * authored no tool expectation — but that is a statement about what the
+ * analyzer was ABLE to see, never evidence that such a call occurred. Naming
+ * the tool error as the cause would have sent a reader after a specific
+ * finding on every legacy row, whatever actually went wrong.
+ *
+ * So this says only what the row itself establishes: the chain was derived by
+ * an analyzer that measures strictly less than the current one, and
+ * re-deriving may therefore attribute what this one could not. That makes
+ * "re-run" a real instruction without attaching a cause to it.
  */
 export const DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION =
-  "the recorded verdict disagrees with the measured chain; this run's chain predates the analyzer that reports an errored tool call on an unauthored case — re-run the case to attribute it";
+  "the recorded verdict disagrees with the measured chain; this run's chain was derived by an older analyzer that measures less than the current one — re-run the case before investigating further";
 
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
