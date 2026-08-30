@@ -163,6 +163,9 @@ function buildStripDataForCell(data: CellData) {
     {
       runLabel: "latest",
       result: outcomeToTrendResult(cellOutcome(data)),
+      passed: data.passCount,
+      failed: data.failCount,
+      total: data.totalCount,
       latencyMs: data.p50LatencyMs,
       latencyP95Ms: data.p95LatencyMs,
       tokens: data.avgTokensPerIteration,
