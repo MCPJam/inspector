@@ -350,7 +350,14 @@ export function ResourcesTab({
           setResourceContent(null);
         }
       }
-      setNextCursor(result.nextCursor);
+      // The response body is untyped, so a non-string `nextCursor` is not a
+      // cursor and ends the listing. A repeated cursor is NOT an ending: the
+      // value is opaque, and a server may legally reissue one constant
+      // token — `""` included — for every page. Paging is user-driven here, so
+      // there is nothing to spin unattended.
+      setNextCursor(
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined,
+      );
       setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
@@ -400,7 +407,9 @@ export function ResourcesTab({
 
   const loadMoreResources = useCallback(async () => {
     if (loadingMore) return;
-    if (!nextCursor) return;
+    // Presence, not truthiness: MCP 2026-07-28 `server/utilities/pagination`
+    // makes `""` a valid cursor that MUST NOT be read as the end of results.
+    if (nextCursor === undefined) return;
 
     await fetchResources(nextCursor, true);
   }, [nextCursor, loadingMore]);
@@ -413,7 +422,7 @@ export function ResourcesTab({
     const observer = new IntersectionObserver((entries) => {
       const entry = entries[0];
       if (!entry.isIntersecting) return;
-      if (!nextCursor || loadingMore) return;
+      if (nextCursor === undefined || loadingMore) return;
 
       loadMoreResources();
     });
@@ -1115,11 +1124,13 @@ export function ResourcesTab({
                         <span>Loading more resources…</span>
                       </div>
                     )}
-                    {!nextCursor && resources.length > 0 && !loadingMore && (
-                      <div className="text-center py-3 text-xs text-muted-foreground">
-                        No more resources
-                      </div>
-                    )}
+                    {nextCursor === undefined &&
+                      resources.length > 0 &&
+                      !loadingMore && (
+                        <div className="text-center py-3 text-xs text-muted-foreground">
+                          No more resources
+                        </div>
+                      )}
                   </>
                 )
               ) : /* Templates List */

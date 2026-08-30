@@ -104,6 +104,21 @@ Agents with shell access can already run `mcpjam` commands directly, and for one
 | `server_doctor` | One-shot diagnostic sweep (HTTP or stdio target) — same checks as [`mcpjam server doctor`](/cli/server-inspection) |
 | `probe_server` | HTTP-only probe: transport selection, auth requirements, OAuth metadata discovery — same as `mcpjam server probe` |
 
+## Skills over MCP
+
+Alongside its tools, `mcpjam mcp` serves two of MCPJam's Agent Skills over the [`io.modelcontextprotocol/skills` extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) (SEP-2640):
+
+| Skill | What it is for |
+|---|---|
+| `mcp-inspector` | Interpreting probe, doctor, OAuth, and conformance output conservatively — the tools this server exposes |
+| `mcpjam-eval-import` | Converting an existing test corpus into an MCPJam eval suite |
+
+A client that advertises the extension sees them in `skills/list` and can load them with no install step — you do not need `npx skills add` for these two when you are connected this way. Each skill's files are also readable as ordinary resources under `skill://mcpjam/<name>/…`, which is why `resources/list` now returns rows for a server that previously exposed none.
+
+Every file carries a SHA-256 digest and a byte size, and a conforming host verifies both before loading. The listing deliberately carries **no** `ttlMs`: because the documented launch command is `npx -y @mcpjam/cli@latest mcp`, the bytes behind an identical command change whenever a release lands, so this server issues no cache-freshness directive it could not honour.
+
+`mcpjam-eval-import` is served by the [hosted MCP server](/cli/mcp-server#relationship-to-the-hosted-mcp-server) too, under the same URI. If you are connected to both at once, address it by server (`<server>/mcpjam-eval-import`) rather than by bare URI.
+
 ## Example session
 
 A typical agent flow while developing a stdio server:

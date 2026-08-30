@@ -310,15 +310,6 @@ export async function bearerAuthMiddleware(
   try {
     const result = await validateGuestTokenDetailedAsync(token);
     if (result.valid && result.guestId) {
-      if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-        return c.json(
-          {
-            code: ErrorCode.FORBIDDEN,
-            message: "Guest access is disabled in this environment.",
-          },
-          403
-        );
-      }
       c.set("guestId", result.guestId);
       c.set("authMethod", "guest");
       return next();

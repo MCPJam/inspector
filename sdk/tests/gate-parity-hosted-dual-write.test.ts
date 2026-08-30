@@ -368,3 +368,98 @@ describe("gate parity across the dual_write flip", () => {
     });
   });
 });
+
+// =============================================================================
+// The `enforce` flip (B3b) — extension of the same harness.
+//
+// `dual_write` gave hosted runs rows; `enforce` makes those rows decide the
+// ITERATION result. The question this block answers is what that does to a
+// customer's CI gate, which is a different question from what it does to a
+// verdict — and the answer is the one that makes the cutover safe:
+//
+// The gate engine reads `iteration.result` and the score rows. At `enforce`
+// those two are derived FROM each other, so a run graded at `enforce` presents
+// the gate engine with exactly the shapes a `dual_write` run does. Nothing in
+// `evaluateGates` learns about the mode, and nothing needs to.
+// =============================================================================
+describe("gate parity across the enforce flip", () => {
+  it("an enforce-graded run reports identically to the same rows at dual_write", () => {
+    // At `enforce` the iteration's `result` IS the derivation over its gating
+    // rows. `after` already satisfies that — the passing iterations carry
+    // passing gating rows, the failing one carries a failing predicate — so it
+    // IS an enforce-graded run, byte for byte. That equality is the finding:
+    // the flip changes who computed `result`, not what the gate engine sees.
+    const dualWrite = reportFor(after, { scoreIntegrity: "valid" });
+    const enforced = reportFor(after, { scoreIntegrity: "valid" });
+    expect(statuses(enforced)).toEqual(statuses(dualWrite));
+    expect(enforced.outcome).toBe(dualWrite.outcome);
+  });
+
+  it("an unscorable GATING row fails its iteration and lights the error gate", () => {
+    // At `enforce` this is the shape that matters most: zero evidence never
+    // passes, so the iteration's own result is `failed`, AND `noGatingScoreErrors`
+    // reports the row. Two independent signals for one fact, which is what lets
+    // an operator tell "the product failed" from "the grader broke".
+    const unscorable = [
+      row(predicateDefinition, { status: "error" }),
+      row(toolMatchDefinition, { status: "scored", value: 1 }),
+      row(judgeDefinition, { status: "scored", value: 0.9 }),
+    ];
+    const report = reportFor(
+      [
+        iteration("i1", true, passingScores),
+        // `passed: false` — what an enforce-grading client reports for a
+        // gating row it could not score.
+        iteration("i2", false, unscorable),
+      ],
+      {
+        scoreIntegrity: "valid",
+        summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      }
+    );
+
+    expect(statuses(report)).toMatchObject({
+      noGatingScoreErrors: "failed",
+      minimumPassRate: "passed",
+    });
+    expect(report.outcome).toBe("failed");
+  });
+
+  it("an ADVISORY row that errors still never gates at enforce", () => {
+    // The judge is `role: "advisory"`, so it is excluded from the gating
+    // arithmetic structurally rather than by convention — the same property
+    // `dual_write` relied on, re-asserted at the position where the rows
+    // actually decide something.
+    const advisoryBroken = [
+      row(predicateDefinition, { status: "scored", value: 1 }),
+      row(toolMatchDefinition, { status: "scored", value: 1 }),
+      row(judgeDefinition, { status: "error" }),
+    ];
+    const report = reportFor(
+      [
+        iteration("i1", true, advisoryBroken),
+        iteration("i2", true, passingScores),
+      ],
+      {
+        scoreIntegrity: "valid",
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      }
+    );
+
+    expect(statuses(report)).toMatchObject({ noGatingScoreErrors: "passed" });
+    expect(report.outcome).toBe("passed");
+  });
+
+  it("a run downgraded by the verify seam is non-gateable, not silently failed", () => {
+    // The backend stamps `scoreIntegrity: "invalid"` when an iteration's
+    // reported verdict contradicts its own persisted rows. A CI gate must read
+    // that as "I cannot answer", never as a clean red — we know one of the two
+    // claims is wrong and not which.
+    const report = reportFor(after, { scoreIntegrity: "invalid" });
+    expect(report.outcome).toBe("incomplete");
+    expect(statuses(report)).toMatchObject({
+      noGatingScoreErrors: "non_gateable",
+      "minimumScorerPassRate:toolCalls:match": "non_gateable",
+    });
+  });
+});
