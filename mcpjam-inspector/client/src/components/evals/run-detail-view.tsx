@@ -24,6 +24,8 @@ import { buildSubmissionCasesFromRun } from "./run-submission";
 import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { ImportEvidenceCard } from "./import-evidence-card";
+import { useRunImportEligibility } from "./use-run-import-eligibility";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { useGoalCompletion } from "./use-goal-completion";
@@ -43,6 +45,9 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
+import { SuiteRunStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
+import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, Download, Share2 } from "lucide-react";
@@ -185,6 +190,26 @@ interface RunDetailViewProps {
    * Optional — CI/commit-detail parents don't have a live suite handle.
    */
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
+  /**
+   * The run's own canonical decision summary, as a slot.
+   *
+   * A SLOT rather than a fetch, because this view is shared: `/evals`, the CI
+   * commit detail and Evaluate all mount it, and only Evaluate opts into the
+   * D9 read. Passing the rendered node keeps the opt-in at the call site and
+   * keeps every non-Evaluate mount at exactly zero summary requests.
+   */
+  decisionSummarySlot?: React.ReactNode;
+  /**
+   * The cohort the flow diagram would analyze, when this surface has one.
+   *
+   * A prop rather than something derived here, for the reason the funnel below
+   * it is not: the funnel reads a rollup that already exists for any run, and
+   * the diagram needs a cohort a paid analyzer pass can be filed against. Only
+   * a caller knows whether this run belongs to one. `null` (the default) means
+   * no cohort, and the panel renders nothing rather than offering a button
+   * that would spend nothing.
+   */
+  flowScope?: InsightsScope | null;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -404,6 +429,8 @@ export function RunDetailView({
   hideAccuracyHero = false,
   onExportTraces,
   onShare,
+  decisionSummarySlot,
+  flowScope = null,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -416,6 +443,14 @@ export function RunDetailView({
         }),
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
+
+  // The run's own eligibility, from the canonical single-run query. The list
+  // projection this screen's `selectedRunDetails` usually comes from does not
+  // carry one, so reading it off that object would render every converted run
+  // as though it had no imported cases.
+  const { eligibility: runImportEligibility } = useRunImportEligibility(
+    selectedRunDetails._id,
+  );
 
   const {
     result: serverQualityResult,
@@ -722,6 +757,29 @@ export function RunDetailView({
       </div>
     ) : null;
 
+  /**
+   * The free half and the paid half of the same traces, side by side.
+   *
+   * The funnel is mounted unconditionally because reading it costs nothing —
+   * the stage worker already derived those verdicts, and this is their rollup.
+   * The diagram beside it is a model's reading, bought per pass, and issues no
+   * query at all until somebody clicks. Auto-requesting it would put a charge
+   * on opening a tab.
+   *
+   * A fragment rather than a wrapper: each half suppresses itself when it has
+   * nothing, and a wrapping div would survive both of them to leave a padded
+   * empty box — and, in the embedded rail, a divider with nothing under it.
+   */
+  const userValueChainPanel = (
+    <>
+      <SuiteRunStageFunnelPanel
+        suiteRunId={selectedRunDetails._id}
+        className="m-3"
+      />
+      <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
+    </>
+  );
+
   const insightRail = (
     <RunInsightRail
       triageCard={
@@ -736,6 +794,7 @@ export function RunDetailView({
       }
       goalCompletionCard={goalCompletionPanel}
       groundednessCard={groundednessPanel}
+      userValueChainCard={userValueChainPanel}
       embedded={embeddedInResultsSplit}
     />
   );
@@ -831,6 +890,12 @@ export function RunDetailView({
 
   const runMetadataBlock = (
     <>
+      {/* FROZEN import evidence, from the run's own snapshot.
+          Fetched canonically rather than derived from the suite's current
+          cases: those get edited after runs finish, and recomputing would let
+          an edit rewrite what a finished run is shown to have decided. */}
+      <ImportEvidenceCard eligibility={runImportEligibility} className="mb-4" />
+
       {!hideCiMetadata &&
         (selectedRunDetails.ciMetadata?.branch ||
           selectedRunDetails.ciMetadata?.commitSha ||
@@ -1022,7 +1087,16 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      <div className="shrink-0">{runMetadataBlock}</div>
+      {/* The run's own answer, above the browser's derived KPIs: what the run
+          DECIDED comes before how its trials went. Absent (and unfetched) on
+          every surface that does not pass the slot. */}
+      {decisionSummarySlot ? (
+        <div className="shrink-0">{decisionSummarySlot}</div>
+      ) : null}
+
+      <div className="shrink-0" data-testid="run-detail-metadata">
+        {runMetadataBlock}
+      </div>
 
       {useTwoColumnLayout ? (
         <>

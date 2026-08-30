@@ -94,7 +94,7 @@ export function trimOrUndefined(value: string | undefined): string | undefined {
  * nameless without an origin still reads as ad-hoc rather than rendering blank.
  */
 export function environmentOrigin(
-  environment: EnvironmentLabelRow
+  environment: EnvironmentLabelRow,
 ): ProjectEnvironmentOrigin {
   if (environment.origin === "named" || environment.origin === "adhoc") {
     return environment.origin;
@@ -121,7 +121,7 @@ export function isAdhocEnvironment(environment: EnvironmentLabelRow): boolean {
  */
 export function environmentLabel(
   environment: EnvironmentLabelRow,
-  ctx: EnvironmentLabelContext = {}
+  ctx: EnvironmentLabelContext = {},
 ): string {
   const name = trimOrUndefined(environment.name);
   if (name) return name;
@@ -163,10 +163,19 @@ export function describeServerScope(environment: EnvironmentLabelRow): string {
 export function environmentPinCounts(environment: EnvironmentLabelRow): {
   skillPins: number;
   pluginPins: number;
+  /**
+   * How many of `skillPins` are held at an EXACT revision rather than tracking
+   * Latest (Versioned Skills). Reported separately because the difference is
+   * the whole point of a pin: an environment at "3 skills, 1 at an exact
+   * version" behaves differently on the next edit than one tracking Latest
+   * throughout, and a single count hides that.
+   */
+  skillVersionPins: number;
 } {
   return {
     skillPins: environment.skillSelection?.skillIds.length ?? 0,
     pluginPins: environment.pluginVersionIds?.length ?? 0,
+    skillVersionPins: environment.skillSelection?.versionPins?.length ?? 0,
   };
 }
 
@@ -180,7 +189,7 @@ export function environmentPinCounts(environment: EnvironmentLabelRow): {
  */
 export function environmentImageLabel(
   environment: EnvironmentLabelRow,
-  ctx: EnvironmentLabelContext
+  ctx: EnvironmentLabelContext,
 ): string | undefined {
   if (!ctx.computersEnabled) return undefined;
   const imageId = environment.computerEnvironmentId;
@@ -206,7 +215,7 @@ export function environmentImageLabel(
  */
 export function environmentDetailLine(
   environment: EnvironmentLabelRow,
-  ctx: EnvironmentLabelContext
+  ctx: EnvironmentLabelContext,
 ): string {
   const { skillPins, pluginPins } = environmentPinCounts(environment);
   const parts = [
@@ -228,7 +237,7 @@ export function environmentDetailLine(
  * row on one client derives the same label.
  */
 export function disambiguateLabels<T extends { label: string }>(
-  items: readonly T[]
+  items: readonly T[],
 ): T[] {
   const counts = new Map<string, number>();
   for (const item of items) {
