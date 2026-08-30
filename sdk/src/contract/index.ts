@@ -79,6 +79,7 @@ export {
 
 export {
   aggregateEvaluationConfigHash,
+  allGatingScorersPassed,
   buildEvaluationConfigSnapshot,
   definitionHash,
   errorScoreResult,
@@ -170,6 +171,150 @@ export {
   stageResultRowSchema,
 } from "./stage-derivation.js";
 
+// ── stage analytics (D5) ─────────────────────────────────────────────────────
+/**
+ * Contract and runtime wiring for the D5/B5 eval analytics fields.
+ *
+ * B5c now carries `intent` through authoring, suite-file sync, Platform
+ * mappings, and Inspector reporting, and derives `StageMeasurementsV1` while
+ * spans are still available. The backend storage/ingest deployment must be
+ * present before a released client publishes these fields to production.
+ *
+ * This sequencing is deliberate: a client must never accept a nonempty intent
+ * or measurement payload and silently drop it. The backend contract was frozen
+ * in B5a and deployed before enabling these runtime write paths.
+ */
+export type {
+  CaseIntent,
+  CaseIntentUpdate,
+  IntentUpdateResolution,
+} from "./stage-intent.js";
+export {
+  INTENT_EXCLUDED_FROM_SEMANTIC_EXACTNESS,
+  MAX_INTENT_CHARS,
+  UNLABELED_INTENT_LABEL,
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+  intentFingerprintValue,
+  intentSliceKey,
+  normalizeIntent,
+  resolveIntentUpdate,
+} from "./stage-intent.js";
+
+export type {
+  MeasurementSpanLike,
+  StageLatencySample,
+  StageMeasurementInput,
+  StageMeasurementRow,
+  StageMeasurementsSchemaVersion,
+  StageMeasurementsV1,
+  StageReach,
+} from "./stage-measurements.js";
+export {
+  LATENCY_BASIS_EVIDENCE_SPAN_UNION,
+  LATENCY_BASIS_SETUP_PHASE_WALL,
+  LATENCY_UNIT,
+  STAGE_LATENCY_ELIGIBLE_STAGES,
+  STAGE_MEASUREMENTS_METADATA_KEY,
+  STAGE_MEASUREMENTS_SCHEMA_VERSION,
+  STAGE_REACH_STATES,
+  attachStageMeasurements,
+  deriveStageMeasurements,
+  reachForStageState,
+  reachIsConsistentWithState,
+  stageLatencySampleSchema,
+  stageMayCarryLatency,
+  stageMeasurementDisagreements,
+  stageMeasurementRowSchema,
+  stageMeasurementsSchema,
+  stageMeasurementsStructuralSchema,
+  stageReachSchema,
+  unionDurationMs,
+} from "./stage-measurements.js";
+
+export type {
+  EvalSetupTally,
+  EvalStageAnalyticsMaterializationState,
+  EvalStageAnalyticsSchemaVersion,
+  EvalStageAnalyticsSlice,
+  EvalStageAnalyticsSliceRow,
+  EvalStageAnalyticsV1,
+  EvalStageCoverageDetail,
+  EvalStageExclusionClass,
+  EvalStageExclusions,
+  EvalStageLatencyAggregate,
+  EvalStageParityBlocker,
+  EvalStageRate,
+  EvalStageTally,
+  EvalSetupLatencyAggregate,
+  SetupPhase,
+} from "./stage-analytics.js";
+export {
+  EVAL_STAGE_ANALYTICS_MATERIALIZATION_STATES,
+  EVAL_STAGE_ANALYTICS_SCHEMA_ID,
+  EVAL_STAGE_ANALYTICS_SCHEMA_VERSION,
+  EVAL_STAGE_EXCLUSION_CLASSES,
+  EVAL_STAGE_PARITY_BLOCKERS,
+  MAX_ANALYTICS_SLICES,
+  MAX_HOST_SLICES,
+  MAX_INTENT_SLICES,
+  MAX_MODEL_SLICES,
+  SETUP_PHASES,
+  STAGE_TALLIES_PER_SLICE,
+  evalSetupLatencyAggregateSchema,
+  evalSetupTallySchema,
+  evalStageAnalyticsMaterializationStateSchema,
+  evalStageAnalyticsSchema,
+  evalStageAnalyticsSliceRowSchema,
+  evalStageAnalyticsSliceSchema,
+  evalStageAnalyticsStructuralSchema,
+  evalStageCoverageDetailSchema,
+  evalStageExclusionsSchema,
+  evalStageLatencyAggregateSchema,
+  evalStageRateSchema,
+  evalStageTallySchema,
+  isServerAttributedSetupFailure,
+  latencyMeanMs,
+  measuredPassRate,
+  measurementCoverageRate,
+  reachRate,
+  stageAnalyticsParityBlockers,
+  stageRate,
+} from "./stage-analytics.js";
+
+export type {
+  StageAnalyticsInput,
+  StageAnalyticsRunInput,
+  StageAnalyticsSetupSignalInput,
+  StageAnalyticsTrialInput,
+  TrialClassification,
+} from "./stage-analytics-aggregate.js";
+export {
+  aggregateStageAnalytics,
+  classifyStageAnalyticsTrial,
+} from "./stage-analytics-aggregate.js";
+
+// ── the chat-session evidence adapter (D8) ───────────────────────────────────
+//
+// NOT a second derivation: it normalizes one chat session's evidence into the
+// SAME `deriveStageResults` input every eval iteration goes through. User
+// Testing, swarm, and (post-D8p) direct/playground sessions all pass through
+// here, so "the connection worked" means one thing on every surface.
+export type {
+  ChatSessionCriteriaEvidence,
+  ChatSessionCriterionOutcome,
+  ChatSessionGoalJudgeEvidence,
+  ChatSessionLifecycle,
+  ChatSessionReadinessEvidence,
+  ChatSessionStageInput,
+  ChatSessionStageSource,
+} from "./chat-session-stage-adapter.js";
+export {
+  CHAT_SESSION_STAGE_SOURCES,
+  buildChatSessionAuthoredCase,
+  buildChatSessionStageInput,
+} from "./chat-session-stage-adapter.js";
+
 // ── the authored step union ──────────────────────────────────────────────────
 export type {
   AssertStep,
@@ -239,6 +384,8 @@ export {
   EVAL_SUITE_SCHEMA_VERSION,
   MAX_BATCH_CREATE_CASES,
   MAX_CASE_ASSERTIONS,
+  MAX_IMPORT_NOTE_CHARS,
+  MAX_IMPORT_SOURCE_CASE_KEY_CHARS,
   MAX_REPETITIONS,
   MAX_SUITE_FILE_CASES,
   MAX_SUITE_FILE_TITLE_CHARS,
@@ -325,3 +472,63 @@ export {
  * file above.
  */
 export { evalVerdictPolicyJsonSchema } from "./eval-verdict-policy.schema.generated.js";
+
+// ── user-facing words for the closed vocabularies ────────────────────────────
+export {
+  DECISION_LABEL_VOCABULARIES,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  EVAL_VERDICT_DECISION_REASON_LABELS,
+  FAILURE_CATEGORY_LABELS,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  STAGE_REASON_LABELS,
+  STAGE_STATE_LABELS,
+  USER_VALUE_STAGE_LABELS,
+} from "./decision-labels.js";
+
+// ── the canonical run decision summary ───────────────────────────────────────
+export type {
+  EvalRunDecisionAssemblyInput,
+  EvalRunDecisionChain,
+  EvalRunDecisionCounts,
+  EvalRunDecisionDiagnostic,
+  EvalRunDecisionDiagnostics,
+  EvalRunDecisionEvidence,
+  EvalRunDecisionIterationInput,
+  EvalRunDecisionRunInput,
+  EvalRunDecisionSummary,
+  EvalRunDecisionSummarySchemaVersion,
+  EvalRunDecisionUndecided,
+  EvalRunDecisionUndecidedReason,
+  EvalRunDecisionVerdict,
+  EvalRunDecisionVerdictSource,
+  EvalRunMeasurementUnit,
+} from "./decision-summary.js";
+export {
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_ID,
+  EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
+  EVAL_RUN_DECISION_UNDECIDED_REASONS,
+  EVAL_RUN_DECISION_VERDICTS,
+  EVAL_RUN_DECISION_VERDICT_SOURCES,
+  EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
+  EVAL_RUN_DECISION_VERDICT_LABELS,
+  EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS,
+  EVAL_RUN_MEASUREMENT_UNITS,
+  EVAL_RUN_MEASUREMENT_UNIT_LABELS,
+  assembleEvalRunDecisionSummary,
+  decisionDiagnosticFailureCategory,
+  decisionDiagnosticFirstFailedStage,
+  evalIterationTracePath,
+  evalRunDecisionChainSchema,
+  evalRunDecisionCountsSchema,
+  evalRunDecisionDiagnosticSchema,
+  evalRunDecisionDiagnosticsSchema,
+  evalRunDecisionEvidenceSchema,
+  evalRunDecisionSummarySchema,
+  evalRunDecisionSummaryStructuralSchema,
+  evalRunDecisionUndecidedReasonSchema,
+  evalRunDecisionUndecidedSchema,
+  evalRunDecisionVerdictSchema,
+  evalRunDecisionVerdictSourceSchema,
+  evalRunMeasurementUnitSchema,
+  measurementUnitLabel,
+} from "./decision-summary.js";

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { routePaths } from "../lib/app-navigation";
 
@@ -96,10 +97,21 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * The route's redirect goes through `ScopedNavigate`, which carries the active
+ * project into a project-owned target — so it needs a router context to read
+ * the current location from. Mounting inside a `MemoryRouter` gives it one;
+ * the `Navigate` marker mocked above still renders, and with no project in the
+ * URL the target is the plain logical path these assertions expect.
+ */
+function renderRoute(element: React.ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
 describe("ComputerRoute — flag hydration", () => {
   it("does not redirect while the flag is still loading (undefined)", () => {
     flagState = undefined;
-    render(<ComputerRoute />);
+    renderRoute(<ComputerRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     // Nothing renders yet either — it waits for the flag to settle.
     expect(screen.queryByTestId("computer-view")).not.toBeInTheDocument();
@@ -107,12 +119,19 @@ describe("ComputerRoute — flag hydration", () => {
 
   it("does not redirect across an undefined -> true transition", () => {
     flagState = undefined;
-    const { rerender } = render(<ComputerRoute />);
+    const { rerender } = renderRoute(<ComputerRoute />);
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
 
     // PostHog resolves the flag to enabled.
     flagState = true;
-    rerender(<ComputerRoute />);
+    // Re-rendered inside the same router: dropping the wrapper here would
+    // remount the route without a location, which is not what a flag
+    // resolving mid-session does.
+    rerender(
+      <MemoryRouter>
+        <ComputerRoute />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
     expect(screen.getByTestId("computer-view")).toBeInTheDocument();
@@ -120,7 +139,7 @@ describe("ComputerRoute — flag hydration", () => {
 
   it("redirects to servers only on an explicit false", () => {
     flagState = false;
-    render(<ComputerRoute />);
+    renderRoute(<ComputerRoute />);
     const nav = screen.getByTestId("navigate");
     expect(nav).toBeInTheDocument();
     expect(nav).toHaveAttribute("data-to", routePaths.servers);
