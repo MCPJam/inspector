@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -29,6 +29,7 @@ import {
   buildUserTestingScenarioPath,
   parseUserTestingDetailTab,
   routePaths,
+  useAppNavigate,
   userTestingCreatePath,
 } from "@/lib/app-navigation";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -87,7 +88,7 @@ export function UserTestingTab({
   createOpen = false,
   editOpen = false,
 }: UserTestingTabProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [searchParams] = useSearchParams();
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;

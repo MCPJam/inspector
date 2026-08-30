@@ -1068,6 +1068,10 @@ async function runCacheScopePaginationCheck(
   for (const method of paginatedCacheableMethods(capabilities)) {
     const scopes: unknown[] = [];
     let cursor: string | undefined;
+    // Every cursor already issued, not just the previous one: an `A → B → A`
+    // alternation never repeats back-to-back, and `""` needs to be caught on
+    // its second appearance now that it no longer ends the walk.
+    const seenCursors = new Set<string>();
 
     // Bounded to a handful of pages: this asserts consistency, not coverage,
     // and a server handing out cursors forever must not hang the run.
@@ -1084,7 +1088,12 @@ async function runCacheScopePaginationCheck(
       if (!payload) break;
       scopes.push(payload.cacheScope);
       const next = payload.nextCursor;
-      if (typeof next !== "string" || next === "" || next === cursor) break;
+      // `""` is a valid continuation cursor (MCP 2026-07-28
+      // `server/utilities/pagination`), so only a non-string ends the walk.
+      // The cycle guard catches a server that reissues any token — `""`
+      // included — instead of making progress.
+      if (typeof next !== "string" || seenCursors.has(next)) break;
+      seenCursors.add(next);
       cursor = next;
     }
 
@@ -2024,12 +2033,30 @@ async function runLogLevelCheck(
     );
   }
 
+  // NOT a pass. Without a probe the request above is an ordinary
+  // `server/discover`, which no server logs about in the first place, so its
+  // silence is the absence of an observation rather than the observation of an
+  // absence — the same silence a server that ignores the opt-in gate entirely
+  // would produce. Passing on it credited every unprobed run with a MUST it
+  // never exercised, and this check is scored, so that credit landed in
+  // published numbers.
+  //
+  // `could-not-run` and deliberately NOT `not-applicable`: the requirement
+  // applies to every modern server, and only our ability to observe it is
+  // missing. `not-applicable` would drop the check from the denominator
+  // (`conformance-outcome.ts`), which turns one unearned pass into a smaller
+  // total and leaves the percentage just as flattering. This way the run
+  // reports `incomplete`, which is what an unexercised MUST actually means.
+  //
+  // The failing branch above still stands without a probe: log records on a
+  // request that carried no level are a violation no matter what provoked
+  // them. Only the silent branch is unprovable, and only it skips.
   if (!probe) {
-    return passedResult(meta, Date.now() - startedAt, {
-      logNotificationCount: 0,
-      evidence:
-        "No logProbe configured: asserted against an ordinary request, which cannot show the server logs at all",
-    });
+    return couldNotRunResult(
+      meta,
+      "No logProbe configured, so the run had no request the server is known to log about: the silence above cannot distinguish a working opt-in gate from a server that never logs. Configure `logProbe` with a tool that emits log records to assert this.",
+      { logNotificationCount: 0 }
+    );
   }
 
   // Positive control: the SAME call carrying a log level. Records here prove
@@ -2079,16 +2106,54 @@ async function runNoSessionIdCheck(
       sessionId: result.headers["mcp-session-id"],
     }));
 
-  return offenders.length > 0
-    ? failedResult(
-        meta,
-        Date.now() - startedAt,
-        "Server minted an Mcp-Session-Id on a modern response; the 2026 era is sessionless",
-        { offenders, inspectedResponses: state.observed.length }
-      )
-    : passedResult(meta, Date.now() - startedAt, {
-        inspectedResponses: state.observed.length,
-      });
+  if (offenders.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      "Server minted an Mcp-Session-Id on a modern response; the 2026 era is sessionless",
+      { offenders, inspectedResponses: state.observed.length }
+    );
+  }
+
+  // A header this run never gave the server a chance to send is not evidence
+  // the server declines to send it.
+  //
+  // Every response here can be a 401 or a rejected handshake — a server that
+  // never completes `server/discover` cannot mint a session id whether or not
+  // it would — and the empty offender list above is then a fact about our
+  // access, not about the server. Passing on it handed a free credit to
+  // exactly the servers that answered nothing, and this check is scored, so
+  // the servers doing worst were the ones it flattered most.
+  //
+  // The bar is one response that actually carried a JSON-RPC result: at that
+  // point the server has completed an exchange it could have attached a
+  // session to, and its silence is a choice. The failing branch above is
+  // deliberately NOT gated on this — a session id on a 401 is still a session
+  // id, and still a violation.
+  // Any 2xx carrying a JSON-RPC `result` member, not `status === 200` alone:
+  // the question here is only "did an exchange complete", and a server that
+  // answers a result on some other 2xx has still processed the call and could
+  // have attached a session header to it. `jsonRpcResult` reads SSE frames as
+  // well as a JSON body, so a streaming server is not mistaken for a dead one.
+  const succeeded = state.observed.filter(
+    (result) =>
+      result.status >= 200 &&
+      result.status < 300 &&
+      jsonRpcResult(result) !== undefined
+  ).length;
+
+  if (succeeded === 0) {
+    return couldNotRunResult(
+      meta,
+      `No modern exchange succeeded (${state.observed.length} response(s), none carrying a JSON-RPC result), so the server was never in a position to mint a session id and its absence asserts nothing`,
+      { inspectedResponses: state.observed.length, succeededResponses: 0 }
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, {
+    inspectedResponses: state.observed.length,
+    succeededResponses: succeeded,
+  });
 }
 
 /**
