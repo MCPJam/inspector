@@ -845,6 +845,67 @@ describe("run_eval_case host selection", () => {
   });
 });
 
+describe("per-run import approvals reach the launch", () => {
+  const APPROVALS = [
+    { testCaseId: "case-1", reason: "Reviewed against the upstream rubric" },
+  ];
+
+  it("forwards them from a SINGLE-CASE run", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", importApprovals: APPROVALS },
+      { client },
+    );
+    // Without this the operation could never launch an `approximated` case:
+    // the platform refuses a selected approximation carrying no approval, so
+    // the one caller who explicitly approved it would still be refused.
+    expect(bodiesTo(fetchMock, "/eval-runs")).toEqual([
+      {
+        suiteId: "suite-1",
+        caseIds: ["case-1"],
+        importApprovals: APPROVALS,
+      },
+    ]);
+  });
+
+  it("forwards them from a SUITE run selecting the same one case", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", importApprovals: APPROVALS },
+      { client },
+    );
+    const single = bodiesTo(fetchMock, "/eval-runs");
+    const suiteRun = makeClient();
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", cases: ["echo works"], importApprovals: APPROVALS },
+      { client: suiteRun.client },
+    );
+    const viaSuite = bodiesTo(suiteRun.fetchMock, "/eval-runs") as Array<
+      Record<string, unknown>
+    >;
+    // The two ways of running ONE case must not disagree about whether it may
+    // run. Both carry the same approval to the same route.
+    const [viaCase] = single as Array<Record<string, unknown>>;
+    expect(viaCase?.importApprovals).toEqual(APPROVALS);
+    expect(viaSuite[0]?.importApprovals).toEqual(APPROVALS);
+  });
+
+  it("omits the key entirely when nothing was approved", async () => {
+    // Absent, never `[]`: an empty list would read as "somebody considered
+    // the approximations and approved none", which is a different statement
+    // from "no approval was part of this launch".
+    const { client, fetchMock } = makeClient();
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works" },
+      { client },
+    );
+    const [body] = bodiesTo(fetchMock, "/eval-runs") as Array<
+      Record<string, unknown>
+    >;
+    expect(body && "importApprovals" in body).toBe(false);
+  });
+});
+
 describe("run_eval_suite pre-run disclosure (G4b)", () => {
   it("fires onDisclosure before createEvalRun, and carries it on the receipt", async () => {
     const callOrder: string[] = [];

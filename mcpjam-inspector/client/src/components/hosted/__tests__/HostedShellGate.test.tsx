@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { HostedShellGate } from "../HostedShellGate";
 
 describe("HostedShellGate", () => {
@@ -56,36 +56,16 @@ describe("HostedShellGate", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows sign in call-to-action when logged out", () => {
-    const onSignIn = vi.fn();
-
+  it("blocks input while the project-loading overlay is up", () => {
     render(
-      <HostedShellGate state="logged-out" onSignIn={onSignIn}>
+      <HostedShellGate state="project-loading">
         <div>App Content</div>
       </HostedShellGate>,
     );
 
-    expect(
-      screen.getByText("Sign in to MCPJam to continue"),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "MCPJam" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(onSignIn).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows employee-only gate copy when restricted", () => {
-    const onSignOut = vi.fn();
-
-    render(
-      <HostedShellGate state="restricted" onSignOut={onSignOut}>
-        <div>App Content</div>
-      </HostedShellGate>,
+    expect(screen.getByTestId("hosted-shell-gate-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-shell-gate-content")).toHaveAttribute(
+      "inert",
     );
-
-    expect(
-      screen.getByText("This environment is limited to MCPJam employees."),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Use another account" }));
-    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 });
