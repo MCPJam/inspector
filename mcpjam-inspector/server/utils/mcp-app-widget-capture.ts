@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
@@ -460,9 +460,7 @@ export async function captureMcpAppWidgetSnapshots(params: {
           return null;
         }
 
-        const resourceUri = getToolUiResourceUri({
-          _meta: toolMetadata,
-        });
+        const resourceUri = resolveToolUiResourceUri(toolMetadata);
         if (!resourceUri) {
           return null;
         }

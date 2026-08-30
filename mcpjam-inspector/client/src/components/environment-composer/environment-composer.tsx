@@ -137,8 +137,8 @@ export function EnvironmentComposer({
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
-  const showEnvironmentsSlot =
-    slots.includes("environments") && environmentsEnabled;
+  const environmentsSlotRequested = slots.includes("environments");
+  const showEnvironmentsSlot = environmentsSlotRequested && environmentsEnabled;
   const showClientsSlot = slots.includes("clients");
   const showServersSlot = slots.includes("servers");
   const showSkillsSlot = slots.includes("skills") && skillsEnabled;
@@ -401,11 +401,14 @@ export function EnvironmentComposer({
         ) : null}
       </div>
 
-      {/* Only when the environment picker is actually usable: the surrounding
-          surface may already be disabling everything and saying its own version
+      {/* Only when the caller asked for the environment slot: a surface that
+          omitted it is already disabling everything and saying its own version
           of this, and naming that control would then point at something the
-          user cannot reach. */}
-      {stackEditBlock && !disabled && showEnvironmentsSlot ? (
+          user cannot reach. Gated on the REQUEST, not on `showEnvironmentsSlot`
+          — folding in `environmentsEnabled` would leave a viewer without the
+          environments flag staring at a fully greyed-out strip with nothing
+          explaining why. */}
+      {stackEditBlock && !disabled && environmentsSlotRequested ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}

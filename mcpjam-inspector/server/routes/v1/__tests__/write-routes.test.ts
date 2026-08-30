@@ -277,6 +277,46 @@ describe("v1 write routes", () => {
         return { disconnectAllServers };
       }
 
+      it("answers an import refusal with 400 and its reason, not a 500", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "host_config",
+          }),
+        });
+        prepareEvalRunMock.mockRejectedValue(
+          Object.assign(new Error("Uncaught ConvexError: not approved"), {
+            data: {
+              code: "IMPORT_INELIGIBLE",
+              message:
+                'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+              reason: "approval_required",
+            },
+          })
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        // Rethrown raw this reached the application-level handler as a 500,
+        // telling the one person who could fix it that the server broke.
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toMatch(/approximated/);
+        expect(body.details?.reason).toBe("approval_required");
+      });
+
       it("derives the suite's saved server selection and connects it", async () => {
         const { disconnectAllServers } = mockHappyCreate();
         mockConvexQueries({
@@ -419,6 +459,130 @@ describe("v1 write routes", () => {
         const body = (await res.json()) as { code?: string; message?: string };
         expect(body.code).toBe("VALIDATION_ERROR");
         expect(body.message).toContain("Pass serverIds explicitly");
+      });
+    });
+
+    /**
+     * Per-run approval of approximated imports, asserted at the TRANSPORT
+     * boundary.
+     *
+     * The exact object handed to `prepareEvalRun` is what matters: every Zod
+     * boundary in this path strips unknown keys silently, so a schema that
+     * forgot to declare `importApprovals` would answer 202 and launch a run
+     * the backend then refuses — reported to the caller as a policy refusal
+     * for a run they did approve.
+     */
+    describe("importApprovals", () => {
+      function mockHappyLaunch() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "host_config",
+          }),
+        });
+        return { disconnectAllServers };
+      }
+
+      it("survives the strict run schema and reaches prepareEvalRun intact", async () => {
+        const { disconnectAllServers } = mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteId: "suite_1",
+            importApprovals: [
+              { testCaseId: "case_1", reason: "Reviewed against the rubric." },
+            ],
+          }
+        );
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          importApprovals: [
+            { testCaseId: "case_1", reason: "Reviewed against the rubric." },
+          ],
+        });
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it("is absent, not empty, on a launch that approved nothing", async () => {
+        const { disconnectAllServers } = mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+        expect(res.status).toBe(202);
+        // An empty array is a claim ("I approved nothing"); absence is the
+        // ordinary case, and the backend reads the two differently.
+        expect(
+          "importApprovals" in prepareEvalRunMock.mock.calls[0][1]
+        ).toBe(false);
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it.each([
+        ["an approver", { approvedBy: "user_9" }],
+        ["an approval time", { approvedAt: 1756100000000 }],
+      ] as const)(
+        "refuses %s supplied by the caller (400, no launch)",
+        async (_label, extra) => {
+          mockHappyLaunch();
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/p1/eval-runs",
+            {
+              suiteId: "suite_1",
+              importApprovals: [
+                { testCaseId: "case_1", reason: "ok", ...extra },
+              ],
+            }
+          );
+          // Both are DERIVED by the server. A caller-supplied approver would
+          // file one person's approval under another's name, and a
+          // caller-supplied timestamp could be backdated past the edit that
+          // invalidated the claim.
+          expect(res.status).toBe(400);
+          expect(prepareEvalRunMock).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each([
+        ["a blank reason", ""],
+        ["a 501-character reason", "r".repeat(501)],
+      ] as const)("refuses %s (400, no launch)", async (_label, reason) => {
+        mockHappyLaunch();
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteId: "suite_1",
+            importApprovals: [{ testCaseId: "case_1", reason }],
+          }
+        );
+        expect(res.status).toBe(400);
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
     });
 
@@ -1599,6 +1763,102 @@ describe("v1 write routes", () => {
       );
     }
 
+    it("sends the SAME approvals to every target of a fan-out", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const approvals = [
+        { testCaseId: "case_1", reason: "Reviewed against the rubric." },
+      ];
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          importApprovals: approvals,
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      // A case's approximation is approximated the same way on each target,
+      // so one human decision covers the whole fan-out. Approving per target
+      // would turn one decision into N, and refusing every target after the
+      // first would fail a launch the caller approved.
+      for (const call of prepareEvalRunMock.mock.calls) {
+        expect(call[1]).toMatchObject({ importApprovals: approvals });
+      }
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("reports an import refusal as a validation failure, not INTERNAL_ERROR", async () => {
+      hostSuiteQueries();
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      // What `startTestSuiteRun` throws for a selected approximation carrying
+      // no approval.
+      prepareEvalRunMock.mockRejectedValue(
+        Object.assign(new Error("Uncaught ConvexError: not approved"), {
+          data: {
+            code: "IMPORT_INELIGIBLE",
+            message:
+              'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
+            reason: "approval_required",
+          },
+        })
+      );
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [{ namedHostId: "host_claude" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as {
+        targets: Array<{ error?: { code?: string; message?: string } }>;
+      };
+      // `describeLaunchFailure` keeps a WebRouteError's code and flattens
+      // everything else to INTERNAL_ERROR. Reporting a server fault for a
+      // decision the CALLER can make — approve the case or exclude it — sends
+      // them to the wrong place entirely.
+      expect(body.targets[0]?.error?.code).toBe("VALIDATION_ERROR");
+      expect(body.targets[0]?.error?.message).toMatch(/approximated/);
+    });
+
+    it("refuses a caller-supplied approver on the group body (400, no launch)", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          importApprovals: [
+            { testCaseId: "case_1", reason: "ok", approvedBy: "user_9" },
+          ],
+          targets: [{ namedHostId: "host_claude" }],
+        }
+      );
+
+      expect(res.status).toBe(400);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
     it("launches unattached environments when ephemeralEnvironment is true", async () => {
       mockConvexQueries({
         "testSuites:getTestSuite": () => ({
@@ -2295,6 +2555,11 @@ describe("v1 write routes", () => {
         summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
         source: "api",
         notes: null,
+        // `null`, never omitted — the same convention `judges` uses below, and
+        // for the same reason: a caller must be able to tell "no waiver in
+        // force" from "an API deployment that does not report one", and an
+        // absent field collapses those into one answer.
+        gateWaiver: null,
         createdAt: 1,
         completedAt: 2,
         // Always present on the detail, so a caller can branch on
@@ -2341,6 +2606,140 @@ describe("v1 write routes", () => {
       expect((await res.json()) as any).toMatchObject({
         id: "run_1",
         executionEngine: "harness:claude-code",
+      });
+    });
+
+    /**
+     * The import-eligibility projection on the run DTO.
+     *
+     * This object decides whether a run may gate a deploy, so what a
+     * partially-valid payload does matters more than what a good one does:
+     * a gate cannot tell a missing field from a satisfied one, so half a
+     * projection is worse than none.
+     */
+    describe("importEligibility", () => {
+      const ELIGIBILITY = {
+        status: "incomplete",
+        gateable: false,
+        importedCaseCount: 3,
+        claimedExactCaseIds: ["case_1"],
+        approvedApproximationCaseIds: ["case_2"],
+        approvedApproximationReceipts: [
+          {
+            testCaseId: "case_2",
+            caseKey: "ui_abc",
+            sourceCaseKey: "upstream/refunds/out-of-window",
+            approvedBy: "user_9",
+            approvedAt: 1756100000000,
+            reason: "Reviewed against the upstream rubric.",
+          },
+        ],
+        issues: [
+          {
+            code: "APPROXIMATION_NOT_APPROVED",
+            testCaseId: "case_3",
+            caseKey: "ui_def",
+            toolName: "render_gone",
+          },
+        ],
+      };
+
+      async function readRun(importEligibility: unknown) {
+        convexQueryMock.mockResolvedValueOnce({
+          ...RUN_DOC,
+          ...(importEligibility !== undefined ? { importEligibility } : {}),
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/p1/eval-runs/run_1"
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as { importEligibility?: unknown };
+      }
+
+      it("projects the eligibility, receipts and issues field by field", async () => {
+        expect((await readRun(ELIGIBILITY)).importEligibility).toEqual(
+          ELIGIBILITY
+        );
+      });
+
+      it("omits the field entirely when the platform reported none", async () => {
+        // Absence says "this deployment has no opinion"; `legacy` says "there
+        // were no imported cases". A gate reading the second where the first
+        // was true would vouch for a run nobody had checked.
+        expect("importEligibility" in (await readRun(undefined))).toBe(false);
+      });
+
+      it("drops internal fields the platform sent alongside the contract", async () => {
+        const body = await readRun({
+          ...ELIGIBILITY,
+          internalCursor: "should not be published",
+          approvedApproximationReceipts: [
+            {
+              ...ELIGIBILITY.approvedApproximationReceipts[0],
+              internalActorEmail: "someone@example.test",
+            },
+          ],
+        });
+        // Spreading whatever the platform sent would publish every field it
+        // gains next without anybody deciding to — and a public field cannot
+        // be un-published once a client depends on it.
+        expect(body.importEligibility).toEqual(ELIGIBILITY);
+      });
+
+      it.each([
+        ["an unknown status", { ...ELIGIBILITY, status: "probably-fine" }],
+        ["a non-boolean gateable", { ...ELIGIBILITY, gateable: "false" }],
+        ["no importedCaseCount", { ...ELIGIBILITY, importedCaseCount: null }],
+        // The LISTS are validated exactly like the scalars. Coercing a
+        // malformed one to `[]` would publish a projection that reads as
+        // complete while the evidence behind it is missing — an `eligible`
+        // run whose approval audit silently became empty.
+        [
+          "a missing claimedExactCaseIds",
+          { ...ELIGIBILITY, claimedExactCaseIds: undefined },
+        ],
+        [
+          "a non-array approvedApproximationCaseIds",
+          { ...ELIGIBILITY, approvedApproximationCaseIds: "case_2" },
+        ],
+        [
+          "a non-string entry among the case ids",
+          { ...ELIGIBILITY, claimedExactCaseIds: ["case_1", 7] },
+        ],
+        [
+          "a non-array approvedApproximationReceipts",
+          { ...ELIGIBILITY, approvedApproximationReceipts: {} },
+        ],
+        ["a non-array issues", { ...ELIGIBILITY, issues: null }],
+        [
+          "an issue carrying no code",
+          { ...ELIGIBILITY, issues: [{ testCaseId: "case_2" }] },
+        ],
+      ] as const)("drops the whole projection given %s", async (_l, payload) => {
+        // Not partially projected: a gate cannot tell a missing field from a
+        // satisfied one, and absence is already handled correctly downstream
+        // as "older deployment, behave as before".
+        expect("importEligibility" in (await readRun(payload))).toBe(false);
+      });
+
+      it("drops the whole projection for a receipt missing who, when, why, or which case", async () => {
+        const body = await readRun({
+          ...ELIGIBILITY,
+          approvedApproximationReceipts: [
+            ELIGIBILITY.approvedApproximationReceipts[0],
+            { testCaseId: "case_4", approvedBy: "user_9", reason: "no time" },
+          ],
+        });
+        // Every field of a receipt is load-bearing. One missing `approvedAt`
+        // is not a weaker receipt; it is one a reader would have to guess at.
+        //
+        // The whole projection goes rather than just that entry: dropping the
+        // entry alone would leave `approvedApproximationCaseIds` naming a case
+        // whose receipt is nowhere, so the payload would contradict itself and
+        // a reader could not tell that anything was missing at all.
+        expect("importEligibility" in body).toBe(false);
       });
     });
 

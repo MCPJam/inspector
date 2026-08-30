@@ -28,21 +28,22 @@ Every gate resolves `undefined` → **hidden/off**. Two shapes:
   a deep link before flags resolve. The visibility variant (`useSkillsEnabled`)
   still fails closed.
 
-| Flag | Gates (representative) | Blocked-state default | Safe? |
-|------|------------------------|-----------------------|-------|
-| `billing-entitlements-ui` | `App.tsx:1321`, `OrganizationsTab.tsx:561`, `ShareProjectDialog.tsx:235` | Billing/entitlements UI hidden | ⚠️ see below |
-| `mcpjam-learning` | `mcp-sidebar.tsx` | Learning nav hidden | ✅ |
-| `registry-enabled` | `mcp-sidebar.tsx` | Registry nav hidden | ✅ |
-| `mcpjam-conformance` / `mcpjam-compatibility` | `mcp-sidebar.tsx` | Nav hidden | ✅ |
-| `xaa` / `xaa-registration` | `mcp-sidebar.tsx`, XAA components | XAA surfaces hidden | ✅ |
-| `sandboxes-enabled` / `learn-more-enabled` | `mcp-sidebar.tsx` | Nav hidden | ✅ |
-| `skills-enabled` | `useSkillsEnabled(State)` | Skills hidden; route guard waits on tri-state | ✅ |
-| `computers-enabled` | `useComputersEnabled(State)` | Computers hidden; route guard waits on tri-state | ✅ |
-| `claude-code-host-enabled` / `codex-host-enabled` | host hooks | Host template hidden | ✅ |
-| `tool-quality-enabled` | `useToolQualityEnabled` | Quality badges hidden | ✅ |
-| `synthetic-monitors` | evals suite views | Monitors hidden | ✅ |
-| `stateless-mcp-enabled` | per-server protocol toggle | Opt-in stays off | ✅ |
-| `mcp-inspector-multi-host/model-enabled` | playground | Feature off | ✅ |
+| Flag                                              | Gates (representative)                                                   | Blocked-state default                                                                                                                             | Safe?        |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `billing-entitlements-ui`                         | `App.tsx:1321`, `OrganizationsTab.tsx:561`, `ShareProjectDialog.tsx:235` | Billing/entitlements UI hidden                                                                                                                    | ⚠️ see below |
+| `mcpjam-learning`                                 | `mcp-sidebar.tsx`                                                        | Learning nav hidden                                                                                                                               | ✅           |
+| `registry-enabled`                                | `mcp-sidebar.tsx`                                                        | Registry nav hidden                                                                                                                               | ✅           |
+| `mcpjam-conformance` / `mcpjam-compatibility`     | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
+| `xaa` / `xaa-registration`                        | `mcp-sidebar.tsx`, XAA components                                        | XAA surfaces hidden                                                                                                                               | ✅           |
+| `sandboxes-enabled` / `learn-more-enabled`        | `mcp-sidebar.tsx`                                                        | Nav hidden                                                                                                                                        | ✅           |
+| `skills-enabled`                                  | `useSkillsEnabled(State)`                                                | Skills hidden; route guard waits on tri-state                                                                                                     | ✅           |
+| `computers-enabled`                               | `useComputersEnabled(State)`                                             | Computers hidden; route guard waits on tri-state                                                                                                  | ✅           |
+| `webmcp-inspector-enabled`                        | `useWebmcpInspectorEnabled(State)`                                       | WebMCP tab and Playground page-tools section hidden; route guard waits on tri-state. Local-only surface — hosted drops it before the flag is read | ✅           |
+| `claude-code-host-enabled` / `codex-host-enabled` | host hooks                                                               | Host template hidden                                                                                                                              | ✅           |
+| `tool-quality-enabled`                            | `useToolQualityEnabled`                                                  | Quality badges hidden                                                                                                                             | ✅           |
+| `synthetic-monitors`                              | evals suite views                                                        | Monitors hidden                                                                                                                                   | ✅           |
+| `stateless-mcp-enabled`                           | per-server protocol toggle                                               | Opt-in stays off                                                                                                                                  | ✅           |
+| `mcp-inspector-multi-host/model-enabled`          | playground                                                               | Feature off                                                                                                                                       | ✅           |
 
 For every beta/nav/opt-in feature, fail-closed is **correct**: a not-yet-GA
 surface briefly not showing is strictly better than flickering it on for a
