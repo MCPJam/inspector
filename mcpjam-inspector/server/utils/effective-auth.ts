@@ -238,18 +238,35 @@ export function applyHostParamMirroring<
 export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   firstPageOnly: true | undefined;
   supportsMrtr: false | undefined;
+  suppressListenChannel: true | undefined;
+  dropToolListChanged: true | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
       ? (mcpProfile as {
           paginationTraversal?: unknown;
           mrtrSupport?: unknown;
+          toolListChanged?: unknown;
+        })
+      : undefined;
+  // Nested record, so it is narrowed separately; an unreadable value falls
+  // through to `undefined` — conforming — like every knob here.
+  const toolListChanged =
+    profile?.toolListChanged !== null &&
+    typeof profile?.toolListChanged === "object"
+      ? (profile.toolListChanged as {
+          listens?: unknown;
+          refetches?: unknown;
         })
       : undefined;
   return {
     firstPageOnly:
       profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
     supportsMrtr: profile?.mrtrSupport === "none" ? false : undefined,
+    suppressListenChannel:
+      toolListChanged?.listens === false ? true : undefined,
+    dropToolListChanged:
+      toolListChanged?.refetches === false ? true : undefined,
   };
 }
 
@@ -264,16 +281,27 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
  * authoritative: it could turn a knob on but never keep it off, and a
  * share-link body could post `firstPageOnly: true` or `supportsMrtr: false`
  * to make a conforming host silently execute as a degraded client — hiding
- * tools from the model, or dropping MRTR rounds mid-conversation.
+ * tools from the model, dropping MRTR rounds mid-conversation, or (with the
+ * `toolListChanged` pair) silencing every server notification.
  *
  * Every other pin is passed through, and an absent-pins body stays absent
  * unless the host actually asks for a non-default knob.
  */
 export function applyHostConformanceKnobs<
-  T extends { firstPageOnly?: boolean; supportsMrtr?: boolean }
+  T extends {
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+  }
 >(
   pins: T | undefined,
-  host: { firstPageOnly: true | undefined; supportsMrtr: false | undefined }
+  host: {
+    firstPageOnly: true | undefined;
+    supportsMrtr: false | undefined;
+    suppressListenChannel: true | undefined;
+    dropToolListChanged: true | undefined;
+  }
 ): T | undefined {
   let next = pins;
   if (host.firstPageOnly === true) {
@@ -286,6 +314,18 @@ export function applyHostConformanceKnobs<
     next = { ...((next ?? {}) as T), supportsMrtr: false };
   } else if (next?.supportsMrtr !== undefined) {
     const { supportsMrtr: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.suppressListenChannel === true) {
+    next = { ...((next ?? {}) as T), suppressListenChannel: true };
+  } else if (next?.suppressListenChannel !== undefined) {
+    const { suppressListenChannel: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.dropToolListChanged === true) {
+    next = { ...((next ?? {}) as T), dropToolListChanged: true };
+  } else if (next?.dropToolListChanged !== undefined) {
+    const { dropToolListChanged: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

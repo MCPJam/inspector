@@ -5,6 +5,7 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import { buildAppPermalink } from "./platform/permalinks.js";
 import { isEvalRunVerdict } from "./contract/verdict-policy.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
@@ -65,11 +66,17 @@ type StartRunResponse = {
 export function projectRunVerdict(
   run: Pick<
     StartRunResponse,
-    "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+    | "result"
+    | "verdictPolicyVersion"
+    | "verdictSummary"
+    | "verdictPolicyIntegrityError"
   >
 ): Pick<
   ReportEvalResultsOutput,
-  "result" | "verdictPolicyVersion" | "verdictSummary" | "verdictPolicyIntegrityError"
+  | "result"
+  | "verdictPolicyVersion"
+  | "verdictSummary"
+  | "verdictPolicyIntegrityError"
 > {
   return {
     result: isEvalRunVerdict(run.result) ? run.result : "failed",
@@ -208,10 +215,39 @@ export function printRunUrl(
     (config.project && config.project !== DEFAULT_MCPJAM_PROJECT
       ? config.project
       : "");
-  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
-  const url = `${config.baseUrl}/evals/suite/${encodeURIComponent(
-    suiteId
-  )}/runs/${encodeURIComponent(runId)}${query}`;
+  let url: string;
+  try {
+    // `baseUrl` is where CI REPORTS to, and every deployment serves the app
+    // from the same origin — so it is the right app origin here. Passed
+    // explicitly either way: the builder reads no configuration of its own.
+    const appOrigin = new URL(config.baseUrl).origin;
+    url = projectId
+      ? buildAppPermalink(
+          {
+            type: "eval_run",
+            id: runId,
+            parent: { type: "eval_suite", id: suiteId },
+            projectId,
+          },
+          { appOrigin }
+        ).url
+      : // NOT a permalink, and knowingly so: with no project id the link
+        // opens whichever project the reader's picker is parked on. It is
+        // still the right line to print for the CI author reading their own
+        // terminal — they are almost always on that project — and the
+        // alternative for a backend that does not echo `projectId` is no link
+        // at all. Built through `URL` rather than concatenation so it stays
+        // encoded and stays out of the string-building this module retired.
+        new URL(
+          `/evals/suite/${encodeURIComponent(
+            suiteId
+          )}/runs/${encodeURIComponent(runId)}`,
+          appOrigin
+        ).toString();
+  } catch {
+    // A convenience line may never fail a CI report that already succeeded.
+    return;
+  }
 
   console.log(`[mcpjam/sdk] View run: ${url}`);
 }
