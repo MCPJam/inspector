@@ -412,6 +412,29 @@ export const ANALYTICS_EVENTS = {
   home_shared_slack_invite_opened: { source: "client" },
   home_shared_slack_retry_clicked: { source: "client" },
   home_shared_slack_channel_opened: { source: "client" },
+
+  // --- Canonical project-scoped URLs (`/p/<projectId>/...`) ---
+  // Every prop here is LOW CARDINALITY on purpose: a project id would make
+  // these unusable as aggregates and would put customer identifiers on a
+  // navigation event. Ids never ride these — only what happened.
+  //
+  // `project_route_legacy_normalized`  props: source (unscoped | query),
+  //   resolved (true | false). One old link rewritten onto its canonical path.
+  //   Its volume is what says whether legacy compatibility can be retired.
+  // `project_route_resolved`           props: outcome (ready), duration_bucket
+  //   (instant | fast | slow) — how long a scoped URL took to become the
+  //   active project.
+  // `project_route_inaccessible`       props: reason (malformed | not-a-member
+  //   | timed-out). Never says whether the project exists.
+  // `project_route_scope_mismatch`     props: guard (redirect-loop |
+  //   repeated-switch). Redirect-loop protection tripped.
+  // `app_signin_return_restored`       props: outcome (restored | absent |
+  //   superseded).
+  project_route_legacy_normalized: { source: "client" },
+  project_route_resolved: { source: "client" },
+  project_route_inaccessible: { source: "client" },
+  project_route_scope_mismatch: { source: "client" },
+  app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

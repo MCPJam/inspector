@@ -4,7 +4,7 @@
 // `ListToolsResultWithMetadata`-typed `isMCPApp`/`isOpenAIApp` helpers (they
 // need an inspector api type) and re-exports this core.
 import { isUIResource } from "@mcp-ui/client";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 
 /**
  * Minimal structural shape `detectUiTypeFromTool` needs — just the `_meta` bag.
@@ -45,7 +45,7 @@ export function detectUIType(
   // 1. OpenAI SDK and MCP Apps: openai/outputTemplate AND ui.resourceUri
   if (
     toolMeta?.["openai/outputTemplate"] &&
-    getToolUiResourceUri({ _meta: toolMeta })
+    resolveToolUiResourceUri(toolMeta)
   ) {
     return UIType.OPENAI_SDK_AND_MCP_APPS;
   }
@@ -56,7 +56,7 @@ export function detectUIType(
   }
 
   // 3. MCP Apps (SEP-1865): ui.resourceUri
-  if (getToolUiResourceUri({ _meta: toolMeta })) {
+  if (resolveToolUiResourceUri(toolMeta)) {
     return UIType.MCP_APPS;
   }
 
@@ -86,7 +86,7 @@ export function getUIResourceUri(
   switch (uiType) {
     case UIType.MCP_APPS:
     case UIType.OPENAI_SDK_AND_MCP_APPS:
-      return getToolUiResourceUri({ _meta: toolMeta }) ?? null;
+      return resolveToolUiResourceUri(toolMeta);
     case UIType.OPENAI_SDK:
       return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
     default:

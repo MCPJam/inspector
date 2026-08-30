@@ -9,6 +9,8 @@ import type {
   EvalRunDiffCaseStatus,
   EvalRunDiffSide,
   EvalRunNumericDiff,
+  EvalRunSkillChange,
+  EvalRunSkillSide,
 } from "./types";
 
 type RunDiffViewProps = {
@@ -42,7 +44,7 @@ export function RunDiffView({
   onOpenIteration,
 }: RunDiffViewProps) {
   const getRunDiff = useAction(
-    "testSuites:getTestSuiteRunDiff" as any
+    "testSuites:getTestSuiteRunDiff" as any,
   ) as unknown as (args: {
     baseRunId: string;
     compareRunId: string;
@@ -146,7 +148,7 @@ function RunDiffLoaded({
 }) {
   const changedCount = useMemo(
     () => diff.cases.filter((row) => row.status !== "unchanged_passed").length,
-    [diff.cases]
+    [diff.cases],
   );
 
   const metricLabel =
@@ -155,38 +157,80 @@ function RunDiffLoaded({
       : "Accuracy";
 
   const summaryMetrics = useMemo(
-    () =>
-      [
-        { label: metricLabel, diff: diff.scores.passRatePercent, format: "percent" as const, higherIsBetter: true },
-        { label: "Passed", diff: diff.scores.passed, format: "number" as const, higherIsBetter: true },
-        { label: "Failed", diff: diff.scores.failed, format: "number" as const },
-        { label: "Total", diff: diff.scores.total, format: "number" as const, neutral: true },
-      ],
-    [diff.scores, metricLabel]
+    () => [
+      {
+        label: metricLabel,
+        diff: diff.scores.passRatePercent,
+        format: "percent" as const,
+        higherIsBetter: true,
+      },
+      {
+        label: "Passed",
+        diff: diff.scores.passed,
+        format: "number" as const,
+        higherIsBetter: true,
+      },
+      { label: "Failed", diff: diff.scores.failed, format: "number" as const },
+      {
+        label: "Total",
+        diff: diff.scores.total,
+        format: "number" as const,
+        neutral: true,
+      },
+    ],
+    [diff.scores, metricLabel],
   );
 
   const performanceMetrics = useMemo(
     () =>
       (
         [
-          { label: "Duration", diff: diff.metrics.wallDurationMs, format: "duration" as const },
-          { label: "Tokens", diff: diff.metrics.totalTokens, format: "number" as const },
-          { label: "Input tokens", diff: diff.metrics.inputTokens, format: "number" as const },
-          { label: "Output tokens", diff: diff.metrics.outputTokens, format: "number" as const },
-          { label: "Cached tokens", diff: diff.metrics.cachedInputTokens, format: "number" as const },
-          { label: "Reasoning tokens", diff: diff.metrics.reasoningTokens, format: "number" as const },
-          { label: "Cost", diff: diff.metrics.estimatedCostUsd, format: "cost" as const },
+          {
+            label: "Duration",
+            diff: diff.metrics.wallDurationMs,
+            format: "duration" as const,
+          },
+          {
+            label: "Tokens",
+            diff: diff.metrics.totalTokens,
+            format: "number" as const,
+          },
+          {
+            label: "Input tokens",
+            diff: diff.metrics.inputTokens,
+            format: "number" as const,
+          },
+          {
+            label: "Output tokens",
+            diff: diff.metrics.outputTokens,
+            format: "number" as const,
+          },
+          {
+            label: "Cached tokens",
+            diff: diff.metrics.cachedInputTokens,
+            format: "number" as const,
+          },
+          {
+            label: "Reasoning tokens",
+            diff: diff.metrics.reasoningTokens,
+            format: "number" as const,
+          },
+          {
+            label: "Cost",
+            diff: diff.metrics.estimatedCostUsd,
+            format: "cost" as const,
+          },
         ] satisfies Array<{
           label: string;
           diff: EvalRunNumericDiff;
           format: DiffMetricFormat;
         }>
       ).filter((metric) => metricHasData(metric.diff)),
-    [diff.metrics]
+    [diff.metrics],
   );
 
   const changedPerformanceMetrics = performanceMetrics.filter((metric) =>
-    metricChanged(metric.diff)
+    metricChanged(metric.diff),
   );
 
   return (
@@ -203,7 +247,9 @@ function RunDiffLoaded({
               {" · "}
               {changedCount === 0
                 ? "No case changes"
-                : `${changedCount} changed case${changedCount === 1 ? "" : "s"}`}
+                : `${changedCount} changed case${
+                    changedCount === 1 ? "" : "s"
+                  }`}
               {" · "}
               {diff.cases.length} total
             </p>
@@ -223,7 +269,9 @@ function RunDiffLoaded({
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">{diff.suite.name}</span>
+            <span className="font-medium text-foreground">
+              {diff.suite.name}
+            </span>
             {" · "}
             {changedCount === 0
               ? "No case changes"
@@ -232,7 +280,8 @@ function RunDiffLoaded({
             {diff.cases.length} case{diff.cases.length === 1 ? "" : "s"}
           </p>
           <p className="text-xs text-muted-foreground">
-            {formatTime(diff.baseRun.createdAt)} → {formatTime(diff.compareRun.createdAt)}
+            {formatTime(diff.baseRun.createdAt)} →{" "}
+            {formatTime(diff.compareRun.createdAt)}
           </p>
         </div>
       )}
@@ -264,6 +313,8 @@ function RunDiffLoaded({
         ) : null}
       </section>
 
+      <SkillChangesSection skills={diff.skills} />
+
       <section className="min-h-0 rounded-lg border border-border/60 bg-card">
         <div className="flex items-center justify-between border-b border-border/40 px-4 py-2.5">
           <h3 className="text-sm font-medium">Cases</h3>
@@ -291,6 +342,135 @@ function RunDiffLoaded({
       </section>
     </div>
   );
+}
+
+/**
+ * WHICH SKILLS CHANGED between the two runs — placed above Cases because it
+ * usually explains them. "You edited `refunds` and three cases regressed" is
+ * the question people open a comparison to answer, and before this the diff
+ * showed only the second half of it.
+ *
+ * Renders nothing when there is nothing to say: a `null` section (neither run
+ * recorded skills — an older run, from before skills were pinned) and a section
+ * whose only content is unchanged skills both stay quiet, rather than adding an
+ * empty card to every comparison.
+ */
+function SkillChangesSection({ skills }: { skills: EvalRunDiff["skills"] }) {
+  if (!skills) return null;
+  const excludedArm = skills.base.excluded || skills.compare.excluded;
+  if (skills.changes.length === 0 && !excludedArm) return null;
+
+  return (
+    <section className="rounded-lg border border-border/60 bg-card">
+      <div className="flex items-center justify-between border-b border-border/40 px-4 py-2.5">
+        <h3 className="text-sm font-medium">Skill changes</h3>
+        {skills.unchangedCount > 0 ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {skills.unchangedCount} unchanged
+          </span>
+        ) : null}
+      </div>
+      {excludedArm ? (
+        <div className="border-b border-border/40 px-4 py-2 text-xs text-muted-foreground">
+          {skills.base.excluded && skills.compare.excluded
+            ? "Both runs ran with skills disabled."
+            : skills.base.excluded
+            ? "The base run ran with skills disabled."
+            : "The compared run ran with skills disabled."}
+        </div>
+      ) : null}
+      <div className="divide-y divide-border/40">
+        {skills.changes.map((change) => (
+          <SkillChangeRow key={change.key} change={change} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SkillChangeRow({ change }: { change: EvalRunSkillChange }) {
+  // Prefer the revision a run actually recorded, on either identity system.
+  // An ADDED or REMOVED skill never has a `versionDelta` — there is only one
+  // side — but it usually does know its revision, and `v2` says more to a
+  // reader than seven characters of hash. The hash is the fallback for a run
+  // that predates versioning, so a real change is never rendered as if nothing
+  // moved.
+  const sideDetail = (side: EvalRunSkillSide | undefined): string =>
+    revisionLabel(side) || shortHash(side);
+  const detail =
+    change.versionDelta ??
+    (change.kind === "changed"
+      ? `${sideDetail(change.base)} → ${sideDetail(change.compare)}`
+      : sideDetail(change.base ?? change.compare));
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
+      <span className="text-sm font-medium">
+        {change.modelRef ?? change.name}
+      </span>
+      <span
+        className={cn(
+          "rounded px-1.5 py-0.5 text-[11px] font-medium",
+          skillChangeBadgeClass(change.kind),
+        )}
+      >
+        {skillChangeLabel(change.kind)}
+      </span>
+      {detail ? (
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {detail}
+        </span>
+      ) : null}
+      {change.renamedFrom ? (
+        <span className="text-xs text-muted-foreground">
+          renamed from {change.renamedFrom}
+        </span>
+      ) : null}
+      {change.channels.map((channel) => (
+        <span
+          key={channel}
+          className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+        >
+          {channel}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** `v4` from whichever identity system recorded it, or "" when neither did. */
+function revisionLabel(side: EvalRunSkillSide | undefined): string {
+  const version = side?.versionNumber ?? side?.serverSkillVersionNumber;
+  return version === undefined ? "" : `v${version}`;
+}
+
+/** First 7 chars of whichever hash identifies the COMPLETE artifact. */
+function shortHash(side: EvalRunSkillSide | undefined): string {
+  if (!side) return "";
+  return (side.aggregateHash ?? side.contentHash).slice(0, 7);
+}
+
+function skillChangeLabel(kind: EvalRunSkillChange["kind"]): string {
+  switch (kind) {
+    case "added":
+      return "Added";
+    case "removed":
+      return "Removed";
+    case "changed":
+      return "Changed";
+  }
+}
+
+function skillChangeBadgeClass(kind: EvalRunSkillChange["kind"]): string {
+  switch (kind) {
+    // A changed skill is the likeliest explanation for a regression below, so
+    // it carries the same weight as a changed case.
+    case "changed":
+      return "bg-warning/50 text-foreground";
+    case "added":
+    case "removed":
+      return "bg-muted text-muted-foreground";
+  }
 }
 
 function SummaryMetric({
@@ -365,7 +545,9 @@ function CaseRow({
                 Config changed
               </span>
             ) : null}
-            <h4 className="min-w-0 truncate text-sm font-medium">{row.title}</h4>
+            <h4 className="min-w-0 truncate text-sm font-medium">
+              {row.title}
+            </h4>
           </div>
           {!isCompact ? (
             <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
@@ -373,13 +555,21 @@ function CaseRow({
             </p>
           ) : null}
         </div>
-        {(durationChanged || tokensChanged) ? (
+        {durationChanged || tokensChanged ? (
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {durationChanged ? (
-              <CaseMetricDelta label="Duration" diff={row.metrics.durationMs} format="duration" />
+              <CaseMetricDelta
+                label="Duration"
+                diff={row.metrics.durationMs}
+                format="duration"
+              />
             ) : null}
             {tokensChanged ? (
-              <CaseMetricDelta label="Tokens" diff={row.metrics.totalTokens} format="number" />
+              <CaseMetricDelta
+                label="Tokens"
+                diff={row.metrics.totalTokens}
+                format="number"
+              />
             ) : null}
           </div>
         ) : isCompact ? (
@@ -419,7 +609,12 @@ function CaseMetricDelta({
   return (
     <span className="tabular-nums">
       {label}{" "}
-      <DeltaPill diff={diff} format={format} higherIsBetter={false} neutral={false} />
+      <DeltaPill
+        diff={diff}
+        format={format}
+        higherIsBetter={false}
+        neutral={false}
+      />
     </span>
   );
 }
@@ -463,7 +658,7 @@ function DeltaPill({
     <span
       className={cn(
         "rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
-        toneClass
+        toneClass,
       )}
     >
       {formatSignedMetric(diff.delta, format)}
@@ -521,7 +716,7 @@ function StatusBadge({ status }: { status: EvalRunDiffCaseStatus }) {
     <span
       className={cn(
         "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        statusBadgeClass(status)
+        statusBadgeClass(status),
       )}
     >
       {statusLabel(status)}
@@ -585,7 +780,7 @@ function metricChanged(diff: EvalRunNumericDiff): boolean {
 
 function formatMetricValue(
   value: number | null,
-  format: DiffMetricFormat
+  format: DiffMetricFormat,
 ): string {
   if (value === null || Number.isNaN(value)) {
     return "-";
