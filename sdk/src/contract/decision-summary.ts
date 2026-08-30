@@ -72,10 +72,13 @@ import {
 import { opaqueIdSchema } from "./identity.js";
 import {
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
 } from "./decision-labels.js";
 import {
   STAGE_ANALYZER_VERSION,
+  STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE,
   stageDerivationSchema,
   stageResultRowSchema,
   type StageResultRow,
@@ -826,8 +829,54 @@ function assembleDiagnostic(
     evidence: assembleEvidence(input, iteration, chain),
     nextAction: category
       ? NEXT_ACTION_BY_FAILURE_CATEGORY[category]
-      : DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+      : uncategorisedNextAction(chain, iteration.result),
   };
+}
+
+/**
+ * What to tell a reader when the chain established no failure category.
+ *
+ * Two of these runs are not the same thing, and the old single line described
+ * both as an absence of information:
+ *
+ *   - The chain measured everything it could and found nothing wrong, while
+ *     the recorded verdict says failed. That is not missing information — it
+ *     is two things we hold disagreeing, which is a different investigation.
+ *   - Anything else (an unverified chain, a stage that never measured, a run
+ *     that did not fail): no category and nothing more to say.
+ *
+ * The disagreement is asserted only when all four halves of it are
+ * STRUCTURALLY established: the chain validated, at least one stage actually
+ * passed, no stage failed, and the verdict is `failed`. Nothing here guesses
+ * at a cause — the chain cannot see one from here, and a guess dressed as a
+ * finding is what this vocabulary exists to prevent.
+ */
+function uncategorisedNextAction(
+  chain: EvalRunDecisionChain,
+  result: EvalRunDecisionIterationInput["result"]
+): string {
+  if (chain.status !== "verified" || result !== "failed") {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+  // A disagreement needs BOTH halves: something measured, and nothing wrong
+  // with it. Requiring only "nothing failed" would call a policy-blocked run
+  // a disagreement — its stages are all `notMeasured/blockedByPolicy`, so
+  // nothing failed, but nothing was measured either and there is nothing for
+  // the verdict to disagree WITH.
+  const measuredSomething = chain.stages.some((row) => row.state === "passed");
+  const anyStageFailed = chain.stages.some((row) => row.state === "failed");
+  if (!measuredSomething || anyStageFailed) {
+    return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
+  }
+
+  // The one case where the CAUSE is knowable from the row rather than
+  // guessed: a chain derived before analyzer 7 could not report an errored
+  // tool call on a case that authored no tool expectation, so "re-run" is a
+  // real instruction rather than a shrug.
+  return chain.analyzerVersion !== undefined &&
+    chain.analyzerVersion < STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE
+    ? DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
+    : DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION;
 }
 
 function assembleChain(

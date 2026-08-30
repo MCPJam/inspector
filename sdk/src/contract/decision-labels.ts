@@ -192,6 +192,34 @@ export const NEXT_ACTION_BY_FAILURE_CATEGORY = Object.freeze({
 export const DECISION_SUMMARY_FALLBACK_NEXT_ACTION =
   "inspect the case trace; no failure category was recorded";
 
+/**
+ * The action when the recorded verdict and the measured chain DISAGREE.
+ *
+ * A narrower, and therefore more useful, statement than the fallback above:
+ * the chain validated, every applicable stage came back ok, and the verdict
+ * still says failed. "No failure category was recorded" is true of that run
+ * but describes it as an absence of information, when in fact two things we
+ * hold are in conflict — which is a different thing to go and look at.
+ *
+ * Named as a disagreement and nothing more. The chain cannot see WHY from
+ * here, and a guess at the cause dressed as a finding is exactly what this
+ * whole vocabulary exists to prevent.
+ */
+export const DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; inspect the case trace";
+
+/**
+ * The same disagreement on a run whose chain predates analyzer 7.
+ *
+ * Here the cause IS known, and knowable from the row itself rather than
+ * guessed: before 7, a case that authored nothing about tools left `response`
+ * inapplicable, so a tool that errored during the run had no stage able to
+ * report it — every applicable stage green, the verdict red. Newer runs
+ * attribute it, which makes "re-run" a real instruction rather than a shrug.
+ */
+export const DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION =
+  "the recorded verdict disagrees with the measured chain; this run's chain predates the analyzer that reports an errored tool call on an unauthored case — re-run the case to attribute it";
+
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   stages: USER_VALUE_STAGES,
