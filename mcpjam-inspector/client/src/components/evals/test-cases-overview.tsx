@@ -26,6 +26,7 @@ import {
   EVAL_FAILED_BADGE_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import { ImportClaimBadge } from "./import-claim-badge";
 import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
@@ -896,6 +897,7 @@ export function TestCasesOverview({
                             CI
                           </span>
                         ) : null}
+                        <ImportClaimBadge claim={testCase.import} />
                       </span>
                       {showClientRail ? null : lastPart}
                     </>
