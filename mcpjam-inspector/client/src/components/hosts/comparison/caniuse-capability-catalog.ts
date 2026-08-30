@@ -41,6 +41,9 @@ export interface CaniuseCapability {
   field: HostConfigFieldDef;
 }
 
+/** A public capability page can say "not yet measured" without treating it as a failure. */
+export type CaniuseSupportLevel = SupportLevel | "unknown";
+
 function toKebab(input: string): string {
   return input
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
@@ -155,11 +158,27 @@ export function sortCaniusePresetHosts<T extends Pick<HostListItem, "hostId">>(
 export function getCaniuseSupportLevel(
   field: HostConfigFieldDef,
   config: HostConfigDtoV2,
-): SupportLevel {
-  return getSupportLevel(field, config) ?? "neutral";
+): CaniuseSupportLevel {
+  // These probe families were added after the catalog had shipped. An absent
+  // value means we have not run that probe for this host yet — not that its
+  // browser iframe, widget relay, or notification channel failed. Other
+  // boolean rows retain their established absent = not supported semantics.
+  if (
+    (field.id.startsWith("toolResult.") ||
+      field.id.startsWith("sandbox.browserStorage.") ||
+      field.id.startsWith("toolListChanged.") ||
+      // Enum rather than boolean, so it resolves to "neutral" rather than
+      // undefined when unset — and "neutral" renders as "Not supported".
+      // Without this an unprobed host publicly claims it cannot paginate.
+      field.id === "paginationTraversal") &&
+    field.read(config) === undefined
+  ) {
+    return "unknown";
+  }
+  return getSupportLevel(field, config) ?? "unknown";
 }
 
-export function getCaniuseSupportLabel(level: SupportLevel): string {
+export function getCaniuseSupportLabel(level: CaniuseSupportLevel): string {
   switch (level) {
     case "supported":
       return "Supported";
@@ -168,5 +187,7 @@ export function getCaniuseSupportLabel(level: SupportLevel): string {
     case "neutral":
     case "unsupported":
       return "Not supported";
+    case "unknown":
+      return "Not yet tested";
   }
 }

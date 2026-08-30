@@ -34,7 +34,7 @@ import {
   type StructuredCaseResult,
   type StructuredRunReport,
 } from "./structured-reporting.js";
-import type { EvalDecisionSummary } from "./eval-decision-summary.js";
+import type { EvalRunDecisionSummary } from "./contract/index.js";
 
 function classify(
   status: PlatformRunCompareCase["status"]
@@ -138,7 +138,7 @@ export function buildRunCompareReport(
     durationMs?: number;
     flakyCases?: FlakyCase[];
     metadata?: Record<string, unknown>;
-    decisionSummary?: EvalDecisionSummary;
+    decisionSummary?: EvalRunDecisionSummary;
   } = {}
 ): StructuredRunReport {
   const cases = [
