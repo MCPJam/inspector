@@ -622,6 +622,69 @@ document.addEventListener('securitypolicyviolation', function(e) {
       }
 
       /**
+       * Block browser storage APIs the host profile turned off.
+       *
+       * `mcpProfile.apps.sandbox.browserStorage` is a probe-measured fact: a
+       * host either lets a widget reach these APIs or it does not. Absent (or
+       * true) means available, so only explicit `false` blocks — matching the
+       * omit-when-absent discipline every other profile knob uses.
+       *
+       * Access throws rather than returning null/undefined because that is
+       * what a real iframe without `allow-same-origin` does: the getter
+       * itself raises SecurityError. A widget's `try { localStorage } catch`
+       * feature-detect must take the same branch here as in production.
+       *
+       * NOT a CSP concern, so unlike the connect guard above this posts no
+       * synthetic violation — nothing is watching for one, and storage never
+       * produces a securitypolicyviolation event.
+       *
+       * @param {object|undefined} browserStorage - per-API policy
+       * @returns {string} script tag, or "" when nothing is blocked
+       */
+      function buildBrowserStorageGuardScript(browserStorage) {
+        if (!browserStorage || typeof browserStorage !== "object") return "";
+        const blocked = ["localStorage", "sessionStorage", "indexedDB"].filter(
+          (api) => browserStorage[api] === false
+        );
+        if (blocked.length === 0) return "";
+
+        const configJson = JSON.stringify({ blocked }).replace(
+          /</g,
+          "\\u003c"
+        );
+
+        return `<script>
+(function() {
+  var config = ${configJson};
+  for (var i = 0; i < config.blocked.length; i++) {
+    (function(api) {
+      try {
+        Object.defineProperty(window, api, {
+          configurable: false,
+          get: function() {
+            throw new DOMException(
+              "Blocked by host browser-storage policy",
+              "SecurityError"
+            );
+          }
+        });
+      } catch (error) {
+        // A non-configurable own property (or a runtime that refuses the
+        // redefine) leaves the API reachable. Fail loud in the console
+        // rather than silently reporting an unenforced policy as enforced.
+        try {
+          console.error(
+            "[mcpjam] could not block " + api + " in this sandbox", error
+          );
+        } catch (_) {}
+      }
+    })(config.blocked[i]);
+  }
+})();
+<\/script>`;
+      }
+
+      /**
        * Inject CSP meta tag and violation listener into HTML
        * @param {string} html - Original HTML content
        * @param {string} cspValue - CSP policy string
@@ -762,6 +825,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               sandboxAttrs,
               cspDirectives,
               cspSubtypePolicy,
+              browserStorage,
               permissive,
               colorScheme,
               recordMode,
@@ -784,6 +848,12 @@ document.addEventListener('securitypolicyviolation', function(e) {
               cspSubtypePolicy,
               cspDirectives
             );
+            // Storage is independent of CSP mode: a host that serves a
+            // permissive CSP can still deny storage, so this guard rides
+            // BOTH branches below while the connect guard rides only the
+            // CSP one.
+            const browserStorageGuardScript =
+              buildBrowserStorageGuardScript(browserStorage);
             recorderDebug("resource ready", {
               recordMode: !!recordMode,
               recorderScript: !!recorderScript,
@@ -867,7 +937,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
                   html,
                   permissiveCsp,
                   recorderScript,
-                  ""
+                  browserStorageGuardScript
                 );
                 inner.srcdoc = processedHtml;
               } else {
@@ -879,7 +949,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
                   html,
                   cspValue,
                   recorderScript,
-                  connectGuardScript
+                  connectGuardScript + browserStorageGuardScript
                 );
                 inner.srcdoc = processedHtml;
               }

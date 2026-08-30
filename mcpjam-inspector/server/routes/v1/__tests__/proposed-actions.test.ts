@@ -590,10 +590,15 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     // builder reaching the operation's catch would re-record it `failed` and
     // answer 500 — telling the user their approved action did not happen, and
     // leaving the lifecycle row contradicting itself over a formatting helper.
-    const entry = gatedEntryFor(runEvalSuiteOperation.name)!;
-    const original = entry.proposal.resource;
-    entry.proposal.resource = () => {
-      throw new Error("bad link");
+    // Aimed at the OPERATION's permalink policy, which is where link
+    // derivation lives now — the registry no longer keeps a builder of its
+    // own. A policy that throws must cost the link and nothing else.
+    const original = runEvalSuiteOperation.permalink;
+    (runEvalSuiteOperation as { permalink: unknown }).permalink = {
+      kind: "derive",
+      resources: () => {
+        throw new Error("bad link");
+      },
     };
     try {
       vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
@@ -602,7 +607,10 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
       } as never);
       const res = await executeRequest(makeApp());
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toMatchObject({ status: "succeeded" });
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ status: "succeeded" });
+      // The link is what was lost, and only the link.
+      expect(body).not.toHaveProperty("resource");
       expect(completeProposedActionMock).toHaveBeenCalledWith(
         expect.objectContaining({ status: "succeeded" })
       );
@@ -610,7 +618,7 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
         expect.objectContaining({ status: "failed" })
       );
     } finally {
-      entry.proposal.resource = original;
+      (runEvalSuiteOperation as { permalink: unknown }).permalink = original;
     }
   });
 

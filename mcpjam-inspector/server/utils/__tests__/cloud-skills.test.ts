@@ -130,6 +130,32 @@ describe("cloud-skills (Convex-sourced)", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  it("maps a FEATURE_UNAVAILABLE ConvexError code → 403 with the real message", async () => {
+    // The backend gates skill AUTHORING behind the `skills-enabled` flag
+    // (`convex/projectSkills.ts` → requireSkillsFeature). Before this code was
+    // in CODE_STATUS it fell through to the message-regex fallback, which does
+    // not match "… is not currently available for your organization" — so a
+    // flagged-off user got an opaque `Server Error` 500 and no way to learn
+    // that a feature flag, not their payload, was the problem.
+    //
+    // 403 matches routes/v1/convex-errors.ts, which chose FORBIDDEN over
+    // FEATURE_NOT_SUPPORTED because the latter maps to 422 (malformed request)
+    // and this request is well-formed.
+    const convexErr = Object.assign(new Error("[CONVEX] redacted"), {
+      data: {
+        code: "FEATURE_UNAVAILABLE",
+        message: "Skills is not currently available for your organization.",
+      },
+    });
+    vi.mocked(convexCreateSkill).mockRejectedValue(convexErr);
+    await expect(
+      createCloudSkill(ctx, { name: "x", description: "d", content: "c" }),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: "Skills is not currently available for your organization.",
+    });
+  });
+
   it("wraps unknown errors as CloudSkillsError 500", async () => {
     vi.mocked(convexCreateSkill).mockRejectedValue(new Error("kaboom"));
     await expect(

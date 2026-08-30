@@ -254,15 +254,16 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
-  it("delivers the payload's skills to the emulated engine, cloud skills off", async () => {
+  it("delivers the payload's skills to the emulated engine, and nothing live", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    // Project-wide cloud skills would double-deliver alongside the resolved
-    // set — the same single-channel rule as an environment target.
-    expect(args.cloudSkills).toBeUndefined();
+    // Captured, not live — the same single-channel rule as an environment
+    // target: the payload already froze this turn's skills, so composing the
+    // connected servers' live catalogs would add ones it excluded.
+    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
     expect(args.skillsSource.kind).toBe("resolved");
     expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
       {
@@ -310,7 +311,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.cloudSkills).toBeUndefined();
+    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
     expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
     // Deploy-skew fallback: no `connectable` projection ⇒ raw ids connect and
     // the manager shows the id as the name.
