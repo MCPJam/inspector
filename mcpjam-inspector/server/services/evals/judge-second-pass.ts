@@ -27,17 +27,30 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
+ * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
+ * judge's row is ADVISORY, so it is structurally excluded from the gating
+ * arithmetic that decides the result; the backend refuses lifecycle fields on
+ * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
+ * backend's own verify seam runs on the merged rows, so if a re-derivation ever
+ * DID move the verdict, the run is marked non-gateable rather than quietly
+ * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
+ * rows `dual_write` writes) and nothing about what it may touch.
+ *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale job id and refuses terminal iterations,
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
 import type { StageEvidence } from "@mcpjam/sdk/contract";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import { turnsNeedModel } from "@/shared/steps";
 import { logger } from "../../utils/logger.js";
 import { buildStageMetadata } from "./finalize-iteration.js";
+import { buildStageAuthoredCase } from "./stage-inputs.js";
 import {
+  isDualWrite,
+  resolveFrozenRunGradingMode,
   resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
@@ -235,6 +248,17 @@ type StoredPredicateRow = {
   predicate: Predicate;
   passed: boolean;
   reason?: string;
+  /**
+   * Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn.
+   *
+   * LOAD-BEARING, and easy to drop. `hostedCriterionId` digests the scope
+   * alongside the predicate, and the scope is a hash input to the definition
+   * too — so rebuilding a turn-scoped predicate WITHOUT it mints a different
+   * `scorerId` and a different `definitionHash` than the first pass wrote. The
+   * result is not a corrected row: it is a second, unscoped gating scorer
+   * beside the original, or an `EVAL_RUN_CONFIG_CONFLICT` outright.
+   */
+  scope?: PredicateScope;
 };
 
 function isPredicateRow(value: unknown): value is StoredPredicateRow {
@@ -261,8 +285,55 @@ function deriveIterationPayload(args: {
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
     isPredicateRow
   );
-  const stage = buildStageMetadata({
-    ...(iteration.stageCase ? { stageCase: iteration.stageCase } : {}),
+  // Derived HERE from the run's own frozen case snapshot, through the SAME
+  // function the runner used on the first pass, whenever the backend served
+  // the raw `authoredCase`. The backend also serves a derived `stageCase` for
+  // D7's consumer; preferring our own derivation keeps stage applicability to
+  // ONE implementation — the SDK's — rather than letting a backend hand-mirror
+  // decide it on the second pass and the SDK decide it on the first, where a
+  // disagreement between them would be invisible.
+  const stageCase = iteration.authoredCase
+    ? buildStageAuthoredCase({
+        test: iteration.authoredCase,
+        ...(iteration.authoredCase.steps
+          ? { steps: iteration.authoredCase.steps }
+          : {}),
+        ...(iteration.authoredCase.promptTurns
+          ? { turns: iteration.authoredCase.promptTurns }
+          : {}),
+        // THE SAME PREDICATE THE FIRST PASS USED, not a steps-shaped
+        // approximation of it. `turnsNeedModel` reads `caseType` +
+        // `promptTurns`; `isModelFree(steps)` returns false when `steps` is
+        // ABSENT, so a legacy `widget_probe` carrying neither — which
+        // `isPinnedOnly` classifies model-free on turn count alone — would be
+        // called model-driven here and gain a `selection` stage the first pass
+        // never derived. This post overwrites `stageResults` wholesale, so
+        // that invented stage would replace the correct chain.
+        caseNeedsModel: turnsNeedModel({
+          caseType: iteration.authoredCase.caseType,
+          promptTurns: iteration.authoredCase.promptTurns,
+        }),
+      })
+    : iteration.stageCase;
+
+  // AN INCOMPLETE TRACE SUPPRESSES ONLY THE STAGE KEYS.
+  //
+  // `traceComplete: false` means a blob this iteration references did not read
+  // back, so the analyzer would be re-deriving the chain from evidence that is
+  // MISSING rather than absent — and this post overwrites `stageResults` as a
+  // full field, so it would replace a correct chain with a thinner one.
+  //
+  // It must not suppress the SCORE derivation: those rows come from stored
+  // predicates and the judge's own verdict, neither of which is in the trace.
+  // Dropping the whole iteration would also omit it from the fanout report,
+  // which the backend reads as an incomplete fanout — so the sweep re-drives
+  // it every five minutes until it exhausts MAX_ATTEMPTS and marks the run
+  // failed.
+  const traceUsable = iteration.traceComplete !== false;
+
+  const stage = traceUsable
+    ? buildStageMetadata({
+    ...(stageCase ? { stageCase } : {}),
     ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
     ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
     ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
@@ -275,9 +346,17 @@ function deriveIterationPayload(args: {
     ...(metadataAttribution ? { metadataAttribution } : {}),
     status: iteration.status === "failed" ? "failed" : "completed",
     ...(iteration.error ? { error: iteration.error } : {}),
-  });
+      })
+    : // `stageAnalyzerVersion` is suppressed WITH the rest: stamping it beside
+      // no `stageResults` would claim a derivation that did not happen, and
+      // since this post merges into existing metadata it would sit on top of
+      // the first pass's chain and misdate it.
+      {};
 
-  if (args.mode !== "dual_write") return { stage };
+  // `isDualWrite` rather than `=== "dual_write"`: `enforce` writes the same
+  // real rows, and the difference between the two modes is who decides the
+  // verdict — which is not this pass's business either way.
+  if (!isDualWrite(args.mode)) return { stage };
 
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateRows.length
@@ -286,9 +365,30 @@ function deriveIterationPayload(args: {
             predicate: row.predicate,
             passed: row.passed,
             ...(typeof row.reason === "string" ? { reason: row.reason } : {}),
+            // Forwarded so a turn-scoped predicate rebuilds under the SAME
+            // scorer identity the first pass wrote. See `StoredPredicateRow`.
+            ...(row.scope ? { scope: row.scope } : {}),
           })),
         }
       : {}),
+    // REDECLARE the tool-match scorer, from the authored case rather than from
+    // matcher output this pass does not have.
+    //
+    // Forwarding `matchOptions` alone was necessary and not sufficient: the
+    // definition itself is built only when the case authored expectations, and
+    // that was read off `evaluation`, which this pass never supplies. So its
+    // config omitted `toolCalls:match` entirely — while the backend merges
+    // scores by `scorerId` and REPLACES `evaluationConfig` wholesale. The first
+    // pass's tool-match row therefore survived with its definition gone: an
+    // unjoinable row, a per-case `EVAL_RUN_CONFIG_CONFLICT`, and at `enforce` a
+    // GATING scorer silently dropped from the verdict.
+    toolMatchAuthored:
+      (iteration.authoredCase?.expectedToolCalls?.length ?? 0) > 0,
+    // The SAME resolved options and polarity the first pass hashed into
+    // `toolCalls:match`. Omitting them would rebuild that definition under a
+    // different `implementationHash` and orphan the first pass's row.
+    ...(iteration.matchOptions ? { matchOptions: iteration.matchOptions } : {}),
+    ...(iteration.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(judgeVerdict && isFiniteNumber(judgeVerdict.threshold)
       ? { judgeVerdict }
       : {}),
@@ -309,6 +409,9 @@ function stageFields(stage: Record<string, unknown>) {
       : {}),
     ...(typeof stage.failureCategory === "string"
       ? { failureCategory: stage.failureCategory }
+      : {}),
+    ...(stage.stageMeasurements !== undefined
+      ? { stageMeasurements: stage.stageMeasurements }
       : {}),
     stageAnalyzerVersion:
       typeof stage.stageAnalyzerVersion === "number"
@@ -362,10 +465,22 @@ export async function runJudgeSecondPass(
     throw error;
   }
 
-  const mode = resolveGradingEngineMode({
-    runSnapshot: run.configSnapshot?.gradingEngine ?? run.gradingEngine,
-  });
-  if (mode !== "dual_write") {
+  // Through the SAME translation the first-pass and replay paths use: an absent
+  // stamp is the backend's `off`, not an absent opinion. Resolving it as
+  // "unconstrained" would fall through to this process's env ceiling and run
+  // the REAL-WRITE second pass for a run whose frozen position was `off`,
+  // contaminating the off and legacy cohorts with real score rows.
+  const mode = resolveFrozenRunGradingMode(
+    run.configSnapshot?.gradingEngine ?? run.gradingEngine
+  );
+  // `shadow` deliberately writes NOTHING here: a shadow row is produced
+  // in-process by the first pass, and a second-pass write is by definition a
+  // real write. `enforce` runs exactly as `dual_write` does.
+  if (!isDualWrite(mode)) {
+    // Through `emptyResult`, which is the only place that knows the full shape
+    // — `JudgeSecondPassResult` requires `metadataAttributionOutcomes`, and a
+    // hand-built literal here silently omitted it for every `off` and `shadow`
+    // run, which is most of them.
     return emptyResult(mode, mode === "off" ? "mode_off" : "mode_shadow");
   }
 
@@ -541,7 +656,12 @@ export async function runJudgeSecondPass(
         runId,
         goalCompletionJobId,
         outcomes: goalCompletionOutcomes,
-        ...(goalCompletionFailed ? { failed: true } : {}),
+        // `run.incomplete` ⇒ the FETCH stopped short of the run's tail, so
+        // this report covers a subset. `markFanout` marks a fanout complete
+        // when every reported outcome succeeded and cannot tell a fully
+        // graded run from a partially fetched one — so a partial fetch must
+        // never be allowed to close it.
+        ...(goalCompletionFailed || run.incomplete ? { failed: true } : {}),
       });
     } catch (error) {
       // The sweep is the delivery guarantee: an unreported pass is retried,
@@ -564,7 +684,10 @@ export async function runJudgeSecondPass(
         runId,
         metadataAttributionJobId,
         outcomes: metadataAttributionOutcomes,
-        ...(metadataAttributionFailed ? { failed: true } : {}),
+        // Same guard, same reason — see goal-completion's report above.
+        ...(metadataAttributionFailed || run.incomplete
+          ? { failed: true }
+          : {}),
       });
     } catch (error) {
       logger.warn("[evals] judge second pass: fanout report failed", {

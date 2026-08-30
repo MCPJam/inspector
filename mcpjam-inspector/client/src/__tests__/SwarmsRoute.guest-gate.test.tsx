@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectMembershipRole } from "../hooks/useProjects";
 
@@ -110,6 +111,17 @@ vi.mock("@codemirror/lint", () => ({
 
 import { SwarmsRoute } from "../App";
 
+/**
+ * The route's redirect goes through `ScopedNavigate`, which carries the active
+ * project into a project-owned target — so it needs a router context to read
+ * the current location from. Mounting inside a `MemoryRouter` gives it one;
+ * the `Navigate` marker mocked above still renders, and with no project in the
+ * URL the target is the plain logical path these assertions expect.
+ */
+function renderRoute(element: React.ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
 describe("SwarmsRoute member-only gate", () => {
   beforeEach(() => {
     mockSwarmsTab.mockClear();
@@ -136,7 +148,7 @@ describe("SwarmsRoute member-only gate", () => {
   it("redirects to servers when the sandboxes flag is off", () => {
     mockFlags.sandboxesEnabled = false;
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.getByText("redirected:/servers")).toBeInTheDocument();
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
@@ -148,7 +160,7 @@ describe("SwarmsRoute member-only gate", () => {
     // /swarms directly, before PostHog has answered.
     mockFlags.sandboxesEnabled = undefined;
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
     expect(mockSwarmsTab).not.toHaveBeenCalled();
@@ -158,7 +170,7 @@ describe("SwarmsRoute member-only gate", () => {
     mockUseAuth.mockReturnValue({ user: null, isLoading: true });
     mockViewerRole.isLoading = true;
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(mockUseViewerProjectRole).toHaveBeenCalledWith({
       isAuthenticated: true,
@@ -172,7 +184,7 @@ describe("SwarmsRoute member-only gate", () => {
   it("shows the access notice and does NOT mount SwarmsTab for a guest", () => {
     mockViewerRole.role = "guest";
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(
       screen.getByText("Swarms is available to project members"),
@@ -189,7 +201,7 @@ describe("SwarmsRoute member-only gate", () => {
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
     expect(
@@ -206,7 +218,7 @@ describe("SwarmsRoute member-only gate", () => {
   it("renders SwarmsTab for a project member", () => {
     mockViewerRole.role = "member";
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
     expect(
@@ -223,7 +235,7 @@ describe("SwarmsRoute member-only gate", () => {
   it("renders SwarmsTab for an owner/admin", () => {
     mockViewerRole.role = "admin";
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
     expect(mockSwarmsTab).toHaveBeenCalledTimes(1);
@@ -233,7 +245,7 @@ describe("SwarmsRoute member-only gate", () => {
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = true;
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
     expect(
@@ -247,7 +259,7 @@ describe("SwarmsRoute member-only gate", () => {
     mockRouteContext.convexProjectId = null;
     mockUseAuth.mockReturnValue({ user: null, isLoading: false });
 
-    render(<SwarmsRoute />);
+    renderRoute(<SwarmsRoute />);
 
     expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
     expect(mockSwarmsTab).toHaveBeenCalledWith({

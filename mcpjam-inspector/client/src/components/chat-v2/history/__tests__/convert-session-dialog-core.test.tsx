@@ -66,6 +66,7 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+import userEvent from "@testing-library/user-event";
 import {
   ConvertSessionDialogCore,
   type PromoteSessionDetailState,
@@ -264,6 +265,137 @@ describe("ConvertSessionDialogCore", () => {
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
       "skip"
+    );
+  });
+});
+
+/**
+ * D8f2 — the content-transfer acknowledgement.
+ *
+ * Three things worth pinning: it is asked ONLY when the server says so, it is
+ * REQUIRED rather than advisory, and an unticked box sends nothing. That last
+ * one matters most: a client that sent `true` regardless would stamp an audit
+ * record saying a person decided something they were never shown.
+ */
+describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => {
+  const ACK_DETAIL: PromoteSessionDetailState = {
+    ...READY_DETAIL,
+    requiresContentTransferAcknowledgement: true,
+  };
+
+  const ackCheckbox = () =>
+    screen.getByRole("checkbox", {
+      name: /copies a tester's content into a durable test case/i,
+    });
+
+  it("does not ask when the server did not say to", () => {
+    renderCore();
+    expect(
+      screen.queryByText(/Someone else wrote this transcript/i)
+    ).toBeNull();
+  });
+
+  it("asks when the server says this is someone else's transcript", () => {
+    renderCore({ detail: ACK_DETAIL });
+    expect(
+      screen.getByText(/Someone else wrote this transcript/i)
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/copies a tester's own words into a test case/i)
+    ).toBeTruthy();
+  });
+
+  it("is never pre-ticked", () => {
+    renderCore({ detail: ACK_DETAIL });
+    expect(ackCheckbox().getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("BLOCKS submit until it is ticked, rather than warning", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const submit = screen.getByRole("button", {
+      name: "Promote to test case",
+    });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(ackCheckbox());
+    expect(submit.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("is a real focusable control, not a div with a click handler", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    // A native <button role="checkbox"> is what makes Space activate it and
+    // Tab reach it. The accessible name comes from a <label htmlFor> bound to
+    // this id, and the consequence is what a screen reader reads with it.
+    expect(checkbox.tagName).toBe("BUTTON");
+    expect(checkbox.getAttribute("id")).toBe("content-transfer-ack");
+    expect(checkbox.getAttribute("aria-describedby")).toBe(
+      "content-transfer-consequence"
+    );
+    expect(checkbox.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("is reachable and tickable by keyboard ALONE", async () => {
+    // `userEvent` models real keyboard semantics — Space on a focused button
+    // activates it — where a bare `fireEvent.keyDown` does not, because jsdom
+    // never synthesizes the click a browser would. No pointer event is fired
+    // anywhere in this test.
+    const user = userEvent.setup();
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    const submit = screen.getByRole("button", {
+      name: "Promote to test case",
+    });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+
+    checkbox.focus();
+    expect(document.activeElement).toBe(checkbox);
+
+    await user.keyboard("[Space]");
+    expect(checkbox.getAttribute("data-state")).toBe("checked");
+    expect(submit.hasAttribute("disabled")).toBe(false);
+
+    // ...and back off again, so the box is genuinely operable rather than a
+    // one-way latch that happens to have been set.
+    await user.keyboard("[Space]");
+    expect(checkbox.getAttribute("data-state")).toBe("unchecked");
+    expect(submit.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("the sentence is the hit target, not just the box", () => {
+    renderCore({ detail: ACK_DETAIL });
+    const checkbox = ackCheckbox();
+    // Clicking the LABEL toggles the control, which is what a `<label
+    // htmlFor>` bound to the checkbox's own id buys — a bigger target and an
+    // accessible name a screen reader reads out with the control.
+    fireEvent.click(
+      screen.getByText(/copies a tester's content into a durable test case/i)
+    );
+    expect(checkbox.getAttribute("data-state")).toBe("checked");
+  });
+
+  it("sends the acknowledgement once it is ticked", async () => {
+    importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
+    renderCore({ detail: ACK_DETAIL });
+    fireEvent.click(ackCheckbox());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Promote to test case" })
+    );
+    await waitFor(() => expect(importAction).toHaveBeenCalled());
+    expect(importAction.mock.calls[0][0]).toMatchObject({
+      contentTransferAcknowledged: true,
+    });
+  });
+
+  it("sends NOTHING when it was never asked for", async () => {
+    importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
+    renderCore();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Promote to test case" })
+    );
+    await waitFor(() => expect(importAction).toHaveBeenCalled());
+    expect(importAction.mock.calls[0][0]).not.toHaveProperty(
+      "contentTransferAcknowledged"
     );
   });
 });

@@ -243,6 +243,12 @@ export interface DriveHostedEvalTurnParams {
   evalAuthContext: { kind: "user_bearer"; token: string };
   endpointPath: string;
   extraBodyFields: Record<string, unknown> | undefined;
+  /**
+   * Extra headers on every per-step Convex request — the bench worker's
+   * `x-mcpjam-benchmark-grant` carrier. Read per step by the engine, so the
+   * object is forwarded by reference and never spread into a copy.
+   */
+  extraHeaders?: Record<string, string>;
   toolChoice: EvalToolChoice | undefined;
   abortSignal: AbortSignal | undefined;
   maxSteps: number;
@@ -535,6 +541,7 @@ export async function driveHostedEvalTurn(
         : {}),
       endpointPath: params.endpointPath,
       extraBodyFields: mergedExtraBodyFields,
+      ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       ...(abortSignal ? { abortSignal } : {}),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
