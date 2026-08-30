@@ -4857,6 +4857,100 @@ evals.get(
   },
 );
 
+// GET /v1/projects/:projectId/eval-runs/:runId/stage-analytics
+//
+// ONE run's materialized `EvalStageAnalyticsV1` document, addressed by run
+// rather than reached by paging the suite.
+//
+// Not a convenience over the suite listing. That listing pages newest-first,
+// so reaching a specific run through it costs work proportional to how long
+// ago the run finished, and cannot answer at all once the run falls outside
+// the pages walked. A run detail page already knows its run.
+//
+// A 404 covers BOTH "not visible to this caller" and "this run has no
+// document", and the two are deliberately not distinguished: to a reader both
+// mean UNMEASURED, and separating them would tell a caller that a run exists
+// in a project they cannot see. The Convex reader fail-softs a visibility
+// failure to `null` for the same reason.
+//
+// NOT backfilled: a run that terminalized before the materializer shipped has
+// no row. That absence is the honest "unmeasured" answer and is never served
+// as a funnel of zeros.
+evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  try {
+    // The run is read and project-matched FIRST, exactly as the suite route
+    // matches its suite: a valid run id from another of the caller's projects
+    // must read as NOT_FOUND here rather than relying on the backend's
+    // fail-soft null, which is defense in depth and not the answer.
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    document = await convex.query(
+      "testSuites:getEvalRunStageAnalytics" as any,
+      { runId },
+    );
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "This run has no stage analytics",
+    );
+  }
+
+  // Validated with the REFINED schema, same as the listing: the structural one
+  // would admit a document with two `overall` slices or an overall slice that
+  // disagrees with the row's own trial count, and those are the invariants
+  // every number a reader draws rests on. A payload that fails is an upstream
+  // fault answered as a service error — never a 200 carrying the bad row.
+  const parsed = evalStageAnalyticsSchema.safeParse(document);
+  if (!parsed.success) {
+    logger.warn("[v1 evals] run stage analytics failed contract validation", {
+      projectId,
+      runId,
+      // The ISSUE, never the row: the payload carries intent labels and host
+      // names, and a validation log is not the place for them.
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Stage analytics payload failed validation",
+    );
+  }
+
+  // Shape is not identity. `runId` is only `string().min(1)` to the schema, so
+  // a valid document for a DIFFERENT run parses perfectly and would then be
+  // served under this run's heading. The Convex reader cross-checks the suite;
+  // this binds the answer to the question actually asked.
+  if (parsed.data.runId !== runId) {
+    logger.warn("[v1 evals] run stage analytics is for a different run", {
+      projectId,
+      runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Stage analytics payload failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as EvalStageAnalyticsV1);
+});
+
 // ── Eval suite/case editing routes ───────────────────────────────────
 
 /** Read a suite (project-scoped) + its execution config for the detail DTO. */

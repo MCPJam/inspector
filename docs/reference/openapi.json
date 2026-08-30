@@ -2419,6 +2419,54 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/stage-analytics": {
+      "get": {
+        "operationId": "getEvalRunStageAnalytics",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's stage analytics",
+        "description": "ONE run's materialized stage-analytics document: where its trials fell out of the six-stage user-value chain (connection, discovery, selection, tool call, response, user value), overall and sliced marginally by intent, model and host.\n\nThe same document the suite listing returns, addressed by run. Use this rather than paging `/eval-suites/{suiteId}/stage-analytics` to reach a known run: that listing is newest-first, so walking it costs work proportional to how long ago the run finished and cannot answer once the run falls outside the pages read.\n\nCounts are returned; RATES are not. A zero denominator is `notMeasured`, never `0`, and every excluded observation is counted under a named class so a denominator can never shrink silently.\n\n`404` covers BOTH \"this run has no document\" and \"this run is not visible to you\", and the two are deliberately not distinguished — separating them would confirm that a run exists in a project you cannot see. NOT backfilled either: a run that completed before this shipped has no document, and that absence means UNMEASURED, never a funnel of zeros.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's complete stage-analytics document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalStageAnalytics"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",

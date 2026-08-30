@@ -1863,6 +1863,40 @@ export class PlatformApiClient {
   }
 
   /**
+   * ONE run's materialized stage-analytics document — the same
+   * `EvalStageAnalyticsV1` the suite listing returns, addressed by run.
+   *
+   * Not a convenience wrapper around the listing. `listEvalSuiteStageAnalytics`
+   * pages a suite newest-first, so reaching a specific run through it means
+   * walking pages until that run appears — unbounded work whose cost grows with
+   * how long ago the run finished, and which cannot answer at all once the run
+   * falls outside the caller's window. A reader that already knows the run
+   * asks for the run.
+   *
+   * `404` means one of two different things, and the API does not distinguish
+   * them on purpose: the run is not visible to this caller, or it has no
+   * document. Both are UNMEASURED to a reader, and separating them would leak
+   * the existence of runs in projects the caller cannot see.
+   *
+   * NOT backfilled, same as the listing: a run that terminalized before the
+   * materializer shipped has no row, and that absence is the honest answer. No
+   * client-side reconstruction exists to fall back on, by design.
+   */
+  getEvalRunStageAnalytics(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalStageAnalytics> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/stage-analytics`,
+      {},
+      options
+    );
+  }
+
+  /**
    * Request (or with `force`, regenerate) the eval run's insights —
    * serverQuality behind the common envelope. SPENDS the org's model budget;
    * poll `getEvalRun().insights` rather than re-requesting.

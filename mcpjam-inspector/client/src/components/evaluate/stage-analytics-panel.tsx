@@ -189,7 +189,20 @@ function SliceGroup({ title, slices }: { title: string; slices: SliceView[] }) {
   );
 }
 
-function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
+/**
+ * One run's document, rendered from PROPS alone.
+ *
+ * Exported so a second surface (the eval run detail) can render the canonical
+ * document without inheriting this file's suite-scoped fetching. The panel
+ * below self-fetches a suite and lists its runs; a run detail already has its
+ * run and needs none of that. Reusing the PANEL there would drag a suite
+ * listing, its paging and its run selector onto a page that has exactly one
+ * run — and would make the run detail's population quietly a suite's.
+ *
+ * Pure props, no hooks, no queries: the same document renders identically on
+ * both surfaces, which is the whole point of there being one contract.
+ */
+export function RunDocument({ row }: { row: EvalStageAnalyticsV1 }) {
   const header = toRunHeaderView(row);
   const overall = overallSlice(row);
   const intents = slicesOfDimension(row, "intent");

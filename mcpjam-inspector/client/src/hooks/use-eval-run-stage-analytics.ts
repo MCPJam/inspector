@@ -1,0 +1,145 @@
+/**
+ * Fetch hook for ONE run's materialized stage analytics (UVH-IN6).
+ *
+ * The run-scoped sibling of `use-eval-suite-stage-analytics.ts`, and
+ * deliberately much smaller: a run has exactly one document, so there is no
+ * cursor array, no page accumulator and no dedupe. What it keeps is the part
+ * that is about correctness rather than paging — a monotonic request id so an
+ * out-of-order response can never paint over a newer one, and an
+ * `AbortController` per effect.
+ *
+ * ── `notFound` is an ANSWER, not a failure ───────────────────────────────────
+ *
+ * The API returns the same 404 for "this run has no document" and "this run is
+ * not visible to you", so that it cannot confirm the existence of runs in
+ * projects the caller cannot see. Both mean UNMEASURED to a reader, so this
+ * hook surfaces that as its own `absent` status rather than as an error: an
+ * error state would put a red service message on every run that finished
+ * before the materializer shipped, which is most of them.
+ *
+ * The other three failure kinds stay errors, and stay APART: `routeUnavailable`
+ * is the dark-ship window, `requestFailed` is a service state, and
+ * `invalidContract` is a bug report. Collapsing them into "couldn't load" loses
+ * the only one a reader can act on.
+ */
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
+import {
+  fetchEvalRunStageAnalytics,
+  isEvalStageAnalyticsError,
+} from "@/lib/apis/eval-stage-analytics-api";
+import type { StageAnalyticsErrorInfo } from "@/hooks/use-eval-suite-stage-analytics";
+
+/**
+ * `absent` is its own state, beside `ready` and `error`.
+ *
+ * Not folded into either: `ready` with a null document would make every caller
+ * re-derive "is there anything here", and `error` would report an unmeasured
+ * run as a malfunction.
+ */
+export type EvalRunStageAnalyticsStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "absent"
+  | "error";
+
+export interface EvalRunStageAnalyticsState {
+  status: EvalRunStageAnalyticsStatus;
+  /** The run's document, or `null` in every state but `ready`. */
+  document: EvalStageAnalyticsV1 | null;
+  error: StageAnalyticsErrorInfo | null;
+  /** Re-runs the read. A no-op while inactive. */
+  refetch: () => void;
+}
+
+function toErrorInfo(error: unknown): StageAnalyticsErrorInfo {
+  if (isEvalStageAnalyticsError(error)) {
+    return {
+      message: error.message,
+      kind: error.kind,
+      ...(error.status !== undefined ? { status: error.status } : {}),
+    };
+  }
+  return {
+    message: error instanceof Error ? error.message : String(error),
+    kind: "requestFailed",
+  };
+}
+
+export function useEvalRunStageAnalytics({
+  projectId,
+  runId,
+  enabled = true,
+}: {
+  projectId: string | null | undefined;
+  runId: string | null | undefined;
+  enabled?: boolean;
+}): EvalRunStageAnalyticsState {
+  const active = Boolean(enabled && projectId && runId);
+
+  const [document, setDocument] = useState<EvalStageAnalyticsV1 | null>(null);
+  const [status, setStatus] = useState<EvalRunStageAnalyticsStatus>("idle");
+  const [error, setError] = useState<StageAnalyticsErrorInfo | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  // Monotonic request id. Only the newest in-flight request may write state —
+  // without it, a slow read for the PREVIOUS run could land after the current
+  // run's and put one run's funnel under another's heading.
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!active) {
+      requestIdRef.current += 1;
+      setStatus("idle");
+      setDocument(null);
+      setError(null);
+      return;
+    }
+
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    const controller = new AbortController();
+    setStatus("loading");
+    setError(null);
+    // Cleared on the way IN, not on the way out: a stale document left on
+    // screen while the next run loads is the same stale-answer bug the request
+    // id exists to prevent, just with a slower fuse.
+    setDocument(null);
+
+    void (async () => {
+      try {
+        const row = await fetchEvalRunStageAnalytics(
+          { projectId: projectId as string, runId: runId as string },
+          controller.signal,
+        );
+        if (requestId !== requestIdRef.current) return;
+        setDocument(row);
+        setStatus("ready");
+      } catch (err) {
+        // An abort is the caller's own teardown, not a failure to report.
+        if (controller.signal.aborted) return;
+        if (requestId !== requestIdRef.current) return;
+        setDocument(null);
+        const info = toErrorInfo(err);
+        if (info.kind === "notFound") {
+          // UNMEASURED, not broken. See the module docblock.
+          setError(null);
+          setStatus("absent");
+          return;
+        }
+        setError(info);
+        setStatus("error");
+      }
+    })();
+
+    return () => controller.abort();
+  }, [active, projectId, runId, attempt]);
+
+  const refetch = useCallback(() => {
+    if (!active) return;
+    setAttempt((n) => n + 1);
+  }, [active]);
+
+  return { status, document, error, refetch };
+}
