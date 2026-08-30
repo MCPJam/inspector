@@ -142,7 +142,7 @@ export function resumableServers(persist: {
   if (!excluded || excluded.length === 0) return aligned;
   const nonResumable = new Set(excluded);
   return aligned.filter(
-    (_, index) => !nonResumable.has(persist.selectedServerIds[index]!)
+    (_, index) => !nonResumable.has(persist.selectedServerIds[index]!),
   );
 }
 
@@ -296,18 +296,20 @@ export interface WebChatTurnPrepareInputs {
   computerWorkdir?: string;
   widgetModelContext?: WidgetModelContextEntry[];
   /**
-   * When set, skills are sourced from the caller's Computer (E2B sandbox)
-   * rather than the local FS. Set by the hosted chat route only when the host
-   * actually has a computer. See `chat-v2-orchestration.ts`.
+   * Whether this turn's `effectiveCapabilities` describe a LIVE surface rather
+   * than a captured environment.
+   *
+   * A live turn also composes SEP-2640 skills from its connected servers; an
+   * environment turn does not, because its server skills were captured and
+   * fetching more would falsify the snapshot. Set by the hosted chat route for
+   * its host/adhoc targets, which resolve no environment at all.
    */
-  cloudSkills?: { authHeader: string; projectId: string };
+  liveSkillSurface?: boolean;
   /**
    * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
    * side. When set (even empty) they are the only skills the emulated engine
    * advertises: `prepareChatV2` receives them as `skillsSource: "resolved"`,
-   * which sits above the cloud/HOSTED/local chain. Callers must NOT also set
-   * `cloudSkills` — that would double-deliver (an environment-scoped
-   * `loadSkill` plus a project-wide one).
+   * which is now the ONLY skill source `prepareChatV2` accepts.
    *
    * Ignored when `harness` is set: a harness turn delivers skills natively
    * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
@@ -438,7 +440,7 @@ function emitSandboxNotices(
   writer: SandboxNoticeWriter | null | undefined,
   notices: SandboxNoticeReason[] | undefined,
   ack?: (delivered: SandboxNoticeReason[]) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
 ): void {
   if (!writer || !notices?.length) return;
   const closed = () => writer.isClosed?.() === true || abortSignal?.aborted;
@@ -485,7 +487,7 @@ export interface StreamWebChatTurnArgs {
  * types the marker into chat keeps their message intact.
  */
 export function stripUiContextModelParts(
-  messages: ModelMessage[]
+  messages: ModelMessage[],
 ): ModelMessage[] {
   let changed = false;
   const out = messages.map((message) => {
@@ -499,7 +501,7 @@ export function stripUiContextModelParts(
           typeof part === "object" &&
           (part as { type?: unknown }).type === "text" &&
           isRenderedUiContextText((part as { text?: unknown }).text)
-        )
+        ),
     );
     if (content.length === message.content.length) return message;
     changed = true;
@@ -520,7 +522,7 @@ export function stripUiContextModelParts(
  */
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
-  requireToolApproval: boolean | undefined
+  requireToolApproval: boolean | undefined,
 ): UiToolApprovalClassification {
   return classifyUiToolApprovals(uiTools, requireToolApproval === true);
 }
@@ -533,7 +535,7 @@ function uiToolApprovalsFrom(
  * path and mapping the error to a `webError(...)` response.
  */
 export async function streamWebChatTurn(
-  args: StreamWebChatTurnArgs
+  args: StreamWebChatTurnArgs,
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
@@ -548,7 +550,7 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
 
@@ -563,7 +565,7 @@ export async function streamWebChatTurn(
       // trigger new linked resource reads. Fresh server-side tool execution
       // resolves resource_link results through trusted tool-origin metadata.
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
-    }
+    },
   );
 
   let prepared;
@@ -590,7 +592,7 @@ export async function streamWebChatTurn(
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
       builtInTools: prepare.builtInTools,
-      ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
+
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
       // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
@@ -600,6 +602,9 @@ export async function streamWebChatTurn(
             skillsSource: {
               kind: "resolved" as const,
               capabilities: prepare.effectiveCapabilities,
+              ...(prepare.liveSkillSurface
+                ? { composeLiveServerSkills: true as const }
+                : {}),
               // So a supporting-file read stops when the client disconnects
               // instead of holding a worker for its full fetch timeout.
               ...(runtime.abortSignal
@@ -643,7 +648,7 @@ export async function streamWebChatTurn(
   const scopeStepUpServerNamesById =
     buildServerNamesById(
       persist.selectedServerIds,
-      persist.selectedServerNames
+      persist.selectedServerNames,
     ) ?? {};
   let suspendedScopeStepUpToolCallId: string | undefined;
   const scopeStepUpResume =
@@ -661,13 +666,13 @@ export async function streamWebChatTurn(
           abortSignal: runtime.abortSignal,
         })
       : runtime.scopeStepUp?.cancelRequest
-      ? buildHostedScopeStepUpCancellation({
-          request: runtime.scopeStepUp.cancelRequest,
-          bearer: runtime.scopeStepUp.bearer,
-          messages: modelMessages,
-          tools: preparedTools,
-        })
-      : undefined;
+        ? buildHostedScopeStepUpCancellation({
+            request: runtime.scopeStepUp.cancelRequest,
+            bearer: runtime.scopeStepUp.bearer,
+            messages: modelMessages,
+            tools: preparedTools,
+          })
+        : undefined;
   const createScopeStepUpContinuation =
     runtime.scopeStepUp && persist.chatSessionId
       ? async ({
@@ -750,7 +755,7 @@ export async function streamWebChatTurn(
           emitInsufficientScopeChunk(
             scopeChallengeWriter,
             scopeStepUpServerNamesById[challenge.serverId],
-            challenge
+            challenge,
           );
         }
       },
@@ -764,11 +769,11 @@ export async function streamWebChatTurn(
               }),
           }
         : {}),
-    }
+    },
   );
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-    prepare.widgetModelContext ?? []
+    prepare.widgetModelContext ?? [],
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
@@ -797,7 +802,7 @@ export async function streamWebChatTurn(
     Boolean(prepare.modelDefinition.id) &&
     isHostedCatalogModel(
       String(prepare.modelDefinition.id),
-      prepare.modelDefinition.provider
+      prepare.modelDefinition.provider,
     );
 
   // Resolve the host config now that `resolvedTemperature` is known.
@@ -805,21 +810,21 @@ export async function streamWebChatTurn(
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? persist.hostConfig({ resolvedTemperature }) ?? null
-      : persist.hostConfig ?? null;
+      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
+      : (persist.hostConfig ?? null);
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok"
+    modelSource: "mcpjam" | "byok" | "local_byok",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
       turnTrace: PersistedTurnTrace,
-      harnessSessionCommit?: HarnessSessionCommitPayload
+      harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
       const isDirectChat = !isScenarioSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -837,7 +842,7 @@ export async function streamWebChatTurn(
               await exportConnectedServerToolSnapshotForEvalAuthoring(
                 manager,
                 knownIds,
-                { logPrefix: "chat-v2.persist" }
+                { logPrefix: "chat-v2.persist" },
               );
           }
         } catch {
@@ -860,10 +865,27 @@ export async function streamWebChatTurn(
           : {}),
         scenarioId: persist.scenarioId,
         authHeader: runtime.authHeader,
+        // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
+        // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
+        // replays.
+        //
+        // Those are different questions and the hosted path only ever answered
+        // the second, so Raw showed the bare host prompt while the model had
+        // been given more: the skills catalog, widget model context, the
+        // environment block. A debugger that cannot show what the model was
+        // told cannot answer "did it even know that skill existed?" — which is
+        // the first question anyone asks when an agent ignores a skill.
+        //
+        // Resume must NOT read this one. Turn-injected content is true of the
+        // turn that happened, not of the next one: replaying "your sandbox was
+        // reset" long after the fact is the confabulation `resumeConfig`'s raw
+        // prompt exists to prevent. Hence two fields, both already on the
+        // ingest contract — the local route has always filled this one.
+        systemPrompt: effectiveEnhancedSystemPrompt,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId }
+          { authenticatedUserId: persist.authenticatedUserId },
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -899,13 +921,13 @@ export async function streamWebChatTurn(
 
   if (!isMCPJam) {
     const providerKeyResult = deriveOrgProviderKeyResult(
-      prepare.modelDefinition
+      prepare.modelDefinition,
     );
     if (!providerKeyResult.ok) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        providerKeyResult.error
+        providerKeyResult.error,
       );
     }
     const providerKey = providerKeyResult.key;
@@ -925,13 +947,13 @@ export async function streamWebChatTurn(
             scenarioId: persist.scenarioId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
-          }
+          },
         )
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
       modelId,
-      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok"
+      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
     );
 
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
@@ -964,7 +986,7 @@ export async function streamWebChatTurn(
             writer,
             runtime.sandboxNotices,
             runtime.ackSandboxNotices,
-            runtime.abortSignal
+            runtime.abortSignal,
           );
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
@@ -1001,7 +1023,7 @@ export async function streamWebChatTurn(
       requireToolApproval: persist.requireToolApproval,
       uiToolApprovals: uiToolApprovalsFrom(
         effectiveUiTools,
-        persist.requireToolApproval
+        persist.requireToolApproval,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1012,7 +1034,7 @@ export async function streamWebChatTurn(
           writer,
           runtime.sandboxNotices,
           runtime.ackSandboxNotices,
-          runtime.abortSignal
+          runtime.abortSignal,
         );
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
@@ -1027,7 +1049,7 @@ export async function streamWebChatTurn(
   const mcpjamModelId = String(prepare.modelDefinition.id);
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam"
+    "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1079,7 +1101,7 @@ export async function streamWebChatTurn(
     requireToolApproval: persist.requireToolApproval,
     uiToolApprovals: uiToolApprovalsFrom(
       effectiveUiTools,
-      persist.requireToolApproval
+      persist.requireToolApproval,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed
@@ -1136,7 +1158,7 @@ export async function streamWebChatTurn(
         writer,
         runtime.sandboxNotices,
         runtime.ackSandboxNotices,
-        runtime.abortSignal
+        runtime.abortSignal,
       );
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
@@ -1152,13 +1174,13 @@ export async function streamWebChatTurn(
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
-          runtime.rpcCollector
+          runtime.rpcCollector,
         );
         // COMP-21: cross-instance frames (harness-mcp landed on another
         // instance) arrive via the shared Convex sink. No-op single-instance.
         stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
           persist.selectedServerIds,
-          runtime.rpcCollector
+          runtime.rpcCollector,
         );
       }
     },

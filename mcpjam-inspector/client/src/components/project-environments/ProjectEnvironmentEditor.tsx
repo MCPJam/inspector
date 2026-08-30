@@ -19,6 +19,11 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { ProjectEnvironmentSkillsPicker } from "./ProjectEnvironmentSkillsPicker";
+// Re-exported from the composer's shared helper rather than kept as a second
+// copy: a dirty-check that missed version pins would silently discard a "hold
+// this skill at v1" edit, and two implementations means one of them eventually
+// does.
+import { sameSkillSelection } from "@/components/environment-composer/environment-stack";
 
 type EnvironmentDraft = {
   name: string;
@@ -42,17 +47,6 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     skillSelection: env.skillSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
-}
-
-function sameSkillSelection(
-  a: ProjectEnvironmentSkillSelection | null,
-  b: ProjectEnvironmentSkillSelection | null
-): boolean {
-  if (a === null || b === null) return a === b;
-  return (
-    a.skillIds.length === b.skillIds.length &&
-    a.skillIds.every((id, i) => id === b.skillIds[i])
-  );
 }
 
 /**
@@ -119,11 +113,11 @@ export function ProjectEnvironmentEditor({
           skillSelection: null,
           computerEnvironmentId: null,
           ...initialDraft,
-        }
+        },
   );
   // Captured at draft init/reset — the ONLY revision update may send.
   const [baseRevision, setBaseRevision] = useState<number | null>(
-    environment?.revision ?? null
+    environment?.revision ?? null,
   );
   const [saving, setSaving] = useState(false);
   // Set on a rejected stale write; cleared only by an explicit reload.
@@ -145,7 +139,7 @@ export function ProjectEnvironmentEditor({
       (skillsEnabled &&
         !sameSkillSelection(
           draft.skillSelection,
-          environment.skillSelection ?? null
+          environment.skillSelection ?? null,
         )) ||
       (computersEnabled &&
         draft.computerEnvironmentId !==
@@ -189,7 +183,7 @@ export function ProjectEnvironmentEditor({
             serverAttachmentId: null,
             skillSelection: null,
             computerEnvironmentId: null,
-          }
+          },
     );
     setBaseRevision(environment?.revision ?? null);
     setConflicted(false);
@@ -263,7 +257,7 @@ export function ProjectEnvironmentEditor({
         ...(skillsEnabled &&
         !sameSkillSelection(
           draft.skillSelection,
-          environment.skillSelection ?? null
+          environment.skillSelection ?? null,
         )
           ? { skillSelection: draft.skillSelection }
           : {}),
@@ -283,7 +277,7 @@ export function ProjectEnvironmentEditor({
         // review the refreshed values explicitly.
         setConflicted(true);
         toast.error(
-          "This environment was changed by someone else — review the refreshed values before saving again."
+          "This environment was changed by someone else — review the refreshed values before saving again.",
         );
       } else {
         toast.error(
@@ -291,8 +285,8 @@ export function ProjectEnvironmentEditor({
             err,
             environment
               ? "Could not save the environment."
-              : "Could not create the environment."
-          )
+              : "Could not create the environment.",
+          ),
         );
       }
     } finally {
@@ -408,7 +402,10 @@ export function ProjectEnvironmentEditor({
 
       {computersEnabled ? (
         <div className="space-y-1.5">
-          <Label htmlFor="project-environment-sandbox-image" className="text-xs">
+          <Label
+            htmlFor="project-environment-sandbox-image"
+            className="text-xs"
+          >
             Sandbox image
           </Label>
           <div className="flex items-center gap-2">
@@ -436,7 +433,7 @@ export function ProjectEnvironmentEditor({
               <EnvironmentBuildBadge
                 build={
                   (sandboxImages ?? []).find(
-                    (img) => img.environmentId === draft.computerEnvironmentId
+                    (img) => img.environmentId === draft.computerEnvironmentId,
                   )?.currentBuild ?? null
                 }
               />
@@ -446,8 +443,8 @@ export function ProjectEnvironmentEditor({
             Applies to cloud runs in this environment: evals, swarms, and
             user-testing sessions each boot a fresh, isolated sandbox from this
             image. Cloud runs only — sandbox images never apply to the machine
-            running this inspector. A not-built image fails at launch — build
-            it first under Computer → Images.
+            running this inspector. A not-built image fails at launch — build it
+            first under Computer → Images.
           </p>
         </div>
       ) : null}

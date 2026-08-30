@@ -62,6 +62,76 @@ afterEach(async () => {
   await Promise.all(closers.splice(0).map((close) => close()));
 });
 
+/**
+ * The gmail/drive/calendar shape from the 2026-08-26 sweep: an endpoint that
+ * refuses every modern request without a token.
+ *
+ * Raw HTTP rather than a fixture handler, because the point is that NOTHING
+ * gets far enough to be a session — a handler that negotiates and then refuses
+ * would still be a completed exchange.
+ */
+async function serveUnauthorized(): Promise<string> {
+  const httpServer = http.createServer((_req, res) => {
+    res
+      .writeHead(401, { "Content-Type": "application/json" })
+      .end(JSON.stringify({ error: "unauthorized" }));
+  });
+  await new Promise<void>((resolve) =>
+    httpServer.listen(0, "127.0.0.1", resolve)
+  );
+  const { port } = httpServer.address() as AddressInfo;
+  closers.push(
+    () =>
+      new Promise<void>((resolve) => {
+        httpServer.closeAllConnections();
+        httpServer.close(() => resolve());
+      })
+  );
+  return `http://127.0.0.1:${port}/mcp`;
+}
+
+describe("modern-no-session-id", () => {
+  it("passes on a server that completes exchanges and mints no session id", async () => {
+    const serverUrl = await serve(createCacheFixtureHandler());
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkIds: ["modern-no-session-id"],
+      checkTimeout: 10_000,
+    }).run();
+
+    const check = byId(result.checks, "modern-no-session-id");
+    expect(check.status).toBe("passed");
+    // The pass is only meaningful because a real exchange succeeded — that is
+    // what makes the absent header a decision rather than an accident.
+    expect(
+      Number((check.details as { succeededResponses?: number })
+        ?.succeededResponses)
+    ).toBeGreaterThan(0);
+  });
+
+  it("cannot run when no exchange succeeded: a dead session mints nothing", async () => {
+    const serverUrl = await serveUnauthorized();
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkIds: ["modern-no-session-id"],
+      checkTimeout: 10_000,
+    }).run();
+
+    const check = byId(result.checks, "modern-no-session-id");
+    // Previously `passed`. A server that 401s everything cannot mint a session
+    // id whether or not it would, so the empty offender list was a fact about
+    // our access — and the servers that answered nothing were the ones this
+    // scored check flattered most.
+    expect(check.status).toBe("skipped");
+    expect(check.skipReason).toBe("could-not-run");
+    expect(check.error?.message).toMatch(/never in a position to mint/);
+    expect(check.details).toMatchObject({ succeededResponses: 0 });
+    expect(result.outcome).toBe("incomplete");
+  });
+});
+
 describe("modern-undeclared-capability-error", () => {
   it("skips (never fails) when no inputRequiredProbe names a tool that asks for input", async () => {
     const serverUrl = await serve(createMrtrFixtureHandler());
@@ -121,7 +191,11 @@ describe("modern-logs-require-log-level", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("passes without a logProbe, and says the evidence is weaker", async () => {
+  // Note this fixture EMITS logs unprompted — `logProbe` is the only thing
+  // that would have caught it. The unprobed run must therefore not report a
+  // pass: the same silence it would read as conformance is produced here by a
+  // server that violates the MUST, and only the probe tells them apart.
+  it("cannot run without a logProbe: silence proves nothing", async () => {
     const serverUrl = await serve(createLoggingFixtureHandler());
     const result = await new MCPConformanceTest({
       serverUrl,
@@ -131,9 +205,15 @@ describe("modern-logs-require-log-level", () => {
     }).run();
 
     const check = byId(result.checks, "modern-logs-require-log-level");
-    expect(check.status).toBe("passed");
+    expect(check.status).toBe("skipped");
+    // `could-not-run`, never `not-applicable`: the requirement applies to every
+    // modern server, so the check must stay in the denominator and drag the
+    // run to `incomplete` rather than quietly leaving the sample.
+    expect(check.skipReason).toBe("could-not-run");
     expect(check.details).toMatchObject({ logNotificationCount: 0 });
-    expect(String(check.details?.evidence)).toMatch(/No logProbe configured/);
+    expect(String(check.error?.message)).toMatch(/No logProbe configured/);
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
   });
 });
 
