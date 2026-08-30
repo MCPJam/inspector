@@ -99,6 +99,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listServerResources",
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
+  "post /projects/{projectId}/servers/{serverId}/skills": "listServerSkills",
+  "post /projects/{projectId}/servers/{serverId}/skills/get": "getServerSkill",
+  "post /projects/{projectId}/servers/{serverId}/skills/read-file":
+    "readServerSkillFile",
 
   // Directory readiness
   "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
@@ -120,14 +124,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/conformance-runs/{runId}/report":
     "getConformanceReport",
 
-  // Hosts
-  "get /projects/{projectId}/hosts": "listHosts",
-  "post /projects/{projectId}/hosts": "createHost",
-  "get /projects/{projectId}/hosts/{hostId}": "getHost",
-  "patch /projects/{projectId}/hosts/{hostId}": "updateHost",
-  "delete /projects/{projectId}/hosts/{hostId}": "deleteHost",
-  "post /projects/{projectId}/hosts/{hostId}/servers": "setHostServers",
-  "post /projects/{projectId}/hosts/{hostId}/duplicate": "duplicateHost",
+  // Clients
+  "get /projects/{projectId}/clients": "listClients",
+  "post /projects/{projectId}/clients": "createClient",
+  "get /projects/{projectId}/clients/{client}": "getClient",
+  "patch /projects/{projectId}/clients/{client}": "updateClient",
+  "delete /projects/{projectId}/clients/{client}": "deleteClient",
+  "post /projects/{projectId}/clients/{client}/servers": "setClientServers",
+  "post /projects/{projectId}/clients/{client}/duplicate": "duplicateClient",
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
@@ -151,6 +155,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Agent Plugins (read-only)
   "get /projects/{projectId}/plugins": "listProjectPlugins",
   "get /plugin-versions/{pluginVersionId}": "getPluginVersion",
+
+  // Cloud Skills (read-only)
+  "get /projects/{projectId}/skills": "listProjectSkills",
+  "get /projects/{projectId}/skills/{skillId}": "getProjectSkill",
 
   // Sandbox images
   "get /projects/{projectId}/images": "listImages",
@@ -178,6 +186,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
+    "listEvalSuiteStageAnalytics",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
@@ -197,8 +207,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-suites/{suiteId}/environments":
     "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/decision-summary":
+    "getEvalRunDecisionSummary",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
+  "post /projects/{projectId}/eval-runs/{runId}/gate-waivers":
+    "createGateWaiver",
+  "get /projects/{projectId}/eval-runs/{runId}/gate-waivers": "getGateWaiver",
+  "delete /projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId}":
+    "revokeGateWaiver",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace":
@@ -327,6 +344,28 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
  * and it belongs in the map above with a method written for it.
  */
 const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
+  // The DEPRECATED `/hosts` aliases. Their canonical `/clients` twins are in
+  // the map above and are what the SDK's contract covers. The SDK does still
+  // reach these paths — `listHosts`…`duplicateHost` remain as executable
+  // compatibility delegates on their old DTOs — but those methods are not the
+  // client's coverage of a route, they are the client's memory of one. Mapping
+  // the alias here to the deprecated method would make the deprecated surface
+  // look like an equal second way in, which is the thing the rename is meant to
+  // end.
+  "get /projects/{projectId}/hosts":
+    "Deprecated alias of `GET /clients`; the SDK's `listHosts` is a compatibility delegate, not this route's contract.",
+  "post /projects/{projectId}/hosts":
+    "Deprecated alias of `POST /clients`; see `GET /projects/{projectId}/hosts`.",
+  "get /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `GET /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "patch /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `PATCH /clients/{client}`, and deliberately weaker: it keeps the pre-rename tokenless contract, so it cannot express the compare-and-set write the canonical route requires.",
+  "delete /projects/{projectId}/hosts/{hostId}":
+    "Deprecated alias of `DELETE /clients/{client}`; see `GET /projects/{projectId}/hosts`.",
+  "post /projects/{projectId}/hosts/{hostId}/servers":
+    "Deprecated alias of `POST /clients/{client}/servers`, without the required config token.",
+  "post /projects/{projectId}/hosts/{hostId}/duplicate":
+    "Deprecated alias of `POST /clients/{client}/duplicate`; see `GET /projects/{projectId}/hosts`.",
   "post /projects/{projectId}/agent":
     "The headless agent turn. Reachable only with a chat-surface service credential (Slack/Discord), and it spends hosted-model credits per call — an SDK method would advertise a capability an sk_ key does not have.",
   "get /agent-ops":

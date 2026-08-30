@@ -58,8 +58,13 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
   });
 
   it("returns the MCP CallToolResult plus additive durationMs", async () => {
+    // The delay is comfortably above the threshold asserted below, because
+    // this raced when the two were equal: a `setTimeout(…, 5)` can be observed
+    // as 4ms elapsed (the timer may fire fractionally early, and the duration
+    // is computed from whole-millisecond `Date.now()` reads), so the assertion
+    // failed intermittently in CI on code that was working correctly.
     const executeTool = vi.fn().mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       return {
         content: [{ type: "text", text: "ok" }],
       };

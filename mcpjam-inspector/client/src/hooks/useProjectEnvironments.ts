@@ -23,9 +23,26 @@ import {
  * the types below are hand-mirrored (no codegen).
  */
 
+/** One skill held at an EXACT revision, rather than tracking Latest. */
+export type ProjectEnvironmentSkillVersionPin = {
+  skillId: string;
+  versionId: string;
+};
+
 export type ProjectEnvironmentSkillSelection = {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * Exact-version overlay on top of `skillIds`. At most one entry per selected
+   * skill; a selected skill with NO entry runs "Latest" — its current revision,
+   * resolved when the run starts, which is what every environment did before
+   * pins existed and what omitting this field still means.
+   *
+   * Absent rather than `[]` when nothing is pinned, matching how the backend
+   * stores it: an unpinned environment must serialize (and fingerprint)
+   * identically to one written before this feature.
+   */
+  versionPins?: ProjectEnvironmentSkillVersionPin[];
 };
 
 /**
@@ -126,7 +143,7 @@ export interface ProjectEnvironmentView {
  */
 export function useProjectEnvironments(
   projectId: string | null,
-  options?: { includeArchived?: boolean; includeAdhoc?: boolean }
+  options?: { includeArchived?: boolean; includeAdhoc?: boolean },
 ): ProjectEnvironmentView[] | undefined {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -145,7 +162,7 @@ export function useProjectEnvironments(
           ...(options?.includeArchived ? { includeArchived: true } : {}),
           ...(includeAdhoc ? { origin: "all" } : {}),
         } as any)
-      : "skip"
+      : "skip",
   ) as ProjectEnvironmentView[] | undefined;
   return useMemo(() => {
     if (rows === undefined) return undefined;
@@ -163,7 +180,7 @@ export function useProjectEnvironments(
  */
 export function useProjectEnvironment(
   projectId: string | null,
-  environmentId: string | null
+  environmentId: string | null,
 ): ProjectEnvironmentView | null | undefined {
   // Same gate as the list hook: without the auth/db-ready checks the query can
   // fire before the backend identity exists and fail rather than skip.
@@ -185,7 +202,7 @@ export function useProjectEnvironment(
           projectId: normalizedProjectId,
           environmentId: normalizedEnvironmentId,
         } as any)
-      : "skip"
+      : "skip",
   ) as ProjectEnvironmentView | null | undefined;
 }
 
@@ -238,7 +255,7 @@ export function useEnsureAdhocEnvironment(): (args: {
   modelId?: string;
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
-    "projectEnvironments:ensureAdhocEnvironment" as any
+    "projectEnvironments:ensureAdhocEnvironment" as any,
   ) as never;
 }
 
@@ -268,7 +285,7 @@ export function useEnsureAdhocEnvironments(): (args: {
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>
 > {
   return useMutation(
-    "projectEnvironments:ensureAdhocEnvironments" as any
+    "projectEnvironments:ensureAdhocEnvironments" as any,
   ) as never;
 }
 

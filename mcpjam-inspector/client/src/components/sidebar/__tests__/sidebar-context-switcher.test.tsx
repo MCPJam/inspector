@@ -558,7 +558,11 @@ describe("SidebarContextSwitcher", () => {
     ).toBeInTheDocument();
   });
 
-  it("clicking the per-row gear opens settings for that project (switching first if needed)", async () => {
+  it("clicking the per-row gear opens THAT project's settings, with no pre-switch", async () => {
+    // The gear used to switch the active project and then navigate. One URL
+    // does both now (`/p/<id>/project-settings`), so there is no window in
+    // which the app is on project B while the address bar still says A — and
+    // no second writer for the route coordinator to race.
     const onSwitchProject = vi.fn();
     const onNavigateToSettings = vi.fn();
     render(
@@ -576,36 +580,12 @@ describe("SidebarContextSwitcher", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Open Sandbox settings" })
     );
-    expect(onSwitchProject).toHaveBeenCalledWith("p2");
+    expect(onSwitchProject).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(onNavigateToSettings).toHaveBeenCalled();
+      // The id is what makes this one gesture: the caller navigates straight
+      // to that project's settings rather than to "the active project's".
+      expect(onNavigateToSettings).toHaveBeenCalledWith("p2");
     });
-  });
-
-  it("navigates to settings in the same gesture as the switch, without waiting for it", () => {
-    // Regression: awaiting the switch let the project change land while the
-    // URL was still the page being left, where App's snap-to-Servers effect
-    // read it as a bare project switch and bounced off the settings page.
-    const onSwitchProject = vi.fn(() => new Promise<void>(() => {}));
-    const onNavigateToSettings = vi.fn();
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={projects}
-        onSwitchProject={onSwitchProject}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-        onNavigateToSettings={onNavigateToSettings}
-      />
-    );
-    openMainDropdown();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Open Sandbox settings" })
-    );
-    expect(onSwitchProject).toHaveBeenCalledWith("p2");
-    // Never resolves, yet navigation already happened.
-    expect(onNavigateToSettings).toHaveBeenCalled();
   });
 
   it("clicking the per-row gear on the active project navigates without re-switching", () => {
@@ -627,7 +607,7 @@ describe("SidebarContextSwitcher", () => {
       screen.getByRole("button", { name: "Open Inspector settings" })
     );
     expect(onSwitchProject).not.toHaveBeenCalled();
-    expect(onNavigateToSettings).toHaveBeenCalled();
+    expect(onNavigateToSettings).toHaveBeenCalledWith("p1");
   });
 
   it("does not render the standalone Project Settings footer item (settings is per-row now)", () => {

@@ -41,6 +41,7 @@ import type {
 } from "@mcpjam/sdk/public-api";
 import {
   AGENT_API_GATED_OPERATIONS,
+  executedActionResource,
   gatedEntryFor,
 } from "./agent-op-registry.js";
 import { resolveSurfaceActor } from "./approval-surface.js";
@@ -368,10 +369,11 @@ proposedActions.post(
       });
 
       // What the caller renders from, and what the org's activity row links
-      // to. `kind` and `resource` are derived SERVER-SIDE from the registry: a
-      // host that synthesised the URL itself would have to know each
-      // operation's result shape, and would silently link to nothing the
-      // moment one changed.
+      // to. `kind` comes from the registry; `resource` comes from the
+      // OPERATION's own permalink policy. Either way it is derived
+      // SERVER-SIDE: a host that synthesised the URL itself would have to
+      // know each operation's result shape, and would silently link to
+      // nothing the moment one changed.
       //
       // Built HERE, before the completion call, and isolated from the
       // operation's own try/catch on purpose. The work is DONE; a throw in a
@@ -383,7 +385,9 @@ proposedActions.post(
       const meta = gatedEntryFor(operation.name)?.proposal;
       let resource: ExecutedActionResource | undefined;
       try {
-        resource = meta?.resource?.(result, { projectId: claim.projectId });
+        resource = executedActionResource(operation, result, input, {
+          projectId: claim.projectId,
+        });
       } catch (error) {
         logger.warn("[v1/proposed-actions] could not build the result link", {
           operation: operation.name,

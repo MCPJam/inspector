@@ -26,6 +26,16 @@ on:
         required: false
         default: true
         type: boolean
+    secrets:
+      # Cloudflare Access service token. staging.mcpjam.com sits behind an
+      # Access policy, so every request below has to present one or Access
+      # answers with its own 302 to the login page and the smoke reads as a
+      # deploy failure. Optional: targets that are not behind Access (prod)
+      # simply omit them, and the steps skip the headers.
+      CF_ACCESS_CLIENT_ID:
+        required: false
+      CF_ACCESS_CLIENT_SECRET:
+        required: false
   workflow_dispatch:
     inputs:
       base_url:
@@ -65,22 +75,44 @@ jobs:
           fi
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
+      # `CF_ARGS` is built as an array and expanded unquoted-per-element so an
+      # absent token yields NO header flags at all, rather than two empty
+      # headers that Access would reject as malformed.
       - name: Check public health endpoints
         env:
           BASE_URL: ${{ steps.target.outputs.base_url }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         shell: bash
         run: |
-          curl --fail --silent --show-error "$BASE_URL/health" >/tmp/health.json
-          curl --fail --silent --show-error "$BASE_URL/api/mcp/health" >/tmp/mcp-health.json
-          curl --fail --silent --show-error "$BASE_URL/api/apps/health" >/tmp/apps-health.json
+          CF_ARGS=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            CF_ARGS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+                     -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
+          curl --fail --silent --show-error "${CF_ARGS[@]}" "$BASE_URL/health" >/tmp/health.json
+          curl --fail --silent --show-error "${CF_ARGS[@]}" "$BASE_URL/api/mcp/health" >/tmp/mcp-health.json
+          curl --fail --silent --show-error "${CF_ARGS[@]}" "$BASE_URL/api/apps/health" >/tmp/apps-health.json
 
+      # "Unauthenticated" here means unauthenticated TO THE APP. The Access
+      # token still has to be present, otherwise Access answers first and the
+      # 302 gets read as the app's own denial — the assertion would pass while
+      # testing nothing.
       - name: Check unauthenticated web route is denied
         env:
           BASE_URL: ${{ steps.target.outputs.base_url }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         shell: bash
         run: |
+          CF_ARGS=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            CF_ARGS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+                     -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
           STATUS="$(curl --silent --output /tmp/web-auth.json --write-out '%{http_code}' \
             -X POST \
+            "${CF_ARGS[@]}" \
             -H 'Content-Type: application/json' \
             "$BASE_URL/api/web/tools/list" \
             -d '{"workspaceId":"smoke","serverId":"smoke"}')"
@@ -119,7 +151,7 @@ jobs:
     # library, so we skip `playwright install --with-deps` — that apt-driven step
     # was costing 15+ min of variable, sometimes-stalling wall-clock time.
     # When bumping @playwright/test, bump this tag in lockstep.
-    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
     # Drives a deployed URL; never launches Electron, so skip its binary download.
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -142,6 +174,8 @@ jobs:
         # smoke job's output because step outputs are job-local.
         env:
           PLAYWRIGHT_BASE_URL: ${{ needs.smoke.outputs.base_url }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: npm run test:e2e -w @mcpjam/inspector
 
       - name: Upload Playwright report
