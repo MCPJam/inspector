@@ -152,6 +152,19 @@ describe("pagination envelope shape", () => {
   it("omits nextCursor when absent", () => {
     expect(v1Page([{ id: "a" }])).toEqual(envelopes.pageNoCursor);
   });
+
+  it("keeps an empty-string nextCursor instead of dropping it", () => {
+    // For the MCP-backed routes (/tools, /prompts, /resources) this value is a
+    // passthrough of the MCP server's own cursor, and MCP 2026-07-28
+    // `server/utilities/pagination` says "an empty string is a valid cursor
+    // and thus MUST NOT be treated as the end of results". A truthiness test
+    // here stripped it and told the caller the listing had ended.
+    expect(v1Page([{ id: "a" }], "")).toEqual({
+      items: [{ id: "a" }],
+      nextCursor: "",
+    });
+    expect("nextCursor" in v1Page([{ id: "a" }], "")).toBe(true);
+  });
 });
 
 describe("runtime error classification", () => {

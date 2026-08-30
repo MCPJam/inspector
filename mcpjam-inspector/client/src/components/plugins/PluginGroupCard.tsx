@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronRight,
   Loader2,
@@ -71,8 +71,32 @@ const TONE_CLASSES: Record<string, string> = {
   muted: "border-border/60 bg-muted/30 text-muted-foreground",
 };
 
-export function PluginGroupCard({ plugin }: { plugin: PluginSummary }) {
-  const [expanded, setExpanded] = useState(false);
+export function PluginGroupCard({
+  plugin,
+  /**
+   * Start expanded because a `/servers/plugins/:pluginId` permalink named
+   * this card.
+   *
+   * Seeds the local state rather than controlling it: once the recipient has
+   * the card open, collapsing it is theirs to do, and a controlled prop would
+   * spring it back open on every re-render of the section above.
+   */
+  initiallyExpanded = false,
+}: {
+  plugin: PluginSummary;
+  initiallyExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
+  // Follow a CHANGE of target, then get out of the way.
+  //
+  // The state seeds from the prop, so a card already mounted when the viewer
+  // opens a second plugin permalink would keep whatever expansion it had and
+  // the newly-named plugin would stay shut. Syncing only when the prop
+  // transitions to `true` opens the new target without springing an
+  // already-open card back after the viewer collapses it.
+  useEffect(() => {
+    if (initiallyExpanded) setExpanded(true);
+  }, [initiallyExpanded]);
   const [pendingAction, setPendingAction] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   /** componentId of the server whose inline setup editor is open. */
