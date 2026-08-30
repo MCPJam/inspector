@@ -304,6 +304,33 @@ export type BaseServerConfig = {
    */
   firstPageOnly?: boolean;
   /**
+   * Whether the client opens the server→client notification channel at all.
+   *
+   * `undefined` (the default) and `false` both open it. `true` simulates a
+   * client that never does — ChatGPT measures this way — so a server author
+   * can see that its `notifications/*` never reach that host, no matter what
+   * the server declares.
+   *
+   * On Streamable HTTP this refuses the standalone GET SSE stream the
+   * upstream client opens after `notifications/initialized`. On the legacy
+   * HTTP+SSE transport the GET stream IS the connection, so this cannot
+   * apply — a real client on that transport cannot not-listen either.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.listens === false`.
+   */
+  suppressListenChannel?: boolean;
+  /**
+   * Whether the client acts on `notifications/tools/list_changed`.
+   *
+   * `undefined` (the default) and `false` both act on it. `true` simulates a
+   * client that ignores it: the notification is dropped before the client
+   * sees it, so its `tools/list` cache is never evicted and the stale list
+   * stays in use — exactly what a server author sees from such a host.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.refetches === false`.
+   */
+  dropToolListChanged?: boolean;
+  /**
    * Whether the client drives MRTR (`resultType: "input_required"`) retry
    * rounds at all.
    *

@@ -41,6 +41,9 @@ import {
   getEvalIterationTraceOperation,
   getEvalRunDisclosureOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -60,6 +63,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -134,6 +140,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -155,6 +164,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   runEvalSuiteOperation,
   getEvalRunOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -360,14 +372,23 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends model quota; the Evaluate tab offers it explicitly.",
 
   // Host and environment administration: re-wires the execution surface.
-  list_hosts: "Host administration has its own tab.",
-  get_host: "Host administration has its own tab.",
-  create_host: "Host creation re-wires the execution surface.",
-  update_host: "Host config changes affect every later run.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative action.",
-  duplicate_host: "Host administration has its own tab.",
+  // Clients stay OUT of the in-app toolset, and this is the one surface where
+  // that did not change. The Clients tab and the WebMCP `ui_*_client` tools own
+  // this surface: the person is already looking at the editor, with undo, a
+  // diff and the whole config in front of them. A chat tool that edits the
+  // client the chat itself is running on would be a worse version of the thing
+  // on screen. The MCP catalog and the agent registry are different — there is
+  // no editor there to defer to.
+  list_clients: "Client administration has its own tab.",
+  get_client: "Client administration has its own tab.",
+  create_client: "Client creation re-wires the execution surface.",
+  update_client:
+    "Client config changes affect every later run, and the Clients tab (plus the WebMCP client tools) is the surface that owns them in-app.",
+  delete_client:
+    "Irreversible and rotates every client config that referenced it.",
+  set_client_servers:
+    "Re-wiring a client's server set is an administrative action.",
+  duplicate_client: "Client administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
   get_project_environment_capabilities:
     "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
@@ -414,6 +435,16 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   export_server: "Emits a full server config including its auth shape.",
   show_servers:
     "The widget-bearing variant for MCP Apps hosts, not in-app chat.",
+
+  // Cloud Skills, the read half. Advertised on the agent catalog
+  // (`mcp/src/tools/platformTools.ts`) because an agent driving eval runs
+  // cannot pin a skill it cannot name. In-app chat is the surface where that
+  // argument does NOT hold: the person is already looking at /skills, which
+  // lists the same rows with the pinnability and the body beside them.
+  list_project_skills:
+    "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
+  get_project_skill:
+    "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 };
 
 const OPERATIONS_BY_ID = new Map(
@@ -439,6 +470,11 @@ const CONNECTION_OPENING_IDS = new Set([
   getServerPromptOperation.name,
   listServerResourcesOperation.name,
   readServerResourceOperation.name,
+  // Skills over MCP opens the same ephemeral connection as the primitives
+  // above, so it inherits the host's approval policy for the same reason.
+  listServerSkillsOperation.name,
+  getServerSkillOperation.name,
+  readServerSkillFileOperation.name,
 ]);
 
 // Operations that mutate state and therefore require user approval when the

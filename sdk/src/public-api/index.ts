@@ -192,9 +192,19 @@ export function v1ErrorBody(
   };
 }
 
-/** Build a canonical collection body (omits `nextCursor` when absent). */
+/**
+ * Build a canonical collection body (omits `nextCursor` when absent).
+ *
+ * ABSENCE omits the field, not emptiness. For the MCP-backed routes
+ * (`/v1/.../tools`, `/prompts`, `/resources`) this value is a PASSTHROUGH of
+ * the MCP server's own cursor, and MCP 2026-07-28 `server/utilities/pagination`
+ * makes `""` a valid cursor that MUST NOT be treated as the end of results — a
+ * truthiness test here would strip it and tell the caller the listing ended.
+ * Convex-backed callers already normalize a spent cursor to `undefined`
+ * themselves, so they are unaffected.
+ */
 export function v1Page<T>(items: T[], nextCursor?: string): V1Page<T> {
-  return nextCursor ? { items, nextCursor } : { items };
+  return nextCursor !== undefined ? { items, nextCursor } : { items };
 }
 
 // ── Agent turn ────────────────────────────────────────────────────────

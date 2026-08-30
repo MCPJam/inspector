@@ -5,6 +5,11 @@ import {
   buildElectronSentryConfig,
   buildSentryConfig,
   buildServerSentryConfig,
+  CLIENT_BUILD_SURFACES,
+  electronBuildSurface,
+  isSentryBuildSurface,
+  resolveClientBuildSurface,
+  SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
 
@@ -41,6 +46,30 @@ describe("buildSentryConfig", () => {
       deployment: "hosted",
     });
     expect("release" in config).toBe(false);
+  });
+
+  it("omits dist entirely when none is given", () => {
+    const config = buildSentryConfig({
+      dsn: "dsn",
+      environment: "dev",
+      deployment: "hosted",
+    });
+    expect("dist" in config).toBe(false);
+  });
+
+  it("keeps dist when provided", () => {
+    // `dist` is what separates the builds that share one release name. A
+    // config that drops it silently puts the npm bundle's events on the
+    // desktop bundle's artifacts, which is how every frame in 2.47.0 came
+    // back naming an unrelated file.
+    expect(
+      buildSentryConfig({
+        dsn: "dsn",
+        environment: "prod",
+        deployment: "self_hosted",
+        dist: "npm",
+      }).dist,
+    ).toBe("npm");
   });
 
   it("keeps release when provided", () => {
@@ -165,6 +194,70 @@ describe("surface builders", () => {
     const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
     expect((abort as RegExp).test("AbortError: The user aborted a request")).toBe(
       true,
+    );
+  });
+});
+
+describe("build surfaces", () => {
+  it("names every surface exactly once", () => {
+    // Two builds sharing a `dist` is the same defect as two builds sharing a
+    // `release`: Sentry cannot tell their artifacts apart and symbolicates
+    // one against the other.
+    expect(new Set(SENTRY_BUILD_SURFACES).size).toBe(
+      SENTRY_BUILD_SURFACES.length,
+    );
+  });
+
+  it("gives mac and Windows Electron builds separate surfaces", () => {
+    // Both desktop jobs compile and upload their own `.vite/renderer` and
+    // `.vite/build` under the same release. Collapsing them to one name
+    // reintroduces the collision.
+    expect(electronBuildSurface("darwin")).toBe("electron-mac");
+    expect(electronBuildSurface("win32")).toBe("electron-win");
+    expect(electronBuildSurface("darwin")).not.toBe(
+      electronBuildSurface("win32"),
+    );
+  });
+
+  it("falls back to local on a platform nothing uploads for", () => {
+    // A Linux desktop build has no artifacts in Sentry. Reporting `local`
+    // says so; borrowing `electron-mac` would claim maps that do not describe
+    // this bundle.
+    expect(electronBuildSurface("linux")).toBe("local");
+  });
+
+  it("rejects a surface name the upload sites do not use", () => {
+    expect(isSentryBuildSurface("npm")).toBe(true);
+    expect(isSentryBuildSurface("desktop")).toBe(false);
+    expect(isSentryBuildSurface("")).toBe(false);
+  });
+
+  it("accepts every surface that builds dist/client", () => {
+    for (const surface of CLIENT_BUILD_SURFACES) {
+      expect(resolveClientBuildSurface(surface)).toBe(surface);
+    }
+  });
+
+  it("resolves an unset build surface to local", () => {
+    expect(resolveClientBuildSurface(undefined)).toBe("local");
+    expect(resolveClientBuildSurface("")).toBe("local");
+  });
+
+  it("rejects the Electron surfaces the client build cannot produce", () => {
+    // `vite.renderer.config.mts` stamps those from `process.platform` and
+    // uploads `.vite/renderer`. A `dist/client` bundle claiming one would be
+    // symbolicated against the renderer's artifacts.
+    expect(() => resolveClientBuildSurface("electron-mac")).toThrow(
+      /not a client build surface/,
+    );
+    expect(() => resolveClientBuildSurface("electron-win")).toThrow(
+      /not a client build surface/,
+    );
+  });
+
+  it("rejects a value no build surface list contains", () => {
+    expect(() => resolveClientBuildSurface("desktop")).toThrow(
+      /not a client build surface/,
     );
   });
 });
