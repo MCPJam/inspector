@@ -299,6 +299,29 @@ const truncateError = (message: string): string =>
  *  forever. Consumed by the executor (R3); this module only exports the value. */
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
+
+/**
+ * Which layer failed, from what the engine REPORTED rather than from where
+ * this was called.
+ *
+ * The first version of this decision lived inline and assumed every engine
+ * error was a stream failure. That holds for the chat engine and not for the
+ * harness: `runHarnessTurn` wraps its whole turn — preparation included — in
+ * one try, so a missing `projectId`, a missing auth bearer, or disabled broker
+ * credential delivery arrives looking exactly like a provider outage. Calling
+ * those `model` files our own setup bug as the provider's, which is the
+ * mis-attribution this work exists to remove, moved one layer over.
+ *
+ * `model` stays the answer for an engine that reports no phase at all: every
+ * emitter that omits it today is a real stream failure, and defaulting the
+ * other way would un-attribute the outages this work was built for.
+ */
+export function failedLayerForEngineError(
+  event: { phase?: "setup" | "stream" } | undefined,
+): "model" | "setup" {
+  return event?.phase === "setup" ? "setup" : "model";
+}
+
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
 ): Promise<HostedEvalTurnOutcome> {
@@ -684,14 +707,28 @@ export async function driveHostedEvalTurn(
       : { iterationError: fallbackError };
     logger.error(logLine);
     sinks.onTurnFailure?.(failure);
-    // Every path through here is the engine's stream failing, so the layer is
-    // known without inspecting anything. The structured code and status ride
-    // along when the engine captured them — they are diagnostics, never the
-    // basis for the classification.
+    // WHICH LAYER, from the engine's own report rather than from this call
+    // site's position.
+    //
+    // The first version of this said "every path through here is the engine's
+    // stream failing". That is true of the chat engine and false of the
+    // HARNESS: `runHarnessTurn` wraps its entire turn — preparation included —
+    // in one try, so a missing projectId, a missing auth bearer or disabled
+    // broker credential delivery arrives here exactly like a provider outage.
+    // Calling those `model` would file our own setup bug as the provider's,
+    // which is the mis-attribution this whole change exists to remove, just
+    // moved one layer over.
+    //
+    // So the engine's `phase` decides when it is reported, and `model` remains
+    // the default only for emitters that do not report one — every such
+    // emitter today is a real stream failure.
+    const failedLayer = failedLayerForEngineError(lastEngineError);
+    // The structured code and status ride along when the engine captured them
+    // — they are diagnostics, never the basis for the classification.
     return {
       kind: "failed" as const,
       ...failure,
-      errorSource: "model" as const,
+      errorSource: failedLayer,
       ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }

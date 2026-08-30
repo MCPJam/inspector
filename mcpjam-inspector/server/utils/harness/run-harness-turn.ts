@@ -2767,6 +2767,12 @@ export async function runHarnessTurn(
         message: errorText,
         rawText: errorText,
         promptIndex,
+        // This catch covers the WHOLE turn, preparation included: the throws
+        // for a missing projectId, a missing auth bearer and disabled broker
+        // delivery all land here, and none of them ever reached a model. The
+        // trace-started flag used just above to decide whether a turn happened
+        // at all is the same signal for whose layer failed.
+        phase: driver?.traceStarted ? "stream" : "setup",
       });
     } finally {
       stopScopeStepUpBridge();
