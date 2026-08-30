@@ -128,14 +128,25 @@ export function hasScriptedAssertion(
   return !!widgetChecks?.some((g) => g.steps.some((s) => s.kind === "assert"));
 }
 
+/**
+ * Read a step's string field defensively. `normalizeSteps` and the legacy
+ * `widgetChecks` bridge both cast stored blobs to the step types without
+ * checking leaf fields, so a field the type promises can still arrive missing
+ * or non-string — and both the editors (during render) and the save-time
+ * completeness checks below read them, where a `.trim()` on `undefined` would
+ * blank the pane instead of reporting the gap.
+ */
+export const trimmedField = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
 /** A locator has at least one usable reference point (no empty strings). */
 export function isLocatorComplete(loc: ElementLocator | undefined): boolean {
   if (!loc) return false;
   return !!(
-    loc.testId ||
-    (loc.role && loc.role.role) ||
-    loc.text ||
-    loc.css
+    trimmedField(loc.testId) ||
+    trimmedField(loc.role?.role) ||
+    trimmedField(loc.text) ||
+    trimmedField(loc.css)
   );
 }
 
@@ -148,14 +159,15 @@ export function isStepComplete(step: ScriptedStep): boolean {
     case "type":
       return isLocatorComplete(step.target);
     case "key":
-      return step.key.trim().length > 0;
+      return trimmedField(step.key).length > 0;
     case "scroll":
     case "wait":
       return true;
     case "assert": {
       const a = step.assertion;
-      if (a.type === "textVisible") return a.text.trim().length > 0;
-      if (a.type === "widgetToolCalled") return a.toolName.trim().length > 0;
+      if (a.type === "textVisible") return trimmedField(a.text).length > 0;
+      if (a.type === "widgetToolCalled")
+        return trimmedField(a.toolName).length > 0;
       return isLocatorComplete(a.target);
     }
   }
@@ -173,7 +185,7 @@ export function sanitizeWidgetChecks(
   if (!widgetChecks?.length) return undefined;
   const cleaned = widgetChecks
     .map((g) => ({ ...g, steps: g.steps.filter(isStepComplete) }))
-    .filter((g) => g.toolName.trim().length > 0 && g.steps.length > 0);
+    .filter((g) => trimmedField(g.toolName).length > 0 && g.steps.length > 0);
   return cleaned.length > 0 ? cleaned : undefined;
 }
 

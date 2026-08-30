@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
+import { ScopedNavigate } from "@/components/routing/scoped-navigate";
 import {
   Archive,
   ArchiveRestore,
@@ -13,9 +14,15 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import {
+  buildProjectEnvironmentPath,
   buildUserTestingScenarioPath,
+  navigateApp,
   routePaths,
 } from "@/lib/app-navigation";
+import {
+  permalinkUnavailableMessage,
+  resolvePermalinkTarget,
+} from "@/lib/permalink-target";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import { convexErrMessage } from "@/lib/convex-error";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -55,12 +62,23 @@ export function ProjectEnvironmentsRoute({
   projectId,
   canManage,
   isAuthenticated,
+  routeEnvironmentId = null,
 }: {
   projectId: string | null;
   /** Admin-gated writes; members browse read-only. */
   canManage: boolean;
   /** Threaded to the detail canvas's host/server reads. */
   isAuthenticated: boolean;
+  /**
+   * The environment an `/environments/:environmentId` permalink named.
+   *
+   * Selection on this screen has always been component state, which is why
+   * `/environments` alone could never be a permalink: it opens whichever row
+   * the viewer last clicked. The param drives selection, and selection drives
+   * the param back (see below), so the URL in the address bar is the URL an
+   * agent would hand out for the same view.
+   */
+  routeEnvironmentId?: string | null;
 }) {
   const flagEnabled = useProjectEnvironmentsEnabledState();
 
@@ -164,6 +182,55 @@ export function ProjectEnvironmentsRoute({
     [environments, selectedId, justCreated]
   );
 
+  // ── Permalink round-trip ───────────────────────────────────────────
+  //
+  // NO EFFECT WRITES THE URL. Selection changes go through
+  // `selectEnvironment`, which sets the state and navigates in the same call;
+  // the effect below only follows the URL when it changes from OUTSIDE (a
+  // pasted permalink, Back, a project switch).
+  //
+  // It was briefly two effects — route→selection and selection→route — and
+  // they fought. Opening a deleted environment cleared `selected`, so the
+  // second effect rewrote the URL to `/environments`, which erased the target
+  // the first effect needed, and the unavailable message survived exactly one
+  // paint before the ordinary list replaced it. Back had the mirror-image
+  // race: it cleared `selectedId`, the route effect restored it from the URL
+  // that had not changed yet, and the detail sprang back open. With the state
+  // and the URL written together neither can happen, and the screen still
+  // works mounted without a Router (its own component tests do exactly that),
+  // where navigating is a history write nothing re-renders from.
+  useEffect(() => {
+    const wanted = routeEnvironmentId?.trim() ?? null;
+    setSelectedId((current) => (current === wanted ? current : wanted));
+    if (wanted) setCreating(false);
+    // `projectId` is a dependency because the project-switch reset above
+    // CLEARS `selectedId` while the route keeps its id — which is exactly what
+    // a cross-project `?project=` permalink does. Without it the target
+    // survives in the URL, resolves as `found`, and the screen still renders
+    // the collection: the wrong-resource landing, on the one journey the
+    // permalink was built for.
+  }, [projectId, routeEnvironmentId]);
+
+  const routeState = resolvePermalinkTarget(
+    routeEnvironmentId,
+    environments,
+    (environment) => environment.environmentId
+  );
+
+  // `navigateApp` rather than `useAppNavigate()`: the hook reads react-router's
+  // navigation CONTEXT, and this screen's component tests render it without a
+  // Router. The imperative form goes through the router ref and degrades to
+  // `window.history` when there is none, so a test that never asserts on the
+  // URL is unaffected instead of failing to mount.
+  //
+  // `replace` because clicking through a list is not navigation history
+  // anyone wants to walk back through one row at a time.
+  const selectEnvironment = useCallback((environmentId: string | null) => {
+    setSelectedId(environmentId);
+    if (environmentId) setCreating(false);
+    navigateApp(buildProjectEnvironmentPath(environmentId), { replace: true });
+  }, []);
+
   // Only the seed/draft consumed FOR THE CURRENT project may reach the form.
   const activeSeed =
     seed && projectId && seed.projectId === projectId.trim()
@@ -184,7 +251,7 @@ export function ProjectEnvironmentsRoute({
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
   // /environments directly. Render nothing until it settles.
   if (flagEnabled === false) {
-    return <Navigate to={routePaths.servers} replace />;
+    return <ScopedNavigate to={routePaths.servers} replace />;
   }
   if (flagEnabled === undefined) {
     return null;
@@ -201,6 +268,32 @@ export function ProjectEnvironmentsRoute({
   // Detail mode is the ONE mode that escapes the centered `max-w-2xl` column:
   // it owns the full width so the read-only Connect canvas can sit beside the
   // editor. List and create modes keep the narrow shell verbatim.
+  // A permalink to an environment this viewer cannot see says so, once, and
+  // does NOT fall through to the list: rendering the collection instead is
+  // exactly the silent wrong-resource landing permalinks exist to prevent.
+  if (routeState.kind === "unavailable") {
+    return (
+      <div className="mx-auto flex h-full max-w-2xl flex-col justify-center gap-4 p-8">
+        <p
+          role="status"
+          data-testid="environment-permalink-unavailable"
+          className="text-sm text-muted-foreground"
+        >
+          {permalinkUnavailableMessage("environment")}
+        </p>
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => selectEnvironment(null)}
+          >
+            Back to environments
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!creating && selected) {
     return (
       <EnvironmentDetail
@@ -209,7 +302,7 @@ export function ProjectEnvironmentsRoute({
         environment={selected}
         canManage={canManage}
         isAuthenticated={isAuthenticated}
-        onBack={() => setSelectedId(null)}
+        onBack={() => selectEnvironment(null)}
       />
     );
   }
@@ -260,7 +353,7 @@ export function ProjectEnvironmentsRoute({
                 setSeed(null);
                 setTentativeDraft(null);
                 setJustCreated(env);
-                setSelectedId(env.environmentId);
+                selectEnvironment(env.environmentId);
               }}
               onCancelCreate={() => {
                 setCreating(false);
@@ -274,7 +367,7 @@ export function ProjectEnvironmentsRoute({
             environments={environments}
             canManage={canManage}
             tentativeCastles={tentativeCastles}
-            onSelect={setSelectedId}
+            onSelect={selectEnvironment}
             onNew={() => {
               setSeed(null);
               setTentativeDraft(null);
