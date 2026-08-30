@@ -8,12 +8,15 @@
  */
 
 import {
+  redactConformanceReportForSharing,
   runConformance,
   type ConformanceReport,
   type ConformanceSuiteKind,
   type MCPServerConfig,
+  type OAuthConformanceConfig,
 } from "@mcpjam/sdk";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { reconcileHeadlessOAuthScope } from "./conformance-oauth-headless-scope.js";
 import { logger } from "../utils/logger.js";
 
 export type ConformanceRunSource =
@@ -22,7 +25,8 @@ export type ConformanceRunSource =
   | "cli"
   | "github_action"
   | "github_app"
-  | "api";
+  | "api"
+  | "benchmark";
 
 export type ExecutePersistedConformanceArgs = {
   convexToken: string;
@@ -30,6 +34,27 @@ export type ExecutePersistedConformanceArgs = {
   server: MCPServerConfig;
   suites?: ConformanceSuiteKind[];
   source: ConformanceRunSource;
+  /**
+   * The OAuth suite's configuration, when the caller has one.
+   *
+   * OAuth is OPT-IN in the SDK — `runConformance` refuses a requested `oauth`
+   * suite with no config rather than guessing an auth strategy — so a caller
+   * that wants the suite executed has to build this. The hosted benchmark
+   * assembles it from the stored connection plus the definition's pins; every
+   * other caller today passes nothing and gets the explicit incomplete below.
+   */
+  oauth?: OAuthConformanceConfig;
+  /**
+   * The OAuth check ids the pinned exam GRADES, by id.
+   *
+   * Present only for a run whose definition pins a headless OAuth scope. It is
+   * what makes the denominator honest: see
+   * `conformance-oauth-headless-scope.ts`, which is where the rule that a
+   * check the harness could not reach is `could-not-run` rather than
+   * `not-applicable` actually lives. Absent ⇒ the report is persisted exactly
+   * as the suite produced it.
+   */
+  oauthHeadlessCheckIds?: ReadonlyArray<string>;
   target: {
     kind: "server" | "github_repo" | "external";
     serverId?: string;
@@ -214,6 +239,34 @@ function syntheticIncompleteReport(
   };
 }
 
+/**
+ * Everything that has to happen to a report BEFORE it becomes a durable row.
+ *
+ * Both passes are OAuth-only and both are ordered deliberately:
+ *
+ *   1. Scope reconciliation runs first, so redaction sees the case list the
+ *      run will actually be graded on.
+ *   2. REDACTION RUNS HERE, NOT AT PROJECTION TIME. A completed OAuth run
+ *      carries a live access token, a refresh token, the client secret and the
+ *      `Authorization` header of every request it made (`routes/web/score.ts`
+ *      says the same thing at the other place this is enforced). Redacting
+ *      when the report is later projected into benchmark evidence would mean
+ *      the credentials were already at rest in `conformanceRuns` — readable by
+ *      every surface that reads a run, and un-recallable once written.
+ */
+function prepareReportForPersistence(
+  suiteKind: ConformanceSuiteKind,
+  report: ConformanceReport,
+  oauthHeadlessCheckIds: ReadonlyArray<string> | undefined
+): ConformanceReport {
+  if (suiteKind !== "oauth") return report;
+  const scoped = oauthHeadlessCheckIds?.length
+    ? reconcileHeadlessOAuthScope({ report, checkIds: oauthHeadlessCheckIds })
+        .report
+    : report;
+  return redactConformanceReportForSharing(scoped);
+}
+
 export async function executePersistedConformanceRun(
   args: ExecutePersistedConformanceArgs
 ): Promise<ExecutePersistedConformanceResult> {
@@ -225,12 +278,19 @@ export async function executePersistedConformanceRun(
       kind === "tasks" ||
       kind === "oauth"
   );
-  // GitHub App has no interactive OAuth. Keep OAuth in the persisted requested
-  // snapshot, but record it as an explicit incomplete suite instead of silently
-  // dropping a configured gate.
+  // GitHub App has no interactive OAuth, and a caller that requested the suite
+  // without configuring it has no auth strategy to run. Keep OAuth in the
+  // persisted requested snapshot either way, but record it as an explicit
+  // incomplete suite instead of silently dropping a configured gate — and
+  // instead of letting `runConformance` refuse the WHOLE run over one suite it
+  // cannot start, which would lose the protocol/apps/tasks reports too.
   const suites = requestedSuites;
   const unsupportedOAuth =
-    args.source === "github_app" && suites.includes("oauth");
+    suites.includes("oauth") && (args.source === "github_app" || !args.oauth);
+  const unsupportedOAuthReason =
+    args.source === "github_app"
+      ? "GitHub App checks cannot complete interactive OAuth authorization"
+      : "The OAuth suite was requested without an auth strategy to run it with";
   const executionSuites = unsupportedOAuth
     ? suites.filter((kind) => kind !== "oauth")
     : suites;
@@ -297,14 +357,18 @@ export async function executePersistedConformanceRun(
             suites: executionSuites,
             protocolVersion: args.protocolVersion as never,
             engineVersion: args.engineVersion,
+            ...(args.oauth ? { oauth: args.oauth } : {}),
             onProgress: async (event) => {
               if (event.status === "running") return;
-              const body =
+              const body = prepareReportForPersistence(
+                event.suiteKind,
                 event.report ??
-                syntheticIncompleteReport(
-                  event.suiteKind,
-                  event.error ?? "suite did not produce a report"
-                );
+                  syntheticIncompleteReport(
+                    event.suiteKind,
+                    event.error ?? "suite did not produce a report"
+                  ),
+                args.oauthHeadlessCheckIds
+              );
               const status =
                 event.status === "completed" ? "completed" : "failed";
               try {
@@ -339,8 +403,11 @@ export async function executePersistedConformanceRun(
                     error: message,
                   }
                 );
+                // Degraded from the PREPARED body, never the raw report: the
+                // fallback carries the verdict and the score forward, and the
+                // raw ones describe a scope this exam does not grade.
                 const fallback = summaryFallbackReport(
-                  event.report,
+                  body,
                   event.suiteKind,
                   message
                 );
@@ -360,9 +427,10 @@ export async function executePersistedConformanceRun(
         : null;
 
     if (unsupportedOAuth) {
-      const body = syntheticIncompleteReport(
+      const body = prepareReportForPersistence(
         "oauth",
-        "GitHub App checks cannot complete interactive OAuth authorization"
+        syntheticIncompleteReport("oauth", unsupportedOAuthReason),
+        args.oauthHeadlessCheckIds
       );
       await client.action(
         "conformanceRuns:upsertReportAction" as never,
