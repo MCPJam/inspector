@@ -1334,11 +1334,27 @@ export function deriveStageResults(
   // those measured rows with "never ran" destroys the evidence an operator
   // needs and states something the run disproves. `firstFailedStage` already
   // carries "where the chain broke" — the rows do not have to lie to say it.
-  const firstFailedIndex = derived.findIndex((r) => r.state === "failed");
+  // WITHDRAWN FIRST, then cascaded — the order matters and getting it wrong
+  // produces a chain that argues with itself.
+  //
+  // The cascade reads `failed` rows to decide which later stages "never ran".
+  // Withdrawing a provider-blocked failure AFTER it has run leaves the
+  // downstream rows still saying `earlierStageFailed` while no stage failed
+  // and no `firstFailedStage` exists — three rows citing a failure the chain
+  // no longer records. Running the withdrawal first means the cascade sees the
+  // rows as they will actually be reported, so a provider outage marks the
+  // later stages `providerError` (which is why they were not measured) rather
+  // than blaming a stage that is no longer failed.
+  //
+  // A failure the provider did NOT explain still cascades exactly as before:
+  // `unexpectedToolCall` at `selection` survives the withdrawal, stays the
+  // first failed row, and the stages after it still read `notReached`.
+  const withdrawn = applyProviderError(derived, evidence);
+  const firstFailedIndex = withdrawn.findIndex((r) => r.state === "failed");
   const rows =
     firstFailedIndex < 0
-      ? derived
-      : derived.map((r, i) =>
+      ? withdrawn
+      : withdrawn.map((r, i) =>
           i > firstFailedIndex && r.state === "notMeasured"
             ? row(r.stage, "notReached", "earlierStageFailed")
             : r
@@ -1474,6 +1490,10 @@ function finalize(
   evidence: StageEvidence,
   forcedCategory?: FailureCategory
 ): StageDerivation {
+  // IDEMPOTENT, and applied here as well as before the positional cascade: the
+  // early-return paths above never reach that cascade, so this is the only
+  // place they get it. A second pass over rows the first already converted
+  // finds nothing left to change — `providerError` is in neither list.
   rows = applyProviderError(rows, evidence);
   const firstFailedStage = rows.find((r) => r.state === "failed")?.stage;
   const failureCategory =
