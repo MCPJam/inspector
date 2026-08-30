@@ -1,6 +1,6 @@
 import path from "node:path";
 import {
-  formatEvalDecisionSummary,
+  formatEvalRunDecisionSummary,
   renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
@@ -45,14 +45,21 @@ export function writeReporterResult(
   writeResult(renderStructuredRunJson(report), "json");
 }
 
-/** Human-only prose, kept separate so `--format json` remains one document. */
+/**
+ * Human-only prose, kept separate so `--format json` remains one document.
+ *
+ * The SAME object the JSON reporter emits under `decisionSummary` and the HTML
+ * reporter renders, run through the canonical renderer — so the three terminals
+ * cannot disagree about the verdict, the unit its counts are in, the first
+ * failed stage, the category or the next action.
+ */
 export function writeEvalDecisionSummary(
   format: string,
-  summary: Parameters<typeof formatEvalDecisionSummary>[0] | undefined,
+  summary: Parameters<typeof formatEvalRunDecisionSummary>[0] | undefined,
   destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
 ): void {
   if (format !== "human" || !summary) return;
-  destination.write(`${formatEvalDecisionSummary(summary)}\n`);
+  destination.write(`${formatEvalRunDecisionSummary(summary)}\n`);
 }
 
 /**
