@@ -54,6 +54,12 @@ const sdkPluginBundleEntry = path.resolve(
   rootDir,
   "../sdk/src/plugin-bundle/index.ts",
 );
+// SEP-1865 widget helpers — the MCP App render/capture utils resolve tool UI
+// resource URIs through the shared leaf.
+const sdkWidgetRuntimeEntry = path.resolve(
+  rootDir,
+  "../sdk/src/widget-runtime/index.ts",
+);
 
 export default defineConfig({
   define: {
@@ -100,6 +106,7 @@ export default defineConfig({
           "@mcpjam/sdk/public-api",
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
+          "@mcpjam/sdk/widget-runtime",
         ],
       },
     },
@@ -139,6 +146,10 @@ export default defineConfig({
       { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
       { find: "@mcpjam/sdk/plugin-bundle", replacement: sdkPluginBundleEntry },
+      {
+        find: "@mcpjam/sdk/widget-runtime",
+        replacement: sdkWidgetRuntimeEntry,
+      },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
