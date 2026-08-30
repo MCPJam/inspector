@@ -214,17 +214,23 @@ function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
  * are already distinguishable there, and the first deeper precision that keeps
  * every DIFFERENT pair looking different. Equal values still render equal —
  * a score exactly on its threshold should read that way.
+ *
+ * EVERY pair, not just each boundary against the score. The first version
+ * compared only score-to-boundary, so a threshold of 0.7001 and a floor of
+ * 0.6999 both rendered `0.7` while the score sat far from either — erasing the
+ * partial band's configured width in a line whose whole job is to show it.
  */
 function showAgainst(
   score: number,
   bounds: readonly number[],
 ): (n: number) => string {
   const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
+  const values = [score, ...bounds];
   // Six is the floor of usefulness, not an arbitrary cap: past it a judge
   // score is float noise, and a line no one can read explains nothing.
   for (let digits = 2; digits <= 6; digits += 1) {
-    const collides = bounds.some(
-      (bound) => bound !== score && at(bound, digits) === at(score, digits),
+    const collides = values.some((a, i) =>
+      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
     );
     if (!collides) return (n: number) => at(n, digits);
   }
