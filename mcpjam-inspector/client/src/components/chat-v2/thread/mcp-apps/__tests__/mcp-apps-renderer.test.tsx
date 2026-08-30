@@ -1246,16 +1246,59 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mcpAppsModalPropsRef.current).not.toBeNull();
     });
     // ChatGPT honors the declared connect list (one directive, proven by the
-    // declared wss endpoint connecting while an undeclared one was blocked)
-    // and its resource subtypes are unknown, so they never reach the proxy.
+    // declared wss endpoint connecting while an undeclared one was blocked).
+    // Its resource subtypes were unknown until the 2026-08-23 paired probe
+    // declared `fastly.jsdelivr.net` — outside ChatGPT's baseline allowlist —
+    // and every subtype loaded, so they are now measured-true rather than
+    // absent.
     const expected = {
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
-      cspResourceDomains: undefined,
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
     };
     expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual(expected);
     expect(mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy).toEqual(
       expected
     );
+  });
+
+  it("forwards browserStorage to inline and modal sandboxes, unchanged", async () => {
+    mcpAppsModalPropsRef.current = null;
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { browserStorage: { localStorage: false } } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>
+    );
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // Passed through verbatim: the proxy, not the renderer, decides what a
+    // `false` leaf means. Both surfaces must agree — a widget moved to the
+    // modal cannot regain an API the inline frame denied it.
+    const expected = { localStorage: false };
+    expect(sandboxedIframePropsRef.current.browserStorage).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetBrowserStorage).toEqual(
+      expected
+    );
+  });
+
+  it("leaves browserStorage undefined when the profile never mentions it", async () => {
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    // Absent must stay absent all the way to the proxy — an empty object
+    // would arm the guard machinery for a host nobody probed.
+    expect(sandboxedIframePropsRef.current.browserStorage).toBeUndefined();
   });
 
   it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {

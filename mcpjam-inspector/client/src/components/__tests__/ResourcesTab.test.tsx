@@ -521,5 +521,48 @@ describe("ResourcesTab", () => {
         expect(screen.getByText("file1.txt")).toBeInTheDocument();
       });
     });
+
+    // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a
+    // valid cursor and thus MUST NOT be treated as the end of results". An
+    // empty-string cursor must therefore leave the list paginating rather than
+    // painting the end-of-list marker.
+    it("does not show the end-of-list marker on an empty-string cursor", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListResources.mockResolvedValue({
+        resources: [{ name: "file1.txt", uri: "file:///file1.txt" }],
+        nextCursor: "",
+      });
+
+      render(
+        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("file1.txt")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("No more resources")).not.toBeInTheDocument();
+    });
+
+    it("treats a non-string nextCursor as the end of the list", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListResources.mockResolvedValue({
+        resources: [{ name: "file1.txt", uri: "file:///file1.txt" }],
+        nextCursor: 42 as unknown as string,
+      });
+
+      render(
+        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("file1.txt")).toBeInTheDocument();
+      });
+      // A number is not a cursor, so the walk is over and the marker shows.
+      await waitFor(() => {
+        expect(screen.getByText("No more resources")).toBeInTheDocument();
+      });
+    });
   });
 });

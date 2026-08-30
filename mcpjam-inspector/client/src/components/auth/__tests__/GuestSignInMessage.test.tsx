@@ -12,12 +12,15 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { track } from "@/lib/analytics";
+import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { GuestSignInMessage } from "../GuestSignInMessage";
 
 describe("GuestSignInMessage", () => {
   beforeEach(() => {
     signInMock.mockReset();
     vi.mocked(track).mockReset();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
   });
 
   it("renders the honest one-liner and an actionable Sign in button", () => {
@@ -46,5 +49,20 @@ describe("GuestSignInMessage", () => {
       "login_button_clicked",
       expect.objectContaining({ location: "guest_signin_message" })
     );
+  });
+
+  it("remembers the whole current URL before handing off to WorkOS", () => {
+    // WorkOS navigates away, so the capture has to happen on this click, not
+    // in an effect afterwards. Project segment, query and hash all come back:
+    // signing in from a project link must return to that link, not to the
+    // app's front door with a project resolved from storage.
+    const path = "/p/k5700000000000000000000000a/evals/suite/s1?view=runs#case";
+    window.history.replaceState({}, "", path);
+
+    render(<GuestSignInMessage />);
+    screen.getByRole("button", { name: /Sign in/i }).click();
+
+    expect(signInMock).toHaveBeenCalledTimes(1);
+    expect(readAppSignInReturnPath()).toBe(path);
   });
 });
