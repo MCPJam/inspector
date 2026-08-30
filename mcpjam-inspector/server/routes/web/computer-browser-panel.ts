@@ -75,17 +75,20 @@ export interface BrowserPanelDeps {
   touchSession?: typeof touchBrowserSession;
   touchActivity?: typeof touchComputerActivity;
   bundleHash?: () => string;
-  /** Establish a session on an already-owned computer (`ensure=1`). */
+  /**
+   * Establish a session on an already-owned computer (`ensure=1`).
+   *
+   * Returns nothing on purpose. The recorded ROW is the source of truth for
+   * what the panel then reports — an attach may have adopted another
+   * replica's session rather than booting its own — so the route re-reads it
+   * either way. A richer return type here would just be data nobody reads,
+   * and an empty-string placeholder in it is exactly the kind of thing a
+   * later caller trusts by mistake.
+   */
   attachSession?: (args: {
     computerId: string;
     signal?: AbortSignal;
-  }) => Promise<{
-    bootId: string;
-    streamUrl: string;
-    streamPassword: string;
-    publicOrigin: string;
-    browserdToken: string;
-  }>;
+  }) => Promise<void>;
   /** Build a daemon client for a recorded session. */
   createClient?: (session: {
     publicOrigin: string;
@@ -114,20 +117,10 @@ export function createComputerBrowserPanelRoutes(
   const attachSession =
     deps.attachSession ??
     (async (args: { computerId: string; signal?: AbortSignal }) => {
-      const handle = await attachBrowserSession(liveBrowserSessionDeps(), {
+      await attachBrowserSession(liveBrowserSessionDeps(), {
         computerId: args.computerId,
         ...(args.signal ? { signal: args.signal } : {}),
       });
-      // The handle's client is already built against the live daemon; the
-      // caller re-looks-up to get the recorded origin + bearer, so only the
-      // display fields are needed here.
-      return {
-        bootId: handle.bootId,
-        streamUrl: handle.streamUrl,
-        streamPassword: handle.streamPassword,
-        publicOrigin: "",
-        browserdToken: "",
-      };
     });
   const createClient =
     deps.createClient ??

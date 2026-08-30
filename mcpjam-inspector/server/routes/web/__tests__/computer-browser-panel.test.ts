@@ -42,13 +42,7 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     lease: { state: "held" as const, holder: CLAIMS.userId, bootId: "boot-1" },
   }));
   const lease = vi.fn(async () => ({ state: "free" as const, bootId: "boot-1" }));
-  const attachSession = vi.fn(async () => ({
-    bootId: "boot-1",
-    streamUrl: SESSION.streamUrl,
-    streamPassword: SESSION.streamPassword,
-    publicOrigin: SESSION.publicOrigin,
-    browserdToken: SESSION.browserdToken,
-  }));
+  const attachSession = vi.fn(async () => {});
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
   const lookupSession = vi.fn(async () => ({
@@ -222,13 +216,6 @@ describe("browser panel — GET /session", () => {
     const lookupSession = vi.fn(async () => ({ reachable: true, session }));
     const attachSession = vi.fn(async () => {
       session = SESSION;
-      return {
-        bootId: "boot-1",
-        streamUrl: SESSION.streamUrl,
-        streamPassword: SESSION.streamPassword,
-        publicOrigin: SESSION.publicOrigin,
-        browserdToken: SESSION.browserdToken,
-      };
     });
     const { call } = build({
       lookupSession: lookupSession as unknown as BrowserPanelDeps["lookupSession"],
