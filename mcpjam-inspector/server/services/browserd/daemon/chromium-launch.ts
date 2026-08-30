@@ -220,6 +220,13 @@ export function wrapPage(page: AnyPage): DriverPage {
       return (snapshot as A11yNode | null) ?? null;
     },
     consoleEntries: () => consoleRing,
+    dropConsoleSince: (since: number) => {
+      // Walk from the end: the ring is chronological, so the tail is the
+      // window to drop.
+      let keep = consoleRing.length;
+      while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;
+      consoleRing.length = keep;
+    },
     webmcp() {
       webmcpPromise ??= attachWebMcp(page);
       return webmcpPromise;

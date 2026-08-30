@@ -190,6 +190,15 @@ var HandoffLease = class {
    * before a human touched it.
    */
   resumedDirty = false;
+  /**
+   * When the CURRENT hold began — the start of the window whose captured
+   * console must not outlive the handoff. Set on the free→held transition
+   * only, so a heartbeat or a re-acquire out of `parked` does not shorten the
+   * window and leave the earliest (most sensitive) entries readable.
+   */
+  heldSince;
+  /** `heldSince` of the hold that just ended, consumed alongside the flag. */
+  resumedHeldSince;
   now;
   defaultTtlMs;
   maxTtlMs;
@@ -222,6 +231,7 @@ var HandoffLease = class {
       Math.max(1e3, ttlMs ?? this.defaultTtlMs),
       this.maxTtlMs
     );
+    if (state.state === "free") this.heldSince = this.now();
     this.current = {
       state: "held",
       holder,
@@ -246,6 +256,8 @@ var HandoffLease = class {
     if (state.holder !== holder) return state;
     this.current = { state: "free" };
     this.resumedDirty = true;
+    this.resumedHeldSince = this.heldSince;
+    this.heldSince = void 0;
     return this.current;
   }
   /** `resume` under its user-facing name; identical semantics. */
@@ -261,6 +273,21 @@ var HandoffLease = class {
     const dirty = this.resumedDirty;
     this.resumedDirty = false;
     return dirty;
+  }
+  /**
+   * The start of the hold that just ended, consumed once.
+   *
+   * The daemon uses it to DISCARD console captured while a person held the
+   * browser. The 423 gate stops an agent reading during the handoff, but the
+   * console ring fills eagerly from a page listener that knows nothing about
+   * leases — so without this, an auth token or a form value the page logged
+   * during someone's login is simply readable the moment they hand back. That
+   * would make the guarantee "you must wait to read it", not "it is private".
+   */
+  consumeResumedHeldSince() {
+    const since = this.resumedHeldSince;
+    this.resumedHeldSince = void 0;
+    return since;
   }
 };
 var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
@@ -1021,6 +1048,7 @@ var ChromiumDriver = class {
     this.lease = options.lease;
   }
   async execute(command) {
+    this.purgeHandoffConsole();
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -1381,6 +1409,22 @@ var ChromiumDriver = class {
   withHandoffNote(output) {
     return this.lease?.consumeResumedDirty() ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE } : output;
   }
+  /**
+   * Drop console captured while a person held the browser, across EVERY tab —
+   * they may have opened one, and a leak in a tab nobody was watching is
+   * still a leak. Consumed once per handoff.
+   */
+  purgeHandoffConsole() {
+    const since = this.lease?.consumeResumedHeldSince?.();
+    if (since === void 0) return;
+    for (const entry of this.tabs.values()) {
+      if (entry.page.isClosed()) continue;
+      try {
+        entry.page.dropConsoleSince(since);
+      } catch {
+      }
+    }
+  }
   /** The L3 token for a frame snapshot the caller already captured. */
   tokenFor(tabId, entry, frame) {
     return computeStateToken({
@@ -1611,6 +1655,11 @@ function wrapPage(page) {
       return snapshot ?? null;
     },
     consoleEntries: () => consoleRing,
+    dropConsoleSince: (since) => {
+      let keep = consoleRing.length;
+      while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;
+      consoleRing.length = keep;
+    },
     webmcp() {
       webmcpPromise ??= attachWebMcp(page);
       return webmcpPromise;

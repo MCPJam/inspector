@@ -11,6 +11,7 @@ type ActLog = string[];
 interface FakePage extends DriverPage {
   setUrl(u: string): void;
   setDom(d: string): void;
+  pushConsole(entry: { type: string; text: string; at: number }): void;
   readonly calls: {
     goto: string[];
     reload: number;
@@ -34,6 +35,7 @@ function fakePage(init: {
   webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
 } = {}): FakePage {
   let url = init.url ?? "about:blank";
+  const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
   let closed = false;
   const calls = {
@@ -85,11 +87,18 @@ function fakePage(init: {
     async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
     async a11ySnapshot() { return (init.a11y ?? null) as never; },
-    consoleEntries: () => init.console ?? [],
+    consoleEntries: () => consoleEntries,
+    dropConsoleSince: (since: number) => {
+      let keep = consoleEntries.length;
+      while (keep > 0 && consoleEntries[keep - 1].at >= since) keep -= 1;
+      consoleEntries.length = keep;
+    },
     async webmcp() { return (init.webmcp ?? null) as never; },
 
     setUrl,
     setDom,
+    pushConsole: (e: { type: string; text: string; at: number }) =>
+      consoleEntries.push(e),
     calls,
   };
 }
@@ -680,5 +689,84 @@ describe("ChromiumDriver — a FAILED act still reports the handoff (L6)", () =>
     );
     expect(res.ok).toBe(false);
     expect(res.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+  });
+});
+
+describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () => {
+  it("DISCARDS console captured while a person held the browser", async () => {
+    // The 423 gate stops an agent reading DURING a handoff. But the console
+    // ring fills from an eager page listener that knows nothing about leases,
+    // so without this the token a login page logged while someone signed in is
+    // readable the instant they hand back — making the guarantee "you have to
+    // wait to read it" rather than "it is private".
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({
+      url: "https://bank.test/",
+      console: [{ type: "log", text: "before the handoff", at: 500 }],
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // A person takes the browser and signs in; the page logs as they go.
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    page.pushConsole({ type: "log", text: "auth token: SECRET", at: 2_100 });
+    page.pushConsole({ type: "error", text: "password field: hunter2", at: 2_200 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const text = JSON.stringify(observed.output);
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("hunter2");
+    // What was logged BEFORE the handoff is ordinary page output and stays.
+    expect(text).toContain("before the handoff");
+  });
+
+  it("purges once, not on every later command", async () => {
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    lease.resume("panel-a");
+    await driver.execute(cmd({ kind: "observe", mode: "url" })); // consumes it
+
+    // Anything logged AFTER the handoff is normal traffic and must survive.
+    page.pushConsole({ type: "log", text: "after the handoff", at: 4_000 });
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    expect(JSON.stringify(observed.output)).toContain("after the handoff");
+  });
+
+  it("purges every tab, not just the one being read", async () => {
+    // A person may open a tab; a leak in one nobody is watching is still a leak.
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const first = fakePage({ url: "https://a.test/" });
+    const second = fakePage({ url: "https://b.test/" });
+    const { context } = fakeContext({ pages: [first, second] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/", newTab: true }, "tab-2"),
+    );
+
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    first.pushConsole({ type: "log", text: "LEAK-A", at: 2_100 });
+    second.pushConsole({ type: "log", text: "LEAK-B", at: 2_100 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    const a = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const b = await driver.execute(cmd({ kind: "observe", mode: "console" }, "tab-2"));
+    expect(JSON.stringify(a.output)).not.toContain("LEAK-A");
+    expect(JSON.stringify(b.output)).not.toContain("LEAK-B");
   });
 });

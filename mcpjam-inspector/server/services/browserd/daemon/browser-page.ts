@@ -53,6 +53,16 @@ export interface DriverPage {
   /** The console ring buffer this page has accumulated, oldest first. */
   consoleEntries(): readonly ConsoleEntry[];
   /**
+   * Discard console entries captured at or after `since` (ms since epoch).
+   *
+   * Exists for the human handoff: the console ring fills from an eager page
+   * listener that knows nothing about the lease, so entries logged while a
+   * person was signing in would otherwise be readable the instant they hand
+   * control back. Dropping the window is the difference between "private" and
+   * "delayed".
+   */
+  dropConsoleSince(since: number): void;
+  /**
    * The page's WebMCP bridge, attached lazily on first use (attaching a CDP
    * session to every tab that may never invoke a page tool is wasted work).
    * Resolves `null` when this build cannot speak the domain at all.

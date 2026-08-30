@@ -170,3 +170,56 @@ describe("HandoffLease", () => {
     expect(RESUMED_AFTER_HANDOFF_NOTE).toMatch(/do not rely on anything/i);
   });
 });
+
+describe("HandoffLease — the hold window", () => {
+  it("reports when the hold began, so the daemon knows what to discard", () => {
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000);
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+  });
+
+  it("consumes the window once", () => {
+    const { lease } = atClock();
+    expect(lease.consumeResumedHeldSince()).toBeUndefined();
+    lease.acquire("panel-a", 30_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+    expect(lease.consumeResumedHeldSince()).toBeUndefined();
+  });
+
+  it("a heartbeat does NOT shorten the window", () => {
+    // Otherwise the earliest part of a handoff — the sign-in itself, the most
+    // sensitive part — would fall outside the discard and stay readable.
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000);
+    advance(10_000);
+    lease.heartbeat("panel-a", 30_000);
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+  });
+
+  it("re-acquiring out of PARKED keeps the original window", () => {
+    // A lease that ran out mid-flow and was picked back up is ONE handoff; the
+    // console from before the expiry is exactly as private as after it.
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000);
+    advance(30_000); // parks
+    lease.acquire("panel-a", 30_000);
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+  });
+
+  it("a refused resume leaves the window intact for the real holder", () => {
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000);
+    advance(5_000);
+    lease.resume("panel-b");
+    expect(lease.consumeResumedHeldSince()).toBeUndefined();
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+  });
+});

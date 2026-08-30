@@ -76,7 +76,7 @@ export interface ChromiumDriverOptions {
    * READS it, to make the first observation after a handoff loud (L6) — the
    * blocking itself happens at the handler, before anything is captured.
    */
-  lease?: Pick<HandoffLease, "consumeResumedDirty">;
+  lease?: Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
@@ -120,7 +120,9 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
-  private readonly lease: Pick<HandoffLease, "consumeResumedDirty"> | undefined;
+  private readonly lease:
+    | Pick<HandoffLease, "consumeResumedDirty" | "consumeResumedHeldSince">
+    | undefined;
   private readonly tabs = new Map<string, TabEntry>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
@@ -134,6 +136,13 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
+    // W4/L6 — before ANYTHING can read, discard what a person's handoff left
+    // behind. The 423 gate stops an agent observing DURING a handoff, but the
+    // console ring fills from an eager page listener that knows nothing about
+    // leases, so a token or a form value the page logged while someone signed
+    // in would otherwise be readable the instant they hand back. Doing it here
+    // rather than in the console branch covers every future reader too.
+    this.purgeHandoffConsole();
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
@@ -574,6 +583,25 @@ export class ChromiumDriver implements BrowserDriver {
     return this.lease?.consumeResumedDirty()
       ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE }
       : output;
+  }
+
+  /**
+   * Drop console captured while a person held the browser, across EVERY tab —
+   * they may have opened one, and a leak in a tab nobody was watching is
+   * still a leak. Consumed once per handoff.
+   */
+  private purgeHandoffConsole(): void {
+    const since = this.lease?.consumeResumedHeldSince?.();
+    if (since === undefined) return;
+    for (const entry of this.tabs.values()) {
+      if (entry.page.isClosed()) continue;
+      try {
+        entry.page.dropConsoleSince(since);
+      } catch {
+        // A page that cannot be purged must not take the command down; the
+        // budgeted console read that follows is capped either way.
+      }
+    }
   }
 
   /** The L3 token for a frame snapshot the caller already captured. */

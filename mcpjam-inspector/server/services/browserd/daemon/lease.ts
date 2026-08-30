@@ -53,6 +53,15 @@ export class HandoffLease {
    * before a human touched it.
    */
   private resumedDirty = false;
+  /**
+   * When the CURRENT hold began — the start of the window whose captured
+   * console must not outlive the handoff. Set on the free→held transition
+   * only, so a heartbeat or a re-acquire out of `parked` does not shorten the
+   * window and leave the earliest (most sensitive) entries readable.
+   */
+  private heldSince: number | undefined;
+  /** `heldSince` of the hold that just ended, consumed alongside the flag. */
+  private resumedHeldSince: number | undefined;
   private readonly now: () => number;
   private readonly defaultTtlMs: number;
   private readonly maxTtlMs: number;
@@ -92,6 +101,8 @@ export class HandoffLease {
       Math.max(1_000, ttlMs ?? this.defaultTtlMs),
       this.maxTtlMs,
     );
+    // Only a hold that starts from `free` opens a new window.
+    if (state.state === "free") this.heldSince = this.now();
     this.current = {
       state: "held",
       holder,
@@ -118,6 +129,8 @@ export class HandoffLease {
     if (state.holder !== holder) return state;
     this.current = { state: "free" };
     this.resumedDirty = true;
+    this.resumedHeldSince = this.heldSince;
+    this.heldSince = undefined;
     return this.current;
   }
 
@@ -135,6 +148,22 @@ export class HandoffLease {
     const dirty = this.resumedDirty;
     this.resumedDirty = false;
     return dirty;
+  }
+
+  /**
+   * The start of the hold that just ended, consumed once.
+   *
+   * The daemon uses it to DISCARD console captured while a person held the
+   * browser. The 423 gate stops an agent reading during the handoff, but the
+   * console ring fills eagerly from a page listener that knows nothing about
+   * leases — so without this, an auth token or a form value the page logged
+   * during someone's login is simply readable the moment they hand back. That
+   * would make the guarantee "you must wait to read it", not "it is private".
+   */
+  consumeResumedHeldSince(): number | undefined {
+    const since = this.resumedHeldSince;
+    this.resumedHeldSince = undefined;
+    return since;
   }
 }
 
