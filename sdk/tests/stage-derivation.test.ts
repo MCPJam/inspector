@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "vitest";
+import { STAGE_REASON_LABELS } from "../src/contract/decision-labels.js";
 import {
   MAX_EVIDENCE_REASONS,
   MAX_EVIDENCE_REASON_CHARS,
@@ -845,6 +846,77 @@ describe("a model-call failure is attributed, not left blank", () => {
     expect(selection.evidence).toBeUndefined();
     expect(firstFailedStage).toBeUndefined();
     expect(failureCategory).toBe("setup");
+  });
+
+  test("the reason speaks for its own stage, not for the run", () => {
+    // Review finding on the label. `providerError` is applied PER ROW, so a
+    // multi-turn iteration whose provider died late keeps its earlier measured
+    // rows — and a run-level "the run never reached the server" would sit
+    // directly beside a `call: passed` that disproves it.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    // The precondition that makes the label's scope matter: the server WAS
+    // reached on this run.
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(STAGE_REASON_LABELS.providerError).not.toContain(
+      "never reached the server"
+    );
+    expect(STAGE_REASON_LABELS.providerError).toContain("this stage");
+  });
+
+  test("the chain does not argue with itself after a withdrawal", () => {
+    // Review finding on the withdrawal itself. The positional cascade reads
+    // `failed` rows to decide which later stages "never ran", so withdrawing
+    // the failure AFTER it ran left `call`, `response` and `userValue` saying
+    // `earlierStageFailed` while no stage failed and no firstFailedStage
+    // existed — three rows citing a failure the chain no longer records.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+        ...providerDied,
+      },
+    });
+
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+    // Nothing may still be blaming a stage that is no longer failed.
+    expect(stageResults.some((r) => r.reason === "earlierStageFailed")).toBe(
+      false
+    );
+    // And the later stages say the true thing about why they are blank.
+    for (const stage of ["call", "response", "userValue"] as const) {
+      const r = stateOf(stageResults, stage);
+      if (r.state === "notMeasured") expect(r.reason).toBe("providerError");
+    }
+  });
+
+  test("a failure the provider did NOT explain still cascades", () => {
+    // The other side. An unexpected call survives the withdrawal, so it stays
+    // the first failed row and the stages after it still read `notReached` —
+    // the cascade is repaired, not disabled.
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
+        ...providerDied,
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    const after = stageResults.slice(
+      stageResults.findIndex((r) => r.stage === "selection") + 1
+    );
+    expect(after.some((r) => r.state === "notReached")).toBe(true);
   });
 
   test("a call that really was made wrongly still counts against the server", () => {
