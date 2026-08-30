@@ -46,6 +46,7 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
+import { isHostedBrowserExposable } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
@@ -429,6 +430,25 @@ export function resolveHostTools(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
         );
+        continue;
+      }
+      // The backend's own gate (catalog entry + desktop template + desktop
+      // credit rate). An explicit `false` is honored even with the env flag
+      // on: the likeliest reason is an unset desktop rate, which would meter
+      // every hosted browser hour at the terminal rate. Silence (an older
+      // backend, or bootstrap not yet run) is not a refusal — the env flag
+      // above is already dark by default and is what staging drives with.
+      if (isHostedBrowserExposable() === false) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: the backend reports it is not exposable",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available on this deployment yet: the backend reports " +
+            "the hosted browser runtime is not fully configured.",
+        });
         continue;
       }
       // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   resolveHostTools,
@@ -510,6 +510,62 @@ describe("resolveHostTools — browser", () => {
       expect(
         resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
       ).toBeUndefined();
+    });
+  });
+
+  it("is not advertised when the BACKEND says it is not exposable (W7)", async () => {
+    // Honored even with the env flag on. The likeliest reason for a refusal is
+    // an unset desktop credit rate, which would meter every hosted browser
+    // hour at the cheaper terminal rate.
+    const { resetComputersRuntimeConfigBootstrapForTests, initComputersRuntimeConfigBootstrap } =
+      await import("../computers/runtime-config");
+    resetComputersRuntimeConfigBootstrapForTests();
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "tok");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              enabled: false,
+              hostedBrowser: { exposable: false, reason: "desktop_rate_unset" },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    await initComputersRuntimeConfigBootstrap();
+    try {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      withFlag("1", () => {
+        expect(
+          resolveHostTools(
+            { builtInToolIds: ["browser"], computer },
+            { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
+          ),
+        ).toBeUndefined();
+      });
+      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0].reason).toContain("not fully configured");
+    } finally {
+      resetComputersRuntimeConfigBootstrapForTests();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("is still advertised when the backend has not answered at all", async () => {
+    // An older backend says nothing. That is not a refusal — the env flag is
+    // already dark by default and is what staging drives the runtime with.
+    const { resetComputersRuntimeConfigBootstrapForTests } = await import(
+      "../computers/runtime-config"
+    );
+    resetComputersRuntimeConfigBootstrapForTests();
+    withFlag("1", () => {
+      expect(
+        resolveHostTools({ builtInToolIds: ["browser"], computer }, browserCtx),
+      ).toBeDefined();
     });
   });
 
