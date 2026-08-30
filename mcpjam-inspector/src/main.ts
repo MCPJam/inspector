@@ -5,7 +5,10 @@
 import "./ws-native-fallback.js";
 import * as Sentry from "@sentry/electron/main";
 import { app, BrowserWindow, shell, Menu, dialog } from "electron";
-import { buildElectronSentryConfig } from "../shared/sentry-config.js";
+import {
+  buildElectronSentryConfig,
+  electronBuildSurface,
+} from "../shared/sentry-config.js";
 import {
   crashReportingIntegrations,
   registerMainProcessCrashHandlers,
@@ -18,6 +21,10 @@ Sentry.init({
   ...buildElectronSentryConfig({
     environment: app.isPackaged ? "prod" : "dev",
     release: app.getVersion(),
+    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
+    // publish separately compiled main bundles under the same release, so
+    // without this they share one artifact namespace.
+    dist: electronBuildSurface(process.platform),
     deployment: "self_hosted",
   }),
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
