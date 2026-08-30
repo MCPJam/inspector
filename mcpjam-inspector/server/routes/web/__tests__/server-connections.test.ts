@@ -278,6 +278,24 @@ describe("claim", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 
+  it.each([
+    ["REQUEST_NOT_FOUND", 404, "Connection request not found"],
+    ["REQUEST_EXPIRED", 410, "That authorization link has expired."],
+  ])(
+    "passes the backend's gone reason through to the page",
+    async (code, status, message) => {
+      backendCalls.claimHandoff.mockRejectedValue(
+        new ServerConnectionBackendError(message, status, code)
+      );
+
+      const res = await post("/claim", { handoffToken: "handoff-1" });
+      const body = (await res.json()) as { details?: { reason?: string } };
+
+      expect(res.status).toBe(404);
+      expect(body.details?.reason).toBe(code);
+    }
+  );
+
   it("passes the refusal reason and masked owner through to the page", async () => {
     // The page renders a different call to action per reason, so the reason has
     // to survive the hop. It travels in `details` rather than as the envelope

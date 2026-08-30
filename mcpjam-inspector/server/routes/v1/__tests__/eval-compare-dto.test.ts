@@ -31,7 +31,7 @@ import {
  * one change.
  */
 const EVAL_RUN_COMPARE_PARITY_SHA256 =
-  "362a9a1e4133883e11cd8a0ec6aba9c3c7215730a1ec30c5b179f32a9390db53";
+  "5823c2420be670bcffaa3b0bdb4e98046393b2929dce903b7aa74fcc5bbf9e02";
 
 const FIXTURE_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -86,6 +86,35 @@ describe("toRunCompareDto — leak gate", () => {
     expect(serialized).not.toContain("kg9042pxwq7mn3jrl6svbt85dz1storage");
     // Nothing that even looks like a storage handle.
     expect(serialized).not.toMatch(/storage/i);
+  });
+
+  it("projects the skills section, including the version move", () => {
+    // The attribution half of a comparison: the fixture's `refunds` was edited
+    // between the two runs, an MCP-served skill was added, and one was
+    // untouched. A public caller needs all three to explain a regression.
+    const skills = dto().skills as Record<string, any>;
+    expect(skills.unchangedCount).toBe(1);
+    expect(skills.base).toEqual({ excluded: false, count: 2 });
+
+    const changed = skills.changes.find((c: any) => c.kind === "changed");
+    expect(changed.name).toBe("refunds");
+    expect(changed.versionDelta).toBe("v3 → v4");
+    expect(changed.base.versionNumber).toBe(3);
+    expect(changed.compare.versionNumber).toBe(4);
+
+    const added = skills.changes.find((c: any) => c.kind === "added");
+    expect(added.name).toBe("lookup");
+    expect(added.channels).toEqual(["mcp-server"]);
+  });
+
+  it("passes a null skills section through instead of flattening it", () => {
+    // null means "neither run recorded skills". An empty `{changes: []}` would
+    // claim no skills were involved, which is a different statement.
+    const dtoWithout = toRunCompareDto(
+      { ...fixture.expectedDiff, skills: null },
+      BASELINE,
+    );
+    expect(dtoWithout.skills).toBeNull();
   });
 
   it("keeps iterationIds, which are already public", () => {
@@ -231,10 +260,12 @@ describe("toRunCompareDto — projection", () => {
     // The diff was handed two runs; only the action knows which policy chose
     // one of them, so `baseline` is passed in rather than read off the diff.
     expect(
-      (toRunCompareDto(fixture.expectedDiff, {
-        policy: "run",
-        baseRunId: "run_explicit",
-      }) as Record<string, any>).baseline,
+      (
+        toRunCompareDto(fixture.expectedDiff, {
+          policy: "run",
+          baseRunId: "run_explicit",
+        }) as Record<string, any>
+      ).baseline,
     ).toEqual({ policy: "run", baseRunId: "run_explicit" });
   });
 
