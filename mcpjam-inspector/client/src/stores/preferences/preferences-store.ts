@@ -107,17 +107,13 @@ function getStoredChatUiOverride(): ChatUiOverride | undefined {
 }
 
 function getStoredHostCapabilitiesOverride():
-  | Record<string, unknown>
-  | undefined {
+  Record<string, unknown> | undefined {
   if (typeof window === "undefined") return undefined;
   let raw: string | null;
   try {
     raw = localStorage.getItem(HOST_CAPABILITIES_OVERRIDE_KEY);
   } catch (error) {
-    console.warn(
-      "Failed to read persisted host capabilities override:",
-      error,
-    );
+    console.warn("Failed to read persisted host capabilities override:", error);
     return undefined;
   }
   if (!raw) return undefined;
@@ -126,11 +122,7 @@ function getStoredHostCapabilitiesOverride():
   // the chat tab. A failed parse silently falls back to the preset.
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed)
-    ) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
     return undefined;
@@ -198,10 +190,7 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
           );
         }
       } catch (error) {
-        console.warn(
-          "Failed to persist host capabilities override:",
-          error,
-        );
+        console.warn("Failed to persist host capabilities override:", error);
       }
       set({ hostCapabilitiesOverride: next });
     },

@@ -301,11 +301,12 @@ function oauthBodySlug(error: unknown): string | undefined {
   if (!body) return undefined;
 
   const code =
-    typeof body.error === "string"
+    oauthResponseErrorCode(error) ??
+    (typeof body.error === "string"
       ? body.error
       : typeof body.error_code === "string"
         ? body.error_code
-        : undefined;
+        : undefined);
   if (!code) return undefined;
 
   switch (code.toLowerCase()) {
@@ -319,6 +320,32 @@ function oauthBodySlug(error: unknown): string | undefined {
     default:
       return undefined;
   }
+}
+
+/**
+ * The RFC 6749 `error` code off an `OAuthResponseError`.
+ *
+ * That class (`oauth/browser-auth.ts`) keeps the code on `.code` and the
+ * server's `error_description` as the message, so it carries neither `error`
+ * nor `error_code` and the body extractor below finds nothing to key on. The
+ * whole error then resolves to `internal/unknown` — origin `ambiguous` — even
+ * though the response said `invalid_grant` in as many words.
+ *
+ * Gated on the class NAME rather than reading `.code` off any error: `.code`
+ * is also where Node puts errnos (`ECONNREFUSED`) and where transport errors
+ * put numeric HTTP statuses, and neither is an OAuth error code. Only this
+ * class guarantees the field means what this function needs it to mean.
+ */
+function oauthResponseErrorCode(error: unknown): string | undefined {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    (error as { name?: unknown }).name !== "OAuthResponseError"
+  ) {
+    return undefined;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code ? code : undefined;
 }
 
 function pickOauthBody(

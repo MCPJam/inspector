@@ -31,7 +31,6 @@ describe("guest-session 5xx diagnosability", () => {
       "test-guest-session-secret";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     // The upstream is down: this is the shape that produced the 07-22 rows.
     global.fetch = vi
       .fn()
