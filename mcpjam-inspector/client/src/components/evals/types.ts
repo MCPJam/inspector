@@ -1,3 +1,4 @@
+import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type {
@@ -86,6 +87,84 @@ export type RunGroupQualityResult = {
   }>;
 };
 
+/**
+ * What a converter CLAIMED about one imported case.
+ *
+ * `exact` is CONVERTER-CLAIMED exact: the converter says it applied a
+ * structural mapping rule, cited in `note`. MCPJam has NOT verified semantic
+ * equivalence, and no surface may render this as "verified" or "accepted" —
+ * the copy is "claimed exact".
+ *
+ * Claim-only. Who approved an approximation, when, and why is a PER-RUN
+ * decision frozen on the run ({@link EvalImportRunDecision},
+ * {@link ImportApprovalReceipt}), never stored on the case.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated, so the
+ * four statuses cannot drift out of step with what a converter may write.
+ */
+export type EvalCaseImportClaim = EvalSuiteFileCaseImport;
+
+/**
+ * The run's FROZEN decision about one imported case, written at launch.
+ *
+ * `claimed_exact` carries no actor because no human decided anything — the run
+ * took the converter's word, having first checked it against the tool
+ * snapshot. `approved_approximation` carries all three facts an override owes:
+ * who, when, and why.
+ *
+ * Read this, never the case's current claim, when showing what a past run did:
+ * a case edited after the run would otherwise retroactively rewrite what that
+ * run is shown to have decided.
+ */
+export type EvalImportRunDecision =
+  | { status: "claimed_exact" }
+  | {
+      status: "approved_approximation";
+      approvedBy: string;
+      approvedAt: number;
+      reason: string;
+    };
+
+/** One frozen approval of an approximated import, as the run recorded it. */
+export type ImportApprovalReceipt = {
+  testCaseId: string;
+  caseKey?: string;
+  sourceCaseKey?: string;
+  approvedBy: string;
+  approvedAt: number;
+  reason: string;
+};
+
+/** One reason a run's import evidence is incomplete. */
+export type ImportEligibilityIssue = {
+  code: string;
+  testCaseId?: string;
+  caseKey?: string;
+  toolName?: string;
+};
+
+/**
+ * Whether a run's imported cases carry evidence a gate may rely on.
+ *
+ * Computed by the platform from the run's OWN frozen snapshot. Never
+ * recomputed here from the suite's current cases: those can be edited after
+ * the run, and recomputing would let an edit change what a finished run is
+ * shown to have proved.
+ *
+ * `incomplete` is NOT a test verdict. It means the run is not gateable, and
+ * every surface that renders it must say so in those words rather than as a
+ * failure.
+ */
+export type ImportEligibility = {
+  status: "legacy" | "eligible" | "incomplete";
+  gateable: boolean;
+  importedCaseCount: number;
+  claimedExactCaseIds: string[];
+  approvedApproximationCaseIds: string[];
+  approvedApproximationReceipts: ImportApprovalReceipt[];
+  issues: ImportEligibilityIssue[];
+};
+
 export type EvalSuiteConfigTest = {
   title: string;
   query: string;
@@ -111,6 +190,13 @@ export type EvalSuiteConfigTest = {
   /** Effective validator options for this entry, resolved at run-start. */
   matchOptions?: EvalMatchOptions;
   testCaseId?: string;
+  /**
+   * The claim FROZEN into this run's snapshot — what the case claimed when the
+   * run started, not what it claims now.
+   */
+  import?: EvalCaseImportClaim;
+  /** The run's own decision about this case. Absent on a native case. */
+  importRunDecision?: EvalImportRunDecision;
 };
 
 export type EvalSuite = {
@@ -288,9 +374,14 @@ export type EvalCase = {
    * overwritten by the next CI report.
    */
   lastSdkWriteAt?: number;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here. ABSENT means natively authored, which is a different fact
+   * from "imported, faithfulness unknown".
+   */
+  import?: EvalCaseImportClaim;
   _creationTime?: number; // Convex auto field
 };
-
 
 export type EvalIteration = {
   _id: string;
@@ -529,6 +620,15 @@ export type EvalSuiteRunSummary = {
 };
 
 export type EvalSuiteRun = {
+  /**
+   * Whether this run's imported cases carry evidence a gate may rely on.
+   *
+   * Served by the CANONICAL selected-run queries (`getTestSuiteRun` /
+   * `getTestSuiteRunDetails`), not by the run LIST projection — so a list row
+   * legitimately has none, and absence here must never be rendered as
+   * `legacy`. Absent also on a deployment that predates the projection.
+   */
+  importEligibility?: ImportEligibility;
   _id: string;
   suiteId: string;
   createdBy: string;
@@ -875,6 +975,54 @@ export type EvalRunDiffSide = {
   };
 };
 
+/** Delivery channel a pinned skill reached the run through. */
+export type EvalRunSkillChannel =
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export type EvalRunSkillSide = {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+};
+
+export type EvalRunSkillChange = {
+  key: string;
+  name: string;
+  modelRef?: string;
+  channels: EvalRunSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** The skill was renamed between the runs; ids still matched it as one skill. */
+  renamedFrom?: string;
+  base?: EvalRunSkillSide;
+  compare?: EvalRunSkillSide;
+  /** `v3 → v4`, present only when BOTH sides recorded a revision number. */
+  versionDelta?: string;
+};
+
+/**
+ * Which skills changed between two runs — the configuration attribution that
+ * usually explains the case-level regressions next to it.
+ *
+ * `null` (not an empty section) when neither run recorded pinned skills:
+ * rendering "no skills changed" for two legacy runs would be a claim nobody
+ * verified.
+ */
+export type EvalRunSkillDiff = {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: EvalRunSkillChange[];
+  unchangedCount: number;
+};
+
 export type EvalRunDiff = {
   suite: {
     id: string;
@@ -917,6 +1065,8 @@ export type EvalRunDiff = {
     passed: EvalRunNumericDiff;
     failed: EvalRunNumericDiff;
   };
+  /** See {@link EvalRunSkillDiff}. Absent on responses from an older backend. */
+  skills?: EvalRunSkillDiff | null;
   cases: Array<{
     caseKey: string;
     title: string;
