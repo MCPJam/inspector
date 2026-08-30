@@ -21,14 +21,16 @@ function getAllowedOrigins(): string[] {
   if (process.env.ALLOWED_ORIGINS) {
     const origins = process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
 
-    // Wildcard origins (e.g. https://*.up.railway.app) are only safe behind
-    // non-prod lockdown.  Reject them in production to prevent accidental
-    // misconfiguration from weakening origin checks.
-    if (process.env.MCPJAM_NONPROD_LOCKDOWN !== "true") {
+    // Wildcard origins (e.g. https://*.up.railway.app) are only safe in
+    // non-production environments that deliberately opt in via
+    // MCPJAM_ALLOW_WILDCARD_ORIGINS (staging and PR previews, which need to
+    // accept each other's ephemeral Railway hostnames). Reject them anywhere
+    // else so a misconfiguration cannot weaken origin checks in production.
+    if (process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS !== "true") {
       const wildcards = origins.filter((o) => o.includes("*"));
       if (wildcards.length > 0) {
         appLogger.warn(
-          `[Security] Wildcard ALLOWED_ORIGINS rejected outside non-prod lockdown: ${wildcards.join(", ")}`,
+          `[Security] Wildcard ALLOWED_ORIGINS rejected without MCPJAM_ALLOW_WILDCARD_ORIGINS=true: ${wildcards.join(", ")}`,
         );
         return origins.filter((o) => !o.includes("*"));
       }

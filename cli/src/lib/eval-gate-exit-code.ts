@@ -8,7 +8,9 @@ import type { GateReport } from "@mcpjam/sdk";
  * with different fixes, and a run that could not be graded must never look like
  * a pass. `2` is taken by usage errors, so the third state is `3`.
  *
- *   0 — every requested gate passed.
+ *   0 — every requested gate passed, OR a failing gate was waived: an
+ *       authorized user overrode it on the record, and the waiver is named in
+ *       every artifact this command writes.
  *   1 — an EVAL VERDICT failed. Reserved for exactly that.
  *   2 — usage error: the policy names an unknown or positionally-generated
  *       scorer, or a threshold is out of range.
@@ -24,6 +26,14 @@ import type { GateReport } from "@mcpjam/sdk";
 export function evalGateExitCode(report: GateReport): number {
   switch (report.outcome) {
     case "passed":
+      return 0;
+    // An authorized, recorded, time-boxed override of a real failure. Exit 0,
+    // because unblocking the release is what a waiver is FOR — but it reaches
+    // 0 by its own named outcome rather than by being turned into `passed`
+    // upstream, so nothing downstream has to reconstruct which of the two
+    // happened. The report, and every artifact built from it, still says the
+    // gate failed and was waived.
+    case "waived":
       return 0;
     case "failed":
       return 1;

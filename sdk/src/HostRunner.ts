@@ -17,9 +17,10 @@ import type {
   StepResult,
 } from "ai";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
+import { modelRejectsTemperature } from "./model-sampling-support.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
@@ -413,20 +414,12 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    // `getToolMetadata` returns the tool's `_meta` contents, so wrap it back
-    // into a `_meta` carrier for the SDK helper — which resolves the nested
-    // `_meta.ui.resourceUri` AND the deprecated flat `_meta["ui/resourceUri"]`
-    // key (legacy servers still emit the latter). The helper throws on a
-    // malformed URI; swallow that here so a misbehaving server can't crash the
-    // passive widget-snapshot capture.
-    let resourceUri: string | undefined;
-    try {
-      resourceUri = getToolUiResourceUri({
-        _meta: toolMetadata,
-      } as Parameters<typeof getToolUiResourceUri>[0]);
-    } catch {
-      return;
-    }
+    // `getToolMetadata` returns the tool's `_meta` contents, which the resolver
+    // takes directly — it reads the nested `_meta.ui.resourceUri` AND the
+    // deprecated flat `_meta["ui/resourceUri"]` key (legacy servers still emit
+    // the latter), and answers null on a malformed URI so a misbehaving server
+    // can't crash the passive widget-snapshot capture.
+    const resourceUri = resolveToolUiResourceUri(toolMetadata);
     if (!resourceUri) {
       return;
     }
@@ -732,10 +725,13 @@ export class HostRunner implements HostExecutor {
         ...(contextMessages.length > 0
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
-        // Only include temperature if explicitly set (some models like reasoning models don't support it)
-        ...(this.temperature !== undefined && {
-          temperature: this.temperature,
-        }),
+        // Only include temperature if explicitly set (some models like reasoning
+        // models don't support it), and never for a model that 400s on the field
+        // being present at all — the key has to be absent, not undefined.
+        ...(this.temperature !== undefined &&
+          !modelRejectsTemperature(this.model) && {
+            temperature: this.temperature,
+          }),
         ...(options?.abortSignal !== undefined && {
           abortSignal: options.abortSignal,
         }),

@@ -41,6 +41,11 @@ import {
   mintCaseId,
   opaqueIdSchema,
 } from "./contract/identity.js";
+import {
+  caseIntentSchema,
+  normalizeIntent,
+  type CaseIntent,
+} from "./contract/stage-intent.js";
 import type { IterationStatus } from "./contract/chain.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
@@ -306,6 +311,11 @@ export interface EvalTestConfig {
    * byte-identical to before.
    */
   externalCaseId?: string;
+  /**
+   * Optional analytics grouping label for this case. It is forwarded with
+   * every result but never participates in scoring or the verdict.
+   */
+  intent?: CaseIntent;
   /**
    * Hosted "negative case" semantics: the test passes iff NO tool was called.
    *
@@ -587,6 +597,20 @@ export class EvalTest {
         }
         config = rest;
       }
+    }
+    // Intent is authored metadata, normalized once at the authoring boundary
+    // just like the hosted external id above. Absence stays absent locally;
+    // the reporting identity sends an explicit null so the wire can preserve
+    // the unlabelled slice.
+    if (config.intent !== undefined) {
+      const intent = normalizeIntent(config.intent);
+      const rest = { ...config };
+      if (intent === undefined) {
+        delete rest.intent;
+      } else {
+        rest.intent = caseIntentSchema.parse(intent);
+      }
+      config = rest;
     }
     assertDeclaredCaseId(config);
     // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
@@ -1178,6 +1202,9 @@ export class EvalTest {
         // standalone test still forks its hosted history — the exact bug the
         // declared id exists to retire, surviving on the path nobody looked at.
         caseId: this.config.id,
+        // `null`, not omission, says this case is deliberately unlabelled on
+        // the result wire. Omission is reserved for pre-intent reporters.
+        intent: this.config.intent ?? null,
         ...(this.config.externalCaseId !== undefined
           ? { externalCaseId: this.config.externalCaseId }
           : {}),
