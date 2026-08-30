@@ -38,7 +38,7 @@ import {
 import type { RemoteServer } from "@/hooks/useProjects";
 import { AddStepPicker, type AddStepPickerChoice } from "./add-step-picker";
 import { cn } from "@/lib/utils";
-import type { ElementLocator } from "@/shared/scripted-steps";
+import { trimmedField, type ElementLocator } from "@/shared/scripted-steps";
 import type { Predicate } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
@@ -238,9 +238,11 @@ function defaultInteractAction(kind: InteractAction["kind"]): InteractAction {
 function InteractActionFields({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: InteractAction;
   onChange: (next: InteractAction) => void;
+  readOnly?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -266,6 +268,7 @@ function InteractActionFields({
           <LocatorFields
             value={value.target}
             onChange={(target) => onChange({ ...value, target })}
+            readOnly={readOnly}
           />
           <Select
             value={value.clickType ?? "left"}
@@ -292,6 +295,7 @@ function InteractActionFields({
           <LocatorFields
             value={value.target}
             onChange={(target) => onChange({ ...value, target })}
+            readOnly={readOnly}
           />
           <Input
             value={value.text}
@@ -382,10 +386,12 @@ function WidgetAssertionFields({
   value,
   onChange,
   availableTools,
+  readOnly = false,
 }: {
   value: WidgetAssertion;
   onChange: (next: WidgetAssertion) => void;
   availableTools: AvailableTool[];
+  readOnly?: boolean;
 }) {
   const target =
     "target" in value ? (value.target as ElementLocator) : undefined;
@@ -475,6 +481,7 @@ function WidgetAssertionFields({
           onChange={(nextTarget) =>
             onChange({ ...value, target: nextTarget } as WidgetAssertion)
           }
+          readOnly={readOnly}
         />
       ) : null}
       {value.kind === "inputValue" ? (
@@ -506,15 +513,16 @@ function AssertStepBody({
     onChange({ ...step, assertion });
 
   if (isWidgetAssertion(a)) {
-    // `WidgetAssertionFields` doesn't thread `readOnly` into its leaves; a
-    // `display:contents` disabled fieldset locks the whole subtree natively
-    // without affecting layout.
+    // The fields thread `readOnly` only far enough to drop the authoring
+    // flags; a `display:contents` disabled fieldset locks the whole subtree
+    // natively without affecting layout.
     return (
       <fieldset disabled={readOnly} className="contents">
         <WidgetAssertionFields
           value={a}
           onChange={setAssertion}
           availableTools={availableTools}
+          readOnly={readOnly}
         />
       </fieldset>
     );
@@ -689,7 +697,7 @@ function StepRow({
         ) : null}
 
         {step.kind === "interact" ? (
-          // `InteractActionFields`/`LocatorFields` don't thread `readOnly`; a
+          // `readOnly` only drops the authoring flags inside; a
           // `display:contents` disabled fieldset locks the subtree natively.
           <fieldset disabled={readOnly} className="contents">
             <div className="space-y-2">
@@ -703,7 +711,10 @@ function StepRow({
                         onUpdate({ ...step, toolName: next })
                       }
                     >
-                      <SelectTrigger className="h-7 text-[11px]">
+                      <SelectTrigger
+                        aria-invalid={!readOnly && !trimmedField(step.toolName)}
+                        className="h-7 text-[11px]"
+                      >
                         <SelectValue placeholder="Pick a view tool…" />
                       </SelectTrigger>
                       <SelectContent>
@@ -729,6 +740,7 @@ function StepRow({
                         onUpdate({ ...step, toolName: e.target.value })
                       }
                       placeholder="view tool name…"
+                      aria-invalid={!readOnly && !trimmedField(step.toolName)}
                       className="h-7 text-[11px]"
                     />
                   )}
@@ -737,6 +749,7 @@ function StepRow({
               <InteractActionFields
                 value={step.action}
                 onChange={(action) => onUpdate({ ...step, action })}
+                readOnly={readOnly}
               />
             </div>
           </fieldset>

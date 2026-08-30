@@ -32,7 +32,7 @@ interface MCPJamLimitDialogState {
 
 const intentForAuth = (
   authStatus: MCPJamLimitAuthStatus,
-  _input: MCPJamLimitNotifyInput
+  _input: MCPJamLimitNotifyInput,
 ): MCPJamLimitIntent | null => {
   if (authStatus === "guest") return "guest";
   if (authStatus === "signedIn") return "topup";
@@ -121,5 +121,5 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
         organizationId: null,
         pendingInput: null,
       }),
-  })
+  }),
 );
