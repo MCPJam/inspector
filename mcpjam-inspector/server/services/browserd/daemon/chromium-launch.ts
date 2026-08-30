@@ -17,6 +17,19 @@ import {
   buildBrowserdLaunchArgs,
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
+import { capText, type A11yNode, type ConsoleEntry } from "./observation-budget";
+import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
+
+/**
+ * Evaluated IN THE PAGE to decide whether this browser really supports
+ * WebMCP. Duplicated from `webmcp-inspector/launch-args.ts` rather than
+ * imported: the daemon is bundled standalone, and pulling in the local
+ * inspector's module would drag its Playwright-facing dependencies into the
+ * sandbox artifact. The two must agree — both read the documented
+ * `document.modelContext`, falling back to the `navigator` alias Chromium 151
+ * still carries.
+ */
+const PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 
 const NAV_TIMEOUT_MS = 30_000;
 
@@ -62,9 +75,75 @@ export type AnyPage = {
   url(): string;
   close(): Promise<void>;
   isClosed(): boolean;
+  bringToFront(): Promise<void>;
+  mouse: {
+    click(x: number, y: number, options?: unknown): Promise<void>;
+    move(x: number, y: number, options?: unknown): Promise<void>;
+    down(options?: unknown): Promise<void>;
+    up(options?: unknown): Promise<void>;
+    wheel(deltaX: number, deltaY: number): Promise<void>;
+  };
+  keyboard: {
+    type(text: string, options?: unknown): Promise<void>;
+    press(key: string, options?: unknown): Promise<void>;
+  };
+  click(selector: string, options?: unknown): Promise<void>;
+  hover(selector: string, options?: unknown): Promise<void>;
+  fill(selector: string, value: string, options?: unknown): Promise<void>;
+  selectOption(
+    selector: string,
+    value: string,
+    options?: unknown,
+  ): Promise<unknown>;
+  accessibility?: { snapshot(options?: unknown): Promise<unknown> };
+  on(event: string, handler: (payload: any) => void): void;
 };
 
+/**
+ * How many console entries a tab keeps. A ring buffer, because console
+ * history is a TAIL the model reads after an act — not a document, and not
+ * something a chatty page should be able to grow without bound.
+ */
+const CONSOLE_RING_SIZE = 200;
+/** Per-entry cap at CAPTURE time; the observe budget caps again for output. */
+const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
+
+/** Act timeouts: long enough for a slow page, short enough to stay a turn. */
+const ACT_TIMEOUT_MS = 15_000;
+
 export function wrapPage(page: AnyPage): DriverPage {
+  // The console ring. Attached once per wrapped page; entries are captured
+  // eagerly because a console message is gone the moment it is emitted.
+  const consoleRing: ConsoleEntry[] = [];
+  page.on("console", (message: { type?: () => string; text?: () => string }) => {
+    try {
+      const text = message.text?.() ?? "";
+      consoleRing.push({
+        type: message.type?.() ?? "log",
+        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+        at: Date.now(),
+      });
+      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+      // A console listener must never take the page down.
+    }
+  });
+  page.on("pageerror", (error: unknown) => {
+    consoleRing.push({
+      type: "pageerror",
+      text: capText(
+        error instanceof Error ? error.message : String(error),
+        CONSOLE_ENTRY_CAPTURE_BYTES,
+      ),
+      at: Date.now(),
+    });
+    if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+  });
+
+  // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
+  // page tool should not pay for a CDP session.
+  let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+
   return {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
@@ -104,7 +183,91 @@ export function wrapPage(page: AnyPage): DriverPage {
     url: () => page.url(),
     close: () => page.close(),
     isClosed: () => page.isClosed(),
+    bringToFront: () => page.bringToFront(),
+
+    // --- act primitives -----------------------------------------------------
+    // Coordinates are already in the canonical observation viewport (L5), so
+    // no scaling happens here: what the model saw IS what it clicks.
+    clickAt: (point, options) =>
+      page.mouse.click(point.x, point.y, {
+        ...(options?.button ? { button: options.button } : {}),
+      }),
+    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverAt: (point) => page.mouse.move(point.x, point.y),
+    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    typeText: (text) => page.keyboard.type(text),
+    fillSelector: (selector, text) =>
+      page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
+    press: (key) => page.keyboard.press(key),
+    scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    async dragTo(from, to) {
+      // Explicit down/move/up rather than `dragAndDrop`: HTML5 drag handlers
+      // and canvas apps both need the intermediate move to fire, and a single
+      // jump often lands as a click.
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2);
+      await page.mouse.move(to.x, to.y);
+      await page.mouse.up();
+    },
+    async selectOption(selector, value) {
+      await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
+    },
+
+    // --- observation --------------------------------------------------------
+    async a11ySnapshot() {
+      const snapshot = await page.accessibility?.snapshot();
+      return (snapshot as A11yNode | null) ?? null;
+    },
+    consoleEntries: () => consoleRing,
+    webmcp() {
+      webmcpPromise ??= attachWebMcp(page);
+      return webmcpPromise;
+    },
   };
+}
+
+/**
+ * Attach a WebMCP bridge to a page over its own CDP session. Returns null when
+ * this browser cannot speak the domain at all — a page with no WebMCP tools is
+ * the normal case, not a failure, so nothing here throws.
+ *
+ * The CDP session comes from the page's context; `attachCdp` is set by
+ * `adaptContext` so this file stays the only one that knows about CDP.
+ */
+async function attachWebMcp(page: AnyPage): Promise<WebMcpBridge | null> {
+  const attach = cdpAttachers.get(page);
+  if (!attach) return null;
+  try {
+    const session = await attach();
+    const bridge = new WebMcpBridge(session);
+    await bridge.start(async () => {
+      // `WebMCP.enable` resolves even where the feature is off — the page API
+      // is the only honest probe (same reasoning as the local inspector's).
+      const supported = await page
+        .evaluate<boolean>(`(() => ${PAGE_API_PROBE})()`)
+        .catch(() => false);
+      return supported === true;
+    });
+    return bridge;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How a wrapped page opens a CDP session. Populated by `adaptContext` (which
+ * holds the BrowserContext); a page wrapped without one — every unit test —
+ * simply has no WebMCP, which is exactly the "page offers no tools" path.
+ */
+const cdpAttachers = new WeakMap<AnyPage, () => Promise<CdpLike>>();
+
+/** Record how a page opens its CDP session (called by `adaptContext`). */
+export function registerCdpAttacher(
+  page: AnyPage,
+  attach: () => Promise<CdpLike>,
+): void {
+  cdpAttachers.set(page, attach);
 }
 
 export interface LaunchBrowserdContextOptions {
@@ -144,6 +307,8 @@ export type AnyContext = {
   pages(): AnyPage[];
   browser(): { isConnected(): boolean } | null;
   close(): Promise<void>;
+  /** Present on a real Playwright context; absent in unit-test fakes. */
+  newCDPSession?(page: AnyPage): Promise<CdpLike>;
 };
 
 /**
@@ -161,6 +326,12 @@ export function adaptContext(context: AnyContext): DriverContext {
     async newPage() {
       const page =
         adopted < startup.length ? startup[adopted++] : await context.newPage();
+      // Register how this page opens a CDP session BEFORE wrapping, so the
+      // wrapper's lazy `webmcp()` can find it. A context without
+      // `newCDPSession` (test fakes) simply yields no WebMCP.
+      if (context.newCDPSession) {
+        registerCdpAttacher(page, () => context.newCDPSession!(page));
+      }
       return wrapPage(page);
     },
     isConnected() {

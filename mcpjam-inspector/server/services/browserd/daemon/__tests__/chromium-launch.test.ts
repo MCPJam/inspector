@@ -12,6 +12,7 @@ import {
  * rest of the adapter is exercised by the RUN_BROWSERD_SPIKE integration test.
  */
 function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
+  const noop = async () => {};
   return {
     async goto() {},
     async reload() {},
@@ -22,6 +23,21 @@ function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
     url: () => "about:blank",
     async close() {},
     isClosed: () => false,
+    async bringToFront() {},
+    mouse: {
+      click: noop,
+      move: noop,
+      down: noop,
+      up: noop,
+      wheel: noop,
+    },
+    keyboard: { type: noop, press: noop },
+    click: noop,
+    hover: noop,
+    fill: noop,
+    async selectOption() { return []; },
+    accessibility: { async snapshot() { return null; } },
+    on() {},
     ...over,
   };
 }

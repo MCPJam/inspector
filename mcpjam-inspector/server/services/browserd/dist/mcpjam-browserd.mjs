@@ -418,6 +418,377 @@ function computeStateToken(inputs) {
   };
 }
 
+// server/services/browserd/daemon/observation-budget.ts
+var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
+function countNodes(node) {
+  let total = 1;
+  for (const child of node.children ?? []) total += countNodes(child);
+  return total;
+}
+function omissionMarker(node, hiddenNodes) {
+  const label = node.name ? `${node.role ?? "node"} "${node.name}"` : node.role ?? "node";
+  return {
+    role: "omitted",
+    name: `${hiddenNodes} node(s) under ${label} omitted \u2014 re-observe with {mode:"a11y", rootSelector:"<selector for this element>"} to read this subtree`
+  };
+}
+function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
+  if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
+  const totalNodes = countNodes(root);
+  let remaining = Math.max(1, budget.maxNodes);
+  let omittedSubtrees = 0;
+  const visit = (node, depth) => {
+    remaining -= 1;
+    const { children, ...rest } = node;
+    if (!children || children.length === 0) return { ...rest };
+    if (depth >= budget.maxDepth || remaining <= 0) {
+      omittedSubtrees += 1;
+      const hidden = children.reduce((sum, child) => sum + countNodes(child), 0);
+      return { ...rest, children: [omissionMarker(node, hidden)] };
+    }
+    const kept = [];
+    for (let index = 0; index < children.length; index += 1) {
+      if (remaining <= 0) {
+        omittedSubtrees += 1;
+        const hidden = children.slice(index).reduce((sum, child) => sum + countNodes(child), 0);
+        kept.push(omissionMarker(node, hidden));
+        break;
+      }
+      kept.push(visit(children[index], depth + 1));
+    }
+    return { ...rest, children: kept };
+  };
+  return { tree: visit(root, 0), omittedSubtrees, totalNodes };
+}
+var TRUNCATION_SUFFIX = "\n\u2026[truncated]";
+function capText(text, maxBytes) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  if (bytes.byteLength <= maxBytes) return text;
+  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
+  const keep = Math.max(0, maxBytes - suffixBytes);
+  let end = Math.min(keep, bytes.byteLength);
+  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
+  const decoder = new TextDecoder("utf-8");
+  return decoder.decode(bytes.subarray(0, end)) + TRUNCATION_SUFFIX;
+}
+var DEFAULT_CONSOLE_BUDGET = {
+  maxEntries: 50,
+  maxEntryBytes: 2e3
+};
+function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({
+      ...entry,
+      text: capText(entry.text, budget.maxEntryBytes)
+    })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+function capToolOutput(output, maxBytes) {
+  if (typeof output === "string") {
+    const capped = capText(output, maxBytes);
+    return { output: capped, omitted: capped !== output };
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(output) ?? "null";
+  } catch {
+    return {
+      output: "[output could not be serialized]",
+      omitted: true
+    };
+  }
+  if (new TextEncoder().encode(serialized).byteLength <= maxBytes) {
+    return { output, omitted: false };
+  }
+  return {
+    output: `[tool output omitted: ${serialized.length} chars exceeds the ${maxBytes}-byte budget \u2014 have the page return a smaller result, or read the rendered page instead]`,
+    omitted: true
+  };
+}
+
+// server/services/browserd/daemon/webmcp-bridge.ts
+var WebMcpBridgeError = class extends Error {
+  constructor(failure, message, cancelReason) {
+    super(message);
+    this.failure = failure;
+    this.cancelReason = cancelReason;
+    this.name = "WebMcpBridgeError";
+  }
+};
+var MAX_EARLY_RESPONSES = 16;
+var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
+var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "about:blank";
+  }
+}
+var WebMcpBridge = class {
+  constructor(cdp, options = {}) {
+    this.cdp = cdp;
+    this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
+    this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
+  }
+  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
+  tools = /* @__PURE__ */ new Map();
+  /** frameId → last known URL, for origin labelling. */
+  frames = /* @__PURE__ */ new Map();
+  pending = /* @__PURE__ */ new Map();
+  /** Responses that arrived before their invocation was registered. */
+  earlyResponses = /* @__PURE__ */ new Map();
+  mainFrameId = "";
+  invocationTimeoutMs;
+  cancelSettleGraceMs;
+  supported = false;
+  disposed = false;
+  /**
+   * Enable the domains and wire the events. `probeSupported` is the page-side
+   * check for `document.modelContext`: `WebMCP.enable` RESOLVES even on a
+   * browser with the feature off (it just never reports a tool), so the domain
+   * is never the probe.
+   */
+  async start(probeSupported) {
+    this.wire();
+    await this.cdp.send("Page.enable").catch(() => {
+    });
+    await this.cdp.send("WebMCP.enable").catch(() => {
+    });
+    this.supported = await probeSupported().catch(() => false);
+  }
+  isSupported() {
+    return this.supported;
+  }
+  wire() {
+    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.set(this.key(tool.frameId, tool.name), tool);
+      }
+    });
+    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.delete(this.key(tool.frameId, tool.name));
+      }
+    });
+    this.cdp.on("WebMCP.toolResponded", (payload) => {
+      const responded = payload ?? {};
+      const id = responded.invocationId;
+      if (!id) return;
+      const waiter = this.pending.get(id);
+      if (!waiter) {
+        if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
+          const oldest = this.earlyResponses.keys().next().value;
+          if (oldest !== void 0) this.earlyResponses.delete(oldest);
+        }
+        this.earlyResponses.set(id, responded);
+        return;
+      }
+      this.settle(id);
+      this.deliver(waiter, responded);
+    });
+    this.cdp.on("Page.frameNavigated", (payload) => {
+      const { frame } = payload ?? {};
+      if (!frame) return;
+      this.frames.set(frame.id, frame.url);
+      this.dropFrame(frame.id);
+      if (!frame.parentId) this.mainFrameId = frame.id;
+    });
+    this.cdp.on("Page.frameDetached", (payload) => {
+      const { frameId } = payload ?? {};
+      if (!frameId) return;
+      this.frames.delete(frameId);
+      this.dropFrame(frameId);
+    });
+  }
+  key(frameId, name) {
+    return `${frameId} ${name}`;
+  }
+  dropFrame(frameId) {
+    for (const key of [...this.tools.keys()]) {
+      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+    }
+  }
+  settle(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter?.timer) clearTimeout(waiter.timer);
+    this.pending.delete(invocationId);
+  }
+  /** Resolve or reject a waiter from the page's response. */
+  deliver(waiter, responded) {
+    if (responded.status === "Completed") {
+      waiter.resolve({ output: responded.output });
+      return;
+    }
+    if (responded.status === "Canceled") {
+      const reason = waiter.cancelReason ?? "cancelled";
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          reason
+        )
+      );
+      return;
+    }
+    waiter.reject(
+      new WebMcpBridgeError(
+        "webmcp_error",
+        responded.exception?.description?.split("\n")[0] || responded.errorText || "The page tool failed without a message."
+      )
+    );
+  }
+  /** The tools currently on offer, as the model should see them. */
+  list() {
+    return [...this.tools.values()].map((tool) => ({
+      name: tool.name,
+      ...tool.description !== void 0 ? { description: tool.description } : {},
+      ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
+      ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
+      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      isMainFrame: tool.frameId === this.mainFrameId,
+      registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
+    }));
+  }
+  /**
+   * Resolve a tool NAME to the frame currently offering it, preferring the
+   * main frame. Frame ids churn across navigations, so this happens at invoke
+   * time rather than being carried around as identity.
+   */
+  resolveFrame(toolName) {
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName && tool.frameId === this.mainFrameId) {
+        return tool.frameId;
+      }
+    }
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName) return tool.frameId;
+    }
+    throw new WebMcpBridgeError(
+      "webmcp_tool_gone",
+      `The page no longer offers a tool named "${toolName}".`
+    );
+  }
+  /** Invoke a page tool and wait for the page's own response. */
+  async invoke(args) {
+    if (this.disposed) {
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        "The browser tab was closed.",
+        "cancelled"
+      );
+    }
+    if (!this.supported) {
+      throw new WebMcpBridgeError(
+        "webmcp_unsupported",
+        "This browser build does not expose the WebMCP page API, so the page's tools cannot be invoked."
+      );
+    }
+    const frameId = this.resolveFrame(args.toolName);
+    let invocationId;
+    try {
+      const result = await this.cdp.send("WebMCP.invokeTool", {
+        frameId,
+        toolName: args.toolName,
+        input: args.input
+      });
+      if (!result?.invocationId) {
+        throw new WebMcpBridgeError(
+          "webmcp_error",
+          "The browser accepted the invocation but returned no invocation id."
+        );
+      }
+      invocationId = result.invocationId;
+    } catch (error) {
+      if (error instanceof WebMcpBridgeError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/tool not found/i.test(message)) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `The page no longer offers a tool named "${args.toolName}".`
+        );
+      }
+      throw error;
+    }
+    const output = await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
+      const early = this.earlyResponses.get(invocationId);
+      if (early) {
+        this.earlyResponses.delete(invocationId);
+        this.deliver(waiter, early);
+        return;
+      }
+      this.pending.set(invocationId, waiter);
+      let cancelling = false;
+      const cancel = (reason) => {
+        if (cancelling) return;
+        cancelling = true;
+        waiter.cancelReason = reason;
+        void Promise.resolve(
+          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        });
+        waiter.timer = setTimeout(() => {
+          if (!this.pending.has(invocationId)) return;
+          this.pending.delete(invocationId);
+          reject(
+            new WebMcpBridgeError(
+              "webmcp_cancelled",
+              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              reason
+            )
+          );
+        }, this.cancelSettleGraceMs);
+      };
+      waiter.timer = setTimeout(
+        () => cancel("timeout"),
+        this.invocationTimeoutMs
+      );
+      args.signal?.addEventListener("abort", () => cancel("cancelled"), {
+        once: true
+      });
+      if (args.signal?.aborted) cancel("cancelled");
+    });
+    return { invocationId, output: output.output };
+  }
+  /**
+   * Cancel an in-flight invocation by id (the `webmcp_cancel` action). The
+   * browser is told to stop either way — a caller may hold an id whose
+   * invocation this bridge no longer tracks — and the boolean reports whether
+   * we had a waiter to mark, so the caller can say "already finished".
+   */
+  async cancel(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter) waiter.cancelReason = "cancelled";
+    await Promise.resolve(
+      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+    ).catch(() => {
+    });
+    return Boolean(waiter);
+  }
+  /** Reject every waiter; called when the tab or daemon goes away. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const [id, waiter] of this.pending) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          "The browser tab was closed.",
+          "cancelled"
+        )
+      );
+      this.pending.delete(id);
+    }
+  }
+};
+
 // server/services/browserd/daemon/settle.ts
 var DEFAULT_SETTLE_OPTIONS = { maxWaitMs: 1e4 };
 async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
@@ -442,27 +813,65 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
+function parsePoint(value) {
+  if (!value) return null;
+  const match = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(value);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+var DEFAULT_SCROLL_STEP = 600;
+function parseScrollDelta(value) {
+  const point = parsePoint(value);
+  if (point) return [point.x, point.y];
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  if (trimmed === "up") return [0, -DEFAULT_SCROLL_STEP];
+  if (trimmed === "down" || trimmed === "") return [0, DEFAULT_SCROLL_STEP];
+  if (trimmed === "top") return [0, -1e6];
+  if (trimmed === "bottom") return [0, 1e6];
+  const pixels = Number(trimmed);
+  if (Number.isFinite(pixels)) return [0, pixels];
+  return [0, DEFAULT_SCROLL_STEP];
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
+  a11yBudget;
+  consoleBudget;
+  webmcpOutputBudgetBytes;
   tabs = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
+    this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
+    this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
   }
   async execute(command) {
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
-      case "navigate":
+      case "navigate": {
         if (action.newTab) {
-          return { ok: false, error: "unimplemented_in_w1: navigate/newTab" };
+          if (command.tabId === void 0) {
+            return {
+              ok: false,
+              error: "newTab requires an explicit tabId to address the new tab by"
+            };
+          }
+          const existing = this.tabs.get(tabId);
+          if (existing && !existing.page.isClosed()) {
+            return {
+              ok: false,
+              error: `tab_exists: ${tabId} \u2014 omit newTab to navigate it, or choose another tabId`
+            };
+          }
         }
         return this.navigateVerb(
           tabId,
           await this.getOrCreateTab(tabId),
           (page) => page.goto(action.url)
         );
+      }
       case "back":
       case "reload": {
         const entry = this.tabs.get(tabId);
@@ -478,10 +887,166 @@ var ChromiumDriver = class {
       case "observe":
         return this.observe(tabId, action);
       case "act":
+        return this.act(tabId, action);
       case "webmcp_invoke":
+        return this.webmcpInvoke(tabId, action);
       case "webmcp_cancel":
-        return { ok: false, error: `unimplemented_in_w1: ${action.kind}` };
+        return this.webmcpCancel(tabId, action);
     }
+  }
+  /**
+   * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
+   * returns the post-act screenshot + URL with a fresh state token, so the
+   * model never has to spend a turn asking "what happened?" — and the token it
+   * gets back is the one its NEXT act should be pinned to.
+   *
+   * L3 staleness is enforced upstream by `guardStaleness`, which compares the
+   * act's `expectedState` before this runs.
+   */
+  async act(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const page = entry.page;
+    if (action.verb === "close_tab") {
+      await page.close().catch(() => {
+      });
+      this.tabs.delete(tabId);
+      return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "activate_tab") {
+      await page.bringToFront();
+      const frame2 = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame2.url }, frame2);
+    }
+    try {
+      await this.dispatchVerb(page, action);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const frame2 = await this.snapshot(page).catch(() => null);
+      return {
+        ok: false,
+        error: `${kind}: ${message.split("\n")[0]}`,
+        // Hand back the CURRENT state anyway: a failed act still moves the
+        // model forward if it can see what the page actually looks like.
+        ...frame2 ? { stateToken: this.tokenFor(tabId, entry, frame2), output: { url: frame2.url } } : {}
+      };
+    }
+    const settled = await this.settle(page);
+    const frame = await this.snapshot(page);
+    const screenshot = await page.screenshotBase64().catch(() => void 0);
+    return {
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url, ...screenshot ? { screenshot } : {} },
+        frame
+      ),
+      settled
+    };
+  }
+  /** Map an act verb onto the page primitives. */
+  async dispatchVerb(page, action) {
+    const target = action.target;
+    const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
+    const selector = target && "selector" in target ? target.selector : null;
+    if (target && "a11yRef" in target) {
+      throw new Error(
+        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
+      );
+    }
+    switch (action.verb) {
+      case "click":
+        if (point) return page.clickAt(point);
+        if (selector) return page.clickSelector(selector);
+        throw new Error("no element: click needs coordinates or a selector");
+      case "hover":
+        if (point) return page.hoverAt(point);
+        if (selector) return page.hoverSelector(selector);
+        throw new Error("no element: hover needs coordinates or a selector");
+      case "type": {
+        const text = action.value ?? "";
+        if (selector) return page.fillSelector(selector, text);
+        return page.typeText(text);
+      }
+      case "press":
+        if (!action.value) throw new Error("press needs a key in `value`");
+        return page.press(action.value);
+      case "scroll": {
+        const [dx, dy] = parseScrollDelta(action.value);
+        return page.scrollBy({ dx, dy });
+      }
+      case "drag": {
+        if (!point) throw new Error("drag needs start coordinates");
+        const to = parsePoint(action.value);
+        if (!to) {
+          throw new Error(
+            'drag needs a destination in `value` as "x,y" (viewport coordinates)'
+          );
+        }
+        return page.dragTo(point, to);
+      }
+      case "select":
+        if (!selector) throw new Error("select needs a selector");
+        if (action.value === void 0) {
+          throw new Error("select needs the option value in `value`");
+        }
+        return page.selectOption(selector, action.value);
+      case "close_tab":
+      case "activate_tab":
+        return;
+    }
+  }
+  async webmcpInvoke(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge || !bridge.isSupported()) {
+      return {
+        ok: false,
+        error: "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools"
+      };
+    }
+    try {
+      const { invocationId, output } = await bridge.invoke({
+        toolName: action.toolKey,
+        input: action.input
+      });
+      const { output: capped, omitted } = capToolOutput(
+        output,
+        this.webmcpOutputBudgetBytes
+      );
+      const frame = await this.snapshot(entry.page);
+      return {
+        ...this.observation(
+          tabId,
+          entry,
+          { invocationId, result: capped, ...omitted ? { omitted } : {} },
+          frame
+        )
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+  async webmcpCancel(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge) {
+      return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    const known = await bridge.cancel(action.invocationId);
+    return { ok: true, output: { cancelled: known } };
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -515,10 +1080,54 @@ var ChromiumDriver = class {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry);
-      case "a11y":
-      case "console":
-      case "webmcp_tools":
-        return { ok: false, error: `unimplemented_in_w1: observe/${action.mode}` };
+      case "a11y": {
+        const snapshot = await entry.page.a11ySnapshot();
+        const frame = await this.snapshot(entry.page);
+        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+          snapshot,
+          this.a11yBudget
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            a11y: tree,
+            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+          },
+          frame
+        );
+      }
+      case "console": {
+        const { entries, omitted } = capConsole(
+          entry.page.consoleEntries(),
+          this.consoleBudget
+        );
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { console: entries, ...omitted > 0 ? { omitted } : {} },
+          frame
+        );
+      }
+      case "webmcp_tools": {
+        const bridge = await entry.page.webmcp();
+        const frame = await this.snapshot(entry.page);
+        if (!bridge || !bridge.isSupported()) {
+          return this.observation(
+            tabId,
+            entry,
+            { webmcpSupported: false, tools: [] },
+            frame
+          );
+        }
+        return this.observation(
+          tabId,
+          entry,
+          { webmcpSupported: true, tools: bridge.list() },
+          frame
+        );
+      }
     }
   }
   /**
@@ -576,13 +1185,20 @@ var ChromiumDriver = class {
    * than the returned output (P1).
    */
   observation(tabId, entry, output, frame) {
-    const stateToken = computeStateToken({
+    return {
+      ok: true,
+      output,
+      stateToken: this.tokenFor(tabId, entry, frame)
+    };
+  }
+  /** The L3 token for a frame snapshot the caller already captured. */
+  tokenFor(tabId, entry, frame) {
+    return computeStateToken({
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal
     });
-    return { ok: true, output, stateToken };
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
   async snapshot(page) {
@@ -692,6 +1308,7 @@ function isNotFound(err) {
 }
 
 // server/services/browserd/daemon/chromium-launch.ts
+var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
   const parts = [];
@@ -711,7 +1328,35 @@ function abortPromise(signal) {
     });
   });
 }
+var CONSOLE_RING_SIZE = 200;
+var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var ACT_TIMEOUT_MS = 15e3;
 function wrapPage(page) {
+  const consoleRing = [];
+  page.on("console", (message) => {
+    try {
+      const text = message.text?.() ?? "";
+      consoleRing.push({
+        type: message.type?.() ?? "log",
+        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+        at: Date.now()
+      });
+      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  page.on("pageerror", (error) => {
+    consoleRing.push({
+      type: "pageerror",
+      text: capText(
+        error instanceof Error ? error.message : String(error),
+        CONSOLE_ENTRY_CAPTURE_BYTES
+      ),
+      at: Date.now()
+    });
+    if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+  });
+  let webmcpPromise = null;
   return {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
@@ -745,8 +1390,61 @@ function wrapPage(page) {
     },
     url: () => page.url(),
     close: () => page.close(),
-    isClosed: () => page.isClosed()
+    isClosed: () => page.isClosed(),
+    bringToFront: () => page.bringToFront(),
+    // --- act primitives -----------------------------------------------------
+    // Coordinates are already in the canonical observation viewport (L5), so
+    // no scaling happens here: what the model saw IS what it clicks.
+    clickAt: (point, options) => page.mouse.click(point.x, point.y, {
+      ...options?.button ? { button: options.button } : {}
+    }),
+    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverAt: (point) => page.mouse.move(point.x, point.y),
+    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    typeText: (text) => page.keyboard.type(text),
+    fillSelector: (selector, text) => page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
+    press: (key) => page.keyboard.press(key),
+    scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    async dragTo(from, to) {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2);
+      await page.mouse.move(to.x, to.y);
+      await page.mouse.up();
+    },
+    async selectOption(selector, value) {
+      await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
+    },
+    // --- observation --------------------------------------------------------
+    async a11ySnapshot() {
+      const snapshot = await page.accessibility?.snapshot();
+      return snapshot ?? null;
+    },
+    consoleEntries: () => consoleRing,
+    webmcp() {
+      webmcpPromise ??= attachWebMcp(page);
+      return webmcpPromise;
+    }
   };
+}
+async function attachWebMcp(page) {
+  const attach = cdpAttachers.get(page);
+  if (!attach) return null;
+  try {
+    const session = await attach();
+    const bridge = new WebMcpBridge(session);
+    await bridge.start(async () => {
+      const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
+      return supported === true;
+    });
+    return bridge;
+  } catch {
+    return null;
+  }
+}
+var cdpAttachers = /* @__PURE__ */ new WeakMap();
+function registerCdpAttacher(page, attach) {
+  cdpAttachers.set(page, attach);
 }
 async function launchBrowserdContext(options) {
   await clearStaleSingletonLock(options.userDataDir);
@@ -767,6 +1465,9 @@ function adaptContext(context) {
   return {
     async newPage() {
       const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
+      if (context.newCDPSession) {
+        registerCdpAttacher(page, () => context.newCDPSession(page));
+      }
       return wrapPage(page);
     },
     isConnected() {

@@ -22,8 +22,18 @@ import {
   type BrowserCommandResult,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
-import type { DriverContext, DriverPage } from "./browser-page";
+import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken } from "./state-token";
+import {
+  capA11yTree,
+  capConsole,
+  capToolOutput,
+  DEFAULT_A11Y_BUDGET,
+  DEFAULT_CONSOLE_BUDGET,
+  type A11yBudget,
+  type ConsoleBudget,
+} from "./observation-budget";
+import { WebMcpBridgeError } from "./webmcp-bridge";
 import {
   DEFAULT_SETTLE_OPTIONS,
   settlePage,
@@ -60,32 +70,90 @@ interface FrameSnapshot {
 
 export interface ChromiumDriverOptions {
   settle?: SettleOptions;
+  a11y?: A11yBudget;
+  console?: ConsoleBudget;
+  /** Byte budget for a WebMCP tool's returned output (L9). */
+  webmcpOutputBytes?: number;
+}
+
+/** Big enough for a real tool result, small enough not to blow a context. */
+const DEFAULT_WEBMCP_OUTPUT_BYTES = 16_000;
+
+/** Parse `"x,y"` from an act's `value`. */
+function parsePoint(value: string | undefined): ActPoint | null {
+  if (!value) return null;
+  const match = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(value);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+
+/** One viewport-ish step down — the overwhelmingly common scroll intent. */
+const DEFAULT_SCROLL_STEP = 600;
+
+/**
+ * A scroll's `value`: `"down"`/`"up"`, a pixel count, or `"dx,dy"`. Anything
+ * unrecognized scrolls down by the default step rather than erroring — a
+ * scroll is cheap and recoverable, and refusing one teaches nothing.
+ */
+function parseScrollDelta(value: string | undefined): [number, number] {
+  const point = parsePoint(value);
+  if (point) return [point.x, point.y];
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  if (trimmed === "up") return [0, -DEFAULT_SCROLL_STEP];
+  if (trimmed === "down" || trimmed === "") return [0, DEFAULT_SCROLL_STEP];
+  if (trimmed === "top") return [0, -1_000_000];
+  if (trimmed === "bottom") return [0, 1_000_000];
+  const pixels = Number(trimmed);
+  if (Number.isFinite(pixels)) return [0, pixels];
+  return [0, DEFAULT_SCROLL_STEP];
 }
 
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
+  private readonly a11yBudget: A11yBudget;
+  private readonly consoleBudget: ConsoleBudget;
+  private readonly webmcpOutputBudgetBytes: number;
   private readonly tabs = new Map<string, TabEntry>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
+    this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
+    this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.webmcpOutputBudgetBytes =
+      options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
   }
 
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
-      case "navigate":
-        // `navigate` is the only verb that may CREATE a tab. `newTab` (open a
-        // distinct tab) is multi-tab territory deferred to W3; reject it rather
-        // than silently replacing the current tab's page (P2).
+      case "navigate": {
+        // `navigate` is the only verb that may CREATE a tab (P2).
         if (action.newTab) {
-          return { ok: false, error: "unimplemented_in_w1: navigate/newTab" };
+          // A new tab needs a NAME the caller chose, because the tabId is the
+          // addressing mechanism for everything that follows. Reusing an
+          // existing one would silently replace that tab's page — the exact
+          // confusion this branch exists to prevent.
+          if (command.tabId === undefined) {
+            return {
+              ok: false,
+              error:
+                "newTab requires an explicit tabId to address the new tab by",
+            };
+          }
+          const existing = this.tabs.get(tabId);
+          if (existing && !existing.page.isClosed()) {
+            return {
+              ok: false,
+              error: `tab_exists: ${tabId} — omit newTab to navigate it, or choose another tabId`,
+            };
+          }
         }
         return this.navigateVerb(tabId, await this.getOrCreateTab(tabId), (page) =>
           page.goto(action.url),
         );
+      }
       case "back":
       case "reload": {
         // back/reload act on an EXISTING tab only — an unknown tabId is an error,
@@ -101,10 +169,206 @@ export class ChromiumDriver implements BrowserDriver {
       case "observe":
         return this.observe(tabId, action);
       case "act":
+        return this.act(tabId, action);
       case "webmcp_invoke":
+        return this.webmcpInvoke(tabId, action);
       case "webmcp_cancel":
-        return { ok: false, error: `unimplemented_in_w1: ${action.kind}` };
+        return this.webmcpCancel(tabId, action);
     }
+  }
+
+  /**
+   * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
+   * returns the post-act screenshot + URL with a fresh state token, so the
+   * model never has to spend a turn asking "what happened?" — and the token it
+   * gets back is the one its NEXT act should be pinned to.
+   *
+   * L3 staleness is enforced upstream by `guardStaleness`, which compares the
+   * act's `expectedState` before this runs.
+   */
+  private async act(
+    tabId: string,
+    action: Extract<BrowserAction, { kind: "act" }>,
+  ): Promise<BrowserCommandResult> {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const page = entry.page;
+
+    // Tab lifecycle verbs do not produce an observation of their own tab.
+    if (action.verb === "close_tab") {
+      await page.close().catch(() => {});
+      this.tabs.delete(tabId);
+      return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "activate_tab") {
+      await page.bringToFront();
+      const frame = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame.url }, frame);
+    }
+
+    try {
+      await this.dispatchVerb(page, action);
+    } catch (error) {
+      // A target that cannot be resolved is a NORMAL answer the model must be
+      // able to act on ("the button isn't there"), not a daemon fault — and
+      // Playwright's own timeout prose would just confuse it.
+      const message = error instanceof Error ? error.message : String(error);
+      const kind = /timeout|not found|no element|strict mode/i.test(message)
+        ? "target_not_found"
+        : "act_failed";
+      const frame = await this.snapshot(page).catch(() => null);
+      return {
+        ok: false,
+        error: `${kind}: ${message.split("\n")[0]}`,
+        // Hand back the CURRENT state anyway: a failed act still moves the
+        // model forward if it can see what the page actually looks like.
+        ...(frame
+          ? { stateToken: this.tokenFor(tabId, entry, frame), output: { url: frame.url } }
+          : {}),
+      };
+    }
+
+    const settled = await this.settle(page);
+    const frame = await this.snapshot(page);
+    const screenshot = await page.screenshotBase64().catch(() => undefined);
+    return {
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url, ...(screenshot ? { screenshot } : {}) },
+        frame,
+      ),
+      settled,
+    };
+  }
+
+  /** Map an act verb onto the page primitives. */
+  private async dispatchVerb(
+    page: DriverPage,
+    action: Extract<BrowserAction, { kind: "act" }>,
+  ): Promise<void> {
+    const target = action.target;
+    const point = target && "coordinates" in target
+      ? { x: target.coordinates[0], y: target.coordinates[1] }
+      : null;
+    const selector = target && "selector" in target ? target.selector : null;
+    if (target && "a11yRef" in target) {
+      // Deferred deliberately: a ref that silently drifts across a re-render
+      // is worse than one the model cannot use at all.
+      throw new Error(
+        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector",
+      );
+    }
+
+    switch (action.verb) {
+      case "click":
+        if (point) return page.clickAt(point);
+        if (selector) return page.clickSelector(selector);
+        throw new Error("no element: click needs coordinates or a selector");
+      case "hover":
+        if (point) return page.hoverAt(point);
+        if (selector) return page.hoverSelector(selector);
+        throw new Error("no element: hover needs coordinates or a selector");
+      case "type": {
+        const text = action.value ?? "";
+        // With a selector, REPLACE the field's value; without one, type into
+        // whatever has focus (the model's previous click).
+        if (selector) return page.fillSelector(selector, text);
+        return page.typeText(text);
+      }
+      case "press":
+        if (!action.value) throw new Error("press needs a key in `value`");
+        return page.press(action.value);
+      case "scroll": {
+        // Default to one viewport-ish step down, the overwhelmingly common
+        // intent, so a bare `scroll` does something useful.
+        const [dx, dy] = parseScrollDelta(action.value);
+        return page.scrollBy({ dx, dy });
+      }
+      case "drag": {
+        if (!point) throw new Error("drag needs start coordinates");
+        const to = parsePoint(action.value);
+        if (!to) {
+          throw new Error(
+            'drag needs a destination in `value` as "x,y" (viewport coordinates)',
+          );
+        }
+        return page.dragTo(point, to);
+      }
+      case "select":
+        if (!selector) throw new Error("select needs a selector");
+        if (action.value === undefined) {
+          throw new Error("select needs the option value in `value`");
+        }
+        return page.selectOption(selector, action.value);
+      case "close_tab":
+      case "activate_tab":
+        // Handled by the caller before dispatch.
+        return;
+    }
+  }
+
+  private async webmcpInvoke(
+    tabId: string,
+    action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
+  ): Promise<BrowserCommandResult> {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge || !bridge.isSupported()) {
+      return {
+        ok: false,
+        error:
+          "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools",
+      };
+    }
+    try {
+      const { invocationId, output } = await bridge.invoke({
+        toolName: action.toolKey,
+        input: action.input,
+      });
+      const { output: capped, omitted } = capToolOutput(
+        output,
+        this.webmcpOutputBudgetBytes,
+      );
+      const frame = await this.snapshot(entry.page);
+      return {
+        ...this.observation(
+          tabId,
+          entry,
+          { invocationId, result: capped, ...(omitted ? { omitted } : {}) },
+          frame,
+        ),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof WebMcpBridgeError
+            ? `${error.failure}: ${error.message}`
+            : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  private async webmcpCancel(
+    tabId: string,
+    action: Extract<BrowserAction, { kind: "webmcp_cancel" }>,
+  ): Promise<BrowserCommandResult> {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge) {
+      return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    const known = await bridge.cancel(action.invocationId);
+    return { ok: true, output: { cancelled: known } };
   }
 
   /**
@@ -149,10 +413,59 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry);
-      case "a11y":
-      case "console":
-      case "webmcp_tools":
-        return { ok: false, error: `unimplemented_in_w1: observe/${action.mode}` };
+      case "a11y": {
+        // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
+        // a marker naming the retrieval verb), never by cutting one open.
+        const snapshot = await entry.page.a11ySnapshot();
+        const frame = await this.snapshot(entry.page);
+        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+          snapshot,
+          this.a11yBudget,
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            a11y: tree,
+            ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
+          },
+          frame,
+        );
+      }
+      case "console": {
+        const { entries, omitted } = capConsole(
+          entry.page.consoleEntries(),
+          this.consoleBudget,
+        );
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { console: entries, ...(omitted > 0 ? { omitted } : {}) },
+          frame,
+        );
+      }
+      case "webmcp_tools": {
+        const bridge = await entry.page.webmcp();
+        const frame = await this.snapshot(entry.page);
+        if (!bridge || !bridge.isSupported()) {
+          // NOT an error: "this page offers no WebMCP tools" is a legitimate
+          // and common answer, and the model should carry on driving the page
+          // rather than treating cooperation as a precondition.
+          return this.observation(
+            tabId,
+            entry,
+            { webmcpSupported: false, tools: [] },
+            frame,
+          );
+        }
+        return this.observation(
+          tabId,
+          entry,
+          { webmcpSupported: true, tools: bridge.list() },
+          frame,
+        );
+      }
     }
   }
 
@@ -228,13 +541,21 @@ export class ChromiumDriver implements BrowserDriver {
     output: Record<string, unknown>,
     frame: FrameSnapshot,
   ): BrowserCommandResult {
-    const stateToken = computeStateToken({
+    return {
+      ok: true,
+      output,
+      stateToken: this.tokenFor(tabId, entry, frame),
+    };
+  }
+
+  /** The L3 token for a frame snapshot the caller already captured. */
+  private tokenFor(tabId: string, entry: TabEntry, frame: FrameSnapshot) {
+    return computeStateToken({
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal,
     });
-    return { ok: true, output, stateToken };
   }
 
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
