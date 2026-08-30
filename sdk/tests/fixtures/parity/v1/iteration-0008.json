@@ -55,6 +55,6 @@
         "reason": "traceAbsent"
       }
     ],
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 5
   }
 }
