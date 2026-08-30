@@ -73,6 +73,13 @@ import {
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
 import { logger } from "../../utils/logger.js";
+import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import {
+  buildLiveEffectiveCapabilities,
+  resolveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
+import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { v1Error, v1Resource } from "./envelope.js";
 import { readJsonObjectBody } from "./adapter.js";
@@ -340,6 +347,19 @@ interface ResolvedTarget {
   serverNames?: string[];
   environmentId?: string;
   /**
+   * The environment's own capability set, when the turn named one.
+   *
+   * An environment DECIDES what runs — which skills, which plugin versions,
+   * which captured server skills — and that decision is the whole reason a
+   * caller names one. Building a live set from the project pool instead would
+   * hand the model every skill the project has, including the ones the
+   * environment deliberately left out, drop the plugin skills it attached, and
+   * swap its captured server skills for live ones. Absent ⇒ the turn pinned
+   * bare `serverIds` and there is no environment decision to honour, so the
+   * caller builds a live set instead.
+   */
+  environmentCapabilities?: EffectiveCapabilitySet;
+  /**
    * Built-in tool ids the target's client advertises that THIS surface does
    * not run — see {@link unappliedBuiltInToolIds}.
    */
@@ -411,10 +431,22 @@ async function resolveTarget(
   const unappliedCapabilities = unappliedBuiltInToolIds(
     spec.host?.runtimeConfig,
   );
+  // Attribution is a SECOND read and deliberately cannot fail the turn: the
+  // environment already decided what runs, so a probe blip must degrade origin
+  // reporting rather than stop a send. Costs nothing when no plugins are
+  // pinned. Mirrors `routes/web/chat-v2.ts`, which is the surface this one has
+  // to agree with about what an environment means.
+  const attribution = await fetchPluginRuntimeAttribution(client, {
+    projectId,
+    pluginVersionIds: (spec.pluginVersions ?? []).map(
+      (plugin) => plugin.pluginVersionId,
+    ),
+  }).catch(() => null);
   return {
     serverIds,
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
+    environmentCapabilities: resolveEffectiveCapabilities(spec, attribution),
     ...(unappliedCapabilities.length > 0 ? { unappliedCapabilities } : {}),
   };
 }
@@ -971,9 +1003,68 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
+    // The project's own skills, which this surface has never had. #4419 gave it
+    // a connected server's skills by advertising the extension above; the
+    // project pool was still invisible, so an agent driving MCPJam could read
+    // somebody else's skills but not its own.
+    //
+    // TWO shapes, because a turn that named an environment is not a live turn.
+    // An environment IS a decision about what runs, so its own resolved set is
+    // the answer — pinned skill selection, attached plugin skills, captured
+    // server skills and all. Only a turn pinning bare `serverIds` has no such
+    // decision behind it, and only that turn builds a live set from the
+    // project pool.
+    //
+    // The live shape stays lazy, like every other live surface: the catalog is
+    // one query and a body is fetched only for the skill the model loads. A
+    // catalog failure degrades to no skills rather than failing the turn.
+    let turnCapabilities: EffectiveCapabilitySet | undefined;
+    let capabilitiesAreLive = false;
+    if (target.environmentCapabilities) {
+      turnCapabilities = target.environmentCapabilities;
+    } else if (projectId) {
+      try {
+        turnCapabilities = buildLiveEffectiveCapabilities({
+          standaloneSkills: await listCloudRuntimeSkills({
+            authHeader,
+            projectId,
+          }),
+        });
+        capabilitiesAreLive = true;
+      } catch (error) {
+        logger.warn(
+          "[v1/chat-session-turn] project skill catalog unavailable",
+          {
+            projectId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    }
+
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: selectedServerIds,
+      ...(turnCapabilities
+        ? {
+            skillsSource: {
+              kind: "resolved" as const,
+              capabilities: turnCapabilities,
+              // Only a LIVE set composes live server skills, and that is the
+              // same rule `web-chat-turn` follows. An environment's server
+              // skills were CAPTURED; fetching more from the connection would
+              // falsify the claim that the set describes the turn — which is
+              // exactly what this flag exists to prevent. On the live arm it
+              // keeps #4419's server skills composed alongside the project's.
+              ...(capabilitiesAreLive
+                ? { composeLiveServerSkills: true as const }
+                : {}),
+              // The turn's own controller, so a lazy body or file read stops
+              // with the turn instead of running to its own fetch timeout.
+              abortSignal: abortController.signal,
+            },
+          }
+        : {}),
       // Without this every server-skill ref is namespaced by the raw server
       // id, in the `listSkills` catalog the model reads AND in the origin
       // banner prepended to loaded skill content.
@@ -1007,8 +1098,8 @@ async function handleTurn(c: Context): Promise<Response> {
     const tools = noTools
       ? ({} as ToolSet)
       : body.maxToolCalls !== undefined && body.maxToolCalls > 0
-      ? capToolCalls(prepared.allTools, body.maxToolCalls)
-      : prepared.allTools;
+        ? capToolCalls(prepared.allTools, body.maxToolCalls)
+        : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -1029,8 +1120,7 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      | { message: string; code?: string; httpStatus?: number }
-      | undefined;
+      { message: string; code?: string; httpStatus?: number } | undefined;
 
     // Past this line the turn may have spent. See `modelCallStarted`.
     modelCallStarted = true;
@@ -1107,7 +1197,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message,
         {
           reason: rateLimited
-            ? lastEngineError?.code ?? "ORG_RATE_LIMIT"
+            ? (lastEngineError?.code ?? "ORG_RATE_LIMIT")
             : "TURN_FAILED",
         },
       );

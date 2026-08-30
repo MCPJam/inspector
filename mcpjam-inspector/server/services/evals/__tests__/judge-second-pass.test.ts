@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { StageAuthoredCase } from "@mcpjam/sdk/contract";
-import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import {
+  LATENCY_BASIS_EVIDENCE_SPAN_UNION,
+  STAGE_ANALYZER_VERSION,
+  STAGE_MEASUREMENTS_SCHEMA_VERSION,
+} from "@mcpjam/sdk/contract";
 import {
   JudgeStageBackendError,
   type JudgeSecondPassRunRow,
@@ -271,6 +275,7 @@ describe("the write it does make", () => {
       "firstFailedStage",
       "failureCategory",
       "stageAnalyzerVersion",
+      "stageMeasurements",
       "setupSignals",
       "toolSignals",
       "scores",
@@ -279,6 +284,61 @@ describe("the write it does make", () => {
     for (const key of Object.keys(body)) expect(allowed.has(key)).toBe(true);
     expect(body.goalCompletionJobId).toBe("job1");
     expect(typeof body.judgeStageDerivedAt).toBe("number");
+  });
+
+  test("forwards derived stage measurements from the persisted trace", async () => {
+    const base = runRow();
+    const { value, applied } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          iterations: [
+            {
+              ...base.iterations[0]!,
+              spans: [
+                {
+                  id: "tool-1",
+                  name: "tools/call",
+                  category: "tool",
+                  startMs: 100,
+                  endMs: 175,
+                },
+              ],
+            },
+          ],
+        })
+      ),
+    });
+
+    await runJudgeSecondPass("run1", value);
+
+    expect(applied[0]!.body.stageMeasurements).toEqual({
+      schemaVersion: STAGE_MEASUREMENTS_SCHEMA_VERSION,
+      stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+      rows: [
+        { stage: "connection", reach: "reached" },
+        { stage: "discovery", reach: "reached" },
+        { stage: "selection", reach: "unknown" },
+        {
+          stage: "call",
+          reach: "reached",
+          latency: {
+            unit: "ms",
+            basis: LATENCY_BASIS_EVIDENCE_SPAN_UNION,
+            value: 75,
+          },
+        },
+        {
+          stage: "response",
+          reach: "reached",
+          latency: {
+            unit: "ms",
+            basis: LATENCY_BASIS_EVIDENCE_SPAN_UNION,
+            value: 75,
+          },
+        },
+        { stage: "userValue", reach: "reached" },
+      ],
+    });
   });
 
   test("the judge verdict reaches userValue as a tier-2 row", async () => {

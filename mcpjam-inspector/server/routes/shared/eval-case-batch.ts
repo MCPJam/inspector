@@ -43,6 +43,11 @@ export interface CaseBatchWarning {
 /** One case in a batch. The authored fields the backend's item validator takes. */
 export type EvalCaseBatchItem = Record<string, unknown> & {
   title: string;
+  /**
+   * Optional analytics label. `null` is reserved for an explicit clear on an
+   * authoritative write; omitted means no intent was supplied.
+   */
+  intent?: string | null;
   /** Declared identity. Minted by the caller; never derived by the backend. */
   caseId?: string;
   /** Per-item write key, derived caller-side (see utils/idempotency.ts). */

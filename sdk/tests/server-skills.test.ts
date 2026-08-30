@@ -685,6 +685,71 @@ describe("listing contradictions", () => {
   });
 });
 
+describe("the manifest is validated, not just consulted", () => {
+  // `readVerifiedServerSkillFile` is a public SDK export, so its safety must
+  // not depend on the caller having passed a manifest that
+  // `getVerifiedServerSkill` already normalized. Containment is what stops one
+  // skill's manifest authorizing a read of another's files, and a check that
+  // holds only while every caller remembers it is the second way in this
+  // module exists to prevent.
+  it("refuses a manifest entry pointing outside the skill's own directory", async () => {
+    const escaping = {
+      uri: SKILL_URI,
+      resources: [
+        {
+          uri: "skill://acme/other-skill/secrets.env",
+          digest: `sha256:${await sha256(FILE_TEXT)}`,
+          size: bytesOf(FILE_TEXT),
+        },
+      ],
+    };
+    const manager = managerWith({
+      entry: escaping,
+      texts: { "skill://acme/other-skill/secrets.env": FILE_TEXT },
+    });
+
+    const refusal = await refusalFrom(() =>
+      readVerifiedServerSkillFile(manager, {
+        serverId: SERVER_ID,
+        entry: escaping as never,
+        resourceUri: "skill://acme/other-skill/secrets.env",
+      })
+    );
+
+    expect(refusal.kind).toBe("unlisted_resource");
+    expect(refusal.message).toContain("outside the skill directory");
+    // Refused BEFORE the fetch — a server that would happily serve the file
+    // must not get bytes in front of a model just because it answered.
+    expect(manager.readResource).not.toHaveBeenCalled();
+  });
+
+  it("refuses a self-contradictory manifest rather than picking a copy", async () => {
+    const duplicated = {
+      uri: SKILL_URI,
+      resources: [
+        { uri: FILE_URI, digest: `sha256:${await sha256(FILE_TEXT)}` },
+        { uri: FILE_URI, digest: `sha256:${await sha256(OTHER_TEXT)}` },
+      ],
+    };
+    const manager = managerWith({
+      entry: duplicated,
+      texts: { [FILE_URI]: FILE_TEXT },
+    });
+
+    const refusal = await refusalFrom(() =>
+      readVerifiedServerSkillFile(manager, {
+        serverId: SERVER_ID,
+        entry: duplicated as never,
+        resourceUri: FILE_URI,
+      })
+    );
+
+    expect(refusal.kind).toBe("unlisted_resource");
+    expect(refusal.message).toContain("more than once");
+    expect(manager.readResource).not.toHaveBeenCalled();
+  });
+});
+
 describe("probing for absence", () => {
   // The ONLY evidence of absence SEP-2640 offers is a -32602 for the URI. Both
   // other outcomes must answer "not proven gone", because this decides whether

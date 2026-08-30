@@ -45,6 +45,9 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
+import { SuiteRunStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
+import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, Download, Share2 } from "lucide-react";
@@ -196,6 +199,17 @@ interface RunDetailViewProps {
    * keeps every non-Evaluate mount at exactly zero summary requests.
    */
   decisionSummarySlot?: React.ReactNode;
+  /**
+   * The cohort the flow diagram would analyze, when this surface has one.
+   *
+   * A prop rather than something derived here, for the reason the funnel below
+   * it is not: the funnel reads a rollup that already exists for any run, and
+   * the diagram needs a cohort a paid analyzer pass can be filed against. Only
+   * a caller knows whether this run belongs to one. `null` (the default) means
+   * no cohort, and the panel renders nothing rather than offering a button
+   * that would spend nothing.
+   */
+  flowScope?: InsightsScope | null;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -416,6 +430,7 @@ export function RunDetailView({
   onExportTraces,
   onShare,
   decisionSummarySlot,
+  flowScope = null,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -742,6 +757,29 @@ export function RunDetailView({
       </div>
     ) : null;
 
+  /**
+   * The free half and the paid half of the same traces, side by side.
+   *
+   * The funnel is mounted unconditionally because reading it costs nothing —
+   * the stage worker already derived those verdicts, and this is their rollup.
+   * The diagram beside it is a model's reading, bought per pass, and issues no
+   * query at all until somebody clicks. Auto-requesting it would put a charge
+   * on opening a tab.
+   *
+   * A fragment rather than a wrapper: each half suppresses itself when it has
+   * nothing, and a wrapping div would survive both of them to leave a padded
+   * empty box — and, in the embedded rail, a divider with nothing under it.
+   */
+  const userValueChainPanel = (
+    <>
+      <SuiteRunStageFunnelPanel
+        suiteRunId={selectedRunDetails._id}
+        className="m-3"
+      />
+      <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
+    </>
+  );
+
   const insightRail = (
     <RunInsightRail
       triageCard={
@@ -756,6 +794,7 @@ export function RunDetailView({
       }
       goalCompletionCard={goalCompletionPanel}
       groundednessCard={groundednessPanel}
+      userValueChainCard={userValueChainPanel}
       embedded={embeddedInResultsSplit}
     />
   );

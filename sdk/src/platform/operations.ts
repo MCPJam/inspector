@@ -15,6 +15,10 @@ import {
   MAX_BATCH_CREATE_CASES,
   evalSuiteFileCaseImportSchema,
 } from "../contract/suite-file.js";
+import {
+  caseIntentSchema,
+  caseIntentUpdateSchema,
+} from "../contract/stage-intent.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -1115,7 +1119,10 @@ const PAGE_CURSOR_DESCRIPTION =
   "Opaque pagination cursor from a previous response.";
 
 const serverPagedInput = serverScopedInput.extend({
-  cursor: z.string().min(1).optional().describe(PAGE_CURSOR_DESCRIPTION),
+  // No `.min(1)`: `""` is a legitimate MCP cursor (2026-07-28
+  // `server/utilities/pagination`), and rejecting it would refuse to page a
+  // conforming server.
+  cursor: z.string().optional().describe(PAGE_CURSOR_DESCRIPTION),
 });
 
 export type ServerPagedInput = z.infer<typeof serverPagedInput>;
@@ -1144,13 +1151,17 @@ async function runServerListing(
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {}
+    // Presence, not truthiness, in BOTH directions: this is a passthrough of
+    // the MCP server's cursor, and `""` is a valid one.
+    input.cursor !== undefined ? { cursor: input.cursor } : {}
   );
   return {
     project: toSelectedProjectInfo(project),
     server: toServerInfo(server),
     items: page.items,
-    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    ...(typeof page.nextCursor === "string"
+      ? { nextCursor: page.nextCursor }
+      : {}),
   };
 }
 
@@ -1748,14 +1759,20 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const rawTools: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
     let truncated = false;
+    // No repeated-cursor guard: comparing two cursors for equality is itself
+    // a determination based on cursor value, and a server may legally reissue
+    // one constant token — `""` included — for every page. The cap below is
+    // the bound, and it already flags the read as incomplete.
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
-        { ...scope, body: cursor ? { cursor } : {} },
+        // Presence, not truthiness: `""` is a valid MCP continuation cursor.
+        { ...scope, body: cursor !== undefined ? { cursor } : {} },
         { signal }
       );
       rawTools.push(...result.items);
-      cursor = result.nextCursor;
-      if (!cursor) break;
+      cursor =
+        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+      if (cursor === undefined) break;
       // Hit the cap with tools still pending — don't pretend the report is
       // complete (a later page could hold widgets that change a verdict).
       if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;
@@ -4436,6 +4453,11 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   runs: z
     .number()
     .int()
@@ -4642,6 +4664,11 @@ const caseModelSchema = z.object({
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
+  intent: caseIntentSchema
+    .optional()
+    .describe(
+      "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
   // A `prompt` step is a model turn; a `toolCall` step is a deterministic
@@ -5577,6 +5604,14 @@ const updateEvalCaseInput = z.object({
     .optional()
     .describe(
       "Import provenance for a converted case: {status, sourceCaseKey?, note?}. `exact` is a CONVERTER CLAIM, not a verification, and requires a note citing the mapping rule. Pass null to clear the stored claim; omit to leave it untouched."
+    ),
+  // UPDATE-only nullability: absent preserves the existing label, `null`
+  // clears it, and a string replaces it. This mirrors the file reconciliation
+  // boundary so neither can silently conflate unlabelled with untouched.
+  intent: caseIntentUpdateSchema
+    .optional()
+    .describe(
+      "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
     ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
@@ -8713,8 +8748,47 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+        "Project-shared skill IDs to select. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
       ),
+    versionPins: z
+      .array(
+        z.object({
+          skillId: z.string().trim().min(1),
+          versionId: z.string().trim().min(1),
+        })
+      )
+      .min(1)
+      .optional()
+      .describe(
+        "Optional exact-version overlay: at most one entry per selected skill, each naming a version of that same skill. A selected skill with no entry runs 'Latest' — its current revision, resolved when the run starts. Pin a version to hold this environment at a known revision, e.g. to compare two revisions of one skill side by side."
+      ),
+  })
+  // The pins are only meaningful RELATIVE to the selection they ride on, so the
+  // relation is checked here rather than left to the API: a duplicate pin makes
+  // "which revision does this skill run?" ambiguous, and a pin for an
+  // unselected skill silently does nothing. Both are rejected server-side too —
+  // catching them in the SDK turns a round-trip error into an immediate one.
+  .superRefine((selection, ctx) => {
+    const pins = selection.versionPins ?? [];
+    const selected = new Set(selection.skillIds);
+    const seen = new Set<string>();
+    for (const pin of pins) {
+      if (seen.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Skill ${pin.skillId} has more than one version pin; pin at most one version per skill.`,
+        });
+      }
+      seen.add(pin.skillId);
+      if (!selected.has(pin.skillId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["versionPins"],
+          message: `Version pin references skill ${pin.skillId}, which is not in skillIds.`,
+        });
+      }
+    }
   })
   .describe(
     "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."

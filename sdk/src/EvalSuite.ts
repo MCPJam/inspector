@@ -289,6 +289,9 @@ export class EvalSuite {
         // — safe because every reader looks the record up by test NAME and
         // none of them branches on how many entries it holds.
         caseId: config.id,
+        // Preserve the unlabelled slice on every modern SDK result. An
+        // omitted field means an older producer did not speak to intent.
+        intent: config.intent ?? null,
         ...(config.externalCaseId !== undefined
           ? { externalCaseId: config.externalCaseId }
           : {}),
