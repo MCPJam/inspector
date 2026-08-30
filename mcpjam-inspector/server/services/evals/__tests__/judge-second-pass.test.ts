@@ -572,6 +572,24 @@ describe("judgeEvidenceFromVerdict", () => {
     expect(line).not.toContain("scored 0.7 against");
   });
 
+  test("keeps a narrow partial band from collapsing to one number", () => {
+    // Review finding on the first version of the precision fix: it compared
+    // each boundary only with the SCORE, so a 0.7001 threshold and a 0.6999
+    // floor both rendered `0.7` while the score sat far from either. The line
+    // whose whole job is to show the band's width erased it.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.5,
+        threshold: 0.7001,
+        partialFloor: 0.6999,
+      }) as { reasons: string[] }
+    ).reasons;
+    expect(line).toContain("0.7001 threshold");
+    expect(line).toContain("0.6999 partial floor");
+  });
+
   test("still reads equal when the score IS the threshold", () => {
     // The other half: growing precision must not manufacture a difference
     // where none exists. A score exactly on its threshold should say so.

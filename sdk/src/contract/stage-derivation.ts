@@ -1380,14 +1380,59 @@ function mergeMetadataAttributionEvidence(
 }
 
 /**
- * Re-label the stages a MODEL-CALL failure left blank.
+ * Reasons a stage reported NOTHING, which a model-call failure explains.
  *
- * Applied last, and only to rows that measured nothing: a stage with its own
- * evidence keeps its own row, because the provider dying at turn 4 does not
- * un-observe what turns 1-3 established. What it replaces is the bare
- * `noEvidenceCaptured` / `traceAbsent` gap, which reads as "we looked and the
- * server told us nothing" — an accusation, when the truth is that our own
- * provider never let us ask.
+ * Each reads as "we looked and the server told us nothing" — an accusation,
+ * when the truth is that our own provider never let us ask.
+ */
+const PROVIDER_BLANKED_REASONS: ReadonlyArray<StageReason | undefined> = [
+  "noEvidenceCaptured",
+  "traceAbsent",
+  "executorEmitsNoSpans",
+];
+
+/**
+ * Failure reasons that conclude from something NOT HAPPENING.
+ *
+ * This is the distinction that decides whether a `failed` row survives a
+ * provider outage, and it is the whole of the second half of this function.
+ *
+ * An ABSENCE verdict — no tool call arrived, an assertion over the output did
+ * not hold, the judge scored a transcript low — is only sound if the run was
+ * allowed to finish. When our own model call died first, "it did not happen"
+ * has a second explanation that outranks the accusation, and we cannot tell
+ * which is true. The honest answer is that we did not measure it.
+ *
+ * PRESENCE verdicts are deliberately absent from this list and keep their
+ * rows: an unexpected call was really made, arguments really mismatched, a
+ * tool really errored, a render really failed. Those observations stand
+ * whatever killed the turn afterwards. `connectFailed` and `toolsListFailed`
+ * matter most here — they happen BEFORE any model call, so a server that would
+ * not connect must never be excused by a provider error that came later.
+ */
+const PROVIDER_UNKNOWABLE_FAILURES: ReadonlyArray<StageReason | undefined> = [
+  "missingToolCall",
+  "predicateFailed",
+  "judgePartial",
+  "judgeFailed",
+];
+
+/**
+ * Re-label what a MODEL-CALL failure made unknowable.
+ *
+ * Applied last, and in two parts.
+ *
+ * BLANK ROWS. A stage that measured nothing is re-labelled, while a stage with
+ * its own evidence keeps its own row: the provider dying at turn 4 does not
+ * un-observe what turns 1-3 established.
+ *
+ * FAILED ROWS THAT REST ON AN ABSENCE. The first version of this stopped at
+ * blank rows, and that left the fix inert on the shape it matters most for. A
+ * case expecting a tool call whose provider died first still had
+ * `selection: failed / missingToolCall` written by the matcher before this
+ * ever ran — so `firstFailedStage` stayed `selection`, `categoryFor` returned
+ * `selection`, and the outage was filed as a model-selection defect. The one
+ * thing this reason exists to prevent, on the most common case in the corpus.
  *
  * `notMeasured` throughout, never `failed`. A run that could not be attempted
  * has measured nothing about the server, and inflating a server failure rate
@@ -1398,16 +1443,30 @@ function applyProviderError(
   evidence: StageEvidence
 ): StageResultRow[] {
   if (evidence.stepError?.source !== "model") return rows;
-  const BLANK: ReadonlyArray<StageReason | undefined> = [
-    "noEvidenceCaptured",
-    "traceAbsent",
-    "executorEmitsNoSpans",
-  ];
-  return rows.map((r) =>
-    r.state === "notMeasured" && BLANK.includes(r.reason)
-      ? { ...r, reason: "providerError" as const }
-      : r
-  );
+  return rows.map((r) => {
+    if (
+      r.state === "notMeasured" &&
+      PROVIDER_BLANKED_REASONS.includes(r.reason)
+    ) {
+      return { ...r, reason: "providerError" as const };
+    }
+    if (
+      r.state === "failed" &&
+      PROVIDER_UNKNOWABLE_FAILURES.includes(r.reason)
+    ) {
+      // The EVIDENCE goes with the verdict it supported. Those lines say why
+      // the absence was judged a failure, and that judgement is exactly what
+      // is being withdrawn — keeping them would leave a `notMeasured` row
+      // arguing for a failure it no longer claims.
+      const { evidence: _dropped, ...rest } = r;
+      return {
+        ...rest,
+        state: "notMeasured" as const,
+        reason: "providerError" as const,
+      };
+    }
+    return r;
+  });
 }
 
 function finalize(
