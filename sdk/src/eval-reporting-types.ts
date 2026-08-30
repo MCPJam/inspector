@@ -132,6 +132,11 @@ export type EvalResultInput = {
    */
   caseId?: string;
   /**
+   * The authored analytics grouping label for this case. `null` explicitly
+   * records an unlabelled modern producer; omission remains legacy-compatible.
+   */
+  intent?: string | null;
+  /**
    * This trial's LIFECYCLE status — what happened to the execution, which is a
    * different question from `passed` (the task verdict).
    *
