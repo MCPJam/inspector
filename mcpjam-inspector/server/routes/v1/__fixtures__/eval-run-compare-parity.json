@@ -11,7 +11,8 @@
       "a run-level evaluation config change (cfg_hash_base -> cfg_hash_compare)",
       "a per-case config that did NOT change while the run-level one did (ck_stable)",
       "not_applicable excluded from a pass-rate denominator (tone on ck_stable)",
-      "_storage blob ids present in the internal diff and dropped by the public DTO"
+      "_storage blob ids present in the internal diff and dropped by the public DTO",
+      "an authored skill edited across the runs (refunds v3 -> v4), an MCP-served skill added, and one unchanged"
     ]
   },
   "suite": {
@@ -49,7 +50,33 @@
         ],
         "environment": {
           "servers": []
-        }
+        },
+        "pinnedSkills": [
+          {
+            "skillId": "kd7abc000000000000000001projectSkills",
+            "name": "refunds",
+            "description": "Handle refund requests",
+            "contentHash": "skill_refunds_v3_hash",
+            "projectSkillVersionId": "kv7abc000000000000000003projectSkillVersions",
+            "projectSkillVersionNumber": 3,
+            "sharing": "project",
+            "channels": [
+              "environment"
+            ]
+          },
+          {
+            "skillId": "kd7abc000000000000000002projectSkills",
+            "name": "tone",
+            "description": "House tone",
+            "contentHash": "skill_tone_v1_hash",
+            "projectSkillVersionId": "kv7abc000000000000000010projectSkillVersions",
+            "projectSkillVersionNumber": 1,
+            "sharing": "project",
+            "channels": [
+              "environment"
+            ]
+          }
+        ]
       },
       "_id": "run_parity_base",
       "runNumber": 1,
@@ -278,7 +305,44 @@
         ],
         "environment": {
           "servers": []
-        }
+        },
+        "pinnedSkills": [
+          {
+            "skillId": "kd7abc000000000000000001projectSkills",
+            "name": "refunds",
+            "description": "Handle refund requests",
+            "contentHash": "skill_refunds_v4_hash",
+            "projectSkillVersionId": "kv7abc000000000000000004projectSkillVersions",
+            "projectSkillVersionNumber": 4,
+            "sharing": "project",
+            "channels": [
+              "environment"
+            ]
+          },
+          {
+            "skillId": "kd7abc000000000000000002projectSkills",
+            "name": "tone",
+            "description": "House tone",
+            "contentHash": "skill_tone_v1_hash",
+            "projectSkillVersionId": "kv7abc000000000000000010projectSkillVersions",
+            "projectSkillVersionNumber": 1,
+            "sharing": "project",
+            "channels": [
+              "environment"
+            ]
+          },
+          {
+            "serverSkillId": "ks7abc000000000000000005serverSkills",
+            "name": "lookup",
+            "description": "Order lookup served over MCP",
+            "contentHash": "server_skill_lookup_hash",
+            "serverSkillVersionNumber": 2,
+            "sharing": "project",
+            "channels": [
+              "mcp-server"
+            ]
+          }
+        ]
       },
       "_id": "run_parity_compare",
       "runNumber": 2,
@@ -662,6 +726,48 @@
           }
         }
       ]
+    },
+    "skills": {
+      "base": {
+        "excluded": false,
+        "count": 2
+      },
+      "compare": {
+        "excluded": false,
+        "count": 3
+      },
+      "changes": [
+        {
+          "key": "skill:kd7abc000000000000000001projectSkills",
+          "name": "refunds",
+          "channels": [
+            "environment"
+          ],
+          "kind": "changed",
+          "base": {
+            "contentHash": "skill_refunds_v3_hash",
+            "versionNumber": 3
+          },
+          "compare": {
+            "contentHash": "skill_refunds_v4_hash",
+            "versionNumber": 4
+          },
+          "versionDelta": "v3 → v4"
+        },
+        {
+          "key": "serverSkill:ks7abc000000000000000005serverSkills",
+          "name": "lookup",
+          "channels": [
+            "mcp-server"
+          ],
+          "kind": "added",
+          "compare": {
+            "contentHash": "server_skill_lookup_hash",
+            "serverSkillVersionNumber": 2
+          }
+        }
+      ],
+      "unchangedCount": 1
     },
     "cases": [
       {

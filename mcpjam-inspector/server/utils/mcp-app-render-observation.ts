@@ -10,7 +10,7 @@
  * a widget tool result resolves to.
  */
 
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
 import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
 import type { WidgetCspMeta } from "./widget-helpers";
@@ -50,7 +50,7 @@ export function isRenderableMcpAppTool(
   toolMetadata: unknown
 ): toolMetadata is Record<string, unknown> {
   if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) return false;
-  return Boolean(getToolUiResourceUri({ _meta: toolMetadata }));
+  return Boolean(resolveToolUiResourceUri(toolMetadata));
 }
 
 /**
@@ -66,7 +66,7 @@ export async function renderMcpAppToolResult(
   const ts = Date.now();
   const base = { toolCallId, toolName, serverId, ts };
 
-  const resourceUri = getToolUiResourceUri({ _meta: toolMetadata });
+  const resourceUri = resolveToolUiResourceUri(toolMetadata);
   if (!resourceUri) {
     return { ...base, status: "no_ui_resource", elapsedMs: 0 };
   }

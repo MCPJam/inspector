@@ -21,6 +21,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { discoverOpenAIImportedSkills } from "../../src/openai-readiness/discovery.js";
+import { sha256HexOfText } from "../../src/mcp-client-manager/skills-integrity.js";
 
 const servers: http.Server[] = [];
 
@@ -31,14 +32,14 @@ afterEach(async () => {
         new Promise<void>((resolve) => {
           server.closeAllConnections?.();
           server.close(() => resolve());
-        }),
-    ),
+        })
+    )
   );
 });
 
 /** Serve one JSON-RPC responder, returning the URL and the methods it saw. */
 async function start(
-  respond: (method: string, params: Record<string, unknown>) => unknown,
+  respond: (method: string, params: Record<string, unknown>) => unknown
 ): Promise<{ url: string; calls: string[] }> {
   const calls: string[] = [];
   const server = http.createServer((req, res) => {
@@ -60,8 +61,8 @@ async function start(
         JSON.stringify(
           answer && "error" in answer
             ? { jsonrpc: "2.0", id: request.id, error: answer.error }
-            : { jsonrpc: "2.0", id: request.id, result: answer },
-        ),
+            : { jsonrpc: "2.0", id: request.id, result: answer }
+        )
       );
     });
   });
@@ -81,6 +82,69 @@ const SKILL_MARKDOWN = [
 ].join("\n");
 
 describe("discoverOpenAIImportedSkills", () => {
+  it("reads current SEP-2640 entries by URI and fetches bytes via resources/read", async () => {
+    const skillUri = "skill://forecast/SKILL.md";
+    const pageUri = "skill://forecast/references/details.md";
+    const page = "Use the city name exactly as entered.";
+    const entry = {
+      uri: skillUri,
+      frontmatter: {
+        name: "forecast",
+        description: "Look up a forecast for any city",
+      },
+      resources: [
+        {
+          uri: skillUri,
+          digest: `sha256:${await sha256HexOfText(SKILL_MARKDOWN)}`,
+          size: new TextEncoder().encode(SKILL_MARKDOWN).length,
+        },
+        {
+          uri: pageUri,
+          digest: `sha256:${await sha256HexOfText(page)}`,
+          size: new TextEncoder().encode(page).length,
+        },
+      ],
+    };
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const { url } = await start((method, params) => {
+      calls.push({ method, params });
+      if (method === "skills/list") return { skills: [entry] };
+      if (method === "skills/get") {
+        return { resultType: "complete", skill: entry };
+      }
+      if (method === "resources/read" && params.uri === skillUri) {
+        return { contents: [{ uri: skillUri, text: SKILL_MARKDOWN }] };
+      }
+      if (method === "resources/read" && params.uri === pageUri) {
+        return { contents: [{ uri: pageUri, text: page }] };
+      }
+      return { error: { code: -32602, message: "unknown URI" } };
+    });
+
+    const evidence = await discoverOpenAIImportedSkills({
+      enteredUrl: url,
+      fetchFn: fetch,
+    });
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "skills/list",
+      "skills/get",
+      "resources/read",
+    ]);
+    expect(calls[1]?.params).toEqual({ uri: skillUri });
+    expect(calls[2]?.params).toEqual({ uri: skillUri });
+    expect(evidence.skills[0]).toMatchObject({
+      name: "forecast",
+      resourceUri: skillUri,
+      declaredDigest: `sha256:${await sha256HexOfText(SKILL_MARKDOWN)}`,
+      markdownBytes: new TextEncoder().encode(SKILL_MARKDOWN).length,
+      observedDigest: await sha256HexOfText(SKILL_MARKDOWN),
+      declaredPageCount: 1,
+      pages: [{ uri: pageUri, bytes: new TextEncoder().encode(page).length }],
+    });
+    expect(evidence.skills[0]?.fetchError).toBeUndefined();
+  });
+
   it("fetches each skill's body, not just the listing", async () => {
     const { url, calls } = await start((method) =>
       method === "skills/list"
@@ -93,7 +157,7 @@ describe("discoverOpenAIImportedSkills", () => {
               },
             ],
           }
-        : { skill: { name: "forecast", content: SKILL_MARKDOWN } },
+        : { skill: { name: "forecast", content: SKILL_MARKDOWN } }
     );
 
     const evidence = await discoverOpenAIImportedSkills({
@@ -105,7 +169,7 @@ describe("discoverOpenAIImportedSkills", () => {
     const [skill] = evidence.skills;
     // The three facts only a fetched body can establish.
     expect(skill.markdownBytes).toBe(
-      new TextEncoder().encode(SKILL_MARKDOWN).length,
+      new TextEncoder().encode(SKILL_MARKDOWN).length
     );
     expect(skill.observedDigest).toMatch(/^[0-9a-f]{64}$/);
     expect(skill.frontmatter).toMatchObject({
@@ -114,13 +178,68 @@ describe("discoverOpenAIImportedSkills", () => {
     });
   });
 
+  it("parses frontmatter with real YAML, so a conforming server is not flagged", async () => {
+    // REGRESSION: this ran through `parseYamlLite`, the deliberately-small
+    // subset parser, while `checkFrontmatterDrift` compares the union of keys
+    // on canonical JSON. Two divergences turned CONFORMING servers into
+    // FRONTMATTER_AGREES violations: a nested map became `""`, and a block
+    // scalar lost the trailing newline YAML preserves.
+    const markdown = [
+      "---",
+      "name: forecast",
+      "description: |",
+      "  Look up a forecast",
+      "  for any city.",
+      "metadata:",
+      "  author: acme",
+      "---",
+      "",
+      "Body.",
+    ].join("\n");
+    const skillUri = "skill://forecast/SKILL.md";
+    const declared = {
+      name: "forecast",
+      description: "Look up a forecast\nfor any city.\n",
+      metadata: { author: "acme" },
+    };
+    const entry = {
+      uri: skillUri,
+      frontmatter: declared,
+      resources: [
+        {
+          uri: skillUri,
+          digest: `sha256:${await sha256HexOfText(markdown)}`,
+          size: new TextEncoder().encode(markdown).length,
+        },
+      ],
+    };
+    const { url } = await start((method, params) => {
+      if (method === "skills/list") return { skills: [entry] };
+      if (method === "skills/get") return { skill: entry };
+      if (method === "resources/read" && params.uri === skillUri) {
+        return { contents: [{ uri: skillUri, text: markdown }] };
+      }
+      return {};
+    });
+
+    const evidence = await discoverOpenAIImportedSkills({
+      enteredUrl: url,
+      fetchFn: fetch,
+    });
+    const [skill] = evidence.skills;
+    // Structurally equal to what the server declared — which is exactly what
+    // the drift check compares, so it now agrees instead of reporting a
+    // violation the server did not commit.
+    expect(skill.frontmatter).toEqual(declared);
+  });
+
   it("records a digest that disagrees with the listing rather than trusting it", async () => {
     // The whole point of fetching: the declared digest is a claim, and this is
     // where it stops being taken at face value.
     const { url } = await start((method) =>
       method === "skills/list"
         ? { skills: [{ name: "forecast", digest: "not-the-real-digest" }] }
-        : { skill: { content: SKILL_MARKDOWN } },
+        : { skill: { content: SKILL_MARKDOWN } }
     );
     const [skill] = (
       await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
@@ -135,7 +254,7 @@ describe("discoverOpenAIImportedSkills", () => {
     const { url } = await start((method) =>
       method === "skills/list"
         ? { skills: [{ name: "forecast" }] }
-        : { skill: { name: "forecast" } },
+        : { skill: { name: "forecast" } }
     );
     const [skill] = (
       await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
@@ -156,7 +275,7 @@ describe("discoverOpenAIImportedSkills", () => {
               content: SKILL_MARKDOWN,
               pages: [{ uri: "skill://forecast/detail", content: page }],
             },
-          },
+          }
     );
     const [skill] = (
       await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
@@ -166,7 +285,7 @@ describe("discoverOpenAIImportedSkills", () => {
       { uri: "skill://forecast/detail", bytes: encoder.encode(page).length },
     ]);
     expect(skill.totalBytes).toBe(
-      encoder.encode(SKILL_MARKDOWN).length + encoder.encode(page).length,
+      encoder.encode(SKILL_MARKDOWN).length + encoder.encode(page).length
     );
   });
 
@@ -191,7 +310,7 @@ describe("discoverOpenAIImportedSkills", () => {
                 content: SKILL_MARKDOWN,
                 pages: [{ uri: "skill://forecast/detail", bytes: declared }],
               },
-            },
+            }
       );
       const [skill] = (
         await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
@@ -213,14 +332,14 @@ describe("discoverOpenAIImportedSkills", () => {
               content: SKILL_MARKDOWN,
               pages: [{ uri: "skill://forecast/detail", bytes: 4096 }],
             },
-          },
+          }
     );
     const [skill] = (
       await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
     ).skills;
     expect(skill.unmeasuredPages).toBeUndefined();
     expect(skill.totalBytes).toBe(
-      new TextEncoder().encode(SKILL_MARKDOWN).length + 4096,
+      new TextEncoder().encode(SKILL_MARKDOWN).length + 4096
     );
   });
 
@@ -240,7 +359,7 @@ describe("discoverOpenAIImportedSkills", () => {
                 content: "detail",
               })),
             },
-          },
+          }
     );
     const [skill] = (
       await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })

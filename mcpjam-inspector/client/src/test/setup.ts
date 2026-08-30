@@ -4,7 +4,61 @@
  */
 import { vi, afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { transferableAbortController } from "node:util";
 import "@testing-library/jest-dom/vitest";
+
+/**
+ * Bridge jsdom's `AbortSignal` across to Node's `Request`.
+ *
+ * Two realms meet in this environment: jsdom implements `AbortController`, so
+ * the global is jsdom's, while `Request` — which jsdom does not implement —
+ * is Node's, from undici. undici validates `init.signal` with a brand check
+ * against NODE's AbortSignal. Node 22 let a jsdom signal through; Node 24
+ * rejects it outright:
+ *
+ *   TypeError: RequestInit: Expected signal ("AbortSignal {}") to be an
+ *   instance of AbortSignal.
+ *
+ * React Router's data router builds `new Request(url, { signal })` on every
+ * navigation, so on Node 24 every `router.navigate()` rejected and the
+ * router's location never moved. Those tests failed as "the click did
+ * nothing"; the real cause showed up only as an unhandled rejection in the run
+ * summary, and only on CI, which pins Node 24 while local checkouts are
+ * commonly on 22.
+ *
+ * The fix is deliberately NOT to swap the global for Node's class. jsdom's
+ * `addEventListener(type, fn, { signal })` brand-checks the other way, so
+ * doing that trades this failure for ~80 component-test failures. Only the
+ * `Request` boundary is wrong, so only the `Request` boundary is patched: a
+ * foreign signal is mirrored onto a Node one that forwards abort (and reason),
+ * leaving both realms intact and cancellation working.
+ */
+const NodeAbortController = transferableAbortController()
+  .constructor as typeof AbortController;
+const NodeAbortSignal = Object.getPrototypeOf(
+  new NodeAbortController().signal
+).constructor as typeof AbortSignal;
+const RealmRequest = globalThis.Request;
+
+class BridgedSignalRequest extends RealmRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    const signal = init?.signal;
+    if (!signal || signal instanceof NodeAbortSignal) {
+      super(input, init);
+      return;
+    }
+    const bridge = new NodeAbortController();
+    if (signal.aborted) {
+      bridge.abort(signal.reason);
+    } else {
+      signal.addEventListener("abort", () => bridge.abort(signal.reason), {
+        once: true,
+      });
+    }
+    super(input, { ...init, signal: bridge.signal });
+  }
+}
+globalThis.Request = BridgedSignalRequest;
 
 // Cleanup after each test to prevent state leakage
 afterEach(() => {

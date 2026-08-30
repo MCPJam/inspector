@@ -90,6 +90,6 @@
       }
     ],
     "failureCategory": "evaluator",
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 5
   }
 }

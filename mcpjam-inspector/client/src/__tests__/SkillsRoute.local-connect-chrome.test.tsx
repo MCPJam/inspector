@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { hostedMode, skillsFlag, mockRouteContext, mockNavigate } = vi.hoisted(
   () => ({
     hostedMode: { value: false },
-    skillsFlag: { value: true },
+    skillsFlag: { value: true as boolean | undefined },
     mockRouteContext: {
       convexProjectId: "project-1" as string | null,
       isAuthenticated: true,
@@ -18,7 +18,7 @@ const { hostedMode, skillsFlag, mockRouteContext, mockNavigate } = vi.hoisted(
 vi.mock("../hooks/useSkillsEnabled", () => ({
   SKILLS_FEATURE_FLAG: "skills-enabled",
   useSkillsEnabledState: () => skillsFlag.value,
-  useSkillsEnabled: () => skillsFlag.value,
+  useSkillsEnabled: () => skillsFlag.value === true,
 }));
 
 vi.mock("../hooks/useComputersEnabled", () => ({
@@ -49,7 +49,12 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 vi.mock("../components/SkillsTab", () => ({
-  SkillsTab: () => <div data-testid="skills-view" />,
+  SkillsTab: ({ cloudSkillsEnabled }: { cloudSkillsEnabled?: boolean }) => (
+    <div
+      data-testid="skills-view"
+      data-cloud-skills={String(cloudSkillsEnabled)}
+    />
+  ),
 }));
 
 vi.mock("../components/hosts/ConnectViewHeader", () => ({
@@ -135,5 +140,50 @@ describe("SkillsRoute — local Connect chrome", () => {
 
     expect(screen.queryByTestId("connect-header")).not.toBeInTheDocument();
     expect(screen.getByTestId("skills-view")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The project store's gate must be the FLAG, in local mode too.
+ *
+ * It reached the tab as `!HOSTED_MODE || flag`, which is unconditionally true
+ * on the desktop. That was harmless only while the Local/Cloud toggle carried
+ * its own separate `computers-enabled` gate; the moment the toggle started
+ * reading this prop — which is the correct flag for it — the tautology became
+ * "no gate at all", offering every local user a switch to a store the backend
+ * gates independently.
+ */
+describe("SkillsRoute — the project store's gate in local mode", () => {
+  it("passes the flag through rather than a local-mode tautology", () => {
+    skillsFlag.value = false;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  it("treats the pre-hydration window as off", () => {
+    skillsFlag.value = undefined;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  it("turns the store on once the flag resolves true", () => {
+    skillsFlag.value = true;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "true"
+    );
   });
 });
