@@ -45,6 +45,9 @@ so results respect the caller's project access.
 | `get_server_prompt` | Render a prompt from a saved MCP server with the given arguments and return its messages. | — |
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
 | `read_server_resource` | Read one resource from a saved MCP server by uri and return its contents. | — |
+| `list_server_skills` | List the Agent Skills a saved MCP server serves over the skills extension (SEP-2640), including ones MCPJam declines to load and why. | — |
+| `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
+| `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
 | `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
 | `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |

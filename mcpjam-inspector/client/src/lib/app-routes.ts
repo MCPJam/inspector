@@ -112,9 +112,27 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "public",
   },
   {
+    path: "embed/bench",
+    kind: "special",
+    note: "Chrome-less vanity surface (score.mcpjam.com): the Connector Bench runner. No sidebar, no NUX.",
+    scope: "public",
+  },
+  {
+    path: "embed/bench/:runId",
+    kind: "special",
+    note: "The same runner, resumed. The run id in the URL is the whole client state — refresh and a second tab both just re-read it.",
+    scope: "public",
+  },
+  {
     path: "results/:runToken",
     kind: "special",
     note: "One score run's report. Public by link token — no session required to read it.",
+    scope: "public",
+  },
+  {
+    path: "bench/results/:secret",
+    kind: "special",
+    note: "One benchmark scorecard. Public by link secret — no session required to read it.",
     scope: "public",
   },
   {
@@ -184,6 +202,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow", scope: "project" },
   { path: "tracing", kind: "screen", surfaceId: "tracing", scope: "project" },
+  { path: "webmcp", kind: "screen", surfaceId: "webmcp", scope: "project" },
   // `ChatAliasRoute` is a `<Navigate replace>` — it renders nothing of its
   // own, exactly like `client-config`. `chat` survives as a nav SEGMENT
   // (normalized to `playground`), which is a separate question from whether

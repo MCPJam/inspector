@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyPageToolApprovals,
   classifyUiToolApprovals,
   isAppToolAlias,
   isClientFulfilledToolName,
@@ -240,6 +241,34 @@ describe("client-fulfilled tool names", () => {
       expect([...classifyUiToolApprovals(legacy, true).requiredNames]).toEqual([
         "ui_navigate",
       ]);
+    });
+  });
+
+  describe("classifyPageToolApprovals", () => {
+    it("puts every page alias in requiredNames, regardless of the approval flag", () => {
+      // Page tools always gate (pageToolCallNeedsApproval), so unlike UI tools
+      // the requireToolApproval flag never moves them to freeNames. This is the
+      // property the hosted engines rely on to emit an approval request instead
+      // of stranding the deferred call.
+      const aliases = ["page_ab12cd34", "page_ef56gh78"];
+      const { requiredNames, freeNames } = classifyPageToolApprovals(aliases);
+      expect([...requiredNames].sort()).toEqual([...aliases].sort());
+      expect(freeNames.size).toBe(0);
+    });
+
+    it("returns empty sets for no page tools, leaving other tools on the flag", () => {
+      for (const input of [undefined, []]) {
+        const { requiredNames, freeNames } = classifyPageToolApprovals(input);
+        expect(requiredNames.size).toBe(0);
+        expect(freeNames.size).toBe(0);
+      }
+    });
+
+    it("marks a page alias as requiring approval the way the hosted gate reads it", () => {
+      // Mirrors toolCallNeedsApproval in mcpjam-stream-handler:
+      //   if (uiToolApprovals?.requiredNames.has(name)) return true;
+      const { requiredNames } = classifyPageToolApprovals(["page_deadbeef"]);
+      expect(requiredNames.has("page_deadbeef")).toBe(true);
     });
   });
 });

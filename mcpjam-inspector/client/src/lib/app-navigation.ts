@@ -83,8 +83,12 @@ export const routePaths = {
   embedHostCompare: "/embed/host-compare",
   /** Chrome-less conformance-score runner for score.mcpjam.com. */
   embedScore: "/embed/score",
+  /** Chrome-less Connector Bench runner. `/<runId>` resumes an in-flight run. */
+  embedBench: "/embed/bench",
   /** Result of one score run, addressable only by its secret link token. */
   scoreResults: "/results",
+  /** One benchmark scorecard, addressable only by its secret link. */
+  benchResults: "/bench/results",
   capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
@@ -104,6 +108,7 @@ export const routePaths = {
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
+  webmcp: "/webmcp",
   /** Legacy path. Still routed (it redirects), but never build links with it. */
   scenarios: "/scenarios",
   userTesting: "/user-testing",

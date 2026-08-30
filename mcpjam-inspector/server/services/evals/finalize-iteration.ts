@@ -27,6 +27,7 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   deriveStageResults,
+  attachStageMeasurements,
   stageDerivationToMetadata,
   type EvalSuiteFileToolPolicy,
   type StageAuthoredCase,
@@ -220,7 +221,7 @@ export function buildStageMetadata(args: {
 }): Record<string, unknown> {
   const { stageCase, status, error } = args;
   if (!stageCase) return {};
-  return stageDerivationToMetadata(
+  const metadata = stageDerivationToMetadata(
     deriveStageResults({
       authored: stageCase,
       evidence: buildStageEvidence({
@@ -241,6 +242,7 @@ export function buildStageMetadata(args: {
       policy: args.policy,
     }),
   );
+  return attachStageMeasurements(metadata, args.spans);
 }
 
 /** A predicate row the score projection can key a criterion off. */

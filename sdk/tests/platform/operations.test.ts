@@ -618,7 +618,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
       };
       return Response.json({
         items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
-        nextCursor: "tools-page-2",
+        // The `""` sentinel lets one test exercise an empty-string nextCursor
+        // coming back off the MCP passthrough; every other cursor is unchanged.
+        nextCursor: requestBody.cursor === "penultimate" ? "" : "tools-page-2",
       });
     }
     if (
@@ -1088,6 +1090,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -1127,6 +1130,7 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
@@ -1854,6 +1858,9 @@ describe("operation catalog consistency", () => {
     call_server_tool: { server: "s", toolName: "t" },
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
+    list_server_skills: { server: "s" },
+    get_server_skill: { server: "s", uri: "u" },
+    read_server_skill_file: { server: "s", skillUri: "u", resourceUri: "r" },
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
@@ -2314,6 +2321,42 @@ describe("server live operations", () => {
 
     expect(result.items).toEqual([{ name: "echo", cursorSeen: "page-2" }]);
     expect(result.nextCursor).toBe("tools-page-2");
+  });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". These listings
+  // are a PASSTHROUGH of the MCP server's cursor, so the rule reaches them.
+  it("accepts an empty-string cursor and puts it on the wire", () => {
+    const parsed = listServerToolsOperation.inputSchema.safeParse({
+      project: "new",
+      server: "Echo",
+      cursor: "",
+    });
+    // A `.min(1)` here would refuse to page a conforming server.
+    expect(parsed.success).toBe(true);
+  });
+
+  it("list_server_tools forwards an empty-string cursor verbatim", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "" }]);
+  });
+
+  it("list_server_tools surfaces an empty-string nextCursor instead of dropping it", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "penultimate" },
+      { client }
+    );
+
+    expect(result.nextCursor).toBe("");
+    expect("nextCursor" in result).toBe(true);
   });
 
   it("call_server_tool defaults parameters and posts the call body", async () => {

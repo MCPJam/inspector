@@ -293,6 +293,206 @@ describe("executePersistedConformanceRun replay", () => {
     );
   });
 
+  it("redacts an OAuth report BEFORE it reaches the write", async () => {
+    // A completed OAuth run carries a live access token, a refresh token, the
+    // client secret and the Authorization header of every request it made.
+    // Redacting when the report is later projected into benchmark evidence
+    // would mean the credentials were already at rest in `conformanceRuns` —
+    // readable by every surface that reads a run, and un-recallable.
+    const { action } = convexClient({
+      runId: "run_1",
+      reused: false,
+      status: "queued",
+    });
+    const report = {
+      schemaVersion: 1,
+      kind: "oauth-conformance",
+      name: "OAuth Conformance",
+      passed: true,
+      outcome: "passed",
+      durationMs: 4,
+      groups: [
+        {
+          id: "oauth-1",
+          title: "2025-11-25/dcr",
+          target: "https://connector.example.com/mcp",
+          passed: true,
+          durationMs: 4,
+          cases: [
+            {
+              id: "token_request",
+              title: "Token Request",
+              category: "oauth",
+              status: "passed",
+              durationMs: 4,
+              details: {
+                access_token: "at-live-secret",
+                client_secret: "cs-live-secret",
+              },
+            },
+          ],
+        },
+      ],
+    };
+    runConformanceMock.mockImplementation(
+      async (config: { onProgress?: (event: unknown) => Promise<void> }) => {
+        await config.onProgress?.({
+          suiteKind: "oauth",
+          status: "completed",
+          report,
+        });
+        return { outcome: "passed", score: { score: 100 } };
+      }
+    );
+
+    await executePersistedConformanceRun({
+      convexToken: "tok",
+      projectId: "p1",
+      server: SERVER as never,
+      suites: ["oauth"],
+      source: "benchmark",
+      target: { kind: "server", serverId: "s1" },
+      oauth: { serverUrl: SERVER.url } as never,
+    });
+
+    const upsert = action.mock.calls.find(
+      (call) => (call as unknown[])[0] === "conformanceRuns:upsertReportAction"
+    ) as unknown as [string, { report: typeof report }];
+    const persisted = JSON.stringify(upsert[1].report);
+    expect(persisted).not.toContain("at-live-secret");
+    expect(persisted).not.toContain("cs-live-secret");
+  });
+
+  it("grades an OAuth report against the pinned headless scope before writing it", async () => {
+    const { action } = convexClient({
+      runId: "run_1",
+      reused: false,
+      status: "queued",
+    });
+    runConformanceMock.mockImplementation(
+      async (config: { onProgress?: (event: unknown) => Promise<void> }) => {
+        await config.onProgress?.({
+          suiteKind: "oauth",
+          status: "completed",
+          report: {
+            schemaVersion: 1,
+            kind: "oauth-conformance",
+            name: "OAuth Conformance",
+            passed: true,
+            outcome: "passed",
+            durationMs: 4,
+            groups: [
+              {
+                id: "oauth-1",
+                title: "2025-11-25/dcr",
+                target: SERVER.url,
+                passed: true,
+                durationMs: 4,
+                cases: [
+                  {
+                    id: "oauth_unauthenticated_challenge",
+                    title: "challenge",
+                    category: "oauth",
+                    status: "passed",
+                    durationMs: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        return { outcome: "passed", score: { score: 100 } };
+      }
+    );
+
+    await executePersistedConformanceRun({
+      convexToken: "tok",
+      projectId: "p1",
+      server: SERVER as never,
+      suites: ["oauth"],
+      source: "benchmark",
+      target: { kind: "server", serverId: "s1" },
+      oauth: { serverUrl: SERVER.url } as never,
+      oauthHeadlessCheckIds: [
+        "oauth_unauthenticated_challenge",
+        "received_authorization_code",
+      ],
+    });
+
+    const upsert = action.mock.calls.find(
+      (call) => (call as unknown[])[0] === "conformanceRuns:upsertReportAction"
+    ) as unknown as [
+      string,
+      {
+        report: {
+          outcome?: string;
+          score?: { couldNotRun: number; applicable: number };
+        };
+      },
+    ];
+    // The pinned check the headless exam never reached is in the denominator,
+    // so the run cannot read as clean.
+    expect(upsert[1].report.outcome).toBe("incomplete");
+    expect(upsert[1].report.score?.couldNotRun).toBe(1);
+    expect(upsert[1].report.score?.applicable).toBe(2);
+  });
+
+  it("records a requested OAuth suite with no auth strategy as an explicit incomplete", async () => {
+    // `runConformance` refuses a requested `oauth` suite with no config. Left
+    // to it, one unconfigured suite would take the protocol/apps/tasks reports
+    // down with it.
+    const { action } = convexClient({
+      runId: "run_1",
+      reused: false,
+      status: "queued",
+    });
+
+    await executePersistedConformanceRun({
+      convexToken: "tok",
+      projectId: "p1",
+      server: SERVER as never,
+      suites: ["protocol", "oauth"],
+      source: "api",
+      target: { kind: "server", serverId: "s1" },
+    });
+
+    expect(runConformanceMock.mock.calls[0]![0]).toMatchObject({
+      suites: ["protocol"],
+    });
+    const oauthUpsert = action.mock.calls.find(
+      (call) =>
+        (call as unknown[])[0] === "conformanceRuns:upsertReportAction" &&
+        ((call as unknown[])[1] as { suiteKind: string }).suiteKind === "oauth"
+    ) as unknown as [string, { status: string; report: { outcome?: string } }];
+    expect(oauthUpsert[1].status).toBe("failed");
+    expect(oauthUpsert[1].report.outcome).toBe("incomplete");
+  });
+
+  it("forwards a configured OAuth strategy into the suite run", async () => {
+    convexClient({ runId: "run_1", reused: false, status: "queued" });
+    const oauth = {
+      serverUrl: SERVER.url,
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      auth: { mode: "headless" },
+    };
+
+    await executePersistedConformanceRun({
+      convexToken: "tok",
+      projectId: "p1",
+      server: SERVER as never,
+      suites: ["oauth"],
+      source: "benchmark",
+      target: { kind: "server", serverId: "s1" },
+      oauth: oauth as never,
+    });
+
+    expect(runConformanceMock.mock.calls[0]![0]).toMatchObject({
+      suites: ["oauth"],
+      oauth,
+    });
+  });
+
   it("runs conformance for a freshly inserted row", async () => {
     const { mutation } = convexClient({
       runId: "run_1",

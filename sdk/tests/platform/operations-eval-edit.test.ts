@@ -223,6 +223,25 @@ describe("eval-edit operation execution", () => {
     expect(patch?.body).toEqual({ import: null });
   });
 
+  it("forwards intent on create and distinguishes clear from omission on update", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Labelled", intent: "refund" },
+      { client }
+    );
+    expect(calls.find((call) => call.method === "POST")?.body?.intent).toBe(
+      "refund"
+    );
+
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", intent: null },
+      { client }
+    );
+    expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+      intent: null,
+    });
+  });
+
   it("create rejects import: null, which the route would 400", async () => {
     // The REST create schema takes the claim or nothing; only PATCH accepts
     // null. An input schema that advertised null here would tell the caller a
