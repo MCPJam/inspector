@@ -171,6 +171,50 @@ function parseAdoptCandidate(
 }
 
 /**
+ * Whether a finished turn may sync on-box skills up into the project pool.
+ *
+ * Extracted from the call site so the conditions are testable and named,
+ * because one of them is subtle and was WRONG: adoption must never run out of a
+ * PINNED turn. A pinned set is a frozen snapshot of the project pool, and
+ * adoption is a write back INTO that pool. So an eval arm whose agent happened
+ * to author a skill on box would mutate what the next arm resolves against —
+ * silently changing the thing under comparison between two runs that are
+ * supposed to differ only in their pinned skills. That is a real falsification
+ * of the snapshot claim, and `executionScope` does not cover it: eval runs set
+ * no execution scope at all.
+ *
+ * `HARNESS_SKILL_ADOPTION_DISABLED=1` remains the operator-side kill switch.
+ */
+export function shouldAdoptSandboxSkills(args: {
+  runSucceeded: boolean;
+  aborted: boolean;
+  pausedForApproval: boolean;
+  supportsSkills: boolean;
+  /** `null` ⇒ the live skills fetch failed; adopting on top of an unknown set
+   *  could re-adopt something we simply failed to see as already-managed. */
+  runtimeSkillsKnown: boolean;
+  skillsArePinned: boolean;
+  /** Guest / swarm scopes never adopt (v1). */
+  hasExecutionScope: boolean;
+  hasCredentials: boolean;
+  hasFileSession: boolean;
+  adoptionDisabled: boolean;
+}): boolean {
+  return (
+    args.runSucceeded &&
+    !args.aborted &&
+    !args.pausedForApproval &&
+    args.supportsSkills &&
+    args.runtimeSkillsKnown &&
+    !args.skillsArePinned &&
+    !args.hasExecutionScope &&
+    args.hasCredentials &&
+    args.hasFileSession &&
+    !args.adoptionDisabled
+  );
+}
+
+/**
  * Scan the runtime's skills root for unmanaged skill dirs and adopt them into
  * Convex. `managedNames` are the names already delivered as cloud skills this
  * turn — those dirs are the adapter's own output, so they're skipped. Returns the

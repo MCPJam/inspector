@@ -98,7 +98,7 @@ export function emptyComposerState(): EnvironmentComposerState {
  * defaults" instead of throwing while rendering the strip.
  */
 export function modelChoiceCount(
-  selection: ModelSelection | undefined
+  selection: ModelSelection | undefined,
 ): number {
   const resolved = selection ?? emptyModelSelection();
   return (
@@ -108,7 +108,7 @@ export function modelChoiceCount(
 
 /** Inherit first, then explicit ids in list order. Host-major mint uses this. */
 export function expandModelChoices(
-  selection: ModelSelection | undefined
+  selection: ModelSelection | undefined,
 ): Array<{
   modelId: string | undefined;
 }> {
@@ -125,7 +125,7 @@ export function expandModelChoices(
 
 export function sameModelSelection(
   a: ModelSelection,
-  b: ModelSelection
+  b: ModelSelection,
 ): boolean {
   if (a.includeClientDefaults !== b.includeClientDefaults) return false;
   if (a.explicitModelIds.length !== b.explicitModelIds.length) return false;
@@ -152,13 +152,13 @@ export function defaultComposerState(args: {
   environmentsEnabled: boolean;
 }): EnvironmentComposerState | null {
   const liveNamed = args.environments.filter(
-    (env) => !env.archivedAt && isNamedEnvironment(env)
+    (env) => !env.archivedAt && isNamedEnvironment(env),
   );
   if (args.environmentsEnabled && liveNamed.length > 0) {
     const preferred =
       (args.preferredEnvironmentId
         ? liveNamed.find(
-            (env) => env.environmentId === args.preferredEnvironmentId
+            (env) => env.environmentId === args.preferredEnvironmentId,
           )
         : undefined) ?? liveNamed[0];
     return composerStateFromEnvironments([preferred]);
@@ -181,7 +181,7 @@ export function defaultComposerState(args: {
 
 /** The slots of a saved environment, as a loose stack the user can now edit. */
 export function stackFromEnvironment(
-  env: ProjectEnvironmentView
+  env: ProjectEnvironmentView,
 ): EnvironmentStack {
   return {
     hostIds: env.hostId ? [env.hostId] : [],
@@ -215,7 +215,7 @@ export type EnabledStackSlots = {
 function enabledSlotsEqual(
   a: ProjectEnvironmentView,
   b: ProjectEnvironmentView,
-  enabled: EnabledStackSlots
+  enabled: EnabledStackSlots,
 ): boolean {
   return (
     (a.serverAttachmentId ?? null) === (b.serverAttachmentId ?? null) &&
@@ -238,7 +238,7 @@ function enabledSlotsEqual(
  * blocked.
  */
 export function environmentsCarryPluginPins(
-  environments: ProjectEnvironmentView[]
+  environments: ProjectEnvironmentView[],
 ): boolean {
   return environments.some((env) => (env.pluginVersionIds?.length ?? 0) > 0);
 }
@@ -251,7 +251,7 @@ export function environmentsCarryPluginPins(
  * shed the override (D2).
  */
 export function environmentsCarryModels(
-  environments: readonly ProjectEnvironmentView[]
+  environments: readonly ProjectEnvironmentView[],
 ): boolean {
   return environments.some((env) => Boolean(env.modelId));
 }
@@ -261,7 +261,7 @@ function modelChoiceKey(env: ProjectEnvironmentView): string {
 }
 
 function modelChoiceSetsAgree(
-  environments: readonly ProjectEnvironmentView[]
+  environments: readonly ProjectEnvironmentView[],
 ): boolean {
   const byHost = new Map<string, Set<string>>();
   for (const env of environments) {
@@ -274,13 +274,13 @@ function modelChoiceSetsAgree(
   const first = [...byHost.values()][0]!;
   const firstKey = [...first].sort().join("\0");
   return [...byHost.values()].every(
-    (set) => [...set].sort().join("\0") === firstKey
+    (set) => [...set].sort().join("\0") === firstKey,
   );
 }
 
 function reconstructModelSelection(
   environments: readonly ProjectEnvironmentView[],
-  slots?: EnabledStackSlots
+  slots?: EnabledStackSlots,
 ): ModelSelection {
   if (slots?.modelsEnabled !== true) {
     return emptyModelSelection();
@@ -323,18 +323,20 @@ function reconstructModelSelection(
  */
 export function environmentsExceedOneStack(
   environments: ProjectEnvironmentView[],
-  enabled: EnabledStackSlots
+  enabled: EnabledStackSlots,
 ): boolean {
   if (environments.length < 2) return false;
 
   if (enabled.modelsEnabled === true) {
     if (
-      environments.some((env) => !enabledSlotsEqual(env, environments[0], enabled))
+      environments.some(
+        (env) => !enabledSlotsEqual(env, environments[0], enabled),
+      )
     ) {
       return true;
     }
     const cells = environments.map(
-      (env) => `${env.hostId}::${modelChoiceKey(env)}`
+      (env) => `${env.hostId}::${modelChoiceKey(env)}`,
     );
     if (new Set(cells).size !== cells.length) return true;
     return !modelChoiceSetsAgree(environments);
@@ -343,7 +345,7 @@ export function environmentsExceedOneStack(
   const hosts = new Set(environments.map((e) => e.hostId));
   if (hosts.size !== environments.length) return true;
   return environments.some(
-    (env) => !enabledSlotsEqual(env, environments[0], enabled)
+    (env) => !enabledSlotsEqual(env, environments[0], enabled),
   );
 }
 
@@ -370,7 +372,7 @@ export function environmentsExceedOneStack(
  */
 export function composerStateFromEnvironments(
   environments: ProjectEnvironmentView[],
-  slots?: EnabledStackSlots
+  slots?: EnabledStackSlots,
 ): EnvironmentComposerState {
   const hostIds: string[] = [];
   for (const env of environments) {
@@ -379,7 +381,7 @@ export function composerStateFromEnvironments(
   const first = environments[0];
   const sharedSlot = <T>(
     pick: (env: ProjectEnvironmentView) => T | null,
-    equal: (a: T | null, b: T | null) => boolean
+    equal: (a: T | null, b: T | null) => boolean,
   ): T | null =>
     first && environments.every((env) => equal(pick(env), pick(first)))
       ? pick(first)
@@ -393,15 +395,15 @@ export function composerStateFromEnvironments(
       hostIds,
       serverAttachmentId: sharedSlot(
         (env) => env.serverAttachmentId ?? null,
-        (a, b) => a === b
+        (a, b) => a === b,
       ),
       skillSelection: sharedSlot(
         (env) => env.skillSelection ?? null,
-        sameSkillSelection
+        sameSkillSelection,
       ),
       computerEnvironmentId: sharedSlot(
         (env) => env.computerEnvironmentId ?? null,
-        (a, b) => a === b
+        (a, b) => a === b,
       ),
       modelSelection: reconstructModelSelection(environments, slots),
     },
@@ -446,13 +448,32 @@ export function composerTargetCount(state: EnvironmentComposerState): number {
 
 export function sameSkillSelection(
   a: ProjectEnvironmentSkillSelection | null | undefined,
-  b: ProjectEnvironmentSkillSelection | null | undefined
+  b: ProjectEnvironmentSkillSelection | null | undefined,
 ): boolean {
   const left = a ?? null;
   const right = b ?? null;
   if (left === null || right === null) return left === right;
   if (left.skillIds.length !== right.skillIds.length) return false;
-  return left.skillIds.every((id, i) => id === right.skillIds[i]);
+  if (!left.skillIds.every((id, i) => id === right.skillIds[i])) return false;
+  return sameVersionPins(left.versionPins, right.versionPins);
+}
+
+/**
+ * Version pins compared as a SET keyed by skill: which revision each skill is
+ * held at is what matters, not the order they were written in. Absent and empty
+ * are the same thing (nothing pinned) — the backend stores absent, but a picker
+ * mid-edit can easily produce `[]`, and treating those as different would mark
+ * an untouched form dirty.
+ */
+function sameVersionPins(
+  a: ProjectEnvironmentSkillSelection["versionPins"],
+  b: ProjectEnvironmentSkillSelection["versionPins"],
+): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  const bySkill = new Map(right.map((pin) => [pin.skillId, pin.versionId]));
+  return left.every((pin) => bySkill.get(pin.skillId) === pin.versionId);
 }
 
 export function stackFieldsEqual(
@@ -463,7 +484,7 @@ export function stackFieldsEqual(
   b: Pick<
     EnvironmentStack,
     "serverAttachmentId" | "skillSelection" | "computerEnvironmentId"
-  >
+  >,
 ): boolean {
   return (
     (a.serverAttachmentId ?? null) === (b.serverAttachmentId ?? null) &&
@@ -484,7 +505,7 @@ export function stackFieldsEqual(
  */
 export function sameOptionalModel(
   left: string | undefined,
-  right: string | undefined
+  right: string | undefined,
 ): boolean {
   return (left ?? null) === (right ?? null);
 }
@@ -493,11 +514,13 @@ export function sameOptionalModel(
 export function targetProductCapReason(
   hostCount: number,
   choiceCount: number,
-  max: number
+  max: number,
 ): string {
   const clients = `${hostCount} client${hostCount === 1 ? "" : "s"}`;
   const models = `${choiceCount} model choice${choiceCount === 1 ? "" : "s"}`;
-  return `${clients} × ${models} = ${hostCount * choiceCount} targets; limit ${max}`;
+  return `${clients} × ${models} = ${
+    hostCount * choiceCount
+  } targets; limit ${max}`;
 }
 
 export type TargetBudgetContext = {
