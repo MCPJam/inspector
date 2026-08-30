@@ -620,6 +620,10 @@ export function RunDetailView({
   const runChain = useRunUserValueChainChoice({
     projectId: selectedRunDetails.projectId ?? null,
     runId: selectedRunDetails._id,
+    // A run opened while it is still going has no document yet. Passing the
+    // status lets the read happen again once it finishes, instead of the
+    // too-early "no document" answer standing until this view remounts.
+    runStatus: selectedRunDetails.status,
   });
 
   /**
@@ -631,7 +635,12 @@ export function RunDetailView({
    */
   const hasStageFunnel =
     runChain.choice === "canonical" ||
-    (runChain.choice === "legacy" && legacyStageFunnel);
+    (runChain.choice === "legacy" && legacyStageFunnel) ||
+    // A canonical read that really FAILED is content too. Without this, a run
+    // with no legacy rollup and no other insight card closes the rail over the
+    // service note written specifically to report that failure — the one case
+    // where the message is the only thing there is to say.
+    runChain.serviceNote !== null;
 
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (

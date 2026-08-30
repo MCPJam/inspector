@@ -78,9 +78,16 @@ export type RunUserValueChain = {
 export function useRunUserValueChainChoice({
   projectId,
   runId,
+  runStatus,
 }: {
   projectId: string | null | undefined;
   runId: string | null | undefined;
+  /**
+   * Passed through so a page opened MID-RUN re-asks once the run finishes.
+   * The document is materialized on terminalization, so without this the
+   * first (too-early) answer would stand until the view remounted.
+   */
+  runStatus?: string | null;
 }): RunUserValueChain {
   // `=== true` on purpose: the hook returns `undefined` while PostHog is still
   // loading its flags, and `undefined` must read as OFF. Without this, the
@@ -89,6 +96,7 @@ export function useRunUserValueChainChoice({
   const { status, document, error } = useEvalRunStageAnalytics({
     projectId,
     runId,
+    ...(runStatus !== undefined ? { runStatus } : {}),
     enabled,
   });
 

@@ -34,15 +34,17 @@ const RUN_ID = GOLDEN_STAGE_ANALYTICS.runId;
 function Harness({
   projectId = "p1",
   runId = RUN_ID,
+  runStatus,
   enabled = true,
   onState,
 }: {
   projectId?: string | null;
   runId?: string | null;
+  runStatus?: string | null;
   enabled?: boolean;
   onState: (state: EvalRunStageAnalyticsState) => void;
 }) {
-  onState(useEvalRunStageAnalytics({ projectId, runId, enabled }));
+  onState(useEvalRunStageAnalytics({ projectId, runId, runStatus, enabled }));
   return null;
 }
 
@@ -150,6 +152,53 @@ describe("useEvalRunStageAnalytics", () => {
     await Promise.resolve();
 
     expect(states[states.length - 1]!.document).toEqual(GOLDEN_STAGE_ANALYTICS);
+  });
+
+  it("re-asks once the run it is watching finishes", async () => {
+    // The document is materialized when the run terminalizes. A page opened
+    // mid-run asks too early and gets a legitimate 404; before this the effect
+    // keyed only on ids, so it never asked again — the run finished, the
+    // document appeared, and the page kept showing the older rollup until
+    // somebody reloaded it.
+    fetchMock.mockRejectedValueOnce(
+      new EvalStageAnalyticsError("notFound", "not yet", { status: 404 }),
+    );
+    const states: EvalRunStageAnalyticsState[] = [];
+    const { rerender } = render(
+      <Harness runStatus="running" onState={(s) => states.push(s)} />,
+    );
+    await waitFor(() =>
+      expect(states[states.length - 1]!.status).toBe("absent"),
+    );
+
+    fetchMock.mockResolvedValue(GOLDEN_STAGE_ANALYTICS);
+    rerender(<Harness runStatus="completed" onState={(s) => states.push(s)} />);
+    await waitFor(() =>
+      expect(states[states.length - 1]!.status).toBe("ready"),
+    );
+    expect(states[states.length - 1]!.document).toEqual(GOLDEN_STAGE_ANALYTICS);
+  });
+
+  it("does NOT re-ask on a status change that is still not terminal", async () => {
+    // Collapsed to "is it over", not carried through as the raw status: a run
+    // moving pending -> running says nothing about whether its document
+    // exists, and re-fetching on it would issue a request per status tick.
+    fetchMock.mockResolvedValue(GOLDEN_STAGE_ANALYTICS);
+    const { rerender } = render(
+      <Harness runStatus="pending" onState={() => {}} />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    rerender(<Harness runStatus="running" onState={() => {}} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("asks immediately when the caller tracks no status", async () => {
+    // The old behaviour, kept for callers that do not pass one — a status this
+    // hook never learns must not turn into a read it never issues.
+    fetchMock.mockResolvedValue(GOLDEN_STAGE_ANALYTICS);
+    const { latest } = renderHook();
+    await waitFor(() => expect(latest().status).toBe("ready"));
   });
 
   it("asks nothing at all while disabled", async () => {

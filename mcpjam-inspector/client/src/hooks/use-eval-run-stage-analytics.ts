@@ -67,16 +67,43 @@ function toErrorInfo(error: unknown): StageAnalyticsErrorInfo {
   };
 }
 
+/**
+ * The statuses after which a run's document will not appear later.
+ *
+ * Matches `use-run-group-quality.ts` rather than inventing a second list —
+ * "this run is over" is one fact and two definitions of it would drift.
+ */
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
 export function useEvalRunStageAnalytics({
   projectId,
   runId,
+  runStatus,
   enabled = true,
 }: {
   projectId: string | null | undefined;
   runId: string | null | undefined;
+  /**
+   * The run's current status, when the caller has it.
+   *
+   * Read for ONE reason: the document is materialized when the run
+   * terminalizes, so a page opened mid-run asks too early, settles on
+   * `absent`, and — because the effect keys only on ids — never asks again.
+   * The run finishes, the document appears, and the page keeps showing the
+   * older rollup until someone reloads it.
+   *
+   * Including the status in the effect's identity makes the transition into a
+   * terminal state re-ask exactly once. Omitted by callers that do not track
+   * it, which keeps the old single-shot behaviour rather than breaking them.
+   */
+  runStatus?: string | null;
   enabled?: boolean;
 }): EvalRunStageAnalyticsState {
   const active = Boolean(enabled && projectId && runId);
+  // Collapsed to a BOOLEAN, not carried through as the raw status: a run
+  // moving `pending` → `running` changes nothing about whether its document
+  // exists, and re-fetching on it would issue a request per status tick.
+  const runIsOver = runStatus ? TERMINAL_RUN_STATUSES.has(runStatus) : true;
 
   const [document, setDocument] = useState<EvalStageAnalyticsV1 | null>(null);
   const [status, setStatus] = useState<EvalRunStageAnalyticsStatus>("idle");
@@ -134,7 +161,7 @@ export function useEvalRunStageAnalytics({
     })();
 
     return () => controller.abort();
-  }, [active, projectId, runId, attempt]);
+  }, [active, projectId, runId, runIsOver, attempt]);
 
   const refetch = useCallback(() => {
     if (!active) return;

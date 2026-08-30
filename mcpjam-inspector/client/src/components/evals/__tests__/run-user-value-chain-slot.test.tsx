@@ -227,6 +227,46 @@ describe("the choice the caller reads for its own emptiness check", () => {
     await waitFor(() => expect(seen[seen.length - 1]).toBe("legacy"));
   });
 
+  it("reports a service note the caller can count as content", async () => {
+    // A canonical read that really failed on a run with no legacy rollup and
+    // no other insight card would otherwise close the rail over the note
+    // written specifically to report that failure — the one case where the
+    // message is the only thing there is to say. The caller gates on this, so
+    // the note has to be readable from the hook's result rather than only
+    // rendered inside the slot.
+    rejectWith("requestFailed");
+    let chain: { serviceNote: string | null; choice: string } | undefined;
+    function Probe() {
+      chain = useRunUserValueChainChoice({ projectId: "p1", runId: RUN_ID });
+      return null;
+    }
+    render(<Probe />);
+    await waitFor(() => expect(chain!.serviceNote).not.toBeNull());
+    expect(chain!.choice).toBe("legacy");
+  });
+
+  it("reports no service note for the states that are not failures", async () => {
+    // `absent` and the dark-ship window must stay silent, or every run that
+    // finished before the materializer shipped would hold a rail open on a
+    // message about nothing being wrong.
+    for (const kind of ["notFound", "routeUnavailable"] as const) {
+      fetchMock.mockReset();
+      rejectWith(kind);
+      let note: string | null | undefined;
+      function Probe() {
+        note = useRunUserValueChainChoice({
+          projectId: "p1",
+          runId: RUN_ID,
+        }).serviceNote;
+        return null;
+      }
+      const { unmount } = render(<Probe />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(note).toBeNull();
+      unmount();
+    }
+  });
+
   it("reports legacy immediately when the flag is off, never nothing", async () => {
     // A run detail whose rail waits on this must not blank the chain for
     // every user who does not have the flag.
