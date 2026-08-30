@@ -14,6 +14,7 @@
  */
 
 import {
+  allGatingScorersPassed,
   errorScoreResult,
   fromCriterionResult,
   fromGoalCompletionCase,
@@ -70,6 +71,22 @@ export type HostedScoreRowInputs = {
   /** Absent on the first pass; present on the judge second pass. */
   judgeVerdict?: HostedJudgeVerdictLike;
   objectiveScoreCap?: number;
+  /**
+   * "This case authored tool-call expectations", stated WITHOUT the matcher's
+   * evidence for them.
+   *
+   * The definition and the row have genuinely different preconditions, and
+   * coupling them to one field is what made the second pass drop the
+   * `toolCalls:match` DEFINITION from its config: it has the authored case but
+   * not the matcher output, so `evaluation` is absent and the definition went
+   * with it — while the first pass's row, merged by `scorerId` on the backend,
+   * survived and became unjoinable.
+   *
+   * Only the DEFINITION reads this. The row still requires `evaluation`,
+   * because a row is a claim about what the matcher found and this pass has
+   * not run it.
+   */
+  toolMatchAuthored?: boolean;
 };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -118,8 +135,10 @@ export function hostedScoreDefinitionInputs(
         }
       : {}),
     // A case that authored no expectations has no tool-match scorer at all,
-    // rather than a vacuously passing one.
-    ...(inputs.evaluation?.expectedToolCalls?.length
+    // rather than a vacuously passing one. `toolMatchAuthored` says the same
+    // thing for a caller holding the authored case but not the matcher's
+    // output — see the field's note.
+    ...(inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored
       ? {
           toolMatch: {
             ...(inputs.matchOptions ? { matchOptions: inputs.matchOptions } : {}),
@@ -269,34 +288,36 @@ function describeToolMatch(evaluation: HostedEvaluationLike): string {
  * What the score rows alone would say about this iteration, for SHADOW
  * COMPARISON ONLY.
  *
- * Gating rows decide; an advisory row (the judge) is ignored, which is the
- * property that makes `role: "advisory"` structural rather than a convention.
- * Only a `scored` row can fail: an `error` or `skipped` row is an ABSENCE of
- * evidence, not a failure, and reading it as one would manufacture mismatches
- * out of unscorable criteria — the same reason `evaluateGates` treats a
- * non-gateable score as non-gating rather than as a fail.
+ * A THIN READING of the contract's `allGatingScorersPassed`, not a second
+ * implementation of it — B3b promoted the arithmetic into
+ * `sdk/src/contract/derive.ts` so the deriver, the backend's verifier and this
+ * comparison all count the same rows the same way. What this adds is which of
+ * that function's two failure modes the SHADOW question cares about:
  *
- * This is never persisted and never compared against `passed` for a decision:
- * its only consumer is `buildShadowMismatch`, whose output is telemetry.
+ *   - `disagreeingScorerIds` — a gating scorer RAN and said no. A real
+ *     disagreement with the boolean verdict, and the thing worth an alert.
+ *   - `unresolvedScorerIds`  — a gating scorer produced no usable verdict.
+ *     DELIBERATELY IGNORED here. An `error` or `skipped` row is an ABSENCE of
+ *     evidence, not a failure, and reading it as one would manufacture
+ *     mismatches out of unscorable criteria — the same reason `evaluateGates`
+ *     treats a non-gateable score as non-gating rather than as a fail.
+ *
+ * The AUTHORITY path is stricter and reads `passed` off the contract function
+ * directly (see `finalize-iteration`), because "we could not score this gate"
+ * must not pass an iteration. The two questions genuinely differ; sharing the
+ * arithmetic while differing on that one reading is the point.
+ *
+ * This is never persisted: its only consumer is `buildShadowMismatch`, whose
+ * output is telemetry.
  */
 export function shadowVerdictFromScores(
   scores: readonly ScoreResult[],
   config: EvaluationConfigSnapshot
 ): { passed: boolean; disagreeingScorerIds: string[] } {
-  const gating = new Set(
-    config.definitions
-      .filter((definition) => definition.role === "gating")
-      .map((definition) => definition.scorerId)
-  );
-  const failing = scores.filter(
-    (score) =>
-      gating.has(score.scorerId) &&
-      score.status === "scored" &&
-      score.passed === false
-  );
+  const { disagreeingScorerIds } = allGatingScorersPassed(scores, config);
   return {
-    passed: failing.length === 0,
-    disagreeingScorerIds: failing.map((score) => score.scorerId),
+    passed: disagreeingScorerIds.length === 0,
+    disagreeingScorerIds,
   };
 }
 

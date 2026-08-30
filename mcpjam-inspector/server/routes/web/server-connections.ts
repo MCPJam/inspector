@@ -140,7 +140,12 @@ function translate(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   if (error instanceof ServerConnectionBackendError) {
     if (error.isGone) {
-      return new WebRouteError(404, ErrorCode.NOT_FOUND, error.message);
+      return new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        error.message,
+        error.code ? { reason: error.code } : undefined
+      );
     }
     // NO 401 ARM, DELIBERATELY. A continuation token the backend does not
     // recognize — expired, or consumed by a cancel — comes back 404

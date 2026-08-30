@@ -416,6 +416,7 @@ export function RunInsightRail({
   triageCard,
   goalCompletionCard,
   groundednessCard,
+  userValueChainCard,
   className,
   embedded = false,
 }: {
@@ -424,6 +425,21 @@ export function RunInsightRail({
   goalCompletionCard?: ReactNode;
   /** Second named advisory judge (groundedness), below goal completion. */
   groundednessCard?: ReactNode;
+  /**
+   * The user-value-chain funnel and the flow diagram's opt-in.
+   *
+   * LAST in the rail, and the two halves are offered differently: the funnel
+   * is a rollup of verdicts we already hold and renders unasked, while the
+   * diagram beside it is bought per pass and waits for a click. Same traces,
+   * different price, so different affordance.
+   *
+   * Deliberately NOT part of the emptiness check below. Both halves render
+   * nothing of their own when there is no derived chain and no analyzable
+   * cohort, and the node itself is truthy either way — counting it would keep
+   * an otherwise-empty rail alive as a full-height column of dead space on
+   * every run with no insight content at all.
+   */
+  userValueChainCard?: ReactNode;
   className?: string;
   /** Flush layout inside the run-detail split (shared dividers, no card gaps). */
   embedded?: boolean;
@@ -441,6 +457,7 @@ export function RunInsightRail({
       {triageCard}
       {goalCompletionCard}
       {groundednessCard}
+      {userValueChainCard}
     </aside>
   );
 }
