@@ -104,10 +104,23 @@ async function bestEffortAccessToken(
  * lives in `details`, not in the prose.
  */
 class HandoffCallError extends Error {
-  constructor(message: string, readonly details?: unknown) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "HandoffCallError";
   }
+}
+
+function isUsedLinkError(error: unknown): boolean {
+  return (
+    error instanceof HandoffCallError &&
+    typeof error.details === "object" &&
+    error.details !== null &&
+    (error.details as { reason?: unknown }).reason === "REQUEST_NOT_FOUND"
+  );
 }
 
 async function call<T>(
@@ -136,6 +149,7 @@ async function call<T>(
   if (!response.ok) {
     throw new HandoffCallError(
       payload?.message ?? "Something went wrong. Please try again.",
+      response.status,
       payload?.details,
     );
   }
@@ -266,6 +280,7 @@ export function ServerConnectionHandoff() {
   } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const claimed = useRef(false);
@@ -346,7 +361,10 @@ export function ServerConnectionHandoff() {
             ? readClaimRefusal(cause.details)
             : null;
         if (claimRefusal) setRefusal(claimRefusal);
-        else setError(cause instanceof Error ? cause.message : String(cause));
+        else {
+          setUsedLink(route?.kind === "claim" && isUsedLinkError(cause));
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
         return;
       }
       await refresh();
@@ -485,8 +503,16 @@ export function ServerConnectionHandoff() {
   if (error && !state) {
     return (
       <Shell>
-        <h1 className="text-lg font-semibold">This link cannot be used</h1>
-        <p className="text-sm text-muted-foreground">{error}</p>
+        <h1 className="text-lg font-semibold">
+          {usedLink
+            ? "This link has already been used"
+            : "This link cannot be used"}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {usedLink
+            ? "Connection links work only once. Create a new link from the CLI to connect again."
+            : error}
+        </p>
       </Shell>
     );
   }
