@@ -106,6 +106,6 @@
     ],
     "firstFailedStage": "selection",
     "failureCategory": "selection",
-    "stageAnalyzerVersion": 7
+    "stageAnalyzerVersion": 8
   }
 }

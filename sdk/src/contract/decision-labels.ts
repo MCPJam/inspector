@@ -102,6 +102,8 @@ export const STAGE_REASON_LABELS = Object.freeze({
   blockedByPolicy: "a policy blocked the run before it could be measured",
   evaluatorError:
     "the evaluator itself failed, so the run says nothing about the server",
+  providerError:
+    "the model provider failed the call, so the run never reached the server",
   setupAborted: "the environment was never prepared, so the test never began",
   connectFailed:
     "the configured server was reached and initialize failed there",

@@ -64,6 +64,27 @@ export type HostedEvalTurnOutcome =
       kind: "failed";
       iterationError: string;
       iterationErrorDetails?: string;
+      /**
+       * WHICH LAYER failed, decided by the catch site rather than by reading
+       * the message.
+       *
+       * `model` means the model-call layer — the engine's stream, or a throw
+       * escaping the assistant turn. A failure there is ours or our
+       * provider's: an outage, an exhausted credit balance, a spend guardrail.
+       * It says nothing about the MCP server under test, which is exactly why
+       * the chain must not file it as an unattributed server failure.
+       *
+       * `setup` is pre-turn work that never reached the model.
+       *
+       * Deliberately NOT derived from the error text. A message classifier
+       * would be one provider's wording away from silently mis-attributing a
+       * whole class of run, and the catch site already knows the answer.
+       */
+      errorSource?: "model" | "setup";
+      /** The engine's structured code, when the failure carried one. */
+      errorCode?: string;
+      /** HTTP status, when the failure came from a non-OK response. */
+      errorHttpStatus?: number;
     };
 
 /** Stream-runner SSE concerns, layered over the shared skeleton per turn. */
@@ -279,16 +300,10 @@ const truncateError = (message: string): string =>
 export const MAX_WIDGET_FOLLOWUP_TURNS = 3;
 
 export async function driveHostedEvalTurn(
-  params: DriveHostedEvalTurnParams
+  params: DriveHostedEvalTurnParams,
 ): Promise<HostedEvalTurnOutcome> {
-  const {
-    promptIndex,
-    browser,
-    prepared,
-    acc,
-    isAborted,
-    abortSignal,
-  } = params;
+  const { promptIndex, browser, prepared, acc, isAborted, abortSignal } =
+    params;
   const logSuffix = params.logSuffix ?? "";
 
   // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
@@ -315,7 +330,7 @@ export async function driveHostedEvalTurn(
       ? params.toolPolicyGate.wrap(mergedTools)
       : mergedTools,
     traceCtx,
-    promptIndex
+    promptIndex,
   );
 
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
@@ -340,8 +355,9 @@ export async function driveHostedEvalTurn(
   // parent's already-committed calls end so the post-turn reconcile below
   // replaces only THIS turn's live entries (the stream runner's `onToolCall`
   // populates the array live) without wiping the parent's.
-  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
-    []);
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[
+    promptIndex
+  ] ??= []);
   const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
@@ -362,14 +378,14 @@ export async function driveHostedEvalTurn(
   // failure branches below (CodeRabbit, PR 2610).
   const mapThrownTurnError = (
     error: unknown,
-    failedStage: string
+    failedStage: string,
   ): HostedEvalTurnOutcome => {
     if (
       isAborted() ||
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`,
       );
       return { kind: "cancelled" };
     }
@@ -395,7 +411,16 @@ export async function driveHostedEvalTurn(
       ...(iterationErrorDetails ? { iterationErrorDetails } : {}),
     };
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // `failedStage` already names the layer; "pre-turn setup" is the one call
+    // site that never reached the model.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource:
+        failedStage === "pre-turn setup"
+          ? ("setup" as const)
+          : ("model" as const),
+    };
   };
 
   // Pre-turn setup that can genuinely throw: the Chromium widget dismissal
@@ -455,7 +480,7 @@ export async function driveHostedEvalTurn(
       systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
-            browser.browserInteractionSteps
+            browser.browserInteractionSteps,
           )
         : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
@@ -529,8 +554,7 @@ export async function driveHostedEvalTurn(
             // opt-out and a truthy check would erase it.
             ...(params.modelVisibleMcpToolResults !== undefined
               ? {
-                  modelVisibleMcpToolResults:
-                    params.modelVisibleMcpToolResults,
+                  modelVisibleMcpToolResults: params.modelVisibleMcpToolResults,
                 }
               : {}),
             ...(params.respectToolVisibility !== undefined
@@ -583,7 +607,7 @@ export async function driveHostedEvalTurn(
   // aborted run as a verdict failure.
   if (isAborted()) {
     logger.debug(
-      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
+      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`,
     );
     return { kind: "cancelled" };
   }
@@ -650,7 +674,7 @@ export async function driveHostedEvalTurn(
   // generic fallbacks.
   const failTurn = (
     fallbackError: string,
-    logLine: string
+    logLine: string,
   ): HostedEvalTurnOutcome => {
     const failure = lastEngineError
       ? {
@@ -660,7 +684,19 @@ export async function driveHostedEvalTurn(
       : { iterationError: fallbackError };
     logger.error(logLine);
     sinks.onTurnFailure?.(failure);
-    return { kind: "failed", ...failure };
+    // Every path through here is the engine's stream failing, so the layer is
+    // known without inspecting anything. The structured code and status ride
+    // along when the engine captured them — they are diagnostics, never the
+    // basis for the classification.
+    return {
+      kind: "failed" as const,
+      ...failure,
+      errorSource: "model" as const,
+      ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
+      ...(typeof lastEngineError?.httpStatus === "number"
+        ? { errorHttpStatus: lastEngineError.httpStatus }
+        : {}),
+    };
   };
 
   if (!turnResult.turnTrace) {
@@ -669,16 +705,16 @@ export async function driveHostedEvalTurn(
       `[evals] runAssistantTurn${logSuffix} returned no turnTrace (engine runSucceeded=false); treating as cycle failure (messagesGrew=${
         newMessages.length > 0
       }, engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+      })`,
     );
   }
   if (newMessages.length === 0) {
     return failTurn(
       "Backend step returned no content (stream error or empty response)",
       `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+      })`,
     );
   }
   // Cursor / Codex review fix: filter to backend step / LLM failure spans
@@ -691,7 +727,7 @@ export async function driveHostedEvalTurn(
     (span) =>
       span.status === "error" &&
       span.category !== "tool" &&
-      !(span as { toolCallId?: string }).toolCallId
+      !(span as { toolCallId?: string }).toolCallId,
   );
   if (stepErrorSpan) {
     return failTurn(
@@ -699,8 +735,8 @@ export async function driveHostedEvalTurn(
       `[evals] runAssistantTurn${logSuffix} turnTrace has non-tool error-status span; treating as cycle failure (span=${
         stepErrorSpan.name
       } category=${stepErrorSpan.category} engineError=${
-        lastEngineError ? (lastEngineError.code ?? "uncoded") : "none"
-      })`
+        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+      })`,
     );
   }
 

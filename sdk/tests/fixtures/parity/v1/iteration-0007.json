@@ -67,6 +67,6 @@
     ],
     "firstFailedStage": "discovery",
     "failureCategory": "setup",
-    "stageAnalyzerVersion": 7
+    "stageAnalyzerVersion": 8
   }
 }

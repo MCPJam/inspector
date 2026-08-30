@@ -24,10 +24,7 @@
  */
 
 import type { ModelMessage } from "ai";
-import type {
-  PredicateResult,
-  ToolErrorRecord,
-} from "@/shared/eval-matching";
+import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -162,6 +159,20 @@ export interface StepEngineOutcome {
   iterationError?: string;
   iterationErrorDetails?: string;
   /**
+   * WHICH LAYER produced `iterationError`, reported by the catch site that
+   * raised it rather than inferred from its text.
+   *
+   * `model` is the model-call layer — our provider, not the MCP server under
+   * test. The chain uses it to stop filing an outage or an exhausted credit
+   * balance as an unattributed server failure. Absent when the caller does
+   * not know, which reads as "unclassified" and changes nothing.
+   */
+  errorSource?: "model" | "setup";
+  /** The engine's structured code, when the failure carried one. */
+  errorCode?: string;
+  /** HTTP status, when the failure came from a non-OK response. */
+  errorHttpStatus?: number;
+  /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
    * not-connected behavior.
@@ -214,6 +225,10 @@ export interface StepExecutorResult {
   /** Set when a `prompt`/`toolCall` step reported a fatal error. */
   iterationError?: string;
   iterationErrorDetails?: string;
+  /** Which layer raised `iterationError` — see `StepEngineOutcome`. */
+  errorSource?: "model" | "setup";
+  errorCode?: string;
+  errorHttpStatus?: number;
   /** True when `iterationError` is a setup (not assertion) failure. */
   setupFailure: boolean;
 }
@@ -222,8 +237,7 @@ export interface StepExecutorResult {
 export function hasWidgetDrivingStep(steps: TestStep[]): boolean {
   return steps.some(
     (s) =>
-      isInteractStep(s) ||
-      (isAssertStep(s) && isWidgetAssertion(s.assertion)),
+      isInteractStep(s) || (isAssertStep(s) && isWidgetAssertion(s.assertion)),
   );
 }
 
@@ -248,7 +262,8 @@ function applyOutcome(
   turn: number,
 ): void {
   if (outcome.messages?.length) state.messages.push(...outcome.messages);
-  if (outcome.toolCalls?.length) recordToolCalls(state, turn, outcome.toolCalls);
+  if (outcome.toolCalls?.length)
+    recordToolCalls(state, turn, outcome.toolCalls);
   if (outcome.toolErrors?.length) state.toolErrors.push(...outcome.toolErrors);
   if (outcome.usage) {
     state.usage.inputTokens += outcome.usage.inputTokens ?? 0;
@@ -262,9 +277,7 @@ function snapshotTranscript(state: StepExecutionState) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    ...(finalAssistantMessage !== undefined
-      ? { finalAssistantMessage }
-      : {}),
+    ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     usage:
       state.usage.inputTokens ||
       state.usage.outputTokens ||
@@ -360,7 +373,11 @@ async function drainAndDriveFollowUps(
         return undefined;
       }
       remaining -= 1;
-      const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
+      const outcome = await handlers.onFollowUp!({
+        text,
+        stepIndex,
+        turnOrdinal: turn,
+      });
       applyOutcome(state, outcome, turn);
       if (outcome.iterationError) return outcome.iterationError;
     }
@@ -387,8 +404,7 @@ async function runAssertStep(
       passed: outcome.ok,
       reason: outcome.ok
         ? `widget assertion "${step.assertion.kind}" passed`
-        : outcome.reason ??
-          `widget assertion "${step.assertion.kind}" failed`,
+        : outcome.reason ?? `widget assertion "${step.assertion.kind}" failed`,
     });
     return;
   }
@@ -556,6 +572,11 @@ export async function executeSteps(args: {
           state,
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -593,6 +614,11 @@ export async function executeSteps(args: {
           state,
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }

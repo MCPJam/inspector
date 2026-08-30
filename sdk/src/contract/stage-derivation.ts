@@ -76,8 +76,13 @@ import {
  * every applicable stage green while its legacy verdict failed on exactly
  * that tool error — a disagreement the chain had no row to express. Re-uses
  * `toolError`, so again no mirror re-pin.
+ *
+ * 8 (UVH-IN2): a model-call-layer failure is attributed to `providerError`
+ * instead of leaving the trial uncategorised. This one DOES move
+ * `STAGE_REASONS`; the backend mirror already carries the member (UVH-BE1
+ * shipped it deliberately ahead of this bump), so nothing quarantines.
  */
-export const STAGE_ANALYZER_VERSION = 7;
+export const STAGE_ANALYZER_VERSION = 8;
 
 /**
  * Why a stage landed where it did.
@@ -108,6 +113,16 @@ export const STAGE_REASONS = [
   "blockedByPolicy",
   /** The grader itself failed, so the run says nothing about the server. */
   "evaluatorError",
+  /**
+   * The MODEL-CALL layer failed: a provider outage, an exhausted credit
+   * balance, a rate limit, or one of our own spend guardrails.
+   *
+   * Broader than the name suggests, and deliberately so — what every case has
+   * in common is that OUR side of the call broke, so the run says nothing
+   * about the MCP server under test. Never `failed`: blaming the server for
+   * our provider's bad day is the mis-attribution this reason exists to stop.
+   */
+  "providerError",
   /** The harness never got to the test (setup abort). */
   "setupAborted",
   /**
@@ -304,6 +319,20 @@ export type StageToolErrorLike = {
   toolName?: string;
 };
 
+/**
+ * The layer a fatal step error came from, reported by the catch site.
+ *
+ * `deriveStageResults` reads only `source`; `code` and `httpStatus` ride along
+ * as diagnostics for a reader, and are deliberately NOT part of the
+ * classification — a rule keyed on a provider's status codes would be one
+ * provider away from mis-attributing a whole class of run.
+ */
+export type StageStepErrorLike = {
+  source?: "model" | "setup";
+  code?: string;
+  httpStatus?: number;
+};
+
 export type StageRenderObservationLike = {
   status?: string;
 };
@@ -414,6 +443,14 @@ export type StageEvidence = {
   prompts?: readonly StagePromptSummaryLike[];
   predicateResults?: readonly StagePredicateResultLike[];
   toolErrors?: readonly StageToolErrorLike[];
+  /**
+   * The fatal step error's LAYER, when one was raised and the runner knew it.
+   *
+   * Distinct from `toolErrors`, which are the server's answers. This is our
+   * own side breaking, and it is the difference between "the server gave us
+   * bad data" and "we never got to ask".
+   */
+  stepError?: StageStepErrorLike;
   renderObservations?: readonly StageRenderObservationLike[];
   /** `tools_total_before` / `tools_exposed` — the one direct discovery signal. */
   toolSignals?: { toolsTotalBefore?: number; toolsExposed?: number };
@@ -1100,7 +1137,14 @@ function categoryFor(
   evidence: StageEvidence
 ): FailureCategory | undefined {
   if (!firstFailed) {
-    return evidence.evaluatorErrored ? "evaluator" : undefined;
+    if (evidence.evaluatorErrored) return "evaluator";
+    // A model-call failure leaves nothing failed — there was nothing to fail
+    // against. Before UVH-IN2 that produced a run with no category at all,
+    // which reads as "we cannot say what went wrong" when in fact we can say
+    // precisely: our provider did. `setup` is the existing bucket for our own
+    // side breaking, which is why this needs no new category.
+    if (evidence.stepError?.source === "model") return "setup";
+    return undefined;
   }
   const failedRow = rows.find((r) => r.stage === firstFailed);
   switch (firstFailed) {
@@ -1323,11 +1367,43 @@ function mergeMetadataAttributionEvidence(
   );
 }
 
+/**
+ * Re-label the stages a MODEL-CALL failure left blank.
+ *
+ * Applied last, and only to rows that measured nothing: a stage with its own
+ * evidence keeps its own row, because the provider dying at turn 4 does not
+ * un-observe what turns 1-3 established. What it replaces is the bare
+ * `noEvidenceCaptured` / `traceAbsent` gap, which reads as "we looked and the
+ * server told us nothing" — an accusation, when the truth is that our own
+ * provider never let us ask.
+ *
+ * `notMeasured` throughout, never `failed`. A run that could not be attempted
+ * has measured nothing about the server, and inflating a server failure rate
+ * with our own outage is exactly what this reason exists to prevent.
+ */
+function applyProviderError(
+  rows: StageResultRow[],
+  evidence: StageEvidence
+): StageResultRow[] {
+  if (evidence.stepError?.source !== "model") return rows;
+  const BLANK: ReadonlyArray<StageReason | undefined> = [
+    "noEvidenceCaptured",
+    "traceAbsent",
+    "executorEmitsNoSpans",
+  ];
+  return rows.map((r) =>
+    r.state === "notMeasured" && BLANK.includes(r.reason)
+      ? { ...r, reason: "providerError" as const }
+      : r
+  );
+}
+
 function finalize(
   rows: StageResultRow[],
   evidence: StageEvidence,
   forcedCategory?: FailureCategory
 ): StageDerivation {
+  rows = applyProviderError(rows, evidence);
   const firstFailedStage = rows.find((r) => r.state === "failed")?.stage;
   const failureCategory =
     forcedCategory ?? categoryFor(firstFailedStage, rows, evidence);

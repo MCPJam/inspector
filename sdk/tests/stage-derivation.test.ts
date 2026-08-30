@@ -781,6 +781,79 @@ describe("userValue", () => {
   });
 });
 
+// ── UVH-IN2: a model-call failure is OURS, not the server's ──────────────────
+//
+// 20 prod trials failed on "credit balance too low… Anthropic API": the step
+// errored, asserts were skipped, and the chain ended `noEvidenceCaptured` with
+// NO failure category — an outage filed as an unattributed server failure.
+
+describe("a model-call failure is attributed, not left blank", () => {
+  const providerDied = { stepError: { source: "model" as const } };
+
+  test("blank stages read as providerError, and the run is categorised setup", () => {
+    const { stageResults, failureCategory, firstFailedStage } = derive({
+      evidence: { traceAbsent: true, ...providerDied },
+    });
+
+    // Every applicable stage says the same true thing: we never got to ask.
+    for (const r of stageResults.filter((x) => x.state === "notMeasured")) {
+      expect(r.reason).toBe("providerError");
+    }
+    // `setup` is the existing bucket for our own side breaking, so no new
+    // category was needed — but a category there MUST be.
+    expect(failureCategory).toBe("setup");
+    // Never `failed`: our provider's bad day is not the server's defect.
+    expect(firstFailedStage).toBeUndefined();
+    expect(stageResults.some((r) => r.state === "failed")).toBe(false);
+  });
+
+  test("stages that DID measure something keep their own rows", () => {
+    // A provider dying at turn 4 does not un-observe turns 1-3. Only the
+    // blank rows are re-labelled.
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        ...providerDied,
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "selection").state).toBe("passed");
+  });
+
+  test("a SETUP-layer error is not a provider error", () => {
+    // Pre-turn setup never reached the model, and `setupAborted` already says
+    // so precisely. Widening `providerError` over it would lose that.
+    const { stageResults } = derive({
+      evidence: { traceAbsent: true, stepError: { source: "setup" } },
+    });
+    expect(stageResults.every((r) => r.reason !== "providerError")).toBe(true);
+  });
+
+  test("an unclassified error changes nothing", () => {
+    // Callers that cannot say which layer broke leave `stepError` absent, and
+    // the chain reports exactly what it did before.
+    const before = derive({ evidence: { traceAbsent: true } });
+    expect(before.stageResults.every((r) => r.reason !== "providerError")).toBe(
+      true
+    );
+    expect(before.failureCategory).toBeUndefined();
+  });
+
+  test("a broken grader still outranks it", () => {
+    // `evaluator` is never folded into another category — a grader bug is not
+    // an infrastructure outage, and counting it as one poisons both rates.
+    const { failureCategory } = derive({
+      evidence: {
+        traceAbsent: true,
+        evaluatorErrored: true,
+        ...providerDied,
+      },
+    });
+    expect(failureCategory).toBe("evaluator");
+  });
+});
+
 // ── UVH-IN7: an observed tool error makes `response` measurable ──────────────
 //
 // The disagreement class this closes: a case authors only transcript

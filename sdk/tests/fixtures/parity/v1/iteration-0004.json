@@ -95,6 +95,6 @@
     ],
     "firstFailedStage": "call",
     "failureCategory": "serverData",
-    "stageAnalyzerVersion": 7
+    "stageAnalyzerVersion": 8
   }
 }
