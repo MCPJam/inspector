@@ -148,14 +148,18 @@ describe("the claim", () => {
     expect(calls.some((call) => call.path === "/claim")).toBe(false);
   });
 
-  it("says the link is unusable rather than showing an empty page", async () => {
+  it("explains that a spent one-time link must be recreated", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ message: "That link has expired." }), {
-            status: 404,
-          }),
+          new Response(
+            JSON.stringify({
+              message: "Connection request not found",
+              details: { reason: "REQUEST_NOT_FOUND" },
+            }),
+            { status: 404 },
+          ),
       ),
     );
     goTo("/connect/server/dead-token");
@@ -163,7 +167,38 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("That link has expired."),
+      await screen.findByText("This link has already been used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connection links work only once. Create a new link from the CLI to connect again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the accurate message for an expired link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              message: "That authorization link has expired.",
+              details: { reason: "REQUEST_EXPIRED" },
+            }),
+            { status: 404 },
+          ),
+      ),
+    );
+    goTo("/connect/server/expired-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link cannot be used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("That authorization link has expired."),
     ).toBeInTheDocument();
   });
 });

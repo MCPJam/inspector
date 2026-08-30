@@ -46,9 +46,9 @@ describe("HarnessBuiltinToolsSection — selectable list", () => {
         onSelect={vi.fn()}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: /Bash/i }).className,
-    ).toContain("bg-primary/10");
+    expect(screen.getByRole("button", { name: /Bash/i }).className).toContain(
+      "bg-primary/10",
+    );
     expect(
       screen.getByRole("button", { name: /Grep/i }).className,
     ).not.toContain("bg-primary/10");

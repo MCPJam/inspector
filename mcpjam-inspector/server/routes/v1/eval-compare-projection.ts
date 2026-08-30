@@ -143,12 +143,12 @@ const CASE_OUTCOMES = new Set(["passed", "failed", "absent"]);
 function caseSide(value: unknown): Rec {
   const side = isRecord(value) ? value : {};
   const iterationIds = Array.isArray(side.iterationIds)
-    ? side.iterationIds.filter(
-        (id): id is string => typeof id === "string",
-      )
+    ? side.iterationIds.filter((id): id is string => typeof id === "string")
     : [];
   return {
-    outcome: CASE_OUTCOMES.has(str(side.outcome)) ? str(side.outcome) : "absent",
+    outcome: CASE_OUTCOMES.has(str(side.outcome))
+      ? str(side.outcome)
+      : "absent",
     iterationIds,
     representativeIterationId: strOrNull(side.representativeIterationId),
     error: strOrNull(side.error),
@@ -200,9 +200,100 @@ function runSide(value: unknown): Rec {
   };
 }
 
+const SKILL_CHANGE_KINDS = new Set(["added", "removed", "changed"]);
+const SKILL_CHANNELS = new Set(["host", "environment", "plugin", "mcp-server"]);
+
+/**
+ * One side's fingerprint of a skill: hashes plus, when the run recorded one,
+ * the revision number. Whitelisted field by field like everything else here —
+ * the pinned-skill metadata is a wide internal shape and only these four are
+ * public.
+ */
+function skillSide(value: unknown): Rec | null {
+  if (!isRecord(value)) return null;
+  return {
+    contentHash: str(value.contentHash),
+    ...(typeof value.aggregateHash === "string"
+      ? { aggregateHash: value.aggregateHash }
+      : {}),
+    ...(typeof value.versionNumber === "number"
+      ? { versionNumber: value.versionNumber }
+      : {}),
+    ...(typeof value.serverSkillVersionNumber === "number"
+      ? { serverSkillVersionNumber: value.serverSkillVersionNumber }
+      : {}),
+  };
+}
+
+/**
+ * Which skills changed between the two runs — the configuration attribution
+ * that explains a case-level regression.
+ *
+ * `null` passes through as `null` rather than becoming an empty section: the
+ * backend uses it to mean "neither run recorded skills", and flattening that
+ * into `{changes: []}` would tell a public caller no skills were involved.
+ *
+ * The internal shape carries no `_storage` ids (skill bodies and files live in
+ * the pin stores, joined by hash elsewhere), so nothing here needs dropping —
+ * but it is still a whitelist, for the same reason the rest of the file is.
+ */
+function skills(value: unknown): Rec | null {
+  if (!isRecord(value)) return null;
+  const base = isRecord(value.base) ? value.base : {};
+  const compare = isRecord(value.compare) ? value.compare : {};
+  const changes = Array.isArray(value.changes) ? value.changes : [];
+  return {
+    base: { excluded: boolOf(base.excluded), count: countOf(base.count) },
+    compare: {
+      excluded: boolOf(compare.excluded),
+      count: countOf(compare.count),
+    },
+    changes: changes.filter(isRecord).map((row) => {
+      const baseSide = skillSide(row.base);
+      const compareSide = skillSide(row.compare);
+      return {
+        key: str(row.key),
+        name: str(row.name),
+        ...(typeof row.modelRef === "string" ? { modelRef: row.modelRef } : {}),
+        channels: (Array.isArray(row.channels) ? row.channels : [])
+          .filter((c): c is string => typeof c === "string")
+          .filter((c) => SKILL_CHANNELS.has(c)),
+        kind: SKILL_CHANGE_KINDS.has(str(row.kind)) ? str(row.kind) : "changed",
+        ...(typeof row.renamedFrom === "string"
+          ? { renamedFrom: row.renamedFrom }
+          : {}),
+        ...(baseSide ? { base: baseSide } : {}),
+        ...(compareSide ? { compare: compareSide } : {}),
+        ...(typeof row.versionDelta === "string"
+          ? { versionDelta: row.versionDelta }
+          : {}),
+      };
+    }),
+    unchangedCount: countOf(value.unchangedCount),
+  };
+}
+
 export type RunCompareBaseline = {
-  policy: "previous_completed" | "previous_completed_same_environment" | "run";
+  policy:
+    | "previous_completed"
+    | "previous_completed_same_environment"
+    | "run"
+    | "commit_sha";
   baseRunId: string;
+  /** Echoed back for the `commit_sha` policy only. */
+  baseCommitSha?: string;
+  /**
+   * Present ONLY when uniqueness could not be established — the SHA matched
+   * several eligible runs, or the bounded lookup saturated so older eligible
+   * ones may exist beyond it. Absent means unambiguous.
+   */
+  matchCount?: number;
+  /**
+   * `matchCount` is a FLOOR, not a total — including when it reads 1. Always
+   * rendered next to its count: a truncated count shown alone claims a
+   * uniqueness nobody checked.
+   */
+  matchCountTruncated?: boolean;
 };
 
 /**
@@ -241,6 +332,7 @@ export function toRunCompareDto(
       estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
     },
     scoreContract: scoreContract(source.scoreContract),
+    skills: skills(source.skills),
     cases: cases.filter(isRecord).map((row) => ({
       caseKey: str(row.caseKey),
       title: str(row.title),
