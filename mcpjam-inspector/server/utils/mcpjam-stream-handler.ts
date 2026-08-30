@@ -423,6 +423,22 @@ export interface MCPJamEngineErrorEvent {
   /** Step index when fired inside `processOneStep`; omitted for site (3). */
   stepIndex?: number;
   /**
+   * WHICH LAYER was running when this fired — not what the message says.
+   *
+   * `"setup"` means the turn died before the model stream began: the harness
+   * catches its own pre-stream preparation (no `projectId`, no auth bearer,
+   * broker credential delivery disabled, a sandbox it could not reserve) in
+   * the same block that catches a stream failure, and reports both here.
+   * A consumer that assumed every engine error was a provider failure would
+   * file our own setup bug as the provider's outage.
+   *
+   * Derived from a flag the emitter already holds — whether the turn's trace
+   * ever started — never from reading the message. Omitted by emitters that
+   * cannot distinguish the two, and a consumer must treat that as unknown
+   * rather than as either answer.
+   */
+  phase?: "setup" | "stream";
+  /**
    * Classified form of this failure, including its `origin` — whose fault the
    * turn dying was.
    *

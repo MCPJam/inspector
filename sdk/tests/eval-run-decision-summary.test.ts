@@ -270,6 +270,10 @@ describe("evidence is attached to the claim it supports", () => {
     /** `null` is a trial that recorded no verdict at all. */
     result?: string | null;
     failSelection?: boolean;
+    /** Selection reached but unreadable — an evidence gap, not a clean chain. */
+    unmeasureSelection?: boolean;
+    /** Selection out of scope for this case — not a gap at all. */
+    selectionNotApplicable?: boolean;
     /**
      * Keep `firstFailedStage` (the schema requires it to name the failed row)
      * but record NO category. `failureCategory` is read from the stored row
@@ -293,8 +297,13 @@ describe("evidence is attached to the claim it supports", () => {
       { stage: "discovery", state: "passed", reason: "observed" },
       {
         stage: "selection",
-        state: opts.failSelection ? "failed" : "passed",
-        reason: opts.failSelection ? "missingToolCall" : "observed",
+        ...(opts.failSelection
+          ? { state: "failed", reason: "missingToolCall" }
+          : opts.unmeasureSelection
+          ? { state: "notMeasured", reason: "noEvidenceCaptured" }
+          : opts.selectionNotApplicable
+          ? { state: "notApplicable", reason: "notAuthored" }
+          : { state: "passed", reason: "observed" }),
       },
       { stage: "call", state: "passed", reason: "observed" },
       { stage: "response", state: "passed", reason: "observed" },
@@ -319,17 +328,51 @@ describe("evidence is attached to the claim it supports", () => {
     );
   });
 
-  it("names the KNOWN cause when the chain predates analyzer 7", () => {
-    // Knowable from the row rather than guessed: before 7, a case that
-    // authored nothing about tools left `response` inapplicable, so an
-    // errored tool call had no stage able to report it.
-    const summary = assembleEvalRunDecisionSummary(
+  it("tells a pre-7 chain to re-run, without naming a cause", () => {
+    // The version proves the analyzer measured LESS than the current one. It
+    // does not prove what went wrong. An earlier draft named the errored tool
+    // call as the cause, which would have sent a reader after one specific
+    // finding on every legacy row whatever actually happened.
+    const action = assembleEvalRunDecisionSummary(
       disagreementInput({ analyzerVersion: 6 })
+    ).diagnostics.items[0]!.nextAction;
+
+    expect(action).toContain("older analyzer that measures less");
+    expect(action).toContain("re-run");
+    // The claim it must NOT make.
+    expect(action).not.toContain("tool");
+  });
+
+  it("does NOT claim a disagreement when a stage was never measured", () => {
+    // The gap the first predicate left. Connection and discovery passed and
+    // nothing failed, so "something measured, nothing wrong" was satisfied —
+    // but the verdict may be failing on exactly the stage the chain could not
+    // read. That is a measurement gap, and calling it a conflict sends someone
+    // looking for a contradiction that is not there.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        unmeasureSelection: true,
+      })
     );
-    expect(summary.diagnostics.items[0]!.nextAction).toContain(
-      "predates the analyzer"
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      "inspect the case trace; no failure category was recorded"
     );
-    expect(summary.diagnostics.items[0]!.nextAction).toContain("re-run");
+  });
+
+  it("still claims a disagreement when a stage is notApplicable", () => {
+    // The other side of that line. A stage the case never exercises is out of
+    // scope, not missing evidence — requiring it to pass would make the claim
+    // unreachable for every case that does not use all six stages.
+    const summary = assembleEvalRunDecisionSummary(
+      disagreementInput({
+        analyzerVersion: STAGE_ANALYZER_VERSION,
+        selectionNotApplicable: true,
+      })
+    );
+    expect(summary.diagnostics.items[0]!.nextAction).toBe(
+      "the recorded verdict disagrees with the measured chain; inspect the case trace"
+    );
   });
 
   it("does NOT claim a disagreement when a stage actually failed", () => {

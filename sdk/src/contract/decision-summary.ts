@@ -847,9 +847,9 @@ function assembleDiagnostic(
  *
  * The disagreement is asserted only when all four halves of it are
  * STRUCTURALLY established: the chain validated, at least one stage actually
- * passed, no stage failed, and the verdict is `failed`. Nothing here guesses
- * at a cause — the chain cannot see one from here, and a guess dressed as a
- * finding is what this vocabulary exists to prevent.
+ * passed, every applicable stage passed, and the verdict is `failed`. Nothing
+ * here guesses at a cause — the chain cannot see one from here, and a guess
+ * dressed as a finding is what this vocabulary exists to prevent.
  */
 function uncategorisedNextAction(
   chain: EvalRunDecisionChain,
@@ -858,21 +858,37 @@ function uncategorisedNextAction(
   if (chain.status !== "verified" || result !== "failed") {
     return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
   }
-  // A disagreement needs BOTH halves: something measured, and nothing wrong
-  // with it. Requiring only "nothing failed" would call a policy-blocked run
-  // a disagreement — its stages are all `notMeasured/blockedByPolicy`, so
-  // nothing failed, but nothing was measured either and there is nothing for
-  // the verdict to disagree WITH.
+  // A disagreement needs the chain to be COMPLETE and clean, not merely
+  // un-failed. Every stage must have `passed`, except the ones the case does
+  // not exercise at all.
+  //
+  // "Something passed and nothing failed" is too weak, and its gap is the same
+  // mistake in slower motion: a chain with connection and discovery passed and
+  // selection `notMeasured / noEvidenceCaptured` has nothing failed and
+  // something measured, but the verdict may be failing on exactly the stage
+  // the chain could not read. That is a measurement GAP, and telling someone
+  // two things they hold are in conflict sends them looking for a
+  // contradiction that is not there.
+  //
+  // `notApplicable` is the one state that does not block the claim: a stage
+  // the case never exercises is not missing evidence, it is out of scope, and
+  // requiring it to pass would make the claim unreachable for every case that
+  // does not use all six stages.
   const measuredSomething = chain.stages.some((row) => row.state === "passed");
-  const anyStageFailed = chain.stages.some((row) => row.state === "failed");
-  if (!measuredSomething || anyStageFailed) {
+  const everyApplicableStagePassed = chain.stages.every(
+    (row) => row.state === "passed" || row.state === "notApplicable"
+  );
+  if (!measuredSomething || !everyApplicableStagePassed) {
     return DECISION_SUMMARY_FALLBACK_NEXT_ACTION;
   }
 
-  // The one case where the CAUSE is knowable from the row rather than
-  // guessed: a chain derived before analyzer 7 could not report an errored
-  // tool call on a case that authored no tool expectation, so "re-run" is a
-  // real instruction rather than a shrug.
+  // A pre-7 chain gets a different INSTRUCTION, not a different diagnosis.
+  //
+  // The version establishes that this analyzer measured strictly less than the
+  // current one — before 7 an errored tool call on a case with no authored
+  // tool expectation had no stage able to report it — so re-deriving may
+  // attribute what this row could not. It does NOT establish that such a call
+  // occurred, which is why the wording names the analyzer and not a cause.
   return chain.analyzerVersion !== undefined &&
     chain.analyzerVersion < STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE
     ? DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
