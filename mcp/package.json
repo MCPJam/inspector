@@ -7,6 +7,7 @@
   "scripts": {
     "build:ui": "vite build --config vite.config.ts",
     "bundle:ui:html": "node scripts/bundle-mcp-app-html.mjs",
+    "bundle:skills": "node scripts/generate-skills-bundle.mjs",
     "test": "npm run build -w @mcpjam/sdk && vitest run",
     "test:fast": "vitest run",
     "ui:watch": "vite build --config vite.config.ts --watch --mode development",
