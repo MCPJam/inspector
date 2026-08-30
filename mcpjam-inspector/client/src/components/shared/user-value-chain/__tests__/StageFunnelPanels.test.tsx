@@ -215,7 +215,7 @@ describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", ()
     expect(onChange).toHaveBeenCalledWith("run-1", false);
   });
 
-  it("renders nothing and never reports when the query throws", () => {
+  it("reports false and renders nothing when the query throws", () => {
     // The dark-ship state. Undeployed must read as "no funnel", and the probe
     // must not take the run-detail page down with it.
     queryThrows();
@@ -229,8 +229,33 @@ describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", ()
         />
       </div>,
     );
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith("run-1", false);
     expect(container.textContent).toBe("the rest of the page");
+  });
+
+  it("clears a previous answer when the SAME run's probe then fails", () => {
+    // The boundary key re-arms the probe across runs, but a query that throws
+    // after answering for the run still on screen renders the fallback
+    // silently. Without `onError` the caller would keep the last good `true`
+    // and hold the rail open over a funnel that is no longer there.
+    convex.useQuery.mockReturnValue(SUMMARY);
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenLastCalledWith("run-1", true);
+
+    queryThrows();
+    rerender(
+      <SuiteRunStageFunnelAvailability
+        suiteRunId="run-1"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).toHaveBeenLastCalledWith("run-1", false);
   });
 
   it("names the run each answer is about, so a stale one is detectable", () => {
@@ -269,7 +294,8 @@ describe("SuiteRunStageFunnelAvailability — the probe that opens the rail", ()
         onChange={onChange}
       />,
     );
-    expect(onChange).not.toHaveBeenCalled();
+    // The failing run reports "no funnel" rather than staying silent.
+    expect(onChange).toHaveBeenLastCalledWith("run-1", false);
 
     convex.useQuery.mockReturnValue(SUMMARY);
     rerender(

@@ -186,7 +186,18 @@ export function SuiteRunStageFunnelAvailability({
     // for the life of the element, so an unkeyed one would swallow the probe
     // for every LATER run too: one transient failure would hide the chain on
     // every run after it until the whole view remounted.
-    <ErrorBoundary key={suiteRunId ?? "no-run"} fallback={null}>
+    //
+    // `onError` covers the other half of that: a query that throws AFTER
+    // answering for the run still on screen renders the fallback silently, so
+    // without this the caller would keep the last good `true` and hold the
+    // rail open over a funnel that is no longer there. Reporting `false` from
+    // here makes the failure say the same thing the dark-ship case does —
+    // no funnel.
+    <ErrorBoundary
+      key={suiteRunId ?? "no-run"}
+      fallback={null}
+      onError={() => onChange(suiteRunId, false)}
+    >
       <SuiteRunStageFunnelProbe suiteRunId={suiteRunId} onChange={onChange} />
     </ErrorBoundary>
   );
