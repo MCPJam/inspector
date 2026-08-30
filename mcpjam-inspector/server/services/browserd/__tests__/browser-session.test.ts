@@ -25,7 +25,6 @@ import {
   BROWSERD_PORT,
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
-  BrowserContextModeUnsupportedError,
   ensureBrowserSession,
   type BrowserSessionDeps,
   type SessionSandbox,
@@ -327,16 +326,34 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
 });
 
 describe("ensureBrowserSession — contextMode", () => {
-  it("refuses an ephemeral request before reserving anything", async () => {
+  it("boots an ephemeral session with no persistent profile (W6)", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, {
+      ...ARGS,
+      contextMode: "ephemeral",
+    });
+    expect(handle.contextMode).toBe("ephemeral");
+    // The daemon is told, so it launches with no user-data-dir at all: an
+    // eval's isolation is a property of the browser, not of remembering to
+    // clear cookies.
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ contextMode: "ephemeral" }),
+    );
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({ contextMode: "ephemeral" }),
+    );
+  });
+
+  it("asks the store for the ephemeral mode, so a persistent row is never reused", async () => {
     const f = makeFakes({ lookups: [liveLookup()] });
-    await expect(
-      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
-    ).rejects.toBeInstanceOf(BrowserContextModeUnsupportedError);
-    // Nothing was reserved, looked up, or connected: a caller that asked for
-    // isolation we cannot provide must not silently get a shared profile.
-    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
-    expect(f.lookup).not.toHaveBeenCalled();
-    expect(f.connect).not.toHaveBeenCalled();
+    await ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" });
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedContextMode: "ephemeral" }),
+    );
+    // The live persistent row is NOT verified or reused for an eval.
+    expect(f.status).not.toHaveBeenCalled();
+    expect(f.boot).toHaveBeenCalled();
   });
 
   it("asks the store for the mode it intends to run in", async () => {

@@ -1447,19 +1447,37 @@ function registerCdpAttacher(page, attach) {
   cdpAttachers.set(page, attach);
 }
 async function launchBrowserdContext(options) {
-  await clearStaleSingletonLock(options.userDataDir);
   const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
+  const launchArgs = {
     headless: options.headless ?? false,
+    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+    // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs),
+    args: buildBrowserdLaunchArgs(options.extraArgs)
+  };
+  if (options.contextMode === "ephemeral") {
+    const browser = await chromium.launch(launchArgs);
+    const context2 = await browser.newContext({
+      acceptDownloads: false,
+      permissions: [],
+      ...BROWSERD_CONTEXT_OPTIONS
+    });
+    return adaptContext(context2, {
+      // The browser outlives the context, so closing the context alone would
+      // leave a Chromium process behind in the box.
+      onClose: () => browser.close()
+    });
+  }
+  await clearStaleSingletonLock(options.userDataDir);
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    ...launchArgs,
     acceptDownloads: false,
     permissions: [],
     ...BROWSERD_CONTEXT_OPTIONS
   });
   return adaptContext(context);
 }
-function adaptContext(context) {
+function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
   return {
@@ -1473,8 +1491,9 @@ function adaptContext(context) {
     isConnected() {
       return context.browser()?.isConnected() ?? true;
     },
-    close() {
-      return context.close();
+    async close() {
+      await context.close();
+      await options.onClose?.();
     }
   };
 }
@@ -1503,7 +1522,11 @@ function readBrowserdConfig(env = process.env) {
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
     headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
-    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0
+    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent"
   };
 }
 function extraArgsFor(config) {
@@ -1523,7 +1546,8 @@ async function main() {
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
-    extraArgs: extraArgsFor(config)
+    extraArgs: extraArgsFor(config),
+    contextMode: config.contextMode
   });
   const driver = new ChromiumDriver(context);
   const stack = buildBrowserdStack(driver, { token: config.token });

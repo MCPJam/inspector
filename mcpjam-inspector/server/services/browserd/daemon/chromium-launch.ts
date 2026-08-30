@@ -277,6 +277,13 @@ export interface LaunchBrowserdContextOptions {
   headless?: boolean;
   /** Extra args, e.g. `--window-size` matched to the X screen geometry. */
   extraArgs?: readonly string[];
+  /**
+   * `persistent` (default) keeps one profile across boots — what a
+   * playground login depends on. `ephemeral` launches a throwaway browser
+   * with a fresh context and NO profile dir, so an eval iteration can never
+   * inherit the previous one's cookies.
+   */
+  contextMode?: "persistent" | "ephemeral";
 }
 
 /**
@@ -288,12 +295,36 @@ export interface LaunchBrowserdContextOptions {
 export async function launchBrowserdContext(
   options: LaunchBrowserdContextOptions,
 ): Promise<DriverContext> {
-  await clearStaleSingletonLock(options.userDataDir);
   const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
+  const launchArgs = {
     headless: options.headless ?? false,
+    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+    // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
     args: buildBrowserdLaunchArgs(options.extraArgs),
+  };
+
+  if (options.contextMode === "ephemeral") {
+    // No user-data-dir at all: an eval's isolation must be a property of the
+    // BROWSER, not of remembering to clear cookies. Nothing persists, so
+    // there is no singleton lock to clear either (L8 is about the shared
+    // profile directory, which does not exist here).
+    const browser = await chromium.launch(launchArgs);
+    const context = await browser.newContext({
+      acceptDownloads: false,
+      permissions: [],
+      ...BROWSERD_CONTEXT_OPTIONS,
+    });
+    return adaptContext(context as unknown as AnyContext, {
+      // The browser outlives the context, so closing the context alone would
+      // leave a Chromium process behind in the box.
+      onClose: () => browser.close(),
+    });
+  }
+
+  await clearStaleSingletonLock(options.userDataDir);
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    ...launchArgs,
     acceptDownloads: false,
     permissions: [],
     ...BROWSERD_CONTEXT_OPTIONS,
@@ -319,7 +350,10 @@ export type AnyContext = {
  * visible and permanently outside the driver's tab map, where a headed user could
  * focus it while observations ran against a different tab (P2).
  */
-export function adaptContext(context: AnyContext): DriverContext {
+export function adaptContext(
+  context: AnyContext,
+  options: { onClose?: () => Promise<unknown> } = {},
+): DriverContext {
   const startup = [...context.pages()];
   let adopted = 0;
   return {
@@ -337,8 +371,11 @@ export function adaptContext(context: AnyContext): DriverContext {
     isConnected() {
       return context.browser()?.isConnected() ?? true;
     },
-    close() {
-      return context.close();
+    async close() {
+      await context.close();
+      // Ephemeral mode owns a Browser above the context; closing only the
+      // context would strand its process inside the box.
+      await options.onClose?.();
     },
   };
 }

@@ -143,27 +143,14 @@ export interface EnsureBrowserSessionArgs {
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
    *
-   * `ephemeral` is REFUSED here today: the daemon has one profile mode (a
-   * persistent user-data-dir), so recording a row as ephemeral would promise
-   * an isolation the runtime does not provide — an eval would silently
-   * inherit a previous iteration's cookies. W6 adds the daemon's ephemeral
-   * launch path and lifts this refusal; until then the type exists so the
-   * session row, the lookup and the reuse check are already mode-aware.
+   * `ephemeral` boots the daemon with no profile directory at all, so an
+   * eval or swarm iteration cannot inherit the previous one's cookies. The
+   * mode is part of session identity: a row in the other mode is never
+   * reused, because handing an eval a logged-in profile (or a human a blank
+   * one) is a silent correctness failure either way.
    */
   contextMode?: BrowserContextMode;
   signal?: AbortSignal;
-}
-
-/** Thrown when a caller asks for a mode the runtime cannot yet honor. */
-export class BrowserContextModeUnsupportedError extends Error {
-  constructor(mode: BrowserContextMode) {
-    super(
-      `browser sessions cannot run in '${mode}' mode yet: the daemon launches a ` +
-        `persistent profile, so an ephemeral session would not actually be ` +
-        `isolated. Evals/swarms get isolation in W6.`,
-    );
-    this.name = "BrowserContextModeUnsupportedError";
-  }
 }
 
 export interface BrowserSessionHandle {
@@ -189,12 +176,6 @@ export async function ensureBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<BrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
-  // Refuse BEFORE reserving a box: a caller asking for isolation we cannot
-  // provide should fail immediately and loudly, not burn a desktop reserve
-  // and then receive a session that quietly shares state.
-  if (contextMode !== "persistent") {
-    throw new BrowserContextModeUnsupportedError(contextMode);
-  }
   const { computerId } = await deps.reserveDesktop({
     bearer: args.bearer,
     projectId: args.projectId,
@@ -281,6 +262,7 @@ async function ensureOnComputer(
         scriptPath: BROWSERD_SCRIPT_PATH,
         port: BROWSERD_PORT,
         userDataDir: BROWSERD_USER_DATA_DIR,
+        contextMode,
       });
     } catch (bootError) {
       // Another replica may have won the boot race for this computer (the

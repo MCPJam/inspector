@@ -28,6 +28,7 @@ async function main(): Promise<void> {
     userDataDir: config.userDataDir,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
+    contextMode: config.contextMode,
   });
   const driver = new ChromiumDriver(context);
   const stack = buildBrowserdStack(driver, { token: config.token });
