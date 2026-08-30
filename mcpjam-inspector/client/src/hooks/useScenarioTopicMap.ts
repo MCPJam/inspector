@@ -205,13 +205,25 @@ export function useScenarioTopicMap({
   return useTopicMap({ scope, enabled });
 }
 
-/** Build a topic-map scope from an insights scope (drops journeyRunIds). */
+/**
+ * Build a topic-map scope from an insights scope (drops journeyRunIds).
+ *
+ * `null` for a benchmark run, and that is a real answer rather than a gap: a
+ * neighbour graph over one exam's repetitions draws "these two runs of the
+ * same case are similar" and nothing else, so the backend builds no map for
+ * one. Falling through to the swarm arm would query with
+ * `projectId: undefined` and hand back some other cohort's map.
+ */
 export function topicMapScopeFromInsights(
   scope: InsightsScope | null,
 ): TopicMapScope | null {
   if (!scope) return null;
-  if (scope.kind === "scenario") {
-    return { kind: "scenario", scenarioId: scope.scenarioId };
+  switch (scope.kind) {
+    case "scenario":
+      return { kind: "scenario", scenarioId: scope.scenarioId };
+    case "swarm":
+      return { kind: "swarm", projectId: scope.projectId };
+    case "benchmark":
+      return null;
   }
-  return { kind: "swarm", projectId: scope.projectId };
 }
