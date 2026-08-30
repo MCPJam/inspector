@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   ArrowLeftRight,
   Building2,
@@ -42,6 +43,7 @@ import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface SidebarContextSwitcherProps {
   activeProjectId: string;
@@ -50,7 +52,8 @@ interface SidebarContextSwitcherProps {
   onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoading?: boolean;
-  onNavigateToSettings?: () => void;
+  /** Opens one project's settings directly. See `onOpenProjectSettings`. */
+  onNavigateToSettings?: (projectId: string) => void;
   isCreateDisabled?: boolean;
   createDisabledReason?: string;
   onLearnMoreExpand?: (tabId: string, sourceRect: DOMRect | null) => void;
@@ -333,15 +336,12 @@ export function SidebarContextSwitcher({
                           onNavigateToSettings
                             ? () => {
                                 setMenuOpen(false);
-                                // Switch and navigate in one gesture. Awaiting
-                                // the switch first let the project change land
-                                // on the old route, where the snap-to-Servers
-                                // effect read it as a bare project switch and
-                                // bounced off the settings page.
-                                if (project.id !== activeProjectId) {
-                                  onSwitchProject(project.id);
-                                }
-                                onNavigateToSettings();
+                                // ONE navigation, to that project's settings
+                                // URL. No pre-switch: the URL is the switch,
+                                // and the route coordinator performs it. The
+                                // old switch-then-navigate pair is what the
+                                // snap-to-Servers effect used to race.
+                                onNavigateToSettings(project.id);
                               }
                             : undefined
                         }
@@ -362,7 +362,8 @@ export function SidebarContextSwitcher({
                     type="button"
                     data-testid="org-sign-in-button"
                     onClick={() => {
-                      signIn();
+                      captureAppSignInReturnPath();
+                      signIn(permalinkSignInOptions());
                       setMenuOpen(false);
                     }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
