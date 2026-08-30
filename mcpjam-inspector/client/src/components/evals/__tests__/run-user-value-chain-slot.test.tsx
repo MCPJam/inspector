@@ -144,6 +144,46 @@ describe("falling back says which it is", () => {
     expect(screen.queryByTestId("run-stage-analytics-service-note")).toBeNull();
   });
 
+  it("says a run HAS no document only when the API said so", async () => {
+    // Review finding: the label read "this run has no canonical stage
+    // analytics" for every fallback, including read failures — reporting a
+    // transient outage as a permanent absence. Only a 404 establishes the
+    // absence; the rest establish that we could not look.
+    rejectWith("notFound");
+    const { unmount } = render(<Slot />);
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("run-stage-analytics-legacy-label"),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getByTestId("run-stage-analytics-legacy-label").textContent,
+    ).toContain("has no canonical stage analytics");
+    unmount();
+
+    for (const kind of [
+      "requestFailed",
+      "invalidContract",
+      "routeUnavailable",
+    ] as const) {
+      fetchMock.mockReset();
+      rejectWith(kind);
+      const view = render(<Slot />);
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId("run-stage-analytics-legacy-label"),
+        ).toBeTruthy(),
+      );
+      const text = screen.getByTestId(
+        "run-stage-analytics-legacy-label",
+      ).textContent;
+      expect(text).toContain("could not be read");
+      // The claim it must NOT make: a document may well exist.
+      expect(text).not.toContain("has no canonical");
+      view.unmount();
+    }
+  });
+
   it("stays silent about the dark-ship window", async () => {
     // The flag is on before the route is deployed. Expected, not a
     // malfunction, and a red banner would be reporting our own rollout.

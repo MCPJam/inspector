@@ -179,6 +179,36 @@ describe("useEvalRunStageAnalytics", () => {
     expect(states[states.length - 1]!.document).toEqual(GOLDEN_STAGE_ANALYTICS);
   });
 
+  it.each([["completed"], ["failed"], ["cancelled"], ["timed_out"]])(
+    "treats %s as terminal and re-asks",
+    async (terminal) => {
+      // `timed_out` was the one missed: the runner types its own terminal
+      // transitions as "cancelled" | "timed_out", so a run that ran out of
+      // time is as over as one that was cancelled — and a page opened during
+      // it would otherwise sit on the older rollup forever.
+      fetchMock.mockReset();
+      fetchMock.mockRejectedValueOnce(
+        new EvalStageAnalyticsError("notFound", "not yet", { status: 404 }),
+      );
+      const states: EvalRunStageAnalyticsState[] = [];
+      const { rerender, unmount } = render(
+        <Harness runStatus="running" onState={(s) => states.push(s)} />,
+      );
+      await waitFor(() =>
+        expect(states[states.length - 1]!.status).toBe("absent"),
+      );
+
+      fetchMock.mockResolvedValue(GOLDEN_STAGE_ANALYTICS);
+      rerender(
+        <Harness runStatus={terminal} onState={(s) => states.push(s)} />,
+      );
+      await waitFor(() =>
+        expect(states[states.length - 1]!.status).toBe("ready"),
+      );
+      unmount();
+    },
+  );
+
   it("does NOT re-ask on a status change that is still not terminal", async () => {
     // Collapsed to "is it over", not carried through as the raw status: a run
     // moving pending -> running says nothing about whether its document

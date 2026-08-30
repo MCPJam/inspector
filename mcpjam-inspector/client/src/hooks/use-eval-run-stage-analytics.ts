@@ -70,10 +70,21 @@ function toErrorInfo(error: unknown): StageAnalyticsErrorInfo {
 /**
  * The statuses after which a run's document will not appear later.
  *
- * Matches `use-run-group-quality.ts` rather than inventing a second list —
- * "this run is over" is one fact and two definitions of it would drift.
+ * `timed_out` belongs here and is easy to miss: the runner types its own
+ * terminal transitions as `"cancelled" | "timed_out"`, so a run that ran out of
+ * time is as over as one that was cancelled. Leaving it out meant a page opened
+ * during such a run never re-asked and sat on the older rollup forever.
+ *
+ * A SUPERSET of `use-run-group-quality.ts`'s list, which omits it — worth
+ * reconciling, but widening that one is outside this change and it is used for
+ * a different question.
  */
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
 
 export function useEvalRunStageAnalytics({
   projectId,

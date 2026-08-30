@@ -73,6 +73,16 @@ export type RunUserValueChain = {
   serviceNote: string | null;
   /** Whether the canonical read was attempted at all — gates the label. */
   attempted: boolean;
+  /**
+   * WHY the legacy rollup is on screen, when it is.
+   *
+   * `absent` is a fact about the RUN — it has no canonical document and never
+   * will. `unreadable` is a fact about this ATTEMPT — a document may well
+   * exist and we could not get it. Saying the first when the second is true
+   * reports a transient outage as a permanent absence, which is exactly the
+   * kind of over-claim the rest of this work removes.
+   */
+  fallbackReason: "absent" | "unreadable" | null;
 };
 
 export function useRunUserValueChainChoice({
@@ -106,6 +116,7 @@ export function useRunUserValueChainChoice({
       document: null,
       serviceNote: null,
       attempted: false,
+      fallbackReason: null,
     };
   }
   if (status === "loading" || status === "idle") {
@@ -114,6 +125,7 @@ export function useRunUserValueChainChoice({
       document: null,
       serviceNote: null,
       attempted: true,
+      fallbackReason: null,
     };
   }
   if (status === "ready" && document) {
@@ -122,6 +134,7 @@ export function useRunUserValueChainChoice({
       document,
       serviceNote: null,
       attempted: true,
+      fallbackReason: null,
     };
   }
   // Everything else falls back to legacy. Only a REAL failure says so out
@@ -132,7 +145,16 @@ export function useRunUserValueChainChoice({
         ? "The canonical stage analytics for this run did not match the published contract, so the older rollup is shown."
         : "The canonical stage analytics for this run could not be read, so the older rollup is shown."
       : null;
-  return { choice: "legacy", document: null, serviceNote, attempted: true };
+  return {
+    choice: "legacy",
+    document: null,
+    serviceNote,
+    attempted: true,
+    // Only a 404 establishes that the run HAS no document. Every error kind —
+    // the dark-ship window included — means we could not read one, which is a
+    // different claim and a recoverable one.
+    fallbackReason: status === "absent" ? "absent" : "unreadable",
+  };
 }
 
 export function RunUserValueChainSlot({
@@ -146,7 +168,7 @@ export function RunUserValueChainSlot({
   legacy: ReactNode;
   className?: string;
 }) {
-  const { choice, document, serviceNote, attempted } = chain;
+  const { choice, document, serviceNote, attempted, fallbackReason } = chain;
 
   if (choice === "nothing") return null;
 
@@ -169,7 +191,13 @@ export function RunUserValueChainSlot({
               two readings is on screen — the older one has no reach/measured
               split and no slices, so its numbers are not comparable to the
               canonical document's. */}
-          Older stage rollup — this run has no canonical stage analytics.
+          {/* The REASON is not guessed either: a 404 means the run has no
+              document, while any read error means we could not fetch one.
+              Reporting a transient outage as a permanent absence would be the
+              same over-claim this work exists to remove. */}
+          {fallbackReason === "unreadable"
+            ? "Older stage rollup — the canonical stage analytics could not be read for this run."
+            : "Older stage rollup — this run has no canonical stage analytics."}
         </p>
       ) : null}
       {serviceNote ? (
