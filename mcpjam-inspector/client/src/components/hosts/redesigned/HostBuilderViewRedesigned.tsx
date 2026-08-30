@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation } from "react-router";
 import { Loader2, Save } from "lucide-react";
+import { useAppNavigate } from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -72,7 +73,7 @@ export function HostBuilderViewRedesigned({
   hostId,
   projectId,
 }: HostBuilderViewRedesignedProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const location = useLocation();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({

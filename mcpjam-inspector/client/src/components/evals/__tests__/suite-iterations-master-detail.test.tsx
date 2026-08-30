@@ -35,6 +35,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
 
+// `SuiteDetailOverview` (Evaluate (New)) reads this; the shipped tab's
+// dashboard does not, so it is only exercised by the opt-in block below.
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
@@ -246,7 +248,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
   });
 
-  it("opens test edit from the suite-detail case list when run actions are hidden", async () => {
+  it("opens test edit with compare deep link from the cases list when run actions are hidden", async () => {
     const user = userEvent.setup();
     const navigation = {
       ...noopNav,
@@ -295,20 +297,21 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    await user.click(screen.getByTestId("suite-test-case-row-case-1"));
+    await user.click(screen.getByTestId("test-cases-overview"));
 
     expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
 
-  it("renders the Evaluate suite-detail identity row when run actions are hidden", () => {
+  it("preserves the clicked iteration when opening compare from the cases list", async () => {
+    const user = userEvent.setup();
     const navigation = {
       ...noopNav,
-      toSuiteEdit: vi.fn(),
+      toTestEdit: vi.fn(),
     };
 
     render(
       <SuiteIterationsView
-        suite={{ ...baseSuite, name: "checkout-flow" }}
+        suite={baseSuite}
         cases={[
           {
             _id: "case-1",
@@ -348,11 +351,12 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    expect(screen.getByTestId("suite-detail-overview")).toBeInTheDocument();
-    expect(screen.getByTestId("suite-detail-identity")).toHaveTextContent(
-      "checkout-flow",
-    );
-    expect(screen.queryByTestId("suite-header")).toBeNull();
+    await user.click(screen.getByTestId("test-cases-open-last-run"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-1",
+    });
   });
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {
@@ -477,6 +481,106 @@ describe("SuiteIterationsView cloud-sandbox gate", () => {
     });
     expect(mocks.suiteHeader).toHaveBeenCalledWith(
       expect.objectContaining({ evalRunsDisabledReason: null }),
+    );
+  });
+});
+
+/**
+ * `suiteDetailOverview` is the one opt-in the shipped Evaluate tab does NOT
+ * pass. These assert both halves of that: off is exactly the behaviour every
+ * current caller has, on is the Evaluate (New) suite page.
+ */
+describe("SuiteIterationsView suiteDetailOverview", () => {
+  const detailCase = {
+    _id: "case-1",
+    testSuiteId: "suite-1",
+    createdBy: "u",
+    title: "Case 1",
+    query: "Prompt",
+    models: [],
+    runs: 1,
+    expectedToolCalls: [],
+  };
+
+  const renderOverview = (
+    props: Partial<Record<string, unknown>> = {},
+    navigation = noopNav,
+  ) =>
+    render(
+      <SuiteIterationsView
+        suite={{ ...baseSuite, name: "checkout-flow" }}
+        cases={[detailCase as any]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={navigation}
+        hideRunActions
+        {...(props as any)}
+      />,
+    );
+
+  it("keeps the unified dashboard when the flag-gated tab has not opted in", () => {
+    renderOverview();
+
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
+    expect(screen.getByTestId("suite-header")).toBeInTheDocument();
+  });
+
+  it("renders the Evaluate (New) suite-detail identity row when opted in", () => {
+    renderOverview({ suiteDetailOverview: true });
+
+    expect(screen.getByTestId("suite-detail-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-detail-identity")).toHaveTextContent(
+      "checkout-flow",
+    );
+    expect(screen.queryByTestId("suite-header")).toBeNull();
+  });
+
+  it("opens test edit from the opted-in suite-detail case list", async () => {
+    const user = userEvent.setup();
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+
+    renderOverview({ suiteDetailOverview: true }, navigation);
+
+    await user.click(screen.getByTestId("suite-test-case-row-case-1"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+  });
+
+  it("keeps the suite header on the edit route so rename and Done stay reachable", () => {
+    // `viewMode` falls through to "overview" for suite-edit, so the opt-in has
+    // to exclude edit mode explicitly. SuiteHeader is the ONLY mount point for
+    // the edit chrome (name editor + Done) and for SuiteEnvironmentComposerBar
+    // — suppressing it leaves the settings sheet headerless and the suite's
+    // client/model/server composer unreachable from both routes.
+    renderOverview({
+      suiteDetailOverview: true,
+      route: { type: "suite-edit", suiteId: "suite-1" },
+    });
+
+    expect(screen.getByTestId("suite-header")).toBeInTheDocument();
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({ isEditMode: true }),
     );
   });
 });

@@ -110,6 +110,33 @@ describe("chat-ingestion", () => {
     expect(body.surface).toBe("share_link");
   });
 
+  it("keeps the sent prompt and the resume prompt as separate fields", async () => {
+    // Two different questions, and merging them breaks one of the two:
+    // `systemPrompt` is EVIDENCE of what the model was given (turn-injected
+    // sections included), `resumeConfig.systemPrompt` is what a resumed turn
+    // replays. Replaying turn-injected content — a skills catalog for servers
+    // that may no longer be connected, or a "your sandbox was reset" notice —
+    // is the confabulation the raw resume prompt exists to prevent.
+    await persistChatSessionToConvex({
+      chatSessionId: "session-2",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      origin: "playground",
+      systemPrompt: "HOST PROMPT\n\n## Skills from MCP servers\n\n- **acme/refunds**",
+      resumeConfig: { systemPrompt: "HOST PROMPT" },
+      startedAt: 1,
+      lastActivityAt: 2,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.systemPrompt).toContain("## Skills from MCP servers");
+    expect(body.resumeConfig.systemPrompt).toBe("HOST PROMPT");
+  });
+
   it("serializes rewind lineage for an edited branch", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "branch-session",
