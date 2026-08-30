@@ -7,6 +7,14 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
 import { EvalsEmptyHero } from "./evals/evals-empty-hero";
 import {
   runExcalidrawQuickstart,
@@ -21,7 +29,6 @@ import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { isQuickstartSuite } from "./evals/constants";
 import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
-import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
@@ -33,10 +40,7 @@ import {
   getEffectiveSuiteServers,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
-import {
-  EvalsHeader,
-  type EvalLandingView,
-} from "./evals/evals-header";
+import { EvalsHeader } from "./evals/evals-header";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -46,15 +50,17 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { SuitesOverview } from "./evals/suites-overview";
-import { ProjectRunsTable } from "./evals/project-runs-table";
-import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
 import { isDraftTestCaseId } from "./evals/draft-test-case";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { SuiteSwitcher } from "./evals/suite-switcher";
 import {
-  CreateSuitePage,
+  sortSuiteOverviewEntries,
+  stripTimestampSuffix,
+} from "./evals/suite-overview-presentation";
+import {
+  CreateSuiteDialog,
   type CreateSuitePayload,
-} from "./evals/create-suite-page";
+} from "./evals/create-suite-dialog";
 import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import { track } from "@/lib/analytics";
@@ -142,7 +148,7 @@ function EvalsTabContent({
 }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  // create-suite-page uses `hostsEnabled` as both a feature gate AND a
+  // create-suite-dialog uses `hostsEnabled` as both a feature gate AND a
   // "skeleton suite creation requires attachments" gate (attachmentsRequired
   // = hostsEnabled && projectId), so it stays auth-gated rather than
   // unconditionally on.
@@ -170,11 +176,10 @@ function EvalsTabContent({
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
     [evalIterationQuota]
   );
-  const { servers: projectServers = [], isLoading: isProjectServersLoading } =
-    useProjectServers({
-      isAuthenticated,
-      projectId: projectId ?? null,
-    });
+  const { servers: projectServers = [] } = useProjectServers({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
@@ -347,6 +352,27 @@ function EvalsTabContent({
     selectedSuiteId,
   ]);
 
+  // No standalone suites list: landing on /evals jumps straight into the most
+  // recently RUN suite's dashboard (suites are switched via the breadcrumb
+  // dropdown). Never-run suites all tie, so a project with no runs falls back
+  // to the sortedSuites recency order. Only the empty-state (no suites) keeps
+  // the bare list route.
+  useEffect(() => {
+    if (route.type !== "list") {
+      return;
+    }
+    if (overviewQueries.isOverviewLoading) {
+      return;
+    }
+    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
+    if (mostRecent) {
+      navigatePlaygroundEvalsRoute(
+        { type: "suite-overview", suiteId: mostRecent.suite._id },
+        { replace: true }
+      );
+    }
+  }, [route.type, overviewQueries.isOverviewLoading, visibleSuites]);
+
   // Wait for auth to settle before firing view events. The parent
   // ErrorBoundary keys on (projectId, isAuthenticated), so projectId
   // resolving null→"x" remounts this component and would otherwise
@@ -370,41 +396,19 @@ function EvalsTabContent({
     });
   }, [isLoading, selectedSuiteId, route.type, projectId]);
 
-  // Prefill for the create-suite page: name from the agent command
-  // (`ui_open_eval_suite_form`) or name + server from the empty-hero cards.
-  // Prefill-over-commit — the user still reviews and submits.
+  // Name-only prefill for the create-suite dialog, set by the agent's
+  // openEvalSuiteForm command (prefill-over-commit: the agent may suggest a
+  // name; the user picks everything else and submits).
   const [createSuitePrefillName, setCreateSuitePrefillName] = useState<
     string | null
   >(null);
-  const [createSuitePrefillServerId, setCreateSuitePrefillServerId] = useState<
-    string | null
-  >(null);
-
-  const emptyHeroServers = useMemo(
-    () =>
-      projectServers
-        .filter((server) => server.name.trim().length > 0)
-        .map((server) => ({ id: server._id, name: server.name })),
-    [projectServers]
-  );
 
   const handleOpenCreateSuite = useCallback(() => {
     setCreateSuitePrefillName(null);
-    setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
 
-  const handleOpenCreateSuiteFromServer = useCallback(
-    (server: { id: string; name: string }) => {
-      setCreateSuitePrefillName(server.name);
-      setCreateSuitePrefillServerId(server.id);
-      navigatePlaygroundEvalsRoute({ type: "create" });
-    },
-    []
-  );
-
   const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
-  const [landingView, setLandingView] = useState<EvalLandingView>("suites");
 
   const existingQuickstartSuiteId = useMemo(() => {
     const match = visibleSuites.find(
@@ -452,10 +456,11 @@ function EvalsTabContent({
 
   const showQuickstart = Boolean(handleConnect);
 
-  const handleCancelCreateSuite = useCallback(() => {
-    setCreateSuitePrefillName(null);
-    setCreateSuitePrefillServerId(null);
-    navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+  const handleCreateDialogChange = useCallback((open: boolean) => {
+    if (!open) {
+      setCreateSuitePrefillName(null);
+      navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
+    }
   }, []);
 
   const handleCreateSuite = useCallback(
@@ -486,7 +491,7 @@ function EvalsTabContent({
         }
 
         // `createTestSuite` cannot take environments, so a suite born in
-        // environment mode needs a second call. The create page already resolved
+        // environment mode needs a second call. The dialog already resolved
         // these ids and sent the matching clients as legacy rollback data, so a
         // failure here leaves a runnable legacy suite the header can convert —
         // worth a toast, not worth discarding the suite.
@@ -523,16 +528,15 @@ function EvalsTabContent({
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
 
-  const handleSelectRunFromAllRuns = useCallback(
-    ({ suiteId, runId }: { suiteId: string; runId: string }) => {
-      navigatePlaygroundEvalsRoute({ type: "run-detail", suiteId, runId });
-    },
-    []
-  );
+  const handleNavigateToSuiteOverview = useCallback(() => {
+    if (!selectedSuiteId) return;
+    navigatePlaygroundEvalsRoute({
+      type: "suite-overview",
+      suiteId: selectedSuiteId,
+    });
+  }, [selectedSuiteId]);
 
-  const handleNavigateToEvalList = useCallback(() => {
-    navigatePlaygroundEvalsRoute({ type: "list" });
-  }, []);
+  const isSuiteOverviewRoute = route.type === "suite-overview";
 
   // Shared by the Generate button (below, on the selected suite) and the
   // agent's generateEvalTests command (any resolved suite): one
@@ -744,7 +748,6 @@ function EvalsTabContent({
         const name =
           typeof payload?.name === "string" ? payload.name.trim() : "";
         setCreateSuitePrefillName(name.length > 0 ? name : null);
-        setCreateSuitePrefillServerId(null);
         navigatePlaygroundEvalsRoute({ type: "create" });
         return {
           status: "form_opened",
@@ -987,54 +990,96 @@ function EvalsTabContent({
       route.type === "test-edit" ||
       route.type === "suite-edit");
 
-  const suiteBreadcrumbLabel = selectedSuite
-    ? stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite"
-    : null;
-  const isNestedDetail =
-    route.type === "test-edit" ||
-    route.type === "test-detail" ||
-    route.type === "run-detail" ||
-    route.type === "suite-edit";
-  const nestedPageLabel =
-    route.type === "test-edit" || route.type === "test-detail"
-      ? isDraftTestCaseId(selectedTestId)
-        ? "New case"
-        : suiteDetails?.testCases.find((testCase) => testCase._id === selectedTestId)
-            ?.title || "Test case"
-      : route.type === "suite-edit"
-        ? "Settings"
-        : route.type === "run-detail"
-          ? "Run"
-          : null;
+  const selectedTestCase = useMemo(() => {
+    if (!selectedTestId) return null;
+    return (
+      suiteDetails?.testCases.find((tc) => tc._id === selectedTestId) ?? null
+    );
+  }, [selectedTestId, suiteDetails]);
 
   const renderPlaygroundBreadcrumb = () => {
-    if (!hasDetailRoute) return null;
-    return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
+    if (!hasDetailRoute || !selectedSuite) return null;
+    const selectedSuiteName =
+      stripTimestampSuffix(selectedSuite.name || "") || "Untitled suite";
+
+    return (
+      <Breadcrumb className="min-w-0 flex-1">
+        <BreadcrumbList className="min-w-0 flex-nowrap">
+          <BreadcrumbItem>
+            <SuiteSwitcher
+              suites={visibleSuites}
+              currentSuiteId={selectedSuite._id}
+              onSelectSuite={handleSelectSuite}
+              onCreateSuite={handleOpenCreateSuite}
+              onDeleteSuite={handlers.handleDelete}
+              canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
+            />
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0 sm:max-w-[280px]">
+            {isSuiteOverviewRoute ? (
+              <BreadcrumbPage
+                className="truncate font-medium"
+                title={selectedSuiteName}
+              >
+                {selectedSuiteName}
+              </BreadcrumbPage>
+            ) : (
+              <BreadcrumbLink asChild>
+                <button
+                  type="button"
+                  onClick={handleNavigateToSuiteOverview}
+                  title={selectedSuiteName}
+                  className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                >
+                  {selectedSuiteName}
+                </button>
+              </BreadcrumbLink>
+            )}
+          </BreadcrumbItem>
+          {route.type === "run-detail" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate font-medium">
+                  Run {formatRunId(route.runId)}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+          {route.type === "test-detail" || route.type === "test-edit" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem className="max-w-[min(220px,32vw)] min-w-0">
+                <BreadcrumbPage
+                  className="truncate font-medium"
+                  title={
+                    selectedTestCase?.title ??
+                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")
+                  }
+                >
+                  {selectedTestCase?.title ??
+                    (isDraftTestCaseId(selectedTestId) ? "New case" : "Case")}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+          {route.type === "suite-edit" ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate font-medium">
+                  Settings
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
   };
 
   const renderSuitesBrowsePanel = () => {
-    const isLandingList = route.type === "list";
-
-    if (isLandingList && landingView === "runs") {
-      return projectId && shouldQueryProjectId(projectId) ? (
-        <div
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
-          data-testid="evals-runs-landing"
-        >
-          <ProjectRunsTable
-            projectId={projectId}
-            onSelectRun={handleSelectRunFromAllRuns}
-          />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            Select a project to see runs.
-          </p>
-        </div>
-      );
-    }
-
     if (overviewQueries.isOverviewLoading) {
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -1052,12 +1097,9 @@ function EvalsTabContent({
       return (
         <EvalsEmptyHero
           onCreateSuite={handleOpenCreateSuite}
-          onCreateSuiteFromServer={handleOpenCreateSuiteFromServer}
           onQuickstart={() => void handleExcalidrawQuickstart()}
           isQuickstartRunning={isQuickstartRunning}
           showQuickstart={showQuickstart}
-          servers={emptyHeroServers}
-          serversLoading={isProjectServersLoading}
         />
       );
     }
@@ -1081,27 +1123,12 @@ function EvalsTabContent({
       );
     }
 
-    // List landing: suites overview. Runs live behind the header tab so the
-    // two lists are not stacked. Clicking a suite still drills into its
-    // dashboard; the Evaluate / suite-name crumb stays on those detail routes.
+    // List route with suites: the redirect effect above is about to send us
+    // into the most recent suite's dashboard. Show a spinner instead of the
+    // (now removed) standalone list so there's no flash of an empty table.
     return (
-      <div
-        className="flex min-h-0 flex-1 flex-col overflow-auto"
-        data-testid="evals-suites-landing"
-      >
-        <div className="px-6 pt-6">
-          <SuitesOverview
-            overview={visibleSuites}
-            onSelectSuite={handleSelectSuite}
-            onRerun={handleRerunWithQuota}
-            onCancelRun={handlers.handleCancelRun}
-            onDelete={handlers.handleDelete}
-            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
-            rerunningSuiteId={rerunningSuiteId}
-            cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-          />
-        </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   };
@@ -1203,64 +1230,37 @@ function EvalsTabContent({
       projectId={projectId}
       isDirectGuest={isDirectGuest}
       header={
-        route.type === "create" ? undefined : (
-          <EvalsHeader
-            onCreateSuite={
-              route.type === "list" ? handleOpenCreateSuite : undefined
-            }
-            onEvaluateClick={handleNavigateToEvalList}
-            isDetail={Boolean(hasDetailRoute)}
-            parentCrumb={
-              isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
-                ? {
-                    label: suiteBreadcrumbLabel,
-                    onClick: () =>
-                      playgroundNavigation.toSuiteOverview(selectedSuiteId),
-                  }
-                : undefined
-            }
-            landingView={route.type === "list" ? landingView : undefined}
-            onLandingViewChange={
-              route.type === "list" ? setLandingView : undefined
-            }
-          >
-            {renderPlaygroundBreadcrumb()}
-          </EvalsHeader>
-        )
+        <EvalsHeader mode="suites">{renderPlaygroundBreadcrumb()}</EvalsHeader>
       }
     >
       <>
-        {route.type === "create" ? (
-          <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <CreateSuitePage
-              onCancel={handleCancelCreateSuite}
-              onSubmit={handleCreateSuite}
-              hostsEnabled={hostsEnabled}
-              projectId={projectId}
-              initialName={createSuitePrefillName}
-              initialServerId={createSuitePrefillServerId}
-            />
-          </div>
-        ) : (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {renderPlaygroundBody()}
-          </div>
-        )}
-
-        <ConfirmationDialogs
-          suiteToDelete={handlers.suiteToDelete}
-          setSuiteToDelete={handlers.setSuiteToDelete}
-          deletingSuiteId={handlers.deletingSuiteId}
-          onConfirmDeleteSuite={handlers.confirmDelete}
-          runToDelete={handlers.runToDelete}
-          setRunToDelete={handlers.setRunToDelete}
-          deletingRunId={handlers.deletingRunId}
-          onConfirmDeleteRun={handlers.confirmDeleteRun}
-          testCaseToDelete={handlers.testCaseToDelete}
-          setTestCaseToDelete={handlers.setTestCaseToDelete}
-          deletingTestCaseId={handlers.deletingTestCaseId}
-          onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
+        <CreateSuiteDialog
+          open={route.type === "create"}
+          onOpenChange={handleCreateDialogChange}
+          onSubmit={handleCreateSuite}
+          hostsEnabled={hostsEnabled}
+          projectId={projectId}
+          initialName={createSuitePrefillName}
         />
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {renderPlaygroundBody()}
+
+          <ConfirmationDialogs
+            suiteToDelete={handlers.suiteToDelete}
+            setSuiteToDelete={handlers.setSuiteToDelete}
+            deletingSuiteId={handlers.deletingSuiteId}
+            onConfirmDeleteSuite={handlers.confirmDelete}
+            runToDelete={handlers.runToDelete}
+            setRunToDelete={handlers.setRunToDelete}
+            deletingRunId={handlers.deletingRunId}
+            onConfirmDeleteRun={handlers.confirmDeleteRun}
+            testCaseToDelete={handlers.testCaseToDelete}
+            setTestCaseToDelete={handlers.setTestCaseToDelete}
+            deletingTestCaseId={handlers.deletingTestCaseId}
+            onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
+          />
+        </div>
       </>
     </EvalTabGate>
   );

@@ -64,6 +64,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         requestTimeout: 10000,
       },
       clientCapabilities: {
+        elicitation: {
+          form: {},
+          url: {},
+        },
         extensions: {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
@@ -248,7 +252,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787097600000,
+      verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -452,6 +456,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        paginationTraversal: "full",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -518,6 +523,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             allowFeatures: {
               fullscreen: "*",
             },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
@@ -546,6 +556,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               image: true,
               font: true,
               media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
             },
             resourcePrefersBorder: true,
             downloadFile: true,
@@ -833,7 +853,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1787097600000,
+      verifiedAt: 1787443200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1005,6 +1025,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -1045,6 +1069,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
             sandboxAttrs: [
               "allow-forms",
               "allow-popups",
@@ -1072,6 +1101,23 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               xhr: true,
               websocket: true,
             },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: true,
             downloadFile: false,
             requestTeardown: false,
@@ -1086,7 +1132,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1784764800000,
+      verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1186,6 +1232,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
@@ -1214,8 +1261,30 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
@@ -1235,6 +1304,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             sandboxAttrs: ["allow-forms"],
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
         },
       },
@@ -1484,7 +1558,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1784764800000,
+      verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1532,6 +1606,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       clientCapabilities: {
         extensions: {
+          "io.slack/block-kit": {
+            mimeTypes: ["application/vnd.slack.blocks+json"],
+          },
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
@@ -1667,10 +1744,32 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             serverResources: true,
             logging: true,
             updateModelContext: false,
-            message: false,
+            message: true,
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: false,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
@@ -1688,6 +1787,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               allow: {},
             },
             sandboxAttrs: ["allow-forms"],
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
         },
       },
@@ -1698,7 +1802,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1786665600000,
+      verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1772,6 +1876,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "firstPageOnly",
+        toolListChanged: {
+          listens: true,
+          refetches: true,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
@@ -1795,6 +1904,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               allow: {
                 clipboardWrite: true,
               },
+            },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
             },
           },
           mcpAppsOverrides: {
@@ -1825,8 +1939,18 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               font: true,
               media: true,
             },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: true,
-            downloadFile: true,
+            downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
@@ -1839,7 +1963,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1787097600000,
+      verifiedAt: 1787702400000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -2169,6 +2293,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "firstPageOnly",
+        toolListChanged: {
+          listens: true,
+          refetches: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
@@ -2178,6 +2307,29 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
         apps: {
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
+                "base-uri": ["'none'"],
+              },
+            },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
@@ -2197,6 +2349,23 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               fetch: true,
               xhr: true,
               websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
             },
             resourcePrefersBorder: true,
             toolCancelled: false,
@@ -2225,8 +2394,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1784764800000,
+      supportedProtocolVersions: ["2024-11-05"],
+      verifiedAt: 1787702400000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -2570,11 +2739,19 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: false,
+          refetches: true,
+        },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2024-11-05"],
           clientInfo: {
-            name: "ms-copilot",
-            version: "1.0.1",
+            name: "mcs",
+            version: "1.0.0",
+            channelId: "pva-studio",
+            lcat: "M365_COPILOT_USER",
+            agentAuthenticationMode: "Integrated",
           },
         },
         apps: {
@@ -2641,7 +2818,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1784764800000,
+      verifiedAt: 1787702400000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2829,18 +3006,23 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: true,
+          refetches: true,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "Visual Studio Code",
-            version: "1.130.0",
+            version: "1.134.0",
           },
         },
         apps: {
           uiInitialize: {
             hostInfo: {
               name: "Visual Studio Code",
-              version: "1.130.0",
+              version: "1.134.0",
             },
           },
           compatRuntime: {
@@ -2867,6 +3049,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "local-network-access": "'src'",
               "clipboard-read": "'src'",
             },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
@@ -2884,6 +3071,28 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: true,

@@ -6,7 +6,10 @@ import {
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityForField,
   getCaniuseCapabilityBySlug,
+  getCaniuseSupportLabel,
+  getCaniuseSupportLevel,
 } from "../caniuse-capability-catalog";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 
 describe("caniuse capability catalog", () => {
@@ -45,6 +48,53 @@ describe("caniuse capability catalog", () => {
         "appsCap.cspBaseUriDomains",
       ])
     );
+  });
+
+  it("includes the widget tool-result and sandbox storage probe rows", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "toolResult.structuredContent",
+        "toolResult.content.text",
+        "toolResult.content.resourceLink",
+        "sandbox.browserStorage.localStorage",
+        "sandbox.browserStorage.sessionStorage",
+        "sandbox.browserStorage.indexedDB",
+      ])
+    );
+
+    const config = emptyHostConfigInputV2() as never;
+    expect(
+      getCaniuseSupportLevel(
+        hostConfigField("toolResult.structuredContent"),
+        config
+      )
+    ).toBe("unknown");
+    expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+
+  it("publishes pagination as a yes/no row, unknown until probed", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("paginationTraversal");
+
+    const field = hostConfigField("paginationTraversal");
+    const withValue = (value: string) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        mcpProfile: { profileVersion: 1, paginationTraversal: value },
+      }) as never;
+
+    // Binary by design: a client either follows nextCursor or stops at page
+    // one. There is no partial state to render.
+    expect(getCaniuseSupportLevel(field, withValue("full"))).toBe("supported");
+    expect(getCaniuseSupportLevel(field, withValue("firstPageOnly"))).toBe(
+      "unsupported"
+    );
+
+    // A host nobody probed must never be published as failing.
+    expect(
+      getCaniuseSupportLevel(field, emptyHostConfigInputV2() as never)
+    ).toBe("unknown");
   });
 
   it("excludes config-only fields from public capability pages", () => {

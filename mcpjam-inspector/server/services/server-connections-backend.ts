@@ -210,6 +210,12 @@ export interface ValidationContext {
   serverUrl: string | null;
   accessToken: string | null;
   authMethod: string | null;
+  /**
+   * The credential is absent because its authorization server could not be
+   * reached, not because none is stored. Defaults to false against a backend
+   * that predates the field, which is the old behaviour.
+   */
+  credentialRetryable: boolean;
 }
 
 /**
@@ -233,6 +239,7 @@ export async function fetchValidationContext(
     serverUrl: result.serverUrl ?? null,
     accessToken: result.accessToken ?? null,
     authMethod: result.authMethod ?? null,
+    credentialRetryable: result.credentialRetryable === true,
   };
 }
 

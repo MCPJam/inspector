@@ -1,4 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { track } from "@/lib/analytics";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -282,7 +284,10 @@ export function MCPJamLimitDialog() {
   };
 
   const handleSignIn = () => {
-    signIn();
+    // Remember where they were, so WorkOS returns them here rather than to
+    // the app's front door.
+    captureAppSignInReturnPath();
+    signIn(permalinkSignInOptions());
     track("plan_limit_sign_in_clicked", {
       location: "plan_limit_dialog",
       wall_kind: "guest_credits",
