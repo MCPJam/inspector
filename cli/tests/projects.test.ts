@@ -632,6 +632,9 @@ async function startConnectionFixture(options: {
    * account that made it and the browser opening it may be signed into another
    * one. */
   me?: { email: string } | null;
+  /** Make the create refuse, so a test can assert what survives the trip from
+   * the backend's error envelope out to the CLI's own. */
+  createRefusal?: { status: number; body: unknown };
 }): Promise<{
   baseUrl: string;
   createBodies: unknown[];
@@ -671,6 +674,11 @@ async function startConnectionFixture(options: {
     }
     if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
       createBodies.push(raw ? JSON.parse(raw) : null);
+      if (options.createRefusal) {
+        res.statusCode = options.createRefusal.status;
+        res.end(JSON.stringify(options.createRefusal.body));
+        return;
+      }
       res.statusCode = 201;
       res.end(JSON.stringify(options.created));
       return;
@@ -894,6 +902,62 @@ test("server connect-status reads an existing request", async () => {
     assert.equal(JSON.parse(run.stdout).status, "ready");
     assert.equal(fixture.polls, 1);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect surfaces the ids blocking an ACTIVE_REQUEST_LIMIT", async () => {
+  // End-to-end over the wire, because the ids cross four layers to get here —
+  // the Convex error, the v1 route's `details`, the SDK's PlatformApiError, and
+  // the CLI's own envelope — and any one of them dropping the field turns the
+  // refusal back into the dead end it was.
+  const fixture = await startConnectionFixture({
+    created: { connectionRequestId: "scr_unused", status: "discovering" },
+    createRefusal: {
+      status: 409,
+      body: {
+        code: "CONFLICT",
+        message:
+          "You already have 5 server connections in progress. Finish or cancel one before starting another.",
+        details: {
+          code: "ACTIVE_REQUEST_LIMIT",
+          activeRequests: ["scr_1", "scr_2", "scr_3", "scr_4", "scr_5"],
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "servers",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+            "--no-browser",
+            "--no-wait",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    const payload = parseStderrJson(run.stderr) as unknown as {
+      error: { details?: { activeRequests?: string[] } };
+    };
+    assert.deepEqual(payload.error.details?.activeRequests, [
+      "scr_1",
+      "scr_2",
+      "scr_3",
+      "scr_4",
+      "scr_5",
+    ]);
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });
