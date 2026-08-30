@@ -91,6 +91,8 @@ import {
   wrapTransportForLogging,
   wrapTransportForTaskResults,
   wrapTransportForFirstPageOnly,
+  wrapTransportForDroppedListChanged,
+  wrapFetchForNoListenChannel,
   wrapFetchForTaskRouting,
   TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
@@ -2063,6 +2065,31 @@ export class MCPClientManager {
   }
 
   /**
+   * {@link getSkillsSupport}, after ensuring the connection exists.
+   *
+   * `getSkillsSupport` reads what a LIVE connection negotiated, synchronously.
+   * On a manager whose connection has not been established yet it therefore
+   * answers `active: false` for every server — not because the extension is
+   * absent, but because there is nothing to read. That is the right answer to
+   * the question it was asked and the wrong answer to the question a caller
+   * usually means.
+   *
+   * It matters on EPHEMERAL managers, which is every hosted request: a route
+   * that reads support as its first act reads it before anything has
+   * connected, concludes the extension is inactive, and returns an empty
+   * listing — then tears the manager down, aborting the negotiation that was
+   * still in flight. The symptom is a 200 with no skills and an `AbortError`
+   * in the connection telemetry, on a server that is perfectly reachable.
+   *
+   * Every other capability question reaches the wire through a method that
+   * awaits `ensureConnected` first. This is that method for skills.
+   */
+  async ensureSkillsSupport(serverId: string): Promise<SkillsSupport> {
+    await this.ensureConnected(serverId);
+    return this.getSkillsSupport(serverId);
+  }
+
+  /**
    * Advertise = enforce. A `skills/*` request is refused BEFORE it reaches the
    * wire whenever the extension is not mutually declared.
    *
@@ -2614,12 +2641,15 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = this.applyFirstPageOnly(
+    const transport = this.applyDroppedListChanged(
       config,
-      wrapTransportForTaskResults(
-        logger
-          ? wrapTransportForLogging(serverId, logger, underlying)
-          : underlying
+      this.applyFirstPageOnly(
+        config,
+        wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, underlying)
+            : underlying
+        )
       )
     );
 
@@ -2749,12 +2779,15 @@ export class MCPClientManager {
       client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = this.applyFirstPageOnly(
+        const wrapped = this.applyDroppedListChanged(
           config,
-          wrapTransportForTaskResults(
-            logger
-              ? wrapTransportForLogging(serverId, logger, streamableTransport)
-              : streamableTransport
+          this.applyFirstPageOnly(
+            config,
+            wrapTransportForTaskResults(
+              logger
+                ? wrapTransportForLogging(serverId, logger, streamableTransport)
+                : streamableTransport
+            )
           )
         );
         await client.connect(wrapped, {
@@ -2842,19 +2875,26 @@ export class MCPClientManager {
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
-      fetch: this.buildTransportFetch(serverId, config),
+      // `listenGuard: false` — see `buildTransportFetch`. On this transport a
+      // GET SSE is the connection, not the listen channel, so `listens:false`
+      // is a documented no-op here rather than a connection failure (a real
+      // client on HTTP+SSE cannot not-listen either).
+      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = this.applyFirstPageOnly(
+      const wrapped = this.applyDroppedListChanged(
         config,
-        wrapTransportForTaskResults(
-          logger
-            ? wrapTransportForLogging(serverId, logger, sseTransport)
-            : sseTransport
+        this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, sseTransport)
+              : sseTransport
+          )
         )
       );
       await client.connect(wrapped, { timeout });
@@ -2947,9 +2987,18 @@ export class MCPClientManager {
     const pin = config.mcpProtocolVersion;
     if (!pin) return undefined;
     const negotiation = resolveVersionNegotiation(pin);
-    // `undefined` is a legacy pin (exact `initialize`, no discover probe) and
-    // `"auto"` falls back on its own. Only an explicit modern pin refuses.
-    if (!negotiation || negotiation.mode === "auto") return undefined;
+    // `"auto"` falls back on its own, so it can never refuse — and a config
+    // with no pin already returned above.
+    //
+    // A legacy pin (`undefined` here: exact `initialize`, no discover probe)
+    // DOES refuse, and used to be excluded. It narrows the accept-list to the
+    // pinned version, so a server whose `initialize` reply names anything else
+    // — e.g. a 2025-11-25 pin against a server that answers 2025-06-18 — fails
+    // the connect just as a modern pin does. Excluding it sent that failure to
+    // the generic connection patterns, which report the user's own version
+    // setting as "the server appears to be down". The verdict below is what
+    // keeps a real outage out: it only matches a version refusal.
+    if (negotiation?.mode === "auto") return undefined;
     for (const error of errors) {
       // NOT "is this an era-negotiation error": that code also covers a probe
       // that hit an HTTP status, a network failure, or a closed transport —
@@ -3669,7 +3718,20 @@ export class MCPClientManager {
    */
   private buildTransportFetch(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    /**
+     * Streamable HTTP only. The listen guard identifies the notification
+     * stream as "a GET with `Accept: text/event-stream`" — under Streamable
+     * HTTP that IS the standalone listen stream, but under the legacy
+     * `SSEClientTransport` the very same request is how the transport OPENS
+     * the connection (`_startOrAuth` in @modelcontextprotocol/client sends it
+     * through this injected fetch with that header). Guarding it there would
+     * 405 the connection itself and make every SSE-only server unreachable
+     * for any profile carrying `listens: false` — including the shipped
+     * ChatGPT template. Header inspection cannot separate the two cases, so
+     * the CALLER declares which transport is asking.
+     */
+    options?: { listenGuard?: boolean }
   ): typeof fetch {
     const httpLogger = this.resolveHttpLogger(config);
     // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
@@ -3677,11 +3739,17 @@ export class MCPClientManager {
     // added above it, and the logger has to record the bytes that guard sent.
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
-    return wrapFetchForTaskRouting(
-      httpLogger
-        ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
-        : baseFetch
-    );
+    const logged = httpLogger
+      ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
+      : baseFetch;
+    // ABOVE the logger deliberately: a refused listen stream never reaches the
+    // network, so logging it would invent a request that was not made. The
+    // absence in the log IS the observation.
+    const listenGuarded =
+      config.suppressListenChannel === true && options?.listenGuard !== false
+        ? wrapFetchForNoListenChannel(logged)
+        : logged;
+    return wrapFetchForTaskRouting(listenGuarded);
   }
 
   private cacheToolsMetadata(
@@ -4086,6 +4154,23 @@ export class MCPClientManager {
   ): Transport {
     return config.firstPageOnly === true
       ? wrapTransportForFirstPageOnly(transport)
+      : transport;
+  }
+
+  /**
+   * Drop `notifications/tools/list_changed` before the client sees it, for a
+   * host whose `mcpProfile.toolListChanged.refetches` is `false`.
+   *
+   * Composed alongside `applyFirstPageOnly` at every transport site: both are
+   * inbound-frame edits, and both belong outside the logging transport so the
+   * wire log keeps what the server really sent.
+   */
+  private applyDroppedListChanged(
+    config: { dropToolListChanged?: boolean },
+    transport: Transport
+  ): Transport {
+    return config.dropToolListChanged === true
+      ? wrapTransportForDroppedListChanged(transport)
       : transport;
   }
 

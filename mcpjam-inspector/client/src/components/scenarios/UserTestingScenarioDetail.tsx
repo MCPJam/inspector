@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation } from "react-router";
 import {
   AlertTriangle,
   ExternalLink,
@@ -72,6 +72,7 @@ import {
   isLegacyUserTestingEditTab,
   parseUserTestingDetailTab,
   type UserTestingDetailTab,
+  useAppNavigate,
 } from "@/lib/app-navigation";
 import { buildScenarioLink } from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
@@ -117,7 +118,7 @@ export function UserTestingScenarioDetail({
   onBack,
   onDeleted,
 }: UserTestingScenarioDetailProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const location = useLocation();
   const { deleteScenario, updateScenario, rebindEnvironmentScenario } =
     useScenarioMutations();

@@ -136,6 +136,44 @@ describe("hostConnectionProfile", () => {
       }
     });
 
+    it("reduces the toolListChanged record per leaf", () => {
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false, refetches: false },
+        },
+      });
+      expect(p.suppressListenChannel).toBe(true);
+      expect(p.dropToolListChanged).toBe(true);
+    });
+
+    it("reduces only the leaf that is set", () => {
+      // ChatGPT's real shape: measured not-listening, with `refetches`
+      // deliberately unmeasured because nothing is ever delivered to it.
+      const p = hostConnectionProfile({
+        mcpProfile: {
+          profileVersion: 1,
+          toolListChanged: { listens: false },
+        },
+      });
+      expect(p.suppressListenChannel).toBe(true);
+      expect("dropToolListChanged" in p).toBe(false);
+    });
+
+    it("collapses true leaves, an empty record, and absence alike", () => {
+      for (const toolListChanged of [
+        { listens: true, refetches: true },
+        {},
+        undefined,
+      ]) {
+        const p = hostConnectionProfile({
+          mcpProfile: { profileVersion: 1, ...(toolListChanged ? { toolListChanged } : {}) },
+        });
+        expect("suppressListenChannel" in p).toBe(false);
+        expect("dropToolListChanged" in p).toBe(false);
+      }
+    });
+
     it("fails closed on unrecognized literals", () => {
       // A future mode this SDK build does not know must not read as the
       // non-default value.
