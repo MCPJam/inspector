@@ -1,4 +1,6 @@
 // Shared types between client and server
+import { modelRejectsTemperature } from "@mcpjam/sdk/browser";
+
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
 import type {
@@ -241,37 +243,59 @@ export const isMCPJamGuestAllowedModel = (
 };
 
 /**
- * Anthropic ids that reject the sampling parameters: Fable 5, Opus 5, Opus
- * 4.8/4.7 and Sonnet 5 answer a `temperature` with a 400 rather than ignoring
- * it, so sending one fails the whole request. Matched by prefix as well as
- * exactly, so a dated snapshot ("claude-opus-5-20260401") resolves like the
- * alias it pins.
+ * Whether a `temperature` may be sent for this model. False means the field has
+ * to be omitted from the request entirely, not sent as a default or as null.
+ *
+ * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
+ * ({@link modelRejectsTemperature}) rather than here, because the SDK's
+ * `HostRunner` builds its own provider request and needs the same answer. The
+ * GPT-5 carve-out stays inspector-side: it is not a Claude family, so the SDK
+ * predicate has nothing to say about it.
+ *
+ * Hosted (MCPJam-provided) ids answer the same way as own-provider ones. They
+ * used to be exempted on the grounds that the backend owns the request body it
+ * sends upstream, but it does not strip the field — it substitutes 0.7 for a
+ * non-numeric one — so `anthropic/claude-opus-4.7`, `4.8`, `claude-sonnet-5`
+ * and `claude-fable-5` were 400ing on every hosted turn. Omitting it here is
+ * the half we own; the backend has to stop defaulting for those models too.
  */
-const MODEL_IDS_REJECTING_TEMPERATURE = [
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-sonnet-5",
-];
-
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  // MCPJam-provided models proxy through the backend, which owns the request
-  // body it sends upstream — "openai/gpt-5" still takes a temperature here.
-  // Only own-provider (BYOK) ids are ours to strip.
-  if (isMCPJamProvidedModel(id)) {
-    return true;
-  }
   if (id.includes("gpt-5")) {
     return false;
   }
-  // Own-provider ids can still carry a provider segment (an OpenRouter-style
-  // "anthropic/claude-opus-5"); the family lives in the last one.
-  const bareId = id.slice(id.lastIndexOf("/") + 1);
-  return !MODEL_IDS_REJECTING_TEMPERATURE.some(
-    (rejected) => bareId === rejected || bareId.startsWith(`${rejected}-`)
-  );
+  return !modelRejectsTemperature(id);
+};
+
+/**
+ * The same question for a catalog row rather than a bare id, so hosted models
+ * can answer from the metadata the backend already sends instead of only from
+ * their id.
+ *
+ * Catalog metadata may only *withdraw* temperature, never restore it: the id
+ * predicate encodes Anthropic families that answer a 400, and a catalog row
+ * claiming `temperature` for one of those is stale, not news. What the metadata
+ * adds is the models no id pattern covers — the reasoning families that reject
+ * sampling for reasons unrelated to being Claude, which today only `gpt-5`
+ * catches by name.
+ *
+ * An absent or empty `supportedParameters` means the catalog said nothing, not
+ * that the model supports nothing: BYOK, org, Ollama and custom rows never
+ * carry it, and hosted rows cached before the field existed arrive without it.
+ * Reading empty as "supports nothing" would strip temperature from every model
+ * on a stale cache.
+ */
+export const modelDefinitionSupportsTemperature = (
+  model: ModelDefinition
+): boolean => {
+  if (!modelSupportsTemperature(model.id)) {
+    return false;
+  }
+  const params = model.supportedParameters;
+  if (!params?.length) {
+    return true;
+  }
+  return params.includes("temperature");
 };
 
 export interface ModelDefinition {
@@ -299,6 +323,14 @@ export interface ModelDefinition {
    * the catalog DTO; absent → treated as guest-gated (locked for guests).
    */
   guestAllowed?: boolean;
+  /**
+   * Request parameters the backend catalog reports this model accepting
+   * (OpenRouter's `supported_parameters`). Only hosted rows carry it — BYOK,
+   * org, Ollama and custom models arrive without it. Read by
+   * {@link modelDefinitionSupportsTemperature}, which treats absent or empty
+   * as "no metadata" rather than "accepts nothing".
+   */
+  supportedParameters?: string[];
 }
 
 export enum Model {
@@ -757,7 +789,9 @@ export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcre
 export function isConcreteOauthProtocolMode(
   value: string
 ): value is ServerFormOAuthProtocolConcreteMode {
-  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(
+    value
+  );
 }
 
 export function isServerFormOAuthProtocolMode(
@@ -840,11 +874,7 @@ export function resolveOAuthProtocolSelection(input: {
 }): {
   mode: ServerFormOAuthProtocolMode;
   protocolVersion: ServerFormOAuthProtocolConcreteMode;
-  source:
-    | "explicit_oauth"
-    | "wire_pin"
-    | "negotiated"
-    | "auth_gated_fallback";
+  source: "explicit_oauth" | "wire_pin" | "negotiated" | "auth_gated_fallback";
 } {
   const mode =
     input.mode ??

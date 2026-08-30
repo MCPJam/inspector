@@ -2,7 +2,11 @@ name: Build and Test
 
 on:
   pull_request:
-    branches: [main]
+    # See the note in test.yml: `branches` filters on the PR's BASE, so a
+    # stacked PR never matched `main` and was never built or linted.
+    branches:
+      - main
+      - "claude/mcp-benchmarks-v2-b0tw4b-**"
   push:
     branches: [main]
 

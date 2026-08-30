@@ -116,8 +116,8 @@ describe("filterByFeatureFlags", () => {
 
   it("ships Evaluate as one flat, unflagged item (Runs is an in-page mode)", () => {
     // Runs used to be a nested subnav item gated by `evaluate-ci`. Both lenses
-    // now live under one Evaluate entry, so the sidebar carries no eval
-    // sub-items and no eval flag.
+    // now live under one Evaluate entry and switch in the page header, so the
+    // sidebar carries no eval sub-items and no eval flag.
     const evalsItems = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => item.url.startsWith("/evals"));
@@ -261,19 +261,33 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("Sessions lives in Measure, after Evaluate", () => {
-    const measure = navigationSections.find((section) => section.id === "measure");
-    const titles = measure?.items.map((item) => item.title) ?? [];
+  it("Evaluate (New) is gated by evaluate-enabled and sits beside Evaluate", () => {
+    // The redesigned tab ships ALONGSIDE the shipped one so the two can be
+    // compared, so a flag-off user must see exactly the nav they see today —
+    // this is the assertion that a mis-wired flag would break.
+    const evaluateItem = navigationSections
+      .flatMap((section) => section.items)
+      .find((item) => item.url === "/evaluate");
 
-    expect(titles).toContain("Evaluate");
-    expect(titles).toContain("Sessions");
-    expect(titles.indexOf("Sessions")).toBeGreaterThan(titles.indexOf("Evaluate"));
-    expect(
-      navigationSections
-        .filter((section) => section.id !== "measure")
-        .flatMap((section) => section.items)
-        .map((item) => item.title),
-    ).not.toContain("Sessions");
+    expect(evaluateItem).toMatchObject({
+      title: "Evaluate (New)",
+      featureFlag: "evaluate-enabled",
+      billingFeature: "evals",
+    });
+
+    const off = filterByFeatureFlags(navigationSections, {})
+      .flatMap((section) => section.items)
+      .map((item) => item.title);
+    expect(off).not.toContain("Evaluate (New)");
+    expect(off).toContain("Evaluate");
+
+    const measure = filterByFeatureFlags(navigationSections, {
+      "evaluate-enabled": true,
+    }).find((section) => section.id === "measure");
+    const titles = measure?.items.map((item) => item.title) ?? [];
+    expect(titles).toContain("Evaluate (New)");
+    const evaluateIndex = titles.indexOf("Evaluate");
+    expect(titles.indexOf("Evaluate (New)")).toBe(evaluateIndex + 1);
   });
 });
 

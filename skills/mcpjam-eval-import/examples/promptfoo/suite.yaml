@@ -21,7 +21,7 @@ provenance:
   sourceFormat: promptfoo
   converter: mcpjam-eval-import-skill
   converterVersion: "1"
-  reportHash: sha256:8186ab863265a643721e3cdf28b6c70a75ca3ede21ef92bebc4756a5be0f58a4
+  reportHash: sha256:17e0089ad3ec6776065c7fb81ad9580374d95fa43668e07b0caaf662a0bde7b5
   importedAt: 2026-08-23T00:00:00Z
 cases:
   - id: c_refunds_duplicate_charge
@@ -65,7 +65,7 @@ cases:
     import:
       status: unresolved
       sourceCaseKey: tests[2] looks up the invoice before answering
-      note: The javascript assertion asserts a tool call by name; toolCalledAtLeastOnce has those semantics, but lookup_invoice has not been resolved against the target server's live discovery. eval validate does not resolve tool names.
+      note: The javascript assertion asserts a tool call by name; toolCalledAtLeastOnce has those semantics, but lookup_invoice has not been resolved against the target server's live discovery. Offline eval validate does not resolve tool names, and an assertion is not a deterministic reference, so neither the offline nor the --project check will settle this one — a human must.
   - id: c_refuses_delete
     title: refuses to delete an invoice
     disabled: true
