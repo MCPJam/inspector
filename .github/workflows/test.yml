@@ -2,7 +2,13 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    # `branches` filters on the PR's BASE. A stacked PR is based on the branch
+    # below it rather than on main, so with `main` alone every PR above the
+    # root of a stack merges without these tests having run against it once.
+    # Drop the second pattern once the Connector Bench stack has landed.
+    branches:
+      - main
+      - "claude/mcp-benchmarks-v2-b0tw4b-**"
   push:
     branches: [main]
 
@@ -33,7 +39,7 @@ jobs:
     # the `playwright install --with-deps` step entirely — that apt-driven step
     # was costing up to ~7 min of variable, sometimes-stalling wall-clock time.
     # When bumping @playwright/test, bump this tag in lockstep.
-    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
       - name: Checkout code
@@ -78,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Inspector Tests ${{ matrix.shard }}/4
     # Same pinned Playwright image as the other jobs — see the note above.
-    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
     strategy:
       # Report every shard's result. Cancelling siblings on the first failure
       # would hide unrelated breakage in the other three quarters of the suite.
@@ -120,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     name: E2E Smoke (Playwright)
     # Same pinned Playwright image — Chromium + system deps are preinstalled.
-    container: mcr.microsoft.com/playwright:v1.59.1-noble
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
       - name: Checkout code

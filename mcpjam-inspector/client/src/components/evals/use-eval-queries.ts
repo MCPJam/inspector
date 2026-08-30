@@ -9,6 +9,34 @@ import type {
 import { getIterationRecencyTimestamp } from "./helpers";
 
 /**
+ * Rows the Connector Bench owns, dropped before anything renders them.
+ *
+ * The FILTERING IS SERVER-SIDE and this is not a second implementation of it —
+ * these queries are already scoped to exclude benchmark-origin suites and runs.
+ * This is the client refusing to re-introduce them: every list below is
+ * assembled from more than one read (an overview joined to its latest run, a
+ * run list intersected with iterations), and each join is a place a filtered
+ * row can walk back in through a projection that carried it for a different
+ * reason.
+ *
+ * The reason it matters is not tidiness. A benchmark suite is an immutable
+ * exam and its runs are evidence for a published score; showing them in
+ * Evaluate offers a user the Edit, Re-run and Delete affordances that surface
+ * carries, against rows where none of those are meaningful.
+ *
+ * The check is STRUCTURAL rather than typed against `EvalSuite["source"]`, and
+ * that is the point: those unions describe what an Evaluate list may contain,
+ * and after this filter `"benchmark"` is not one of the things it may contain.
+ * Widening them to admit a value the lists must never hold would push a dead
+ * `benchmark` case into every badge map and switch downstream of them.
+ */
+const BENCHMARK_SOURCE = "benchmark";
+
+function isBenchmarkOwned(row: { source?: string | undefined }): boolean {
+  return row.source === BENCHMARK_SOURCE;
+}
+
+/**
  * Hook for fetching eval data (overview, suite details, and runs)
  */
 export function useEvalQueries({
@@ -49,10 +77,17 @@ export function useEvalQueries({
   }, [isDirectGuest, organizationId, projectId]);
 
   const enableOverviewQuery = hasActorAccess;
-  const suiteOverview = useQuery(
+  const suiteOverviewRaw = useQuery(
     "testSuites:getTestSuitesOverview" as any,
     enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;
+  // `undefined` survives the filter rather than collapsing to `[]`: every
+  // loading flag below reads it as "an answer is still coming", and an empty
+  // array here would flash the "no suites" hero over a project that has some.
+  const suiteOverview = useMemo(
+    () => suiteOverviewRaw?.filter((entry) => !isBenchmarkOwned(entry.suite)),
+    [suiteOverviewRaw]
+  );
 
   const hasSelectedSuiteInPlay =
     !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
@@ -66,12 +101,16 @@ export function useEvalQueries({
   // practice) is never truncated mid-group. The list consumer caps by
   // *groups* after grouping rather than capping raw rows, so groups
   // remain fully expandable even near the limit.
-  const suiteRuns = useQuery(
+  const suiteRunsRaw = useQuery(
     "testSuites:listTestSuiteRuns" as any,
     enableSuiteDetailsQuery
       ? ({ suiteId: selectedSuiteId, limit: 100 } as any)
       : "skip"
   ) as EvalSuiteRun[] | undefined;
+  const suiteRuns = useMemo(
+    () => suiteRunsRaw?.filter((run) => !isBenchmarkOwned(run)),
+    [suiteRunsRaw]
+  );
 
   const isOverviewLoading =
     isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);

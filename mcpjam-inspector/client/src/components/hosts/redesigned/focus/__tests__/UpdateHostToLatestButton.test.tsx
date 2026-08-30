@@ -310,6 +310,10 @@ describe("UpdateHostToLatestButton", () => {
     );
 
     expect(draftRef.current).toEqual(catalogDraftFor("mcpjam"));
+    expect(draftRef.current.clientCapabilities.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
   });
 
   it("stays enabled when only the display name needs updating", async () => {
