@@ -450,6 +450,7 @@ Advanced replay override. Most users should not construct this manually.
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
 | `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. The backend resolves by it first and adopts it onto a case that resolved by content hash, which is what lets a renamed test keep its history. Must equal `externalCaseId` when both are present. |
+| `intent` | `string \| null` | No | Analytics grouping label for this case. `null` explicitly records an unlabelled modern producer; omit the field to preserve legacy wire behavior. Never affects scoring or the verdict. |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |

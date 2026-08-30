@@ -272,6 +272,19 @@ interface PersistChatSessionOptions {
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
   messages?: unknown[];
+  /**
+   * The system prompt as SENT — turn-injected sections included.
+   *
+   * Evidence, not configuration. It is what the Raw view and
+   * `get_chat_session` show, so it has to be the string the model actually
+   * received: the host prompt plus whatever the turn added (the server-skill
+   * catalog, widget model context, the environment block, sandbox notices).
+   *
+   * NOT the same field as `resumeConfig.systemPrompt`, which is the RAW host
+   * prompt a resumed turn replays. Turn-injected content is true of the turn
+   * that happened and not of the next one, so the two must not be merged —
+   * see the comment at the hosted persist call.
+   */
   systemPrompt?: string;
   responseMessages?: unknown[];
   assistantText?: string;
