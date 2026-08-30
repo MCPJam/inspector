@@ -142,6 +142,20 @@ export interface ChatV2Request {
    */
   appTools?: AppToolSnapshotEntry[];
   /**
+   * WebMCP tools registered by a page the WebMCP Inspector has open, snapshotted
+   * per turn from the inspector store.
+   *
+   * Client-fulfilled like `appTools`: the model's call comes back to the browser,
+   * which invokes it through the inspector session and supplies the result. The
+   * server validates the boundary again in `validatePageToolEntries` and gates
+   * EVERY call for approval — these run code on a third-party site, and the only
+   * claims about what they do come from that site.
+   *
+   * Local surfaces only: the inspector session lives in the local server's
+   * process, so a hosted turn has nothing to resolve these against.
+   */
+  pageTools?: PageToolSnapshotEntry[];
+  /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
    * These are per-request, ephemeral model context: the server appends them
@@ -171,6 +185,23 @@ export interface AppToolSnapshotEntry {
   description?: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
+}
+
+/**
+ * One WebMCP page tool as the client advertises it for a turn.
+ *
+ * `alias` is what the model sees (page-authored names are arbitrary and would
+ * not survive the provider tool-name charset); `toolKey` is what the inspector
+ * invokes by, and `sessionId` says which open browser it belongs to.
+ */
+export interface PageToolSnapshotEntry {
+  alias: string;
+  sessionId: string;
+  toolKey: string;
+  rawName: string;
+  origin: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface WidgetModelContextEntry {

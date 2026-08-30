@@ -837,5 +837,563 @@
         "evaluationConfigHash": "2d1343d843f8e5a0f9282f87563cca9244727dfaf0a13091a380a5126d5fef23"
       }
     ]
+  },
+
+  "__verdicts": {
+    "__readme": "PINNED CROSS-RUNTIME VERDICT ARITHMETIC for `allGatingScorersPassed` — the function the score contract becomes AUTHORITATIVE with at grading mode `enforce`. The inspector's copy lives in sdk/src/contract/derive.ts and decides an iteration's `result`; the backend's hand-mirror lives in convex/lib/scoreContract.ts and VERIFIES that reported result against the rows that were actually persisted. Two implementations of \"did the gates hold\" is exactly how a hosted run and a CI gate end up disagreeing about the same rows, so both sides run these cases. SHAPE: `definitions` are AUTHORED (onError/onSkipped may be absent — each side resolves them, which is also what proves an omitted default and an explicit one behave identically). `rows` name their definition by `scorerId`; each side stamps the resolved `definitionHash` onto the row before calling, because the join is BY HASH and hard-coding hashes here would duplicate what the __digests block already pins. A row whose scorerId matches no definition is intentionally left unjoinable. `expected` is `{passed, disagreeing, unresolved}` with both id lists sorted.",
+    "cases": [
+      {
+        "__label": "V1 — every gating scorer scored and passed",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-toolCalls:match",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V2 — one gating scorer ran and said no",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-toolCalls:match",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 0,
+            "passed": false
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:a"
+          ],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V3 — a gating definition with NO row at all",
+        "__why": "Zero evidence never passes. A gate nobody scored is not a gate that held.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-toolCalls:match",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [],
+          "unresolved": [
+            "toolCalls:match"
+          ]
+        }
+      },
+      {
+        "__label": "V4 — a gating row errored, default onError (fail)",
+        "__why": "Reported as UNRESOLVED, not as a disagreement: the scorer never said no, it broke. Both lists fail the iteration; keeping them apart is what lets the shadow comparison read `disagreeing` alone and not manufacture a mismatch out of an unscorable criterion.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "error",
+            "error": "scorer blew up"
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [],
+          "unresolved": [
+            "predicate:a"
+          ]
+        }
+      },
+      {
+        "__label": "V5 — a gating row errored, explicit onError: ignore",
+        "__why": "The author opted out. The definition's own policy decides; the function does not invent a gate the author disabled.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating",
+            "onError": "ignore"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "error",
+            "error": "scorer blew up"
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V6 — a gating row was skipped, default onSkipped (fail)",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "skipped",
+            "rationale": "never ran"
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [],
+          "unresolved": [
+            "predicate:a"
+          ]
+        }
+      },
+      {
+        "__label": "V7 — a gating definition whose only row is not_applicable",
+        "__why": "not_applicable is excluded from EVERY denominator — that is what the status means. It neither fails nor counts as missing evidence.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "not_applicable",
+            "rationale": "out of scope"
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V8 — an ADVISORY row failed",
+        "__why": "Structural, not conventional: advisory definitions are never iterated, so the judge cannot gate no matter what it scores.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-judge:goalCompletion",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "status": "scored",
+            "value": 0.1,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V9 — an ADVISORY row errored",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-judge:goalCompletion",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "status": "error",
+            "error": "judge timed out"
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V10 — no gating definitions at all",
+        "__why": "Vacuously true HERE, and deliberately not the last word: the backend's verify seam treats a config with no gating definitions as NOT DERIVABLE and declines to check, rather than reading this true as corroboration.",
+        "definitions": [
+          {
+            "scorerId": "judge:goalCompletion",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-judge:goalCompletion",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "judge:goalCompletion",
+            "status": "scored",
+            "value": 0.9,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": true,
+          "disagreeing": [],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V11 — a failure and an absence together",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "predicate:b",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:b",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-toolCalls:match",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-judge:goalCompletion",
+            "deterministic": false,
+            "passThreshold": 0.7,
+            "role": "advisory"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 0,
+            "passed": false
+          },
+          {
+            "scorerId": "predicate:b",
+            "status": "error",
+            "error": "broke"
+          },
+          {
+            "scorerId": "toolCalls:match",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          },
+          {
+            "scorerId": "judge:goalCompletion",
+            "status": "scored",
+            "value": 0.2,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:a"
+          ],
+          "unresolved": [
+            "predicate:b"
+          ]
+        }
+      },
+      {
+        "__label": "V12 — one gating definition, two rows, one of them failing",
+        "__why": "Per-turn scoping puts several rows under one definition. Any failing row fails the definition; a passing sibling does not rescue it.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 1,
+            "passed": true
+          },
+          {
+            "scorerId": "predicate:a",
+            "status": "scored",
+            "value": 0,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:a"
+          ],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V13 — a failing row that joins to NOTHING",
+        "__why": "An unjoinable row is quarantined at ingest and never reaches this function, so it cannot vote. What decides here is the gating definition it left with no row: absence, not the orphan's own verdict.",
+        "definitions": [
+          {
+            "scorerId": "predicate:a",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:a",
+            "deterministic": true,
+            "passThreshold": 1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:not-in-this-config",
+            "status": "scored",
+            "value": 0,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [],
+          "unresolved": [
+            "predicate:a"
+          ]
+        }
+      },
+      {
+        "__label": "V14 — a row whose passThreshold undercuts its definition's",
+        "__why": "The row is INTERNALLY consistent (0.2 >= 0.1, so `passed: true` survives validateScoreRow) and joins correctly, but the threshold it claims to have been scored under is the DEFINITION's 0.8. Trusting the row's own `passed` would let a stale or crafted client author a pass out of a failing value. The threshold is a hash input, so the joined definition is the one this row names, and its threshold is the only one with authority.",
+        "definitions": [
+          {
+            "scorerId": "predicate:strict",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:strict",
+            "deterministic": true,
+            "passThreshold": 0.8,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:strict",
+            "status": "scored",
+            "value": 0.2,
+            "passThreshold": 0.1,
+            "passed": true
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:strict"
+          ],
+          "unresolved": []
+        }
+      },
+      {
+        "__label": "V15 — a row lying the other way is not re-derived into a pass",
+        "__why": "The mirror image of V14: this row's threshold OVERSTATES the definition's, so re-deriving from the definition alone (0.5 >= 0.1) would turn a reported failure into a pass. The derivation is conservative in both directions — the row must assert a pass AND the definition's threshold must agree — so neither lie buys a green.",
+        "definitions": [
+          {
+            "scorerId": "predicate:lax",
+            "idSource": "platform",
+            "scorerVersion": "1",
+            "implementationHash": "impl-predicate:lax",
+            "deterministic": true,
+            "passThreshold": 0.1,
+            "role": "gating"
+          }
+        ],
+        "rows": [
+          {
+            "scorerId": "predicate:lax",
+            "status": "scored",
+            "value": 0.5,
+            "passThreshold": 0.9,
+            "passed": false
+          }
+        ],
+        "expected": {
+          "passed": false,
+          "disagreeing": [
+            "predicate:lax"
+          ],
+          "unresolved": []
+        }
+      }
+    ]
   }
 }

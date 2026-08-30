@@ -144,6 +144,9 @@ describe("workspace tool catalog", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "list_server_skills",
+      "get_server_skill",
+      "read_server_skill_file",
       "start_claude_readiness_run",
       "start_openai_readiness_run",
       "get_readiness_run",
@@ -161,6 +164,12 @@ describe("workspace tool catalog", () => {
       "run_eval_suite",
       "get_eval_run",
       "compare_eval_run",
+      // The gate-waiver trio. The READ is advertised alongside the writes on
+      // purpose: a waiver only its grantors can see is not a visible waiver,
+      // and visibility is half of what the workflow is for.
+      "waive_eval_gate",
+      "get_eval_gate_waiver",
+      "revoke_eval_gate_waiver",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
       "get_eval_run_steps",

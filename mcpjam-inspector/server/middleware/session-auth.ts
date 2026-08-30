@@ -107,6 +107,15 @@ const UNPROTECTED_PREFIXES = [
   // `startsWith` reason as above; the router's only path is
   // `/api/internal/evals/judge-completed`.
   "/api/internal/evals/",
+  // Backend→Inspector chat-session chain doorbell. Same caller, same guard,
+  // same reason: Convex sends `x-inspector-service-token` and no browser
+  // session, so session auth would 401 it before
+  // `internalServiceAuthMiddleware()` could reject a wrong token. The body
+  // carries no selector at all — the pass claims from the backend's own queue
+  // — so there is nothing here for a caller to name. Trailing slash for the
+  // same `startsWith` reason as above; the router's only path is
+  // `/api/internal/chat-stage/derivation-requested`.
+  "/api/internal/chat-stage/",
 ];
 
 /**
