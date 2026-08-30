@@ -10,16 +10,24 @@ import {
 import {
   assertRunIdBaseline,
   buildBaselineProvenance,
+  compareBaseSelector,
+  resolveBaselineSelector,
   comparePolicyFromGateOptions,
   evaluateBaselineComparison,
   mergeGateReports,
   policyFromOptions,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
 } from "../src/lib/eval-gate.js";
-import { DEFAULT_MIN_EFFECT_SIZE, DEFAULT_MIN_SAMPLE_SIZE } from "@mcpjam/sdk";
+import {
+  applyGateWaiver,
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+} from "@mcpjam/sdk";
 import type { GateReport } from "@mcpjam/sdk";
-import type { PlatformRunCompare } from "@mcpjam/sdk/platform";
+import type { PlatformEvalRun, PlatformRunCompare } from "@mcpjam/sdk/platform";
 
 function report(outcome: GateReport["outcome"]): GateReport {
   return { outcome, verdicts: [], scoreIntegrity: "unknown" };
@@ -53,7 +61,7 @@ test("NO infrastructure condition maps to the eval-failure code", () => {
 test("an unrecognized outcome fails closed, not open", () => {
   assert.equal(
     evalGateExitCode({ outcome: "who-knows" } as unknown as GateReport),
-    3,
+    3
   );
 });
 
@@ -83,7 +91,7 @@ test("an infra-failed run's partial summary can never gate green", () => {
       summary: { total: 3, passed: 3, failed: 0 },
     } as never,
     undefined,
-    { minimumPassRate: 0.95 },
+    { minimumPassRate: 0.95 }
   );
   // Same summary, run completed: the gate passes — proving the guard below is
   // carried by the STATUS check, not by anything in the numbers.
@@ -97,8 +105,143 @@ test("an infra-failed run's partial summary can never gate green", () => {
       scoreIntegrity: "unknown",
       verdicts: [],
     }),
-    3,
+    3
   );
+});
+
+// ── import evidence ──────────────────────────────────────────────────────────
+//
+// Import COMPLETENESS is evidence eligibility, not a measurement of the server
+// under test. Everything below turns on that one distinction: it makes the
+// outcome `incomplete` rather than `failed`, which is what puts it out of a
+// waiver's reach and out of exit 1.
+
+/** A run that would otherwise gate GREEN — so only the evidence can stop it. */
+function passingRun(
+  importEligibility?: Record<string, unknown>
+): PlatformEvalRun {
+  return {
+    id: "run_1",
+    suiteId: "suite_1",
+    runNumber: 1,
+    status: "completed",
+    result: "passed",
+    summary: { total: 10, passed: 10, failed: 0, passRate: 1 },
+    ...(importEligibility ? { importEligibility } : {}),
+  } as never;
+}
+
+test("explicitly incomplete import evidence is not gateable, and not a failure", () => {
+  const report = reportForRun(
+    passingRun({
+      status: "incomplete",
+      gateable: false,
+      importedCaseCount: 2,
+      claimedExactCaseIds: [],
+      approvedApproximationCaseIds: [],
+      approvedApproximationReceipts: [],
+      issues: [{ code: "APPROXIMATION_NOT_APPROVED", caseKey: "ui_abc" }],
+    }),
+    undefined,
+    { minimumPassRate: 0.95 }
+  );
+  // Not `failed`: the run has not told us the server regressed, it has told us
+  // its own evidence cannot be relied on. Blaming the server under test for a
+  // conversion nobody finished reviewing would be the wrong sentence AND the
+  // wrong exit code.
+  assert.equal(report.outcome, "incomplete");
+  assert.equal(evalGateExitCode(report), 3);
+  assert.equal(report.verdicts[0].gate, "import");
+  assert.equal(report.verdicts[0].status, "non_gateable");
+  assert.match(report.verdicts[0].message, /not a test failure/);
+  // The issue codes reach the message, so an operator can act without a
+  // second command.
+  assert.match(report.verdicts[0].message, /APPROXIMATION_NOT_APPROVED/);
+});
+
+test("`gateable: false` blocks even under a status this CLI does not know", () => {
+  // The platform owns the decision. A state it adds later must fail CLOSED
+  // here rather than fall through to a verdict on the strength of an
+  // unrecognized string.
+  assert.equal(
+    importEvidenceBlocksGate(
+      passingRun({
+        status: "some-future-state",
+        gateable: false,
+        importedCaseCount: 1,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      })
+    ),
+    true
+  );
+});
+
+test("a waiver cannot convert incomplete import evidence into a pass", () => {
+  const waiver = {
+    id: "w_1",
+    reason: "Shipping the hotfix; evals reviewed by hand.",
+    expiresAt: Date.now() + 60_000,
+    createdAt: Date.now(),
+    createdBy: "user_1",
+    createdByEmail: "someone@example.test",
+    policySnapshot: null,
+  };
+  const waived = applyGateWaiver(
+    importIneligibleReport(
+      passingRun({
+        status: "incomplete",
+        gateable: false,
+        importedCaseCount: 1,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      })
+    ),
+    waiver
+  );
+  // A waiver overrides a measured VERDICT. Nothing was measured here, so there
+  // is nothing to override — and flipping exit 3 to 0 would turn a waiver
+  // granted for something else entirely into a green release.
+  assert.equal(waived.outcome, "incomplete");
+  assert.equal(evalGateExitCode(waived), 3);
+  // …and the waiver is still ATTACHED, so every artifact names it even though
+  // it changed nothing.
+  assert.equal(waived.waiver?.id, "w_1");
+});
+
+test("legacy and eligible evidence proceed through the ordinary verdict logic", () => {
+  for (const status of ["legacy", "eligible"] as const) {
+    const report = reportForRun(
+      passingRun({
+        status,
+        gateable: true,
+        importedCaseCount: status === "legacy" ? 0 : 2,
+        claimedExactCaseIds: [],
+        approvedApproximationCaseIds: [],
+        approvedApproximationReceipts: [],
+        issues: [],
+      }),
+      undefined,
+      { minimumPassRate: 0.95 }
+    );
+    assert.equal(report.outcome, "passed", status);
+  }
+});
+
+test("an older server that reports no eligibility at all changes nothing", () => {
+  // Absence is "this deployment has no opinion", NOT "there were no imported
+  // cases". Reading it as incomplete would fail every existing gate the moment
+  // this CLI shipped; reading it as eligible would vouch for evidence nobody
+  // checked. Behaving exactly as before is the only honest third answer.
+  assert.equal(importEvidenceBlocksGate(passingRun()), false);
+  const report = reportForRun(passingRun(), undefined, {
+    minimumPassRate: 0.95,
+  });
+  assert.equal(report.outcome, "passed");
 });
 
 test("percent flags convert to fractions at the boundary, exactly", () => {
@@ -106,15 +249,21 @@ test("percent flags convert to fractions at the boundary, exactly", () => {
   // 100% must be the fraction 1 EXACTLY; a hair under and a fully-passing run
   // fails the most common gate anybody writes.
   assert.equal(policy.minimumPassRate, 1);
-  assert.equal(policyFromOptions({ minPassRatePercent: "0" }).minimumPassRate, 0);
+  assert.equal(
+    policyFromOptions({ minPassRatePercent: "0" }).minimumPassRate,
+    0
+  );
   assert.equal(
     policyFromOptions({ minPassRatePercent: "95" }).minimumPassRate,
-    0.95,
+    0.95
   );
 });
 
 test("0 percent is a real threshold, not an unset one", () => {
-  assert.equal(policyFromOptions({ minPassRatePercent: "0" }).minimumPassRate, 0);
+  assert.equal(
+    policyFromOptions({ minPassRatePercent: "0" }).minimumPassRate,
+    0
+  );
   assert.equal(policyFromOptions({}).minimumPassRate, undefined);
 });
 
@@ -123,7 +272,7 @@ test("out-of-range and non-numeric percents are usage errors", () => {
     assert.throws(
       () => policyFromOptions({ minPassRatePercent: bad }),
       /between 0 and 100/,
-      `expected "${bad}" to be rejected`,
+      `expected "${bad}" to be rejected`
     );
   }
 });
@@ -152,9 +301,9 @@ test("a __proto__ scorer id becomes a real entry, not a silent no-op", () => {
   assert.equal(
     Object.prototype.hasOwnProperty.call(
       policy.minimumScorerPassRate ?? {},
-      "__proto__",
+      "__proto__"
     ),
-    true,
+    true
   );
   assert.equal((policy.minimumScorerPassRate as never)["__proto__"], 1);
 });
@@ -162,22 +311,22 @@ test("a __proto__ scorer id becomes a real entry, not a silent no-op", () => {
 test("naming the same scorer twice is a usage error, not last-wins", () => {
   assert.throws(
     () => policyFromOptions({ minScorerPassRate: ["tone=95", "tone=50"] }),
-    /more than once/,
+    /more than once/
   );
 });
 
 test("malformed scorer flags are usage errors", () => {
   assert.throws(
     () => policyFromOptions({ minScorerPassRate: ["tone"] }),
-    /<scorerId>=<value>/,
+    /<scorerId>=<value>/
   );
   assert.throws(
     () => policyFromOptions({ minScorerPassRate: ["=90"] }),
-    /<scorerId>=<value>/,
+    /<scorerId>=<value>/
   );
   assert.throws(
     () => policyFromOptions({ minMeanScore: ["tone=7"] }),
-    /between 0 and 1/,
+    /between 0 and 1/
   );
 });
 
@@ -186,7 +335,7 @@ test("only score-derived policies request the iterations fetch", () => {
   assert.equal(policyNeedsIterations({ noGatingScoreErrors: true }), true);
   assert.equal(
     policyNeedsIterations({ minimumScorerPassRate: { tone: 1 } }),
-    true,
+    true
   );
   assert.equal(policyNeedsIterations({ minimumMeanScore: { tone: 1 } }), true);
   assert.equal(policyNeedsIterations({ maximumTotalTokens: 10 }), true);
@@ -217,7 +366,7 @@ test("a pass-rate gate works against a run with no integrity verdict", () => {
   const failing = reportForRun(
     { ...RUN, summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 } },
     undefined,
-    { minimumPassRate: 1 },
+    { minimumPassRate: 1 }
   );
   assert.equal(evalGateExitCode(failing), 1);
 });
@@ -234,7 +383,7 @@ test("an integrity-INVALID run is non-gateable even when every iteration passed"
   const tampered = reportForRun(
     { ...RUN, scoreIntegrity: "invalid" as const },
     { items: [], complete: true },
-    { noGatingScoreErrors: true },
+    { noGatingScoreErrors: true }
   );
   assert.equal(evalGateExitCode(tampered), 3);
 });
@@ -256,7 +405,7 @@ test("an INCONCLUSIVE run is non-gateable, never a failure", () => {
       summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
     } as never,
     undefined,
-    { minimumPassRate: 1 },
+    { minimumPassRate: 1 }
   );
   assert.equal(green.outcome, "passed");
   // … and a differently-shaped one would gate RED, reading as a regression
@@ -268,7 +417,7 @@ test("an INCONCLUSIVE run is non-gateable, never a failure", () => {
       summary: { total: 2, passed: 0, failed: 2, passRate: 0 },
     } as never,
     undefined,
-    { minimumPassRate: 1 },
+    { minimumPassRate: 1 }
   );
   assert.equal(evalGateExitCode(red), 1);
   // Which is why the command never reaches the engine for an inconclusive
@@ -279,7 +428,7 @@ test("an INCONCLUSIVE run is non-gateable, never a failure", () => {
       scoreIntegrity: "unknown",
       verdicts: [],
     }),
-    3,
+    3
   );
 });
 
@@ -287,9 +436,9 @@ test("the gate keeps exactly four exit codes under verdict policy 2", () => {
   // `inconclusive` is a third RESULT, not a fifth exit code: CI contracts
   // written against 0/1/2/3 keep working.
   const codes = new Set(
-    (["passed", "failed", "usage_error", "incomplete"] as const).map((outcome) =>
-      evalGateExitCode(report(outcome)),
-    ),
+    (["passed", "failed", "usage_error", "incomplete"] as const).map(
+      (outcome) => evalGateExitCode(report(outcome))
+    )
   );
   assert.deepEqual([...codes].sort(), [0, 1, 2, 3]);
 });
@@ -297,6 +446,8 @@ test("the gate keeps exactly four exit codes under verdict policy 2", () => {
 // ── --baseline (runId half) ─────────────────────────────────────────────────
 
 const RUN_ID = "run-current";
+/** The resolved run-id baseline these tests pin, post-flag-resolution. */
+const RUN_BASELINE = { kind: "run", runId: "run_base" } as const;
 
 test("assertRunIdBaseline accepts an ordinary run id", () => {
   assert.doesNotThrow(() => assertRunIdBaseline("run_abc123", RUN_ID));
@@ -312,15 +463,17 @@ test("assertRunIdBaseline returns the TRIMMED value, not the raw one", () => {
   assert.equal(assertRunIdBaseline("run-base", RUN_ID), "run-base");
 });
 
-test("assertRunIdBaseline rejects a 40-hex git SHA, upper or lower case", () => {
+test("assertRunIdBaseline REDIRECTS a 40-hex git SHA to --baseline-sha", () => {
+  // No longer "SHA baselines are unsupported" — they are supported, under
+  // their own flag. `--baseline` still refuses the shape so a caller who
+  // pastes a commit SHA into the run-id flag is told which flag to use,
+  // instead of sending a doomed run lookup that comes back as `incomplete`
+  // (exit 3) and reads as "no baseline exists".
   const sha = "a".repeat(40);
-  assert.throws(
-    () => assertRunIdBaseline(sha, RUN_ID),
-    /SHA baselines are not supported yet/,
-  );
+  assert.throws(() => assertRunIdBaseline(sha, RUN_ID), /--baseline-sha/);
   assert.throws(
     () => assertRunIdBaseline(sha.toUpperCase(), RUN_ID),
-    /SHA baselines are not supported yet/,
+    /--baseline-sha/
   );
   // One character short or long is not the SHA shape — a real run id could
   // plausibly look like this, so it must NOT be rejected.
@@ -341,7 +494,7 @@ test("assertRunIdBaseline rejects a blank value, not just an absent one", () => 
     assert.throws(
       () => assertRunIdBaseline(blank, RUN_ID),
       /must not be blank/,
-      JSON.stringify(blank),
+      JSON.stringify(blank)
     );
   }
 });
@@ -356,21 +509,18 @@ test("assertRunIdBaseline rejects using the gated run as its own baseline", () =
   // regression gate that validated nothing.
   assert.throws(
     () => assertRunIdBaseline(RUN_ID, RUN_ID),
-    /cannot be its own baseline/,
+    /cannot be its own baseline/
   );
   // A DIFFERENT run id is fine, even one that merely looks similar.
   assert.doesNotThrow(() => assertRunIdBaseline(`${RUN_ID}-2`, RUN_ID));
 });
 
-test("assertRunIdBaseline rejects a whitespace-padded SHA, not just a bare one", () => {
+test("assertRunIdBaseline redirects a whitespace-padded SHA, not just a bare one", () => {
   // The SHA check runs against the TRIMMED value: `--baseline " <40-hex> "`
-  // is still a doomed run lookup, and the blank check just above already
-  // proved trimming doesn't change what the flag means.
+  // is still the wrong flag, and the blank check just above already proved
+  // trimming doesn't change what the flag means.
   const padded = `  ${"a".repeat(40)}  `;
-  assert.throws(
-    () => assertRunIdBaseline(padded, RUN_ID),
-    /SHA baselines are not supported yet/,
-  );
+  assert.throws(() => assertRunIdBaseline(padded, RUN_ID), /--baseline-sha/);
 });
 
 test("comparePolicyFromGateOptions: --baseline alone implies regression gating", () => {
@@ -394,7 +544,7 @@ test("comparePolicyFromGateOptions: every comparative flag requires --baseline",
     assert.throws(
       () => comparePolicyFromGateOptions(options),
       /pass --baseline/,
-      JSON.stringify(options),
+      JSON.stringify(options)
     );
   }
 });
@@ -416,7 +566,7 @@ test("comparePolicyFromGateOptions: tuning flags apply once --baseline is set", 
 
 function gateReport(
   outcome: GateReport["outcome"],
-  verdicts: GateReport["verdicts"] = [],
+  verdicts: GateReport["verdicts"] = []
 ): GateReport {
   return { outcome, verdicts, scoreIntegrity: "unknown" };
 }
@@ -438,7 +588,7 @@ test("mergeGateReports: outcome follows usage_error > failed > incomplete > pass
     assert.equal(
       mergeGateReports(gateReport(threshold), gateReport(comparative)).outcome,
       expected,
-      `${threshold} + ${comparative}`,
+      `${threshold} + ${comparative}`
     );
   }
 });
@@ -453,7 +603,7 @@ test("mergeGateReports: every verdict from both halves survives, neither buries 
   const merged = mergeGateReports(threshold, comparative);
   assert.deepEqual(
     merged.verdicts.map((v) => v.gate),
-    ["minimumPassRate", "passRateRegression"],
+    ["minimumPassRate", "passRateRegression"]
   );
 });
 
@@ -461,7 +611,7 @@ test("mergeGateReports: scoreIntegrity carries the RUN's own value, not the comp
   const threshold = gateReport("passed");
   const merged = mergeGateReports(
     { ...threshold, scoreIntegrity: "valid" },
-    { ...gateReport("passed"), scoreIntegrity: "invalid" },
+    { ...gateReport("passed"), scoreIntegrity: "invalid" }
   );
   assert.equal(merged.scoreIntegrity, "valid");
 });
@@ -474,7 +624,7 @@ const ZERO_DIFF = {
 };
 
 function compareWire(
-  overrides: Partial<PlatformRunCompare> = {},
+  overrides: Partial<PlatformRunCompare> = {}
 ): PlatformRunCompare {
   return {
     suite: { id: "s1", name: "Suite" },
@@ -554,6 +704,14 @@ function stubClient(
     | PlatformRunCompare
     | (() => Promise<PlatformRunCompare>)
     | { reject: unknown },
+  /**
+   * What `getEvalRun` reports for the BASELINE run.
+   *
+   * Defaults to a run carrying no eligibility at all, which is "no opinion" —
+   * every pre-existing baseline, and the behaviour these tests assert when the
+   * baseline is sound.
+   */
+  baseRun: unknown = { id: "run_base", importEligibility: undefined }
 ) {
   return {
     async compareEvalRun() {
@@ -564,8 +722,32 @@ function stubClient(
     async listEvalRunIterations() {
       return { items: [], nextCursor: undefined };
     },
+    async getEvalRun() {
+      if (
+        baseRun &&
+        typeof baseRun === "object" &&
+        "reject" in (baseRun as Record<string, unknown>)
+      ) {
+        throw (baseRun as { reject: unknown }).reject;
+      }
+      return baseRun;
+    },
   };
 }
+
+/** A baseline run whose own import evidence the platform says is not gateable. */
+const INELIGIBLE_BASE_RUN = {
+  id: "run_base",
+  importEligibility: {
+    status: "incomplete" as const,
+    gateable: false,
+    importedCaseCount: 2,
+    claimedExactCaseIds: [],
+    approvedApproximationCaseIds: [],
+    approvedApproximationReceipts: [],
+    issues: [{ code: "APPROXIMATION_NOT_APPROVED", testCaseId: "tc_1" }],
+  },
+};
 
 test("evaluateBaselineComparison: a real regression evaluates and carries provenance", async () => {
   const result = await evaluateBaselineComparison({
@@ -573,7 +755,7 @@ test("evaluateBaselineComparison: a real regression evaluates and carries proven
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "failed");
@@ -583,7 +765,55 @@ test("evaluateBaselineComparison: a real regression evaluates and carries proven
   assert.equal(notRecorded.modelProvider, "notRecorded");
   assert.equal(notRecorded.hostHarness, "notRecorded");
   assert.equal(notRecorded.serverEnvironmentIdentity, "notRecorded");
-  assert.equal(notRecorded.configHashesBeyondEvaluationConfigHash, "notRecorded");
+  assert.equal(
+    notRecorded.configHashesBeyondEvaluationConfigHash,
+    "notRecorded"
+  );
+});
+
+test("evaluateBaselineComparison: a baseline that cannot gate blocks the comparison", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(compareWire(), INELIGIBLE_BASE_RUN) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: RUN_BASELINE,
+    policy: { passRateRegression: {} },
+  });
+  // The compare wire says this is a regression, and on the current run's own
+  // evidence it would be `failed`. But a gate rests on BOTH runs, and the
+  // baseline's evidence is explicitly not gateable — so the comparison is
+  // `incomplete`, which no waiver can override, rather than a confident
+  // verdict resting on provenance nobody finished reviewing.
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.gate, "baseline");
+  assert.match(result.report.verdicts[0]?.message ?? "", /baseline run 1/);
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /APPROXIMATION_NOT_APPROVED/
+  );
+});
+
+test("evaluateBaselineComparison: an unreadable baseline run is incomplete, not a pass", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient(compareWire(), {
+      reject: new Error("network down"),
+    }) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: RUN_BASELINE,
+    policy: { passRateRegression: {} },
+  });
+  // "We could not look" is not "it is fine". Skipping the check on a transient
+  // error would make the gate trustworthy only when the network happened to be
+  // up.
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.gate, "baseline");
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /could not read the baseline run's import evidence/
+  );
 });
 
 test("evaluateBaselineComparison: BASELINE_NOT_FOUND folds to incomplete, never failed", async () => {
@@ -596,12 +826,15 @@ test("evaluateBaselineComparison: BASELINE_NOT_FOUND folds to incomplete, never 
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "incomplete");
   assert.equal(result.report.verdicts[0]?.gate, "baseline");
-  assert.match(result.report.verdicts[0]?.message ?? "", /no baseline to compare against/);
+  assert.match(
+    result.report.verdicts[0]?.message ?? "",
+    /no baseline to compare against/
+  );
   assert.equal(result.provenance, undefined);
 });
 
@@ -610,18 +843,18 @@ test("evaluateBaselineComparison: an unfinished side is incomplete, defence in d
     client: stubClient(
       compareWire({
         compareRun: { ...compareWire().compareRun, completedAt: null },
-      }),
+      })
     ) as never,
     signal: new AbortController().signal,
     projectId: "proj-alpha",
     runId: "run_compare",
-    baseline: "run_base",
+    baseline: RUN_BASELINE,
     policy: { passRateRegression: {} },
   });
   assert.equal(result.report.outcome, "incomplete");
   assert.match(
     result.report.verdicts[0]?.message ?? "",
-    /must be completed before they can be compared/,
+    /must be completed before they can be compared/
   );
 });
 
@@ -637,7 +870,7 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     evaluationConfigChanged: true,
     iterationWeightingEqual: false,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {
     passRateRegression: {},
   });
   assert.deepEqual(provenance.baseline, compare.baseline);
@@ -678,7 +911,7 @@ test("buildBaselineProvenance: an unrequested gate's policy is null, not an impl
     evaluationConfigChanged: false,
     iterationWeightingEqual: true,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {});
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {});
   assert.deepEqual(provenance.policy, {
     passRateRegression: null,
     noDeterministicRegressions: false,
@@ -698,7 +931,7 @@ test("buildBaselineProvenance: an explicit policy is echoed back verbatim, not r
     evaluationConfigChanged: false,
     iterationWeightingEqual: true,
   };
-  const provenance = buildBaselineProvenance("run_base", compare, input, {
+  const provenance = buildBaselineProvenance(RUN_BASELINE, compare, input, {
     passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
     noDeterministicRegressions: true,
     maximumP95LatencyIncreaseMs: 500,
@@ -776,7 +1009,7 @@ test("buildBaselineProvenance: names the added/removed cases behind caseSetChang
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },
@@ -801,7 +1034,11 @@ test("buildBaselineProvenance: names the added/removed cases behind caseSetChang
   assert.deepEqual(compatibility.comparableCaseIds, ["ck_shared"]);
   assert.deepEqual(compatibility.incompatibleCases, [
     { caseKey: "ck_new", status: "new_case", reasons: ["case_added"] },
-    { caseKey: "ck_removed", status: "removed_case", reasons: ["case_removed"] },
+    {
+      caseKey: "ck_removed",
+      status: "removed_case",
+      reasons: ["case_removed"],
+    },
   ]);
 });
 
@@ -896,7 +1133,7 @@ test("buildBaselineProvenance: a case-set-stable case can still be individually 
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },
@@ -987,7 +1224,7 @@ test("buildBaselineProvenance: a run-level evaluation config change excludes eve
     ],
   });
   const provenance = buildBaselineProvenance(
-    "run_base",
+    RUN_BASELINE,
     compare,
     {
       base: { iterations: { total: 70, passed: 56 } },
@@ -1017,4 +1254,275 @@ test("buildBaselineProvenance: a run-level evaluation config change excludes eve
       reasons: ["evaluation_config_changed"],
     },
   ]);
+});
+
+// ── --baseline-sha (source-SHA half) ───────────────────────────────────────
+
+const SHA = "9f1a2b3c4d5e6f70819293a4b5c6d7e8f9a0b1c2";
+
+test("resolveBaselineSelector: neither flag is not an error", () => {
+  // `--baseline` is optional — a threshold-only gate is a legitimate
+  // invocation and must not be forced to name a baseline it never wanted.
+  assert.equal(resolveBaselineSelector({ runId: RUN_ID }), undefined);
+});
+
+test("resolveBaselineSelector: names the KIND rather than inferring it", () => {
+  assert.deepEqual(
+    resolveBaselineSelector({ baseline: "run_base", runId: RUN_ID }),
+    {
+      kind: "run",
+      runId: "run_base",
+    }
+  );
+  assert.deepEqual(
+    resolveBaselineSelector({ baselineSha: SHA, runId: RUN_ID }),
+    {
+      kind: "commitSha",
+      commitSha: SHA,
+    }
+  );
+});
+
+test("resolveBaselineSelector: the two flags are mutually exclusive", () => {
+  // Refused HERE, before any request. The v1 route and the Convex action
+  // refuse the same pair; none of the three is allowed to win silently by
+  // picking one, because a baseline that resolves the way the caller did not
+  // ask for is a verdict computed against the wrong run.
+  assert.throws(
+    () =>
+      resolveBaselineSelector({
+        baseline: "run_base",
+        baselineSha: SHA,
+        runId: RUN_ID,
+      }),
+    /mutually exclusive/
+  );
+});
+
+test("resolveBaselineSelector: --baseline-sha is TRIMMED, like --baseline", () => {
+  // Same failure mode the run-id half already guards: a padded value that
+  // passed validation but travelled raw would be refused on the wire, or
+  // resolve to nothing and report `incomplete` (exit 3) — a comparability
+  // answer for what is really a usage error.
+  assert.deepEqual(
+    resolveBaselineSelector({ baselineSha: `  ${SHA}  `, runId: RUN_ID }),
+    { kind: "commitSha", commitSha: SHA }
+  );
+});
+
+test("resolveBaselineSelector: a blank --baseline-sha is a usage error", () => {
+  // `--baseline-sha "$GITHUB_SHA"` with the variable unset hands Commander an
+  // empty string: `!== undefined` but falsy, so unchecked it would silently
+  // disable the whole comparison and exit 0 on nothing the caller asked for.
+  for (const blank of ["", "   ", "\t"]) {
+    assert.throws(
+      () => resolveBaselineSelector({ baselineSha: blank, runId: RUN_ID }),
+      /must not be blank/,
+      JSON.stringify(blank)
+    );
+  }
+});
+
+test("resolveBaselineSelector: a SHA is NOT validated for shape", () => {
+  // Deliberate. SHAs are matched byte-for-byte as CI reported them, so a
+  // client-side shape rule would veto a source identifier the backend would
+  // have resolved — an abbreviated SHA being the obvious case.
+  assert.deepEqual(
+    resolveBaselineSelector({ baselineSha: "9f1a2b3", runId: RUN_ID }),
+    {
+      kind: "commitSha",
+      commitSha: "9f1a2b3",
+    }
+  );
+});
+
+test("comparePolicyFromGateOptions: --baseline-sha enables the regression gate", () => {
+  // Reading only `baseline` here would make every comparative flag silently
+  // inert under `--baseline-sha`.
+  const policy = comparePolicyFromGateOptions({ baselineSha: SHA });
+  assert.ok(policy.passRateRegression, "SHA baseline must enable the gate");
+  assert.doesNotThrow(() =>
+    comparePolicyFromGateOptions({
+      baselineSha: SHA,
+      gateDeterministicRegressions: true,
+    })
+  );
+});
+
+test("comparePolicyFromGateOptions: tuning flags still need SOME baseline", () => {
+  assert.throws(
+    () => comparePolicyFromGateOptions({ gateDeterministicRegressions: true }),
+    /--baseline or --baseline-sha/
+  );
+});
+
+test("evaluateBaselineComparison: a SHA baseline sends baseCommitSha, not baseRunId", async () => {
+  let sent: Record<string, unknown> | undefined;
+  const client = {
+    async compareEvalRun(params: Record<string, unknown>) {
+      sent = params;
+      return compareWire({
+        baseline: {
+          policy: "commit_sha",
+          baseRunId: "run_base",
+          baseCommitSha: SHA,
+        },
+      });
+    },
+    async listEvalRunIterations() {
+      return { items: [], nextCursor: undefined };
+    },
+    // The baseline's own import evidence is read by id whichever selector put
+    // it on the wire; this one carries none, so it does not block.
+    async getEvalRun() {
+      return { id: "run_base", importEligibility: undefined };
+    },
+  };
+  const result = await evaluateBaselineComparison({
+    client: client as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: { kind: "commitSha", commitSha: SHA },
+    policy: { passRateRegression: {} },
+  });
+
+  // Exactly one selector on the wire.
+  assert.equal(sent?.baseCommitSha, SHA);
+  assert.equal(sent?.baseRunId, undefined);
+
+  // The pin requires a gate to record baseline run id AND source SHA. Keeping
+  // only one loses the audit trail: the SHA is what CI asked for, the run id
+  // is what the verdict was actually computed against.
+  assert.equal(result.provenance?.requestedBaselineKind, "commitSha");
+  assert.equal(result.provenance?.requestedBaselineCommitSha, SHA);
+  assert.equal(result.provenance?.resolvedBaselineCommitSha, SHA);
+  assert.equal(result.provenance?.baseRunId, "run_base");
+});
+
+test("provenance: an absent matchCount records uniqueness, and invents no count", async () => {
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: {
+        policy: "commit_sha",
+        baseRunId: "run_base",
+        baseCommitSha: SHA,
+      },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {}
+  );
+  assert.equal(provenance.baselineMatchUnique, true);
+  // Absent means unambiguous — it must NOT be defaulted to 1, which would
+  // read as a count the backend actually reported.
+  assert.equal(provenance.baselineMatchCount, undefined);
+});
+
+test("provenance: an AMBIGUOUS match is recorded, not silently compared", async () => {
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: {
+        policy: "commit_sha",
+        baseRunId: "run_base",
+        baseCommitSha: SHA,
+        matchCount: 3,
+      },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {}
+  );
+  assert.equal(provenance.baselineMatchCount, 3);
+  assert.equal(provenance.baselineMatchUnique, false);
+  assert.equal(provenance.baselineMatchCountTruncated, false);
+});
+
+test("provenance: matchCount 1 + truncated is NOT recorded as unique", async () => {
+  // The case the flag exists for. A floor of 1 is not a proof of 1: older
+  // eligible runs may exist beyond the bounded lookup. Recording this as
+  // unique would be a false claim — and a regression verdict rests on it.
+  const provenance = buildBaselineProvenance(
+    { kind: "commitSha", commitSha: SHA },
+    compareWire({
+      baseline: {
+        policy: "commit_sha",
+        baseRunId: "run_base",
+        baseCommitSha: SHA,
+        matchCount: 1,
+        matchCountTruncated: true,
+      },
+    }),
+    {
+      base: { iterations: { total: 70, passed: 56 } },
+      compare: { iterations: { total: 80, passed: 48 } },
+      deterministicScoreRegressions: [],
+      scoreDeltasAvailable: false,
+      caseSetChanged: false,
+      scenarioConfigChanged: false,
+      evaluationConfigChanged: false,
+      iterationWeightingEqual: true,
+    },
+    {}
+  );
+  assert.equal(provenance.baselineMatchCount, 1);
+  assert.equal(provenance.baselineMatchCountTruncated, true);
+  assert.equal(
+    provenance.baselineMatchUnique,
+    false,
+    "a truncated count of 1 must never be recorded as an established unique match"
+  );
+});
+
+test("an UNRESOLVABLE SHA is incomplete (exit 3), never a regression (exit 1)", async () => {
+  const result = await evaluateBaselineComparison({
+    client: stubClient({
+      reject: Object.assign(new Error("no run for that commit"), {
+        details: { reason: "BASELINE_NOT_FOUND" },
+      }),
+    }) as never,
+    signal: new AbortController().signal,
+    projectId: "proj-alpha",
+    runId: "run_compare",
+    baseline: { kind: "commitSha", commitSha: SHA },
+    policy: { passRateRegression: {} },
+  });
+  assert.equal(result.report.outcome, "incomplete");
+  assert.equal(result.report.verdicts[0]?.status, "non_gateable");
+  assert.equal(evalGateExitCode(result.report), EVAL_GATE_INCOMPLETE_EXIT_CODE);
+  assert.notEqual(evalGateExitCode(result.report), 1);
+});
+
+test("compareBaseSelector: eval compare refuses the pair but allows NEITHER", () => {
+  // `eval compare` differs from `eval gate` in exactly one way: omitting both
+  // is its documented default (nearest earlier completed run), not an error.
+  assert.deepEqual(compareBaseSelector({}), {});
+  assert.deepEqual(compareBaseSelector({ baseRun: " run_base " }), {
+    baseRunId: "run_base",
+  });
+  assert.deepEqual(compareBaseSelector({ baseSha: ` ${SHA} ` }), {
+    baseCommitSha: SHA,
+  });
+  assert.throws(
+    () => compareBaseSelector({ baseRun: "run_base", baseSha: SHA }),
+    /mutually exclusive/
+  );
 });

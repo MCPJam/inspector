@@ -2983,7 +2983,8 @@ async function processOneStep(
         );
       }
 
-      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` tools)
+      // Client-fulfilled tools (SEP-1865 app aliases + WebMCP `ui_*` and
+      // `page_*` tools)
       // have no `execute` function because they run in the browser via
       // `useChat.onToolCall`. With `skipNonExecutableTools`, the helper
       // executes server tools in-place and leaves only registered
@@ -3081,7 +3082,7 @@ async function processOneStep(
         commitNewlyLoaded(discoveryState);
       }
 
-      // Client-fulfilled tools (app aliases + `ui_*`): pause only for
+      // Client-fulfilled tools (app aliases + `ui_*`/`page_*`): pause only for
       // unresolved registered client-fulfilled calls. Other unresolved calls
       // should keep the legacy loop behavior; in normal execution they have
       // already been converted to error tool-results above.

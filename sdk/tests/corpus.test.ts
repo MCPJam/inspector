@@ -260,6 +260,10 @@ describe("scenarioContentHash", () => {
   const IGNORED: Array<{ label: string; patch: Partial<PlatformEvalCase> }> = [
     { label: "iterations", patch: { iterations: 99 } },
     { label: "models", patch: { models: [] } },
+    {
+      label: "intent (analytics metadata, not case content)",
+      patch: { intent: "refund" },
+    },
     { label: "timestamps", patch: { createdAt: 999, updatedAt: 999 } },
     {
       label: "matchOptions (evaluation config, not content)",
