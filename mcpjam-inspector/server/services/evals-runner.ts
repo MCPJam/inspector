@@ -3366,6 +3366,7 @@ const runLocalIteration = async ({
     activeTraceCtx: null,
     iterationError: undefined,
     iterationErrorDetails: undefined,
+    stepErrorSource: undefined,
     pinnedSetupFailure: false,
   };
   // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
@@ -3847,6 +3848,13 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // The layer that failed, when this driver could tell — the local twin of
+      // the hosted path's `stepError`. Without it a local-BYOK trial that died
+      // on the model call finalizes uncategorised, which is the very failure
+      // the provider-error work removed on the hosted path.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       // Keys shadow-mismatch telemetry only; never read for the verdict.
       ...(runId !== null ? { runId: String(runId) } : {}),
       // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
@@ -4083,6 +4091,12 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // Same as the success path: carry the layer when the driver could tell.
+      // This branch is the one a model-call failure most often ends on, so
+      // omitting it here would leave the fix half-applied.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       ...(runId !== null ? { runId: String(runId) } : {}),
       ...(gradingMode ? { gradingMode } : {}),
       scoreMatchOptions: scoreMatchOptionsFor(test),

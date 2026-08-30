@@ -174,18 +174,61 @@ function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
   const score = finiteNumber(verdict.score);
   const threshold = finiteNumber(verdict.threshold);
   if (score === undefined) return [];
-  // Rounded to two places: a model-supplied score can arrive with float noise
-  // (`0.42000000000000004`), and this line is read by a person. Rounding does
-  // not invent precision the verdict lacks — it stops displaying precision it
-  // never had.
-  const show = (n: number) => String(Number(n.toFixed(2)));
-  return [
-    threshold === undefined
-      ? `LLM judge scored ${show(score)}`
-      : `LLM judge scored ${show(score)} against a ${show(
-          threshold,
-        )} threshold`,
-  ];
+
+  // The BOUNDARIES that actually decided the band, not just the threshold.
+  //
+  // A `partial` or `fail` band is settled by the threshold AND the partial
+  // floor together, so a line naming only the threshold cannot explain itself:
+  // 0.5 against a 0.7 threshold reads as a plain miss, and says nothing about
+  // why it failed rather than landing in the partial band. The floor is
+  // included exactly when it is one of the numbers the decision turned on.
+  // The BAND is `verdict.verdict`; `verdict.status` is the outer state
+  // (scored / error / skipped / pending) and never carries a band.
+  const band = typeof verdict.verdict === "string" ? verdict.verdict : "";
+  const floor =
+    band === "partial" || band === "fail"
+      ? finiteNumber(verdict.partialFloor)
+      : undefined;
+
+  const bounds = [threshold, floor].filter(
+    (n): n is number => n !== undefined,
+  );
+  const show = showAgainst(score, bounds);
+
+  const parts = [`LLM judge scored ${show(score)}`];
+  if (threshold !== undefined) parts.push(`against a ${show(threshold)} threshold`);
+  if (floor !== undefined) parts.push(`and a ${show(floor)} partial floor`);
+  return [parts.join(" ")];
+}
+
+/**
+ * Pick a rendering precision that cannot contradict the band it explains.
+ *
+ * Two decimals is right for a person reading a score, and wrong when it erases
+ * the very comparison the line exists to show: a 0.699 score against a 0.7
+ * threshold rendered as "scored 0.7 against a 0.7 threshold" while the row
+ * says it fell short. The numbers then argue with the label, and the reader
+ * has no way to tell which is wrong.
+ *
+ * So precision grows only as far as it must: two places whenever the values
+ * are already distinguishable there, and the first deeper precision that keeps
+ * every DIFFERENT pair looking different. Equal values still render equal —
+ * a score exactly on its threshold should read that way.
+ */
+function showAgainst(
+  score: number,
+  bounds: readonly number[],
+): (n: number) => string {
+  const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
+  // Six is the floor of usefulness, not an arbitrary cap: past it a judge
+  // score is float noise, and a line no one can read explains nothing.
+  for (let digits = 2; digits <= 6; digits += 1) {
+    const collides = bounds.some(
+      (bound) => bound !== score && at(bound, digits) === at(score, digits),
+    );
+    if (!collides) return (n: number) => at(n, digits);
+  }
+  return (n: number) => at(n, 6);
 }
 
 function readJudgeVerdict(
