@@ -195,7 +195,9 @@ function LocalShellBody({ engine }: { engine: ComputerEngineState }) {
         {/* Same `toggleVisible` gate as the cloud body: with only one engine
             available there is no choice to indicate, and the body copy below
             already names the machine. */}
-        {engine.toggleVisible ? <RailEngineChip engine={engine.engine} /> : null}
+        {engine.toggleVisible ? (
+          <RailEngineChip engine={engine.engine} />
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 px-3 pb-3">
         {!consent.granted ? (
