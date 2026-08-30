@@ -65,8 +65,24 @@ const serverFields = {
  * it did not derive from the path. Unknown keys are a 400, not a silent
  * forward, and `projectId`/`serverId`/`workspaceId` are never accepted in a
  * body: they come from the URL.
+ *
+ * STRICT ABOUT UNKNOWN KEYS, NOT ABOUT `enabled`. That field was the one
+ * mandatory member of a body whose every other member is optional, and
+ * `--body` documents no schema, so the only way to discover it was to send a
+ * server and read back
+ * `enabled: Invalid input: expected boolean, received undefined`. Nobody
+ * creates a server they want switched off, so `true` is the answer the
+ * rejection was asking for.
+ *
+ * The default is applied on the create schema and NOT on `serverFields`, so
+ * `updateServerSchema` below keeps mapping the shared field to a plain
+ * `.optional()`: a default on the update path would turn "leave `enabled`
+ * alone" into "set it to true" for every patch that did not mention it.
  */
-const createServerSchema = z.strictObject(serverFields);
+const createServerSchema = z.strictObject({
+  ...serverFields,
+  enabled: serverFields.enabled.default(true),
+});
 const updateServerSchema = z
   .strictObject({
     ...Object.fromEntries(

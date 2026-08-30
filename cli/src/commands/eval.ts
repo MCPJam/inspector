@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  projectResolutionError,
   resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
@@ -35,10 +36,16 @@ import {
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
+  buildAppPermalink,
   type CreateEvalSuiteInput,
   type PlatformEvalRunDisclosure,
   type PlatformOperation,
+  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import {
+  validateImportToolReferences,
+  type ImportToolFinding,
+} from "../lib/eval-import-live-validation.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -55,14 +62,17 @@ import {
   writeResult,
 } from "../lib/output.js";
 import {
+  applyGateWaiver,
   buildCorpus,
-  buildEvalDecisionSummaryFromIterations,
   buildEvalRunReport,
   buildRunCompareReport,
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
+  formatGateWaiverLine,
   formatSuiteFileFindings,
+  GATE_WAIVER_MAX_REASON_LENGTH,
+  GATE_WAIVER_REASON_NOTICE,
   gateOutcomeVerdict,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
@@ -73,6 +83,7 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type ResolvedEvalSuiteFile,
   type StructuredCaseResult,
   type StructuredEvalRunInput,
   type StructuredRunReport,
@@ -98,6 +109,7 @@ import {
 import {
   executeEvalRunFromFile,
   looksLikeVersionedSuiteFile,
+  MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
@@ -119,13 +131,18 @@ import {
   isNonVerdictRunStatus,
 } from "../lib/eval-gate-exit-code.js";
 import {
-  assertRunIdBaseline,
+  activeWaiverForRun,
+  resolveBaselineSelector,
+  compareBaseSelector,
   baselineNotFoundReason,
   comparePolicyFromGateOptions,
   evaluateBaselineComparison,
   mergeGateReports,
   policyFromOptions,
+  parseWaiverExpiry,
   policyNeedsIterations,
+  importEvidenceBlocksGate,
+  importIneligibleReport,
   reportForRun,
   type EvalGateOptions,
 } from "../lib/eval-gate.js";
@@ -136,6 +153,11 @@ import {
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
+import {
+  decisionSummaryFromIterations,
+  readEvalRunDecisionSummary,
+} from "../lib/eval-decision-summary.js";
+import type { EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -543,15 +565,24 @@ function writeRunLink(
   if (format !== "human") return;
   const suiteId = run.suiteId?.trim();
   const runId = run.runId?.trim();
-  if (!suiteId || !runId) return;
-  const query = run.projectId?.trim()
-    ? `?project=${encodeURIComponent(run.projectId.trim())}`
-    : "";
-  process.stdout.write(
-    `View: ${webOrigin}/evals/suite/${encodeURIComponent(
-      suiteId
-    )}/runs/${encodeURIComponent(runId)}${query}\n`
-  );
+  const projectId = run.projectId?.trim();
+  if (!suiteId || !runId || !projectId) return;
+  let permalink: PlatformPermalink;
+  try {
+    permalink = buildAppPermalink(
+      {
+        type: "eval_run",
+        id: runId,
+        parent: { type: "eval_suite", id: suiteId },
+        projectId,
+      },
+      { appOrigin: webOrigin }
+    );
+  } catch {
+    // A convenience line may never fail a command that already succeeded.
+    return;
+  }
+  process.stdout.write(`View: ${permalink.url}\n`);
 }
 
 /** Judge keys the CLI knows how to label, in the order it prints them. */
@@ -1047,10 +1078,17 @@ function gateReportCase(
   report: GateReport,
   baselineProvenance?: Record<string, unknown>
 ): StructuredCaseResult {
-  const passed = report.outcome === "passed";
+  const waived = report.outcome === "waived";
+  // A WAIVED gate did not block the build, so it must not inflate the
+  // artifact's failure count — a JUnit file whose failure count contradicts
+  // the exit code sends a CI job red on the strength of the very thing that
+  // was waived. It is still not reported as a plain pass: `waiver` below makes
+  // the JUnit renderer emit `<skipped>` instead of a bare passing testcase,
+  // the HTML renderer give it its own section, and the title say so outright.
+  const passed = report.outcome === "passed" || waived;
   return {
     id: "gate",
-    title: "Eval gate",
+    title: waived ? "Eval gate (WAIVED)" : "Eval gate",
     category: "gate",
     passed,
     // Only a real FAILED gate is a confirmed regression. `incomplete` and
@@ -1061,17 +1099,41 @@ function gateReportCase(
     classification:
       report.outcome === "failed"
         ? "breaking"
-        : passed
-          ? "non_breaking"
-          : "informational",
-    ...(passed
+        // A waived gate is `informational`, NOT `non_breaking`. It really did
+        // fail; `non_breaking` would claim the run observed no breaking change,
+        // which is the opposite of what happened.
+        : waived
+          ? "informational"
+          : passed
+            ? "non_breaking"
+            : "informational",
+    // The failing verdicts are carried on a WAIVED case too. The waiver
+    // explains why the build was not blocked; it is not a reason to stop
+    // saying what failed.
+    ...(passed && !waived
       ? {}
       : {
           error: report.verdicts
-            .filter((verdict) => verdict.status !== "passed")
+            .filter(
+              (verdict) =>
+                verdict.status !== "passed" && verdict.status !== "waived"
+            )
             .map((verdict) => verdict.message)
             .join("; "),
         }),
+    ...(report.waiver
+      ? {
+          waiver: {
+            id: report.waiver.id,
+            reason: report.waiver.reason,
+            expiresAt: report.waiver.expiresAt,
+            createdAt: report.waiver.createdAt,
+            createdBy: report.waiver.createdBy,
+            createdByEmail: report.waiver.createdByEmail,
+            policySnapshot: report.waiver.policySnapshot,
+          },
+        }
+      : {}),
     // The baseline provenance rides along on the case row too, not only in
     // the report's top-level metadata: `--reporter junit-xml` has no other
     // place to carry it, and a regression visible in the exit code but
@@ -1088,7 +1150,13 @@ async function runEvalGate(
   options: PlatformOptions &
     EvalGateOptions & {
       project?: string;
-      run: string;
+      /**
+       * Optional at the TYPE level only. `gate` cannot mark it required in
+       * commander without breaking `gate waive`/`gate unwaive` dispatch, so
+       * absence is refused below — with the same exit 2 commander would have
+       * produced.
+       */
+      run?: string;
       wait?: boolean;
       waitTimeout?: string;
       reporter?: string;
@@ -1104,6 +1172,13 @@ async function runEvalGate(
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  // Enforced here rather than by commander — see the option's declaration. A
+  // usage error, so the exit code is 2 exactly as it was when commander did
+  // the checking, and it is raised before any flag parsing spends a request.
+  const runId = options.run?.trim();
+  if (!runId) {
+    throw usageError("--run <id> is required. Pass the eval run to gate.");
+  }
   const reporter = parseReporterFormat(options.reporter);
   const needsReport = reporter !== undefined || options.out !== undefined;
   const policy = policyFromOptions({
@@ -1115,10 +1190,11 @@ async function runEvalGate(
   // The NORMALIZED value is what travels downstream — the raw one is never
   // read again, so a whitespace-padded but otherwise valid `--baseline`
   // cannot slip past validation and then fail to resolve on the wire.
-  const baseline =
-    options.baseline !== undefined
-      ? assertRunIdBaseline(options.baseline, options.run)
-      : undefined;
+  const baseline = resolveBaselineSelector({
+    baseline: options.baseline,
+    baselineSha: options.baselineSha,
+    runId,
+  });
   const comparePolicy = comparePolicyFromGateOptions(options);
   const waitTimeoutMs =
     options.waitTimeout !== undefined
@@ -1126,9 +1202,7 @@ async function runEvalGate(
       : DEFAULT_GATE_WAIT_TIMEOUT_MS;
   const resolved = resolveCloudProjectArgs(options);
 
-  let decisionSummary:
-    | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
-    | undefined;
+  let decisionSummary: EvalRunDecisionSummary | undefined;
   let outcome: {
     report: GateReport;
     run?: PlatformEvalRun;
@@ -1152,7 +1226,7 @@ async function runEvalGate(
         const project = resolution.project;
         const deadline = Date.now() + waitTimeoutMs;
         let run = await client.getEvalRun(
-          { projectId: project.id, runId: options.run },
+          { projectId: project.id, runId },
           { signal }
         );
 
@@ -1161,6 +1235,12 @@ async function runEvalGate(
             // Without --wait, a still-running run would otherwise be gated on
             // its PARTIAL summary — a confident verdict about an unfinished
             // run. Undecidable, not failed.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1173,12 +1253,19 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           if (Date.now() >= deadline) {
             // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
             // pass. Reported as incomplete so it can never read as a
             // regression.
+            decisionSummary = await readEvalRunDecisionSummary(
+              client,
+              signal,
+              project.id,
+              run
+            );
             return {
               report: {
                 outcome: "incomplete" as const,
@@ -1191,11 +1278,12 @@ async function runEvalGate(
                   },
                 ],
               },
+              run,
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
           run = await client.getEvalRun(
-            { projectId: project.id, runId: options.run },
+            { projectId: project.id, runId },
             { signal }
           );
         }
@@ -1210,7 +1298,7 @@ async function runEvalGate(
               client,
               signal,
               project.id,
-              options.run
+              runId
             );
           } catch (error) {
             iterationError =
@@ -1222,6 +1310,19 @@ async function runEvalGate(
           isNonVerdictRunStatus(run.status) ||
           isNonVerdictRunResult(run.result)
         ) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run
+                );
           // Cancelled / timed out: the run has not told us the server
           // regressed, it has told us nothing. Same for a policy-2
           // `inconclusive` result, where the platform itself declined to
@@ -1247,15 +1348,59 @@ async function runEvalGate(
           };
         }
 
+        // Import evidence, BEFORE any verdict is computed and before
+        // `--baseline` gets a chance to merge one in.
+        //
+        // Early-returned rather than folded into the threshold report because
+        // the merge ranks `failed` above `incomplete`: a baseline regression
+        // alongside ineligible evidence would surface as exit 1, reporting a
+        // measured verdict this run is explicitly not allowed to produce.
+        // A waiver cannot reach it either — `applyGateWaiver` refuses to touch
+        // `incomplete`, which is the property that keeps import completeness
+        // un-overridable.
+        if (importEvidenceBlocksGate(run)) {
+          decisionSummary =
+            iterations && iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run,
+                  iterations,
+                })
+              : await readEvalRunDecisionSummary(
+                  client,
+                  signal,
+                  project.id,
+                  run,
+                );
+          return {
+            report: importIneligibleReport(run),
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
+          };
+        }
+
+        // Assembled from the walk this gate already paid for, through the
+        // canonical assembler. The gate's own verdict is untouched: this
+        // EXPLAINS the run, it does not re-decide it, and the summary's verdict
+        // comes from the run's own decision rather than from these rows.
         if (iterations) {
-          decisionSummary = buildEvalDecisionSummaryFromIterations(
-            iterations.items,
-            {
-              total: run.summary?.total,
-              passed: run.summary?.passed,
-              failed: run.summary?.failed,
-              iterationWalkComplete: iterations.complete,
-            }
+          decisionSummary = decisionSummaryFromIterations({
+            projectId: project.id,
+            run,
+            iterations,
+          });
+        } else {
+          // The most common gate — `--min-pass-rate-percent` — is decided off
+          // the run's own summary and needs no iteration walk. Read the
+          // canonical object for every output mode so JSON and reporter
+          // artifacts cannot silently omit it.
+          decisionSummary = await readEvalRunDecisionSummary(
+            client,
+            signal,
+            project.id,
+            run
           );
         }
         // A failed LOCAL iteration fetch makes the run's own threshold report
@@ -1310,7 +1455,7 @@ async function runEvalGate(
           client,
           signal,
           projectId: project.id,
-          runId: options.run,
+          runId,
           baseline,
           policy: comparePolicy,
           compareIterations: iterations,
@@ -1381,7 +1526,24 @@ async function runEvalGate(
     return;
   }
 
-  const exitCode = evalGateExitCode(outcome.report);
+  // THE WAIVER, folded in after every verdict is settled and before anything
+  // is reported.
+  //
+  // HERE rather than inside the fetch closure, because this must also cover
+  // the early returns above (a still-running run, a wait timeout, a cancelled
+  // run) — and it must cover them by NOT waiving them: `applyGateWaiver`
+  // upgrades only a real `failed` outcome, so an infrastructure condition
+  // keeps its exit 3 no matter what waiver is on the run. A waiver granted
+  // because the evals regressed is not consent to ship on a network error.
+  //
+  // The waiver is attached even when it changed nothing, so the artifact names
+  // it either way. `outcome` is the only thing that says whether it decided
+  // anything.
+  const report = applyGateWaiver(
+    outcome.report,
+    activeWaiverForRun(outcome.run)
+  );
+  const exitCode = evalGateExitCode(report);
   const structured = needsReport
     ? buildEvalRunReport(
         outcome.run
@@ -1397,8 +1559,8 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(outcome.report, outcome.baselineProvenance)],
-          verdict: gateOutcomeVerdict(outcome.report.outcome),
+          cases: [gateReportCase(report, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(report.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1416,10 +1578,19 @@ async function runEvalGate(
   if (reporter && structured) {
     writeReporterResult(reporter, structured);
   } else {
-    writeResult({ gate: outcome.report, exitCode }, globalOptions.format);
+    writeResult(
+      globalOptions.format === "json"
+        ? {
+            gate: report,
+            exitCode,
+            ...(decisionSummary ? { decisionSummary } : {}),
+          }
+        : { gate: report, exitCode },
+      globalOptions.format
+    );
   }
   if (globalOptions.format === "human" && !reporter) {
-    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+    process.stderr.write(`${formatGateReport(report)}\n`);
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -1428,6 +1599,184 @@ async function runEvalGate(
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
+  }
+}
+
+/**
+ * Read `--run` and `--project` off the parent `gate` command.
+ *
+ * They are declared on `gate`, and commander hands a parent's options to the
+ * parent's own `opts()` even when a subcommand is the one running — so the
+ * subcommand must ask upward rather than redeclare them. Redeclaring is worse
+ * than verbose: the parent consumes `--run` first, and the subcommand's own
+ * mandatory check then fails on a flag the user demonstrably passed.
+ *
+ * `--run` is enforced HERE, with a usage error, because `gate` can no longer
+ * mark it required (see the registration). Exit 2 either way.
+ */
+function gateSubcommandScope(command: Command): {
+  run: string;
+  project?: string;
+} {
+  const parentOptions = (command.parent?.opts() ?? {}) as {
+    run?: string;
+    project?: string;
+  };
+  const run = parentOptions.run?.trim();
+  if (!run) {
+    throw usageError("--run <id> is required. Pass the eval run to act on.");
+  }
+  return {
+    run,
+    ...(parentOptions.project !== undefined
+      ? { project: parentOptions.project }
+      : {}),
+  };
+}
+
+/**
+ * `mcpjam cloud eval gate waive` — override a failing run's gate, on the
+ * record.
+ *
+ * The notice goes to STDERR before the request, not after and not on stdout.
+ * Before, because it is a warning about what the caller is ABOUT to store
+ * permanently and unredacted; stderr, so `--format json` output stays one
+ * parseable document.
+ *
+ * NO LOCAL VALIDATION of the reason or the expiry beyond parsing the duration
+ * format. Each of the platform's five refusals carries copy it wrote for the
+ * caller — including the one for a suite with no organization, which names a
+ * remedy nobody would guess — and a local check firing first would replace
+ * that copy with a message invented here.
+ */
+async function runEvalGateWaive(
+  options: { reason: string; expiresIn: string },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = gateSubcommandScope(command);
+  // Parsed BEFORE any network call, like every other flag in this file: a
+  // malformed duration exits 2 without spending a request.
+  const expiresAt = parseWaiverExpiry(options.expiresIn);
+  const resolved = resolveCloudProjectArgs(scope);
+
+  if (globalOptions.format === "human") {
+    process.stderr.write(`Gate waiver reason: ${GATE_WAIVER_REASON_NOTICE}\n`);
+  }
+
+  const result = await runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const projects = await client.listProjects({}, { signal });
+      const resolution = resolveProject(projects.items, resolved.project);
+      if (!resolution.ok) {
+        throw usageError(
+          appendProjectLinkHint(resolution.message, resolved.projectScope)
+        );
+      }
+      return await client.createGateWaiver(
+        {
+          projectId: resolution.project.id,
+          runId: scope.run,
+          reason: options.reason,
+          expiresAt,
+        },
+        { signal }
+      );
+    }
+  );
+
+  writeResult(result, globalOptions.format);
+  if (globalOptions.format === "human") {
+    // `conflict` is a normal result, not an error, and it must not read as
+    // "granted" — the waiver now in force is somebody else's, with somebody
+    // else's reason on the check.
+    process.stderr.write(
+      `${
+        result.status === "conflict"
+          ? "A waiver was already in force over this run; it was NOT replaced."
+          : "Gate waived."
+      } ${formatGateWaiverLine(result.waiver)}\n`
+    );
+    // A published Check Run is a persisted verdict, not a live read. Zero
+    // republished checks on a repository with checks connected means the
+    // status that actually gates the merge did not move — worth saying, since
+    // that is usually the reason someone waived at all.
+    process.stderr.write(
+      `Republished ${result.republishedChecks} GitHub check run(s).\n`
+    );
+  }
+}
+
+/**
+ * `mcpjam cloud eval gate unwaive` — end a waiver early.
+ *
+ * `--waiver` is optional: omitted, the waiver currently in force over `--run`
+ * is resolved first. That read is what makes the common case safe as well as
+ * convenient — revoking "the waiver on this run" cannot name the wrong row.
+ *
+ * `already_revoked` is a SUCCESS. The platform reports the original
+ * revocation rather than restamping it, so a retry cannot overwrite the record
+ * of who actually ended the waiver; treating it as an error here would push
+ * callers into exactly the retry loop that record has to survive.
+ */
+async function runEvalGateUnwaive(
+  options: { waiver?: string },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = gateSubcommandScope(command);
+  const resolved = resolveCloudProjectArgs(scope);
+
+  const result = await runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const projects = await client.listProjects({}, { signal });
+      const resolution = resolveProject(projects.items, resolved.project);
+      if (!resolution.ok) {
+        throw usageError(
+          appendProjectLinkHint(resolution.message, resolved.projectScope)
+        );
+      }
+      const projectId = resolution.project.id;
+
+      let waiverId = options.waiver?.trim();
+      if (!waiverId) {
+        const { waiver } = await client.getGateWaiver(
+          { projectId, runId: scope.run },
+          { signal }
+        );
+        if (!waiver) {
+          // A usage error, not a silent success. "Nothing to revoke" and "I
+          // revoked it" are different facts, and an operator putting a gate
+          // back needs to know which one happened. Naming `--waiver` says how
+          // to reach an already-expired or already-revoked row, which this
+          // read deliberately does not return.
+          throw usageError(
+            `No waiver is in force over run "${scope.run}". Pass --waiver <id> to revoke a specific one.`
+          );
+        }
+        waiverId = waiver.id;
+      }
+
+      return await client.revokeGateWaiver(
+        { projectId, runId: scope.run, waiverId },
+        { signal }
+      );
+    }
+  );
+
+  writeResult(result, globalOptions.format);
+  if (globalOptions.format === "human") {
+    process.stderr.write(
+      `${
+        result.status === "already_revoked"
+          ? "This waiver was already revoked; the existing revocation stands."
+          : "Gate waiver revoked."
+      } Republished ${result.republishedChecks} GitHub check run(s).\n`
+    );
   }
 }
 
@@ -1445,6 +1794,7 @@ async function runEvalCompare(
       project?: string;
       run: string;
       baseRun?: string;
+      baseSha?: string;
       reporter?: string;
       out?: string;
     },
@@ -1454,6 +1804,14 @@ async function runEvalCompare(
   // Parsed BEFORE any network call, so a malformed flag exits 2 without
   // spending a request — and cannot be mistaken for an infrastructure failure.
   const policy = comparePolicyFromOptions(options);
+  // Same pre-network parse, and the same mutual exclusion the route and the
+  // Convex action enforce. `eval compare` has NO required baseline — omitting
+  // both selectors is the documented "nearest earlier completed run" default —
+  // so this only refuses the pair, and normalizes whichever one was given.
+  const baseSelector = compareBaseSelector({
+    baseRun: options.baseRun,
+    baseSha: options.baseSha,
+  });
   const reporter = parseReporterFormat(options.reporter);
   const resolved = resolveCloudProjectArgs(options);
 
@@ -1461,7 +1819,7 @@ async function runEvalCompare(
     report: GateReport;
     compare?: PlatformRunCompare;
     flakyCases?: FlakyCase[];
-    decisionSummary?: ReturnType<typeof buildEvalDecisionSummaryFromIterations>;
+    decisionSummary?: EvalRunDecisionSummary;
   };
 
   let outcome: CompareOutcome;
@@ -1483,7 +1841,7 @@ async function runEvalCompare(
           {
             projectId: project.id,
             runId: options.run,
-            ...(options.baseRun ? { baseRunId: options.baseRun } : {}),
+            ...baseSelector,
           },
           { signal }
         );
@@ -1550,20 +1908,33 @@ async function runEvalCompare(
           compareP95Ms: p95Of(compareIterations),
         });
 
+        // The compare wire's run sides are a COMPARISON projection: they carry
+        // `result` and `summary` but no `status` and no `verdictSummary`, so
+        // assembling a decision from one would report a policy-v2 run as a
+        // legacy percent-threshold run — a claim about where its verdict came
+        // from that would simply be false. One small read gets the real thing;
+        // the diagnostics still come from the walk already performed, which is
+        // more complete than a single endpoint page.
+        const compareRunDetail = await client
+          .getEvalRun(
+            { projectId: project.id, runId: compare.compareRun.id },
+            { signal }
+          )
+          .catch(() => undefined);
+
         return {
           report: evaluateCompareGates(input, policy),
           compare,
-          decisionSummary: compareIterations
-            ? buildEvalDecisionSummaryFromIterations(
-                compareIterations.items,
-                {
-                  total: compare.compareRun.summary?.total,
-                  passed: compare.compareRun.summary?.passed,
-                  failed: compare.compareRun.summary?.failed,
-                  iterationWalkComplete: compareIterations.complete,
-                }
-              )
-            : undefined,
+          // About the COMPARE side only. A baseline's own failures are a
+          // different run's diagnostics and would read here as this run's.
+          decisionSummary:
+            compareIterations && compareRunDetail
+              ? decisionSummaryFromIterations({
+                  projectId: project.id,
+                  run: compareRunDetail,
+                  iterations: compareIterations,
+                })
+              : undefined,
           // Reported, NEVER gated. See `detectFlakyCases`.
           flakyCases: compareIterations?.complete
             ? detectFlakyCases(flakyInputFrom(compareIterations.items))
@@ -1628,6 +1999,15 @@ async function runEvalCompare(
   );
   if (globalOptions.format === "human" && !reporter) {
     process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+    // The COMPARE side's own decision, the same object the report carries.
+    // Stderr, like the gate report above, so `--format human` still leaves one
+    // parseable document on stdout. The baseline's failures are a different
+    // run's diagnostics and are deliberately not shown here.
+    writeEvalDecisionSummary(
+      globalOptions.format,
+      outcome.decisionSummary,
+      process.stderr
+    );
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
@@ -1937,6 +2317,23 @@ type ValidateResult = {
     enabledCases: number;
   };
   findings: unknown[];
+  /**
+   * Present ONLY when `--project` was passed.
+   *
+   * A separate block rather than more entries in `findings`, because the two
+   * answer different questions: `findings` is "is this a valid suite file?",
+   * which is a property of the bytes and reproducible on any machine, and this
+   * is "does it resolve against THIS project right now?", which is a property
+   * of a live inventory that changes under you. Merging them would make a
+   * caller unable to tell a file it must edit from a project it must fix.
+   */
+  projectValidation?: {
+    project: { id: string; name: string };
+    /** Every target the file resolved to, so a finding's scope is readable. */
+    targets: string[];
+    valid: boolean;
+    findings: ImportToolFinding[];
+  };
 };
 
 /**
@@ -1953,15 +2350,151 @@ type ValidateResult = {
  * network round trip, and it is a later step's work. "Valid" here therefore
  * means "a valid suite file", never "this will run".
  */
-function runEvalValidate(options: { file: string }, command: Command): void {
+/**
+ * Parse `--allow-approximated` / `--approval-reason` into the file-run knob.
+ *
+ * Every rule here is enforced BEFORE the launch, and each one exists because
+ * the alternative silently spends money or silently weakens the policy:
+ *
+ *   - **`--suite` rejects them.** A hosted suite's cases are not the ones this
+ *     invocation authored, so an authored-id selector has nothing to resolve
+ *     against. Accepting the flags and ignoring them would let somebody believe
+ *     an approximation had been approved when the run refused it.
+ *   - **Selectors require a reason, and a reason requires selectors.** An
+ *     override with no stated reason is indistinguishable from an accident,
+ *     and a reason with nothing to apply it to is a typo the caller wants to
+ *     hear about before the run starts, not after.
+ *   - **Duplicates refuse.** Naming a case twice is either a mistake or a
+ *     misunderstanding of what approving twice would mean; neither should be
+ *     resolved by quietly deduplicating.
+ *
+ * Returns `undefined` when neither flag was passed, which is the ordinary case
+ * and must stay indistinguishable from the pre-flag behaviour.
+ */
+export function parseApprovalFlags(options: {
+  suite?: string;
+  allowApproximated?: string[];
+  approvalReason?: string;
+}): { cases: string[]; reason: string } | undefined {
+  const selectors = options.allowApproximated ?? [];
+  const rawReason = options.approvalReason;
+  if (selectors.length === 0 && rawReason === undefined) return undefined;
+
+  if (options.suite) {
+    throw usageError(
+      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve."
+    );
+  }
+  if (selectors.length === 0) {
+    throw usageError(
+      "--approval-reason needs at least one --allow-approximated <case> to apply to."
+    );
+  }
+  if (rawReason === undefined) {
+    throw usageError(
+      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
+    );
+  }
+  const reason = rawReason.trim();
+  if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
+    throw usageError(
+      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
+    );
+  }
+  const seen = new Set<string>();
+  for (const selector of selectors) {
+    const trimmed = selector.trim();
+    if (trimmed.length === 0) {
+      throw usageError("--allow-approximated does not accept a blank case.");
+    }
+    if (seen.has(trimmed)) {
+      throw usageError(
+        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
+      );
+    }
+    seen.add(trimmed);
+  }
+  return { cases: [...seen], reason };
+}
+
+/**
+ * Findings from a live check, rendered the way `formatSuiteFileFindings`
+ * renders structural ones — same pointer-first shape, so a reader scanning both
+ * halves of a `--project` validation is reading one format, not two.
+ */
+export function formatImportToolFindings(
+  findings: readonly ImportToolFinding[]
+): string {
+  return findings
+    .map(
+      (entry) =>
+        `  ${entry.pointer}: ${entry.message} ` +
+        `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
+        `${entry.imported ? ", imported" : ""})`
+    )
+    .join("\n");
+}
+
+/**
+ * The live half of `eval validate --project`.
+ *
+ * Authenticates and resolves the named project with the same helpers every
+ * other cloud command uses, then runs the ONE shared reference check. A failure
+ * to authenticate, reach the project, or list a server's tools propagates as a
+ * command error: the file has not been judged, and saying it has would be a
+ * lie in the one direction that matters.
+ */
+async function runProjectValidation(
+  options: PlatformOptions & { project?: string },
+  command: Command,
+  resolved: ResolvedEvalSuiteFile
+): Promise<NonNullable<ValidateResult["projectValidation"]>> {
+  const globalOptions = getGlobalOptions(command);
+  const scope = resolveCloudProjectArgs(options);
+  return runPlatformCommand(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const page = await client.listProjects({}, { signal });
+      const resolution = resolveProject(page.items, scope.project);
+      if (!resolution.ok) throw projectResolutionError(resolution.message);
+      const project = resolution.project;
+      const outcome = await validateImportToolReferences(client, {
+        projectId: project.id,
+        resolved,
+        signal,
+      });
+      return {
+        project: { id: project.id, name: project.name },
+        targets: outcome.targets.map((target) => target.label),
+        valid: outcome.findings.length === 0,
+        findings: outcome.findings,
+      };
+    }
+  );
+}
+
+async function runEvalValidate(
+  options: PlatformOptions & { file: string; project?: string },
+  command: Command
+): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
   const label = options.file === "-" ? "<stdin>" : options.file;
   const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
 
   if (loaded.ok) {
+    // Keyed off the FLAG, never off the resolved project scope. A linked
+    // directory or an `MCPJAM_PROJECT` in the environment must not silently
+    // turn the one offline command in this CLI into a networked one —
+    // somebody validating a file on a plane would get an auth error for a
+    // question that needs no auth.
+    const projectValidation =
+      options.project === undefined
+        ? undefined
+        : await runProjectValidation(options, command, loaded.resolved);
     const result: ValidateResult = {
-      valid: true,
+      valid: projectValidation ? projectValidation.valid : true,
       file: label,
       suite: {
         id: loaded.authored.suite.id,
@@ -1970,17 +2503,33 @@ function runEvalValidate(options: { file: string }, command: Command): void {
         enabledCases: loaded.resolved.enabledCases.length,
       },
       findings: [],
+      ...(projectValidation ? { projectValidation } : {}),
     };
     if (globalOptions.format === "human") {
       const total = result.suite?.cases ?? 0;
       process.stdout.write(
-        `${label}: valid — suite ${result.suite?.id} ` +
+        `${label}: ${result.valid ? "valid" : "invalid"} — suite ${result.suite?.id} ` +
           `(${total} ${total === 1 ? "case" : "cases"}, ` +
           `${result.suite?.enabledCases} enabled)\n`
       );
-      return;
+      if (projectValidation && !projectValidation.valid) {
+        process.stdout.write(
+          `${projectValidation.findings.length} unresolved reference(s) ` +
+            `against project ${projectValidation.project.name}:\n` +
+            formatImportToolFindings(projectValidation.findings) +
+            "\n"
+        );
+      }
+    } else {
+      writeResult(result, globalOptions.format);
     }
-    writeResult(result, globalOptions.format);
+    // A completed live check that found unresolved references is a VERDICT on
+    // the file, so it takes the command's ordinary "file judged invalid" exit.
+    // An auth or network failure never reaches here — it threw, and threw as a
+    // command error.
+    if (projectValidation && !projectValidation.valid) {
+      setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
+    }
     return;
   }
 
@@ -2389,9 +2938,19 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
+      )
+      .option(
+        "--allow-approximated <case...>",
+        "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
+      )
+      .option(
+        "--approval-reason <text>",
+        "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server."
       ).action(
     async (
       options: PlatformOptions & {
+        allowApproximated?: string[];
+        approvalReason?: string;
         composeHost?: string;
         composeComputer?: string;
         composeModel?: string[];
@@ -2445,6 +3004,7 @@ export function registerEvalCommands(program: Command): void {
       if (options.waitTimeout !== undefined && !options.wait) {
         throw usageError("--wait-timeout requires --wait.");
       }
+      const approvals = parseApprovalFlags(options);
       const globalOptions = getGlobalOptions(command);
       const reporter = parseReporterFormat(options.reporter);
       const waitTimeoutMs =
@@ -2552,6 +3112,7 @@ export function registerEvalCommands(program: Command): void {
                   ...(options.idempotencyKey
                     ? { idempotencyKey: options.idempotencyKey }
                     : {}),
+                  ...(approvals ? { approvals } : {}),
                   ...composeField(options),
                 },
               }
@@ -2710,6 +3271,26 @@ export function registerEvalCommands(program: Command): void {
           );
 
           if (!needsReport) {
+            // No report was asked for, so no iteration walk was paid for — but
+            // in human format the whole value of `--wait` is being told what
+            // happened, and today a failing wait prints a receipt and an exit
+            // code and nothing about why. One bounded read buys that back.
+            //
+            // SINGLE-RUN ONLY, here and below. `StructuredRunReport` carries
+            // one summary and a fan-out has several runs; attaching one of them
+            // would label a report about N runs with the decision of one.
+            const soloSummary =
+              globalOptions.format === "human" &&
+              result.targets.length === 1 &&
+              runs.length === 1 &&
+              TERMINAL_RUN_STATUSES.has(runs[0]!.status)
+                ? await readEvalRunDecisionSummary(
+                    client,
+                    signal,
+                    result.project.id,
+                    runs[0]!
+                  )
+                : undefined;
             // Deliberately does NOT throw on `waitErrors` here. Throwing from
             // inside the platform command skips the receipt below, and the
             // receipt is the only place the launched run ids are printed: a
@@ -2723,6 +3304,7 @@ export function registerEvalCommands(program: Command): void {
               waitErrors,
               reportInputs: [] as StructuredEvalRunInput[],
               iterationErrorCodes: new Map<string, string>(),
+              ...(soloSummary ? { decisionSummary: soloSummary } : {}),
             };
           }
 
@@ -2759,7 +3341,33 @@ export function registerEvalCommands(program: Command): void {
               }
             })
           );
-          return { runs, waitErrors, reportInputs, iterationErrorCodes };
+          // Free: assembled from the walk `reportInputs` already performed,
+          // through the same assembler the API endpoint calls. Skipped when the
+          // walk failed — a summary built from an empty iteration list would
+          // report zero failures for a run nobody managed to read.
+          const solo =
+            result.targets.length === 1 &&
+            runs.length === 1 && reportInputs.length === 1
+              ? reportInputs[0]!
+              : undefined;
+          const decisionSummary =
+            solo && solo.iterationError === undefined
+              ? decisionSummaryFromIterations({
+                  projectId: result.project.id,
+                  run: solo.run,
+                  iterations: {
+                    items: [...solo.iterations],
+                    complete: solo.iterationsComplete,
+                  },
+                })
+              : undefined;
+          return {
+            runs,
+            waitErrors,
+            reportInputs,
+            iterationErrorCodes,
+            ...(decisionSummary ? { decisionSummary } : {}),
+          };
         },
         {
           projectScope: resolved.projectScope,
@@ -2784,6 +3392,9 @@ export function registerEvalCommands(program: Command): void {
               suite: result.suite,
               ...(result.runGroupId ? { runGroupId: result.runGroupId } : {}),
             },
+            ...(completion.decisionSummary
+              ? { decisionSummary: completion.decisionSummary }
+              : {}),
           })
         : undefined;
 
@@ -2839,6 +3450,13 @@ export function registerEvalCommands(program: Command): void {
           globalOptions.format
         );
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        // Human only, and after the receipt: the receipt carries the run ids
+        // and must reach stdout first whatever else happens.
+        writeEvalDecisionSummary(
+          globalOptions.format,
+          completion.decisionSummary,
+          process.stdout
+        );
       }
 
       // Everything above has already been written — report file, reporter
@@ -2892,9 +3510,7 @@ export function registerEvalCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
-      let decisionSummary:
-        | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
-        | undefined;
+      let decisionSummary: EvalRunDecisionSummary | undefined;
       const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
         platformOptionsOf(command),
@@ -2910,31 +3526,22 @@ export function registerEvalCommands(program: Command): void {
             } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
+          // Any terminal run that did NOT pass — not just a failed one.
+          // `inconclusive` and a run that stopped without a verdict are the
+          // outcomes a reader is least able to explain on their own, and the
+          // summary is the only place that says which check withheld it. A
+          // clean pass is skipped: there is nothing to diagnose, and the extra
+          // read would buy a block of "0 non-passing" noise.
+          //
+          // `getEvalRunOperation` already uses the endpoint-first, shared
+          // fallback reader. Reuse that exact object instead of doing a second
+          // network read (and, on old deployments, a second iteration walk).
           if (
             globalOptions.format === "human" &&
             TERMINAL_RUN_STATUSES.has(result.run.status) &&
-            result.run.result === "failed"
+            result.run.result !== "passed"
           ) {
-            try {
-              const iterations = await fetchAllIterations(
-                context.client,
-                context.signal,
-                result.project.id,
-                result.run.id
-              );
-              decisionSummary = buildEvalDecisionSummaryFromIterations(
-                iterations.items,
-                {
-                  total: result.run.summary?.total,
-                  passed: result.run.summary?.passed,
-                  failed: result.run.summary?.failed,
-                  iterationWalkComplete: iterations.complete,
-                }
-              );
-            } catch {
-              // The status result is already useful; an optional diagnostic
-              // read must never turn a successful status request into a failure.
-            }
+            decisionSummary = result.decisionSummary;
           }
           return result;
         },
@@ -2943,18 +3550,33 @@ export function registerEvalCommands(program: Command): void {
           quiet: globalOptions.quiet,
         }
       );
-      writeResult(result, globalOptions.format);
+      // The wire-shaped result is useful in JSON, but human output must not
+      // leak raw decision enums (for example `argumentMismatch`) before the
+      // label-aware summary below. The operation still returns the canonical
+      // object verbatim for MCP/JSON consumers; this only removes the duplicate
+      // machine payload from the human terminal.
+      const resultForOutput =
+        globalOptions.format === "human"
+          ? (() => {
+              const { decisionSummary: _decisionSummary, ...humanResult } = result;
+              return humanResult;
+            })()
+          : result;
+      writeResult(resultForOutput, globalOptions.format);
       writeJudgeSummary(globalOptions.format, result.run.judges);
-      writeRunLink(globalOptions.format, webOrigin, {
-        projectId: result.project.id,
-        suiteId: result.run.suiteId,
-        runId: result.run.id,
-      });
+      // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
+      // it is the one thing a reader acts on after reading the rest, and a
+      // block printed under it would push it out of sight on a long run.
       writeEvalDecisionSummary(
         globalOptions.format,
         decisionSummary,
         process.stdout
       );
+      writeRunLink(globalOptions.format, webOrigin, {
+        projectId: result.project.id,
+        suiteId: result.run.suiteId,
+        runId: result.run.id,
+      });
     }
   );
 
@@ -3141,13 +3763,22 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-      addProjectOption(
+      const gateCommand = addProjectOption(
       evals
       .command("gate")
       .description(
-        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
+        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or waived, 1 eval failure, 2 usage, 3 incomplete)"
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      // `.option`, not `.requiredOption`, ONLY so that `gate waive` and `gate
+      // unwaive` below can exist: commander enforces a parent's mandatory
+      // options before dispatching to a subcommand, so a required `--run`
+      // here would make every `gate waive` invocation fail on the parent's
+      // check. Absence is enforced in `runEvalGate` instead.
+      //
+      // The exit code is UNCHANGED by that move: commander's own
+      // missing-option error is mapped to 2 (USAGE_ERROR) by the CLI
+      // entrypoint, which is exactly what `usageError` produces.
+      .option("--run <id>", "Eval run ID (from `eval run`)")
       )
       .option(
         "--min-pass-rate-percent <0-100>",
@@ -3171,23 +3802,27 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--baseline <runId>",
-        "Baseline run ID to gate a regression delta against (SHA baselines are not supported yet)"
+        "Baseline run ID to gate a regression delta against; mutually exclusive with --baseline-sha"
+      )
+      .option(
+        "--baseline-sha <sha>",
+        "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --baseline"
       )
       .option(
         "--min-sample-size <n>",
-        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline"
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline or --baseline-sha"
       )
       .option(
         "--min-effect-size-percent <0-100>",
-        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline"
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline or --baseline-sha"
       )
       .option(
         "--gate-deterministic-regressions",
-        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline"
+        "Fail if a deterministic gating scorer flipped from passed to failed; requires --baseline or --baseline-sha"
       )
       .option(
         "--max-p95-latency-increase-ms <ms>",
-        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline"
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
       )
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(
@@ -3206,7 +3841,7 @@ export function registerEvalCommands(program: Command): void {
       options: PlatformOptions &
         EvalGateOptions & {
           project?: string;
-          run: string;
+          run?: string;
           wait?: boolean;
           waitTimeout?: string;
           reporter?: string;
@@ -3218,6 +3853,47 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  // ── `eval gate waive` / `eval gate unwaive` ───────────────────────────────
+  //
+  // Subcommands of `gate`, sharing its `--run` and `--project`. Commander
+  // gives a parent's declared options to the parent even when a subcommand
+  // runs, so these read them off `gate` rather than redeclaring them — a
+  // second `--run` on the subcommand is consumed by the parent and the
+  // subcommand's own mandatory check then fails on a flag the user did pass.
+  //
+  // NEITHER COMMAND PRE-JUDGES AUTHORIZATION. Waiving is manage-tier and the
+  // platform enforces it; a local guess would either block someone entitled to
+  // waive or let an unauthorized attempt look accepted until the write failed.
+  gateCommand
+    .command("waive")
+    .description(
+      "Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check."
+    )
+    .requiredOption(
+      "--reason <text>",
+      `Why the gate is being overridden (max ${GATE_WAIVER_MAX_REASON_LENGTH} characters). ${GATE_WAIVER_REASON_NOTICE}`
+    )
+    .requiredOption(
+      "--expires-in <duration>",
+      "How long the waiver lasts, e.g. 30m, 12h, 7d. Capped at 30 days by the platform — there is no permanent waiver."
+    )
+    .action(async (options: { reason: string; expiresIn: string }, command) => {
+      await runEvalGateWaive(options, command);
+    });
+
+  gateCommand
+    .command("unwaive")
+    .description(
+      "Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent."
+    )
+    .option(
+      "--waiver <id>",
+      "Waiver ID to revoke. Omit to revoke the waiver currently in force over --run."
+    )
+    .action(async (options: { waiver?: string }, command) => {
+      await runEvalGateUnwaive(options, command);
+    });
+
       addProjectOption(
       evals
       .command("compare")
@@ -3228,7 +3904,11 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--base-run <id>",
-        "Baseline run ID (defaults to the nearest earlier completed run in the same suite)"
+        "Baseline run ID (defaults to the nearest earlier completed run in the same suite); mutually exclusive with --base-sha"
+      )
+      .option(
+        "--base-sha <sha>",
+        "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --base-run"
       )
       .option(
         "--gate-regressions",
@@ -3264,6 +3944,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           run: string;
           baseRun?: string;
+          baseSha?: string;
           reporter?: string;
           out?: string;
         },
@@ -3276,15 +3957,24 @@ export function registerEvalCommands(program: Command): void {
   evals
     .command("validate")
     .description(
-      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )
     .requiredOption(
       "--file <path>",
       "Suite file to validate, .yaml or .json (or - for stdin)"
     )
-    .action((options: { file: string }, command: Command) => {
-      runEvalValidate(options, command);
-    });
+    .option(
+      "--project <id-or-name>",
+      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline."
+    )
+    .action(
+      async (
+        options: PlatformOptions & { file: string; project?: string },
+        command: Command
+      ) => {
+        await runEvalValidate(options, command);
+      }
+    );
 
       evals
       .command("export")
