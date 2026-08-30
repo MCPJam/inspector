@@ -1395,6 +1395,7 @@ export function SwarmsTab({
           projectId={projectId}
           environments={environments}
           personaCount={personas?.length}
+          hosts={hosts ?? []}
           {...(selectedPersona
             ? {
                 persona: {

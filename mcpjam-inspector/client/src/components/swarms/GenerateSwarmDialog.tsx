@@ -27,13 +27,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { useConvexAuth } from "convex/react";
+import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import {
-  buildEnvJourneyPayload,
-  MAX_ENVIRONMENTS_PER_JOURNEY,
-} from "@/components/swarms/journey-environments";
+  composerHasTarget,
+  defaultComposerState,
+  emptyComposerState,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
+import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
+import { useCloudServerReadiness } from "@/components/environment-composer/use-cloud-server-readiness";
+import { MAX_ENVIRONMENTS_PER_JOURNEY } from "@/components/swarms/journey-environments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectServerAttachments } from "@/hooks/useViews";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { mostRecentlyConnectedAttachmentId } from "@/components/swarms/generate-target-recency";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   generateSwarmJourneys,
@@ -60,6 +72,9 @@ export const MAX_PERSONAS_PER_PROJECT = 200;
 
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
 
+const joinNames = (names: string[]) =>
+  names.length <= 1 ? (names[0] ?? "This client") : names.join(", ");
+
 const EMPTY_SLATE_MESSAGE =
   "Generation returned no goals. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
 
@@ -75,6 +90,8 @@ export interface GenerateSwarmDialogProps {
   environments?: ProjectEnvironmentView[];
   /** Live persona count; gates the 200-per-project cap in `persona` mode. */
   personaCount?: number;
+  /** Project clients, for the default target. */
+  hosts: ReadonlyArray<{ hostId: string }>;
   /** Required in `journeys` mode: the persona the journeys are generated for. */
   persona?: { _id: string; name: string; role: string; notes?: string };
   /** Creates the persona row; resolves to the new persona's id. */
@@ -110,14 +127,26 @@ export function GenerateSwarmDialog({
   projectId,
   environments,
   personaCount,
+  hosts,
   persona,
   onCreatePersona,
   onCreateJourney,
   onPersonaCreated,
 }: GenerateSwarmDialogProps) {
-  const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
+  const [targetState, setTargetState] =
+    useState<EnvironmentComposerState>(emptyComposerState);
+  const journeyCount = DEFAULT_JOURNEY_COUNT;
   const envList = useMemo(() => environments ?? [], [environments]);
-  const [journeyCount, setJourneyCount] = useState(DEFAULT_JOURNEY_COUNT);
+  const { isAuthenticated } = useConvexAuth();
+  const { serverAttachments, isLoading: attachmentsLoading } =
+    useProjectServerAttachments({ isAuthenticated, projectId });
+  const isUserReady = useDbUserReady();
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  // Null outside an AppStateProvider — then there is no connection history.
+  const appState = useOptionalSharedAppState();
+  const resolveTargets = useComposerResolver(projectId);
+  /** One-shot per opening; a later render must not overwrite an edit. */
+  const seededRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Latched once the persona row is written. Re-running generation after that
@@ -133,8 +162,8 @@ export function GenerateSwarmDialog({
 
   useEffect(() => {
     if (!open) {
-      setEnvironmentIds([]);
-      setJourneyCount(DEFAULT_JOURNEY_COUNT);
+      seededRef.current = false;
+      setTargetState(emptyComposerState());
       setPending(false);
       setErrorMessage(null);
       setPersonaCommitted(false);
@@ -142,14 +171,48 @@ export function GenerateSwarmDialog({
     }
   }, [open]);
 
-  // Journey payload: `environmentIds` + compat `hostIds`. Null when the
-  // selection is unusable (empty, or an id that no longer resolves because
-  // another member archived it mid-dialog) — so a stale id can never be
-  // persisted or spend generation quota.
-  const envPayload = useMemo(
-    () => buildEnvJourneyPayload(environmentIds, envList),
-    [environmentIds, envList]
-  );
+  // Seed a target so the dialog opens ready to submit.
+  useEffect(() => {
+    if (!open || seededRef.current) return;
+    if (environmentsEnabled && environments === undefined) return;
+    // The attachments query reports an empty list while it loads; seeding off
+    // that would latch the default to "no server group".
+    if (attachmentsLoading) return;
+    if (isAuthenticated && shouldQueryProjectId(projectId) && !isUserReady) {
+      return;
+    }
+    const next = defaultComposerState({
+      environments: environmentsEnabled ? envList : [],
+      hosts,
+      serverAttachments,
+      environmentsEnabled,
+    });
+    // Latch only once something was seeded; `hosts` can still be empty here.
+    if (!next) return;
+    seededRef.current = true;
+    // Only on the composed branch: a saved environment carries its own server
+    // group, and overriding it would silently retarget the environment.
+    if (next.environmentIds.length === 0) {
+      const recent = mostRecentlyConnectedAttachmentId(
+        serverAttachments,
+        appState?.servers
+      );
+      if (recent) next.stack.serverAttachmentId = recent;
+    }
+    setTargetState(next);
+  }, [
+    appState?.servers,
+    attachmentsLoading,
+    isAuthenticated,
+    isUserReady,
+    projectId,
+    envList,
+    environments,
+    environmentsEnabled,
+    hosts,
+    open,
+    serverAttachments,
+  ]);
 
   const countValid =
     Number.isInteger(journeyCount) &&
@@ -161,7 +224,15 @@ export function GenerateSwarmDialog({
   // mode stays disabled until the count is known.
   const personaCountKnown =
     mode !== "persona" || typeof personaCount === "number";
-  const targetsValid = envPayload !== null;
+  // The resolver rejects a target with no servers (`ENV_NO_SERVERS`), and the
+  // same queries can answer that here, before the round-trip.
+  const readiness = useCloudServerReadiness({
+    projectId,
+    state: targetState,
+    environments: envList,
+  });
+  const noServers = readiness.status === "no_servers" ? readiness : null;
+  const targetsValid = composerHasTarget(targetState) && !noServers;
   const canSubmit =
     !pending &&
     !personaCommitted &&
@@ -204,13 +275,12 @@ export function GenerateSwarmDialog({
   };
 
   const handleGenerate = async () => {
-    if (!targetsValid || !countValid || !envPayload) return;
+    if (!targetsValid || !countValid) return;
     // Grounding id, resolved BEFORE the latch: `targetsValid` already proves
     // latch-free side (see the comment below). Grounds on the FIRST selected
     // environment — the backend resolves its server group, or the host's own
     // picks when it has none.
-    const groundingEnvironmentId = environmentIds[0];
-    if (!groundingEnvironmentId) return;
+
     // Every rejection that returns WITHOUT entering the try/finally below must
     // come before the latch is taken — otherwise the latch is never released
     // and the button is silently dead until the dialog is reopened.
@@ -231,16 +301,26 @@ export function GenerateSwarmDialog({
     generateInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
-    // Snapshot targets at submit. Generation is a slow round-trip and the
-    // pickers stay mounted, so reading live state after the await would let a
-    // mid-flight change retarget the created rows — or clear the selection and
-    // fail every mutation — after the quota was already spent.
-    const target = {
-      hostIds: [...envPayload.hostIds],
-      environmentIds: [...envPayload.environmentIds],
-    };
-
     try {
+      // Before generating, so a failure here costs no generation.
+      const resolved = await resolveTargets({
+        state: targetState,
+        liveEnvironments: envList,
+        max: MAX_ENVIRONMENTS_PER_JOURNEY,
+      });
+      const groundingEnvironmentId = resolved.environmentIds[0];
+      if (!groundingEnvironmentId) {
+        throw new Error("Could not resolve where these goals should run.");
+      }
+      // Snapshot targets at submit. Generation is a slow round-trip and the
+      // pickers stay mounted, so reading live state after the await would let a
+      // mid-flight change retarget the created rows — or clear the selection and
+      // fail every mutation — after the quota was already spent.
+      const target = {
+        hostIds: [] as string[],
+        environmentIds: [...resolved.environmentIds],
+      };
+
       if (mode === "persona") {
         track("swarm_generate_persona_started", {
           location: "swarms",
@@ -365,10 +445,8 @@ export function GenerateSwarmDialog({
   const title = mode === "persona" ? "Generate persona" : "Generate goals";
   const description =
     mode === "persona"
-      ? "Generates one persona and its goals, grounded in your environment's tools. Everything lands as editable rows — nothing runs until you say so."
-      : `Generates goals for ${
-          persona?.name ?? "this persona"
-        }, grounded in your environment's tools. Nothing runs until you say so.`;
+      ? "Generates a user persona and its goals, grounded in your server's tools. Confirm the server you'd like to use first."
+      : "Generates goals for your user persona, grounded in your server's tools. Confirm the server you'd like to use first.";
 
   return (
     <Dialog
@@ -390,53 +468,58 @@ export function GenerateSwarmDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-col gap-1.5">
-            <Label>Environments</Label>
+            <Label>Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <EnvironmentPicker
+              <ServerGroupPicker
                 projectId={projectId}
-                value={environmentIds}
-                onChange={setEnvironmentIds}
-                multi
-                max={MAX_ENVIRONMENTS_PER_JOURNEY}
-                emptyLabel="No environments · pick one"
-                triggerTestId="generate-environments-picker"
-                triggerAriaLabel="Attached environments"
+                value={targetState.stack.serverAttachmentId}
+                onChange={(serverAttachmentId) =>
+                  setTargetState((prev) => ({
+                    ...prev,
+                    stack: { ...prev.stack, serverAttachmentId },
+                    customized: true,
+                  }))
+                }
+                onClearSelection={() =>
+                  setTargetState((prev) => ({
+                    ...prev,
+                    stack: { ...prev.stack, serverAttachmentId: null },
+                    customized: true,
+                  }))
+                }
+                emptyTriggerLabel="Server group · client default"
+                infoText="Generation reads these servers' tools to write the goals."
+                triggerTestId="generate-server-group-picker"
                 inModal
               />
             </div>
-            {environments === undefined ? (
+            {hosts.length === 0 ? (
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Loading environments…
+                Connect a client before generating.
               </p>
-            ) : envList.length === 0 ? (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                This project has no environments yet. Create one to generate.
-              </p>
-            ) : (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Generation is grounded in the first environment's tools; every
-                created goal fans out across all of them.
-              </p>
-            )}
+            ) : null}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Label
-              htmlFor="swarm-generate-count"
-              className="shrink-0 text-[11px] text-muted-foreground"
+          {noServers ? (
+            <p
+              role="alert"
+              className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
             >
-              Goals
-            </Label>
-            <Input
-              id="swarm-generate-count"
-              type="number"
-              min={MIN_GENERATED_JOURNEYS}
-              max={MAX_GENERATED_JOURNEYS}
-              className="h-8 w-16"
-              value={journeyCount}
-              onChange={(e) => setJourneyCount(Number(e.target.value))}
-            />
-          </div>
+              {joinNames(noServers.labels)} has no servers assigned. Turn on
+              Auto-connect on the{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigateApp(routePaths.servers);
+                }}
+              >
+                Servers tab
+              </button>
+              , or pick a server group above.
+            </p>
+          ) : null}
 
           {errorMessage ? (
             <p
