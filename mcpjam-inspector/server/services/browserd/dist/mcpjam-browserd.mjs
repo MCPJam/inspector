@@ -578,8 +578,16 @@ function computeStateToken(inputs) {
 // server/services/browserd/daemon/observation-budget.ts
 var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
 function countNodes(node) {
-  let total = 1;
-  for (const child of node.children ?? []) total += countNodes(child);
+  let total = 0;
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    total += 1;
+    const children = current.children;
+    if (children) {
+      for (const child of children) stack.push(child);
+    }
+  }
   return total;
 }
 function omissionMarker(node, hiddenNodes) {
@@ -623,11 +631,15 @@ function capText(text, maxBytes) {
   const bytes = encoder.encode(text);
   if (bytes.byteLength <= maxBytes) return text;
   const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
-  const keep = Math.max(0, maxBytes - suffixBytes);
-  let end = Math.min(keep, bytes.byteLength);
+  if (maxBytes < suffixBytes) {
+    return decodeUpTo(bytes, maxBytes);
+  }
+  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+}
+function decodeUpTo(bytes, limit) {
+  let end = Math.max(0, Math.min(limit, bytes.byteLength));
   while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
-  const decoder = new TextDecoder("utf-8");
-  return decoder.decode(bytes.subarray(0, end)) + TRUNCATION_SUFFIX;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
 }
 var DEFAULT_CONSOLE_BUDGET = {
   maxEntries: 50,
@@ -774,6 +786,7 @@ var WebMcpBridge = class {
   settle(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
+    if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
   }
   /** Resolve or reject a waiter from the page's response. */
@@ -886,11 +899,12 @@ var WebMcpBridge = class {
         if (cancelling) return;
         cancelling = true;
         waiter.cancelReason = reason;
+        if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
           this.cdp.send("WebMCP.cancelInvocation", { invocationId })
         ).catch(() => {
         });
-        waiter.timer = setTimeout(() => {
+        waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
           this.pending.delete(invocationId);
           reject(
@@ -934,6 +948,7 @@ var WebMcpBridge = class {
     this.disposed = true;
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
+      if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
           "webmcp_cancelled",
@@ -1632,11 +1647,18 @@ async function launchBrowserdContext(options) {
   };
   if (options.contextMode === "ephemeral") {
     const browser = await chromium.launch(launchArgs);
-    const context2 = await browser.newContext({
-      acceptDownloads: false,
-      permissions: [],
-      ...BROWSERD_CONTEXT_OPTIONS
-    });
+    let context2;
+    try {
+      context2 = await browser.newContext({
+        acceptDownloads: false,
+        permissions: [],
+        ...BROWSERD_CONTEXT_OPTIONS
+      });
+    } catch (error) {
+      await browser.close().catch(() => {
+      });
+      throw error;
+    }
     return adaptContext(context2, {
       // The browser outlives the context, so closing the context alone would
       // leave a Chromium process behind in the box.
@@ -1667,8 +1689,11 @@ function adaptContext(context, options = {}) {
       return context.browser()?.isConnected() ?? true;
     },
     async close() {
-      await context.close();
-      await options.onClose?.();
+      try {
+        await context.close();
+      } finally {
+        await options.onClose?.();
+      }
     }
   };
 }

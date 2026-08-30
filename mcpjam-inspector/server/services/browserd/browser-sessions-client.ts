@@ -313,7 +313,10 @@ export async function recordBrowserSession(args: {
     args.signal,
   );
   if (raw === CONFLICT) return { status: "conflict" };
-  if (!isRecord(raw) || typeof raw.sessionId !== "string") {
+  // An EMPTY id is a failure, not a record: it would ride out in the handle and
+  // then address every later touch and release at nothing, so the session would
+  // look alive to us and idle to the sweeper.
+  if (!isRecord(raw) || typeof raw.sessionId !== "string" || !raw.sessionId) {
     return { status: "failed" };
   }
   return { status: "recorded", sessionId: raw.sessionId };

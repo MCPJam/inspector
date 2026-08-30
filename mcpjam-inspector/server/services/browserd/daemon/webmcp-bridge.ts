@@ -88,7 +88,16 @@ interface PendingInvocation {
   resolve: (value: { output: unknown }) => void;
   reject: (error: Error) => void;
   cancelReason?: "cancelled" | "timeout";
+  /** The invocation deadline. */
   timer?: ReturnType<typeof setTimeout>;
+  /**
+   * The grace timer that settles a cancel the page never answers. Kept in its
+   * OWN field: reusing `timer` would overwrite the invocation deadline's
+   * handle on the abort path (where it has not fired yet), leaking a timer
+   * that then keeps the event loop alive for its full duration and that
+   * neither `settle` nor `dispose` can reach.
+   */
+  cancelTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface RespondedPayload {
@@ -244,6 +253,7 @@ export class WebMcpBridge {
   private settle(invocationId: string): void {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
+    if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
   }
 
@@ -389,12 +399,15 @@ export class WebMcpBridge {
         if (cancelling) return;
         cancelling = true;
         waiter.cancelReason = reason;
+        // The invocation deadline is moot once we have asked the page to stop;
+        // the grace timer below is what settles this waiter now.
+        if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
           this.cdp.send("WebMCP.cancelInvocation", { invocationId }),
         ).catch(() => {});
         // Settle even if the page never answers our cancel — a dead page must
         // not leave the caller waiting forever.
-        waiter.timer = setTimeout(() => {
+        waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
           this.pending.delete(invocationId);
           reject(
@@ -448,6 +461,7 @@ export class WebMcpBridge {
     this.disposed = true;
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
+      if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
           "webmcp_cancelled",

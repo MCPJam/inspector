@@ -182,3 +182,40 @@ describe("capToolOutput", () => {
     });
   });
 });
+
+describe("observation budgets — pathological inputs (review follow-up)", () => {
+  it("survives a tree deep enough to blow a recursive stack", () => {
+    // The node count runs at FULL depth (it is how a marker knows what it is
+    // hiding), so it meets the whole tree however deep. Throwing here would
+    // fail the very observation the budget exists to make reportable.
+    let root: A11yNode = { role: "leaf" };
+    for (let i = 0; i < 60_000; i += 1) {
+      root = { role: "node", children: [root] };
+    }
+    const capped = capA11yTree(root, { maxNodes: 50, maxDepth: 5 });
+    expect(capped.totalNodes).toBe(60_001);
+    expect(capped.omittedSubtrees).toBeGreaterThan(0);
+  });
+
+  it("never returns more bytes than asked for, even below the marker's length", () => {
+    // A per-entry cap sits inside a total cap; a `capText` that overshot its
+    // own budget would break the caller's arithmetic, not just its own.
+    const encoder = new TextEncoder();
+    const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
+    for (const maxBytes of [0, 1, 2, suffixBytes - 1, suffixBytes, suffixBytes + 1]) {
+      const capped = capText("hello world, this is a long line", maxBytes);
+      expect(encoder.encode(capped).byteLength).toBeLessThanOrEqual(maxBytes);
+    }
+  });
+
+  it("still never splits a multi-byte character under a tiny budget", () => {
+    // "日" is 3 bytes; a 2-byte budget must yield nothing, not half a glyph
+    // (a U+FFFD replacement is itself 3 bytes and would overshoot).
+    const encoder = new TextEncoder();
+    for (const maxBytes of [0, 1, 2, 3, 4, 5]) {
+      const capped = capText("日本語テキスト", maxBytes);
+      expect(encoder.encode(capped).byteLength).toBeLessThanOrEqual(maxBytes);
+      expect(capped).not.toContain("�");
+    }
+  });
+});

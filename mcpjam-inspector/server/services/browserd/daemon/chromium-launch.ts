@@ -310,11 +310,20 @@ export async function launchBrowserdContext(
     // there is no singleton lock to clear either (L8 is about the shared
     // profile directory, which does not exist here).
     const browser = await chromium.launch(launchArgs);
-    const context = await browser.newContext({
-      acceptDownloads: false,
-      permissions: [],
-      ...BROWSERD_CONTEXT_OPTIONS,
-    });
+    let context;
+    try {
+      context = await browser.newContext({
+        acceptDownloads: false,
+        permissions: [],
+        ...BROWSERD_CONTEXT_OPTIONS,
+      });
+    } catch (error) {
+      // Ownership of the browser transfers to `adaptContext` below. If we
+      // never get there, nothing else will ever close it, and a stranded
+      // Chromium keeps running inside the box until the sandbox dies.
+      await browser.close().catch(() => {});
+      throw error;
+    }
     return adaptContext(context as unknown as AnyContext, {
       // The browser outlives the context, so closing the context alone would
       // leave a Chromium process behind in the box.
@@ -372,10 +381,15 @@ export function adaptContext(
       return context.browser()?.isConnected() ?? true;
     },
     async close() {
-      await context.close();
-      // Ephemeral mode owns a Browser above the context; closing only the
-      // context would strand its process inside the box.
-      await options.onClose?.();
+      // Ephemeral mode owns a Browser above the context, and closing only the
+      // context would strand its process inside the box — so the browser close
+      // runs even when the context close fails, which is exactly the case
+      // where something is already wrong.
+      try {
+        await context.close();
+      } finally {
+        await options.onClose?.();
+      }
     },
   };
 }

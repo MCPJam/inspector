@@ -235,6 +235,12 @@ describe("browser-sessions-client", () => {
 
     stubFetch(200, { notASessionId: true });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
+
+    // An EMPTY id is a failure too, not a record: it would ride out in the
+    // handle and address every later touch and release at nothing, so the
+    // session would look alive to us and idle to the sweeper.
+    stubFetch(200, { sessionId: "" });
+    expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
   });
 
   it("touch surfaces `counted`, and an unreachable touch counts as not counted", async () => {

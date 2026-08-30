@@ -469,3 +469,33 @@ describe("ensureBrowserSession — per-computer serialization", () => {
     expect(order).toEqual(["first-start", "first-end", "second-start"]);
   });
 });
+
+describe("ensureBrowserSession — the caller went away (review follow-up)", () => {
+  it("does NOT kill and reboot a live daemon because the lookup was aborted", async () => {
+    // An aborted lookup returns `{reachable:false, session:null}` — the client
+    // never throws — which is indistinguishable from "there is no session".
+    // Acting on that would let a cancelled chat turn take down a durable
+    // daemon that is serving someone else perfectly well.
+    const controller = new AbortController();
+    const f = makeFakes({
+      lookups: [{ reachable: false, session: null }],
+    });
+    controller.abort();
+
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, signal: controller.signal }),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.record).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+  });
+
+  it("still relaunches normally when nothing was aborted", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalledOnce();
+  });
+});

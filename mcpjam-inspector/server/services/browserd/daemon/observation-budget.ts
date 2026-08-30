@@ -39,9 +39,24 @@ export interface CappedA11yTree {
   totalNodes: number;
 }
 
+/**
+ * Count a subtree ITERATIVELY. This runs before any depth budget applies — it
+ * is how we know how much a marker is hiding — so it sees the tree at full
+ * depth. A recursive walk would blow the stack on a pathologically nested page
+ * and throw out of the very function whose job is to make a huge tree
+ * reportable.
+ */
 function countNodes(node: A11yNode): number {
-  let total = 1;
-  for (const child of node.children ?? []) total += countNodes(child);
+  let total = 0;
+  const stack: A11yNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop() as A11yNode;
+    total += 1;
+    const children = current.children;
+    if (children) {
+      for (const child of children) stack.push(child);
+    }
+  }
   return total;
 }
 
@@ -117,14 +132,28 @@ export function capText(text: string, maxBytes: number): string {
   const bytes = encoder.encode(text);
   if (bytes.byteLength <= maxBytes) return text;
   const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
-  const keep = Math.max(0, maxBytes - suffixBytes);
-  // `TextDecoder` with `fatal: false` replaces a split character with U+FFFD,
-  // so back up to a character boundary first: if the byte we would cut AT is a
-  // continuation byte (0b10xxxxxx), the cut lands mid-character.
-  let end = Math.min(keep, bytes.byteLength);
+  // A budget too small to hold the marker gets no marker. Appending it anyway
+  // would return MORE bytes than the caller asked for, which defeats the one
+  // thing a byte cap promises — and the caller's own budget arithmetic (a
+  // per-entry cap inside a total cap) is what would then overflow.
+  if (maxBytes < suffixBytes) {
+    return decodeUpTo(bytes, maxBytes);
+  }
+  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+}
+
+/**
+ * Decode at most `limit` bytes, never splitting a multi-byte character.
+ * `TextDecoder` with `fatal: false` would replace a split character with
+ * U+FFFD — which is itself 3 bytes, so a naive cut can also OVERSHOOT the
+ * budget it was meant to respect.
+ */
+function decodeUpTo(bytes: Uint8Array, limit: number): string {
+  let end = Math.max(0, Math.min(limit, bytes.byteLength));
+  // If the byte we would cut AT is a continuation byte (0b10xxxxxx), the cut
+  // lands mid-character; walk back to the boundary.
   while (end > 0 && (bytes[end] & 0b1100_0000) === 0b1000_0000) end -= 1;
-  const decoder = new TextDecoder("utf-8");
-  return decoder.decode(bytes.subarray(0, end)) + TRUNCATION_SUFFIX;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
 }
 
 export interface ConsoleEntry {

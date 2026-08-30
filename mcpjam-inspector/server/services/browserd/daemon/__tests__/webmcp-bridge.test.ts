@@ -283,6 +283,39 @@ describe("WebMcpBridge — invocation", () => {
     }
   });
 
+  it("leaves NO timer behind after an aborted invocation settles", async () => {
+    // The abort path used to overwrite the invocation deadline's handle with
+    // the cancel-grace handle, so the deadline timer was never cleared: a
+    // no-op timer stayed scheduled for its full duration, holding the event
+    // loop open and out of reach of both settle() and dispose().
+    vi.useFakeTimers();
+    try {
+      const fake = fakeCdp({ onSend: () => ({ invocationId: "inv-1" }) });
+      const bridge = await started(fake, {
+        invocationTimeoutMs: 60_000,
+        cancelSettleGraceMs: 100,
+      });
+      fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+
+      const controller = new AbortController();
+      const pending = bridge.invoke({
+        toolName: "book_flight",
+        input: {},
+        signal: controller.signal,
+      });
+      const assertion = expect(pending).rejects.toMatchObject({
+        failure: "webmcp_cancelled",
+      });
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(101); // the grace timer settles it
+      await assertion;
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("settles even when the page never answers the cancel", async () => {
     vi.useFakeTimers();
     try {

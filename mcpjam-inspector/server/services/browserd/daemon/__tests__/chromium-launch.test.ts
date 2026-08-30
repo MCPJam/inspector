@@ -113,3 +113,35 @@ describe("adaptContext (P2 — adopt the persistent context's startup page)", ()
     expect(adaptContext(fakeAnyContext({ browser: () => null })).isConnected()).toBe(true);
   });
 });
+
+describe("adaptContext — ephemeral ownership (review follow-up)", () => {
+  it("closes the browser even when closing the CONTEXT fails", async () => {
+    // Ephemeral mode owns a Browser above the context. If a failing context
+    // close skipped the browser close, a Chromium process would be stranded
+    // inside the sandbox — and a failing close is exactly the moment when
+    // something is already wrong.
+    const onClose = vi.fn(async () => {});
+    const adapted = adaptContext(
+      fakeAnyContext({
+        async close() {
+          throw new Error("context close failed");
+        },
+      }),
+      { onClose },
+    );
+    await expect(adapted.close()).rejects.toThrow(/context close failed/);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes the browser after a clean context close", async () => {
+    const onClose = vi.fn(async () => {});
+    const adapted = adaptContext(fakeAnyContext(), { onClose });
+    await adapted.close();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("is fine with no owned browser at all (the persistent path)", async () => {
+    const adapted = adaptContext(fakeAnyContext());
+    await expect(adapted.close()).resolves.toBeUndefined();
+  });
+});

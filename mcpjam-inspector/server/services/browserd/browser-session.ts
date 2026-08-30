@@ -258,6 +258,13 @@ function handleFromRecord(
   };
 }
 
+/** Refuse to continue once the caller has gone away. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error("browser session establishment aborted");
+  }
+}
+
 async function ensureOnComputer(
   deps: BrowserSessionDeps,
   computerId: string,
@@ -277,6 +284,13 @@ async function ensureOnComputer(
   const lookup = await deps.store.lookup(lookupArgs);
   const reusedHandle = await tryReuse(deps, lookup, contextMode, args.signal);
   if (reusedHandle) return reusedHandle;
+
+  // An aborted lookup comes back indistinguishable from "no session" — the
+  // client never throws — so check the signal before treating that answer as
+  // grounds for a relaunch. Otherwise a caller merely going away (a cancelled
+  // chat turn) would kill and reboot a durable daemon that is serving someone
+  // else perfectly well.
+  throwIfAborted(args.signal);
 
   // Relaunch. Everything below touches the sandbox; the connection is always
   // released, and a daemon that cannot be recorded is always stopped.
