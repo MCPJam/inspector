@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -98,6 +99,7 @@ import {
   useCurrentSearchParam,
   buildOrganizationPath,
 } from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -492,7 +494,16 @@ export function OrganizationsTab({
           Members, models, and billing live on your organization. Sign in to
           manage them.
         </p>
-        <Button onClick={() => signIn()}>Sign in</Button>
+        <Button
+          onClick={() => {
+            // Remember where they were, so WorkOS returns them here rather
+            // than to the app's front door.
+            captureAppSignInReturnPath();
+            signIn(permalinkSignInOptions());
+          }}
+        >
+          Sign in
+        </Button>
       </OrganizationStateShell>
     );
   }
