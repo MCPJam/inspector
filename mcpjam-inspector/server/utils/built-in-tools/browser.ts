@@ -21,7 +21,17 @@
  *      thought about approval gets no browser tools, and no edit to those five
  *      call sites is required for them to be safe.
  *
- *   2. BOTH LAYERS ARE CHECKED on every daemon reply. A command can be
+ *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
+ *      implementation result carries the capture as base64 in an ordinary
+ *      field; left there it is serialized into the tool result as TEXT, which
+ *      no provider can see. Every one of these tools targets by coordinates
+ *      read off that image, so without the mapping the whole coordinate design
+ *      is a blind guess — and the turn pays tens of thousands of tokens for a
+ *      string the model cannot read. `browser-session-context.ts` states the
+ *      same requirement, and `computer-use-tool.ts` is the sibling that
+ *      already meets it.
+ *
+ *   3. BOTH LAYERS ARE CHECKED on every daemon reply. A command can be
  *      REJECTED (busy, expired, stale) with a non-"ok" transport status, OR
  *      admitted and then fail in the browser (`result.ok === false`). A caller
  *      that branches only on the transport status reads a failed act as
@@ -39,16 +49,27 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
-import type {
-  BrowserAction,
-  BrowserActTarget,
-  BrowserCommand,
-  ObservationStateToken,
+import {
+  BROWSERD_OBSERVATION_VIEWPORT,
+  isPointInViewport,
+  type BrowserAction,
+  type BrowserActTarget,
+  type BrowserCommand,
+  type ObservationStateToken,
 } from "../../services/browserd/protocol.js";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 
 export const BROWSER_BUILT_IN_TOOL_ID = "browser";
+
+/**
+ * The coordinate space the model is told about, stated in the tool schema and
+ * re-checked before a command leaves this process. Read from the protocol so
+ * the schema, the daemon's bounds check, and the launched viewport cannot
+ * disagree about what "x: 900" means.
+ */
+const VIEWPORT_W = BROWSERD_OBSERVATION_VIEWPORT.width;
+const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -378,7 +399,11 @@ export function buildBrowserTools(
   const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
-    tools[name] = definition;
+    // Attached HERE, once, rather than on each tool: every one of these
+    // returns a `present()` shape and so may carry a capture, and a tool added
+    // later that forgot the mapping would silently go back to sending the
+    // model an unreadable base64 string.
+    tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
     built.push(name);
   };
 
@@ -430,7 +455,10 @@ export function buildBrowserTools(
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
         "Target by coordinates from the last screenshot, or by CSS selector. Returns the " +
-        "page state after the action settles.",
+        "page state after the action settles. Coordinates are CSS pixels in a " +
+        `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
+        "screenshot — the screenshot is always shown at that size, so read x and y " +
+        "straight off it without scaling.",
       inputSchema: z.object({
         verb: z.enum([
           "click",
@@ -442,19 +470,47 @@ export function buildBrowserTools(
           "select",
         ]),
         selector: z.string().optional().describe("CSS selector to target."),
-        x: z.number().optional().describe("X coordinate from the last screenshot."),
-        y: z.number().optional().describe("Y coordinate from the last screenshot."),
+        x: z
+          .number()
+          .min(0)
+          .max(VIEWPORT_W - 1)
+          .optional()
+          .describe(
+            `X coordinate from the last screenshot, 0 to ${VIEWPORT_W - 1}.`,
+          ),
+        y: z
+          .number()
+          .min(0)
+          .max(VIEWPORT_H - 1)
+          .optional()
+          .describe(
+            `Y coordinate from the last screenshot, 0 to ${VIEWPORT_H - 1}.`,
+          ),
         value: z
           .string()
           .optional()
           .describe(
             'Text to type, key to press ("Enter"), scroll amount ("down"/"up"/pixels), ' +
-              'drag destination ("x,y"), or option value to select.',
+              'drag destination ("x,y" in the same viewport coordinates), or option ' +
+              "value to select.",
           ),
         tabId: z.string().optional(),
       }),
       needsApproval,
       execute: async ({ verb, selector, x, y, value, tabId }, { abortSignal }) => {
+        if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
+          // The schema states the bounds, but a hosted path reconstructs the
+          // schema on the wire and executes with whatever input comes back, so
+          // the bound is re-checked here rather than assumed. The daemon
+          // refuses too; this one exists to answer the model in its own terms
+          // instead of as a transport error.
+          return {
+            error:
+              `out_of_viewport: (${x}, ${y}) is outside the ${VIEWPORT_W}x${VIEWPORT_H} ` +
+              "screenshot; nothing was clicked. Coordinates are CSS pixels with " +
+              "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
+          };
+        }
         const target: BrowserActTarget | undefined =
           x !== undefined && y !== undefined
             ? { coordinates: [x, y] }
@@ -509,13 +565,24 @@ export function buildBrowserTools(
           .enum(["screenshot", "dom", "a11y", "console", "url"])
           .optional()
           .describe("Defaults to screenshot."),
+        rootSelector: z
+          .string()
+          .optional()
+          .describe(
+            'With mode "a11y": read only the subtree under this CSS selector. ' +
+              "Use it to read a subtree an earlier observation reported as omitted.",
+          ),
         tabId: z.string().optional(),
       }),
       needsApproval: needsApproval && !readOnly,
-      execute: async ({ mode, tabId }, { abortSignal }) =>
+      execute: async ({ mode, rootSelector, tabId }, { abortSignal }) =>
         present(
           await send(
-            { kind: "observe", mode: mode ?? "screenshot" },
+            {
+              kind: "observe",
+              mode: mode ?? "screenshot",
+              ...(rootSelector ? { rootSelector } : {}),
+            },
             { tabId, signal: abortSignal },
           ),
         ),
@@ -589,6 +656,76 @@ function isObservational(name: string): boolean {
  * bash tool — and the state token never reaches it, because it is this
  * layer's bookkeeping, not the model's.
  */
+/** One model-visible content part, as the AI SDK tool-result contract takes them. */
+type ModelContentPart =
+  | { type: "text"; text: string }
+  | { type: "image-data"; data: string; mediaType: string };
+
+/**
+ * Sniff the capture format from its base64 prefix. Mirrors the helper in
+ * `computer-use-tool.ts`; kept local rather than imported because that module
+ * pulls the Anthropic provider and the widget harness in with it, and this is
+ * two lines of magic-number matching.
+ */
+function imageMediaType(base64: string): string {
+  // JPEG base64 begins with "/9j/"; PNG with "iVBOR".
+  return base64.startsWith("/9j/") ? "image/jpeg" : "image/png";
+}
+
+/**
+ * Lift the screenshot out of a result and hand it to the model as IMAGE
+ * content, with everything else alongside as text.
+ *
+ * The capture is pulled from the top level (a normal observation) and from the
+ * `page` envelope (the fresh observation that rides a `stale_observation`
+ * refusal) — the second is precisely when the model most needs to see what the
+ * page became. It is REMOVED from the text half rather than duplicated: a
+ * base64 blob repeated as text is the token cost this mapping exists to avoid.
+ */
+export function toBrowserModelOutput({ output }: { output: unknown }): {
+  type: "content";
+  value: ModelContentPart[];
+} {
+  const value: ModelContentPart[] = [];
+  if (typeof output !== "object" || output === null) {
+    return {
+      type: "content",
+      value: [{ type: "text", text: JSON.stringify(output ?? null) }],
+    };
+  }
+  const rest: Record<string, unknown> = { ...(output as Record<string, unknown>) };
+  const shot = takeScreenshot(rest);
+  if (shot) {
+    value.push({ type: "image-data", data: shot, mediaType: imageMediaType(shot) });
+  }
+  value.push({ type: "text", text: JSON.stringify(rest) });
+  return { type: "content", value };
+}
+
+/**
+ * Remove and return the capture, from wherever this result carries one.
+ * Mutates `rest` (and its `page` envelope, copied first so the caller's
+ * object is never rewritten).
+ */
+function takeScreenshot(rest: Record<string, unknown>): string | undefined {
+  const top = rest.screenshot;
+  if (typeof top === "string" && top.length > 0) {
+    delete rest.screenshot;
+    return top;
+  }
+  const page = rest.page;
+  if (typeof page === "object" && page !== null) {
+    const nested = { ...(page as Record<string, unknown>) };
+    const shot = nested.screenshot;
+    if (typeof shot === "string" && shot.length > 0) {
+      delete nested.screenshot;
+      rest.page = nested;
+      return shot;
+    }
+  }
+  return undefined;
+}
+
 function present(
   outcome: CommandOutcome & { tabId: string },
 ): Record<string, unknown> {

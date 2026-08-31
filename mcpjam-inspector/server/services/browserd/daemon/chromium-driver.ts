@@ -16,7 +16,9 @@
  * in here from the pure helpers in PR (c1).
  */
 import {
+  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
+  isPointInViewport,
   type BrowserAction,
   type BrowserCommand,
   type BrowserCommandResult,
@@ -277,6 +279,20 @@ export class ChromiumDriver implements BrowserDriver {
     const point = target && "coordinates" in target
       ? { x: target.coordinates[0], y: target.coordinates[1] }
       : null;
+    if (point && !isPointInViewport(point.x, point.y)) {
+      // Refuse rather than dispatch. Chromium delivers a mouse event outside
+      // the viewport quite happily; it hits nothing, and the caller reads an
+      // ordinary post-act observation that looks exactly like a click landing
+      // on empty space. The daemon is the authority on the coordinate space,
+      // so the refusal lives here and not only in the tool schema — the panel
+      // and the v1 bridge reach this same path.
+      throw new Error(
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ` +
+          `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+          "observation viewport; coordinates are CSS pixels with (0, 0) at the " +
+          "top-left of the last screenshot",
+      );
+    }
     const selector = target && "selector" in target ? target.selector : null;
     if (target && "a11yRef" in target) {
       // Deferred deliberately: a ref that silently drifts across a re-render
@@ -317,6 +333,15 @@ export class ChromiumDriver implements BrowserDriver {
         if (!to) {
           throw new Error(
             'drag needs a destination in `value` as "x,y" (viewport coordinates)',
+          );
+        }
+        if (!isPointInViewport(to.x, to.y)) {
+          // The destination rides in a string and so bypasses the check above;
+          // a drag ending off-viewport drops its payload on nothing.
+          throw new Error(
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ` +
+              `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+              "observation viewport",
           );
         }
         return page.dragTo(point, to);
@@ -440,7 +465,20 @@ export class ChromiumDriver implements BrowserDriver {
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.
-        const snapshot = await entry.page.a11ySnapshot();
+        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
+        if (action.rootSelector && snapshot === null) {
+          // The retrieval verb the omission marker names must fail LOUDLY when
+          // its selector finds nothing. Returning an empty tree would read as
+          // "that subtree is empty" — the opposite of "your selector was
+          // wrong" — and the caller would believe the page, not retry.
+          return {
+            ok: false,
+            error:
+              `unknown_selector: nothing on this page matches ` +
+              `"${action.rootSelector}"; re-observe the page and pick a ` +
+              `selector from what it shows`,
+          };
+        }
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
           snapshot,

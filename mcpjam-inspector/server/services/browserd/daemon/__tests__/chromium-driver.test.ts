@@ -19,6 +19,7 @@ interface FakePage extends DriverPage {
     shots: number;
     acts: ActLog;
     front: number;
+    a11yRoots: (string | undefined)[];
   };
 }
 
@@ -31,6 +32,8 @@ function fakePage(init: {
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
   a11y?: unknown;
+  /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
+  a11yBySelector?: Record<string, unknown>;
   console?: Array<{ type: string; text: string; at: number }>;
   webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
 } = {}): FakePage {
@@ -45,6 +48,7 @@ function fakePage(init: {
     shots: 0,
     acts: [] as ActLog,
     front: 0,
+    a11yRoots: [] as (string | undefined)[],
   };
   const setDom = (d: string) => { dom = d; };
   const setUrl = (u: string) => { url = u; };
@@ -86,7 +90,15 @@ function fakePage(init: {
     async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
     async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
-    async a11ySnapshot() { return (init.a11y ?? null) as never; },
+    async a11ySnapshot(rootSelector?: string) {
+      calls.a11yRoots.push(rootSelector);
+      // Mirrors the live adapter: an unmatched root selector resolves null,
+      // which is what the driver must turn into `unknown_selector`.
+      if (rootSelector !== undefined) {
+        return (init.a11yBySelector?.[rootSelector] ?? null) as never;
+      }
+      return (init.a11y ?? null) as never;
+    },
     consoleEntries: () => consoleEntries,
     dropConsoleSince: (since: number) => {
       let keep = consoleEntries.length;
@@ -220,6 +232,62 @@ describe("ChromiumDriver — observe", () => {
     // A model must never receive a half-serialized node.
     expect(() => JSON.parse(JSON.stringify(output.a11y))).not.toThrow();
     expect(res.stateToken).toBeDefined();
+  });
+
+  it("scopes the tree to rootSelector — the retrieval verb the omission marker names", async () => {
+    // The marker tells the caller to re-observe an omitted subtree with
+    // {mode:"a11y", rootSelector:"…"}. If that does not reach the page, the
+    // marker sends the model somewhere it cannot go and the subtree is lost.
+    const page = fakePage({
+      url: "https://x.test/",
+      a11y: { role: "main" },
+      a11yBySelector: {
+        "#panel": { role: "region", children: [{ role: "button", name: "Go" }] },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: "#panel" }),
+    );
+
+    expect(page.calls.a11yRoots).toContain("#panel");
+    expect(res.ok).toBe(true);
+    expect((res.output as { a11y: unknown }).a11y).toEqual({
+      role: "region",
+      children: [{ role: "button", name: "Go" }],
+    });
+  });
+
+  it("REFUSES a rootSelector that matches nothing, instead of answering an empty tree", async () => {
+    // An empty tree reads as "that subtree is empty" — the model believes the
+    // page and moves on. The error is the only version it can act on.
+    const page = fakePage({ url: "https://x.test/", a11y: { role: "main" } });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: "#gone" }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown_selector/);
+    expect(res.error).toContain("#gone");
+  });
+
+  it("still answers a whole-page a11y observation when the page has no tree", async () => {
+    // Unmatched-selector is an error; an empty PAGE is not. Only the request
+    // that named a root gets the stricter reading.
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(res.ok).toBe(true);
   });
 
   it("returns the console tail, newest last, byte-capped", async () => {
@@ -472,6 +540,58 @@ describe("ChromiumDriver — act verbs (W3)", () => {
       const { res } = await acted(action);
       expect(res.ok, `${action.verb} without its input must fail`).toBe(false);
     }
+  });
+
+  it("REFUSES a coordinate outside the observation viewport, without dispatching", async () => {
+    // Chromium delivers an out-of-viewport mouse event happily: it hits
+    // nothing, and the caller reads a normal post-act observation that is
+    // indistinguishable from a click landing on empty space. Refusing is the
+    // only outcome the model can recover from.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [1200, 40] },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+    expect(res.error).toContain("1024x768");
+    expect(page.calls.acts).toHaveLength(0); // nothing was dispatched
+  });
+
+  it("refuses a NEGATIVE coordinate too", async () => {
+    const { res } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [10, -1] },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+  });
+
+  it("allows the far corner — the bound is inclusive of the last pixel", async () => {
+    // Guards the off-by-one that would make the bottom-right of every
+    // screenshot unclickable.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "click",
+      target: { coordinates: [1023, 767] },
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:1023,767");
+  });
+
+  it("refuses a drag DESTINATION outside the viewport (it rides in a string)", async () => {
+    // The destination bypasses the target check because it arrives as
+    // `value: "x,y"`, so it needs its own bound.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "drag",
+      target: { coordinates: [10, 10] },
+      value: "5000,20",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/out_of_viewport/);
+    expect(page.calls.acts).toHaveLength(0);
   });
 
   it("closes and activates tabs", async () => {

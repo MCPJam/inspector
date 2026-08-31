@@ -17,7 +17,8 @@ import {
   buildBrowserdLaunchArgs,
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
-import { capText, type A11yNode, type ConsoleEntry } from "./observation-budget";
+import { capText, type ConsoleEntry } from "./observation-budget";
+import { parseAriaSnapshot } from "./aria-snapshot";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -95,8 +96,18 @@ export type AnyPage = {
     value: string,
     options?: unknown,
   ): Promise<unknown>;
-  accessibility?: { snapshot(options?: unknown): Promise<unknown> };
+  ariaSnapshot(options?: unknown): Promise<string>;
+  locator(selector: string): AnyLocator;
   on(event: string, handler: (payload: any) => void): void;
+};
+
+/**
+ * The sliver of Playwright's `Locator` the daemon uses: narrow a selector to
+ * its first match and take that element's aria snapshot.
+ */
+export type AnyLocator = {
+  first(): AnyLocator;
+  ariaSnapshot(options?: unknown): Promise<string>;
 };
 
 /**
@@ -110,6 +121,20 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
+
+/**
+ * Accessibility capture timeout. Shorter than an act: an observation that
+ * cannot be taken promptly is better answered as "unavailable" than held
+ * open, because the caller has a screenshot and a DOM outline to fall back on.
+ */
+const A11Y_TIMEOUT_MS = 5_000;
+
+/**
+ * JPEG quality for model-facing captures. High enough that text stays legible
+ * and layout edges stay crisp for coordinate targeting; low enough that a
+ * capture on every act does not dominate the turn's token budget.
+ */
+const SCREENSHOT_JPEG_QUALITY = 70;
 
 export function wrapPage(page: AnyPage): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
@@ -177,7 +202,15 @@ export function wrapPage(page: AnyPage): DriverPage {
       return page.evaluate<string>(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
-      const buffer = await page.screenshot({ type: "png" });
+      // JPEG, not PNG. Every act and navigate result carries a capture, and a
+      // full-viewport PNG of a real page runs 100–400 KB — which becomes tens
+      // of thousands of tokens once it reaches the model as image content. At
+      // this quality the difference is invisible for reading a page and
+      // aiming a click, and roughly an order of magnitude cheaper.
+      const buffer = await page.screenshot({
+        type: "jpeg",
+        quality: SCREENSHOT_JPEG_QUALITY,
+      });
       return buffer.toString("base64");
     },
     url: () => page.url(),
@@ -215,9 +248,23 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot() {
-      const snapshot = await page.accessibility?.snapshot();
-      return (snapshot as A11yNode | null) ?? null;
+    async a11ySnapshot(rootSelector?: string) {
+      // `page.accessibility` NO LONGER EXISTS in the pinned Playwright (1.62.1
+      // removed it), so the tree-shaped API this used to call resolved
+      // `undefined` for every page. `ariaSnapshot` is its successor: it answers
+      // YAML, which `parseAriaSnapshot` rebuilds into the tree the L9 budget
+      // needs, and it takes a selector root — which is what makes the omission
+      // marker's `rootSelector` retrieval verb real.
+      const target = rootSelector ? page.locator(rootSelector).first() : page;
+      try {
+        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
+        return parseAriaSnapshot(yaml);
+      } catch {
+        // A selector that matches nothing, a detached element, or a page too
+        // busy to answer. `null` is the honest result; the driver turns an
+        // unmatched ROOT selector into an error rather than an empty tree.
+        return null;
+      }
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since: number) => {

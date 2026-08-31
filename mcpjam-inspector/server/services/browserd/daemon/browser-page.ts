@@ -48,8 +48,16 @@ export interface DriverPage {
   selectOption(selector: string, value: string): Promise<void>;
   /** Focus this tab in the window (what a human sees, and what `activate_tab` does). */
   bringToFront(): Promise<void>;
-  /** The accessibility tree, uncapped — the driver applies the L9 budget. */
-  a11ySnapshot(): Promise<A11yNode | null>;
+  /**
+   * The accessibility tree, uncapped — the driver applies the L9 budget.
+   *
+   * `rootSelector` scopes the tree to one element, which is how a caller
+   * retrieves a subtree the budget omitted. Resolves `null` when the tree is
+   * unavailable AND when a `rootSelector` matches nothing: the driver
+   * distinguishes those two by whether it asked for a root, and reports an
+   * unmatched selector as an error rather than as an empty page.
+   */
+  a11ySnapshot(rootSelector?: string): Promise<A11yNode | null>;
   /** The console ring buffer this page has accumulated, oldest first. */
   consoleEntries(): readonly ConsoleEntry[];
   /**

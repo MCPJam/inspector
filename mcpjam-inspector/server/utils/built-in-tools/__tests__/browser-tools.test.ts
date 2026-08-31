@@ -449,3 +449,146 @@ describe("buildBrowserTools — a human has the browser (W4/L6)", () => {
     });
   });
 });
+
+describe("the screenshot reaches the model as an IMAGE, not as text", () => {
+  it("maps a capture to image content and drops it from the text half", async () => {
+    // Left in the JSON result the capture is text to every provider: the model
+    // cannot see the page it is being asked to click on, and the turn pays
+    // tens of thousands of tokens for the privilege.
+    const { result } = build();
+    const tools = result!.tools as any;
+    const output = await run(tools, "browser_navigate", {
+      url: "https://example.com",
+    });
+
+    const mapped = tools.browser_navigate.toModelOutput({ output });
+
+    expect(mapped.type).toBe("content");
+    expect(mapped.value[0]).toEqual({
+      type: "image-data",
+      data: "PNG",
+      mediaType: "image/png",
+    });
+    const text = mapped.value.find((p: any) => p.type === "text");
+    expect(text.text).toContain("https://example.com");
+    // Not duplicated as text — that duplication is the token cost.
+    expect(text.text).not.toContain("PNG");
+  });
+
+  it("labels a JPEG capture as JPEG (the daemon captures JPEG)", async () => {
+    const jpeg = "/9j/4AAQSkZJRg";
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: { ok: true, output: { url: "https://x.test", screenshot: jpeg } },
+    }));
+    const tools = result!.tools as any;
+    const output = await run(tools, "browser_observe", {});
+    const mapped = tools.browser_observe.toModelOutput({ output });
+    expect(mapped.value[0]).toMatchObject({ mediaType: "image/jpeg", data: jpeg });
+  });
+
+  it("lifts the capture out of a stale_observation refusal, where it matters most", async () => {
+    // The act did not run and the page moved; the fresh observation riding the
+    // refusal is exactly what the model needs to LOOK at to re-decide.
+    const { result } = build({}, async () => ({
+      status: "stale_observation",
+      result: {
+        ok: false,
+        output: { url: "https://moved.test", screenshot: "FRESH" },
+      },
+    }));
+    const tools = result!.tools as any;
+    const output = await run(tools, "browser_act", { verb: "click", x: 5, y: 5 });
+
+    const mapped = tools.browser_act.toModelOutput({ output });
+
+    expect(mapped.value[0]).toMatchObject({ type: "image-data", data: "FRESH" });
+    const text = mapped.value.find((p: any) => p.type === "text");
+    expect(text.text).toContain("stale_observation");
+    expect(text.text).toContain("https://moved.test");
+    expect(text.text).not.toContain("FRESH");
+  });
+
+  it("emits text only when a result carries no capture", async () => {
+    const { result } = build({}, async () => ({
+      status: "ok",
+      result: { ok: true, output: { url: "https://x.test" } },
+    }));
+    const tools = result!.tools as any;
+    const output = await run(tools, "browser_observe", { mode: "url" });
+    const mapped = tools.browser_observe.toModelOutput({ output });
+    expect(mapped.value).toHaveLength(1);
+    expect(mapped.value[0].type).toBe("text");
+  });
+
+  it("is attached to EVERY built browser tool", async () => {
+    // A tool added later that forgot the mapping silently goes back to
+    // sending the model an unreadable base64 string.
+    const { result } = build();
+    for (const [name, definition] of Object.entries(result!.tools as any)) {
+      expect(
+        typeof (definition as any).toModelOutput,
+        `${name} must map its output for the model`,
+      ).toBe("function");
+    }
+  });
+});
+
+describe("the coordinate space is stated and enforced", () => {
+  it("names the viewport and the origin in the act tool's description", async () => {
+    const { result } = build();
+    const description = (result!.tools as any).browser_act.description as string;
+    expect(description).toContain("1024x768");
+    expect(description).toMatch(/top-left/i);
+  });
+
+  it("bounds x and y in the schema", () => {
+    const { result } = build();
+    const schema = (result!.tools as any).browser_act.inputSchema;
+    expect(schema.safeParse({ verb: "click", x: 1024, y: 10 }).success).toBe(false);
+    expect(schema.safeParse({ verb: "click", x: -1, y: 10 }).success).toBe(false);
+    expect(schema.safeParse({ verb: "click", x: 1023, y: 767 }).success).toBe(true);
+  });
+
+  it("REFUSES an out-of-range coordinate at execute time, without sending a command", async () => {
+    // The schema states the bound, but a hosted path reconstructs the schema
+    // on the wire and executes with whatever comes back — so the bound is
+    // re-checked rather than assumed.
+    const { result, sendCommand } = build();
+    const tools = result!.tools as any;
+
+    const output: any = await run(tools, "browser_act", {
+      verb: "click",
+      x: 4000,
+      y: 10,
+    });
+
+    expect(output.error).toMatch(/out_of_viewport/);
+    expect(output.error).toContain("1024x768");
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("browser_observe carries the omission marker's retrieval verb", () => {
+  it("forwards rootSelector to the daemon", async () => {
+    // `observation-budget.ts` tells the model to re-read an omitted subtree
+    // with {mode:"a11y", rootSelector:"…"}; if the parameter stops here, the
+    // marker points at a dead end.
+    const { result, sendCommand } = build();
+    await run(result!.tools as any, "browser_observe", {
+      mode: "a11y",
+      rootSelector: "#panel",
+    });
+    expect(sendCommand.mock.calls[0][0].action).toMatchObject({
+      kind: "observe",
+      mode: "a11y",
+      rootSelector: "#panel",
+    });
+  });
+
+  it("omits the field entirely when no selector is given", async () => {
+    const { result, sendCommand } = build();
+    await run(result!.tools as any, "browser_observe", { mode: "a11y" });
+    expect(sendCommand.mock.calls[0][0].action).not.toHaveProperty("rootSelector");
+  });
+});

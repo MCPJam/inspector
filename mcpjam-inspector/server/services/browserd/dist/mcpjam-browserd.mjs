@@ -7,6 +7,13 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
+var BROWSERD_OBSERVATION_VIEWPORT = {
+  width: 1024,
+  height: 768
+};
+function isPointInViewport(x, y) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+}
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
   retainTtlMs: 15 * 60 * 1e3,
@@ -1171,6 +1178,11 @@ var ChromiumDriver = class {
   async dispatchVerb(page, action) {
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
+    if (point && !isPointInViewport(point.x, point.y)) {
+      throw new Error(
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+      );
+    }
     const selector = target && "selector" in target ? target.selector : null;
     if (target && "a11yRef" in target) {
       throw new Error(
@@ -1204,6 +1216,11 @@ var ChromiumDriver = class {
         if (!to) {
           throw new Error(
             'drag needs a destination in `value` as "x,y" (viewport coordinates)'
+          );
+        }
+        if (!isPointInViewport(to.x, to.y)) {
+          throw new Error(
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
           );
         }
         return page.dragTo(point, to);
@@ -1301,7 +1318,13 @@ var ChromiumDriver = class {
       case "screenshot":
         return this.observeScreenshot(tabId, entry);
       case "a11y": {
-        const snapshot = await entry.page.a11ySnapshot();
+        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
+        if (action.rootSelector && snapshot === null) {
+          return {
+            ok: false,
+            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
+          };
+        }
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
           snapshot,
@@ -1479,6 +1502,21 @@ var WEBMCP_LAUNCH_ARGS = [
 ];
 
 // server/services/browserd/daemon/launch-args.ts
+var ENABLE_FEATURES = "--enable-features=";
+var DISABLE_FEATURES = "--disable-features=";
+function featuresEnabledBy(args) {
+  return args.flatMap(
+    (arg) => arg.startsWith(ENABLE_FEATURES) ? arg.slice(ENABLE_FEATURES.length).split(",").filter(Boolean) : []
+  );
+}
+var BROWSERD_ENABLED_FEATURES = [
+  ...featuresEnabledBy(WEBMCP_LAUNCH_ARGS),
+  // Playwright enables this itself (unless PLAYWRIGHT_LEGACY_SCREENSHOT is
+  // set) and our switch would otherwise drop it, quietly moving every capture
+  // back to the legacy screenshot surface. Restated to preserve the pinned
+  // version's own default rather than to change it.
+  "CDPScreenshotNewSurface"
+];
 var BROWSERD_HARDENING_ARGS = [
   // Crash-avoidance in a container with a small /dev/shm. Its ABSENCE is exactly
   // what reads as "E2B is flaky" under load. (Local inspector carries this too.)
@@ -1488,9 +1526,13 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-blink-features=AutomationControlled",
   // Determinism for the eval double-run bar: identical color across hosts.
   "--force-color-profile=srgb",
-  // Otherwise a navigation can hold the OLD frame and we screenshot a page that
-  // no longer exists — poison for both the agent and the eval.
-  "--disable-features=PaintHolding",
+  // NOTE — there is deliberately no `--disable-features=PaintHolding` here.
+  // Holding the old frame across a navigation really would poison a capture,
+  // but Playwright ALREADY disables PaintHolding in its own combined switch;
+  // restating it bought nothing and destroyed the other eleven entries in that
+  // list (see the ENABLE_FEATURES/DISABLE_FEATURES note above). Anything
+  // browserd genuinely needs disabled has to be added to Playwright's list,
+  // not emitted as a competing switch.
   // The panel/stream is frequently occluded and the driven tab is often not
   // foreground; without these, timers throttle and the agent sees a frozen app.
   "--disable-background-timer-throttling",
@@ -1511,7 +1553,6 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-gpu",
   "--use-angle=swiftshader-webgl"
 ];
-var BROWSERD_OBSERVATION_VIEWPORT = { width: 1024, height: 768 };
 var BROWSERD_CONTEXT_OPTIONS = {
   viewport: BROWSERD_OBSERVATION_VIEWPORT,
   deviceScaleFactor: 1,
@@ -1522,7 +1563,22 @@ var BROWSERD_CONTEXT_OPTIONS = {
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 MCPJam-Browser/1.0"
 };
 function buildBrowserdLaunchArgs(extra = []) {
-  return [...WEBMCP_LAUNCH_ARGS, ...BROWSERD_HARDENING_ARGS, ...extra];
+  const passthrough = WEBMCP_LAUNCH_ARGS.filter(
+    (arg) => !arg.startsWith(ENABLE_FEATURES)
+  );
+  const args = [
+    ...passthrough,
+    `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
+    ...BROWSERD_HARDENING_ARGS,
+    ...extra
+  ];
+  const clobbering = args.find((arg) => arg.startsWith(DISABLE_FEATURES));
+  if (clobbering) {
+    throw new Error(
+      `browserd launch args must not carry ${DISABLE_FEATURES} (got "${clobbering}"): Chromium honours only the last occurrence, so this would discard Playwright's own disabled-feature list wholesale`
+    );
+  }
+  return args;
 }
 
 // server/services/browserd/daemon/profile-lock.ts
@@ -1553,6 +1609,132 @@ function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
 }
 
+// server/services/browserd/daemon/aria-snapshot.ts
+var ROLE_LINE = /^([^\s":]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*(.*)$/;
+var ATTRIBUTE = /\[([^\]=]+)(?:=([^\]]*))?\]/g;
+function parseAriaSnapshot(yaml) {
+  if (!yaml) return null;
+  const lines = yaml.split("\n");
+  const roots = [];
+  const stack = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (raw.trim().length === 0) continue;
+    const parsed = parseLine(raw);
+    if (!parsed) continue;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= parsed.indent) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1];
+    if (parent) {
+      (parent.node.children ??= []).push(parsed.node);
+    } else {
+      roots.push(parsed.node);
+    }
+    if (parsed.blockScalar) {
+      const { text, next } = readBlockScalar(lines, index + 1, parsed.indent);
+      if (text) parsed.node.name = text;
+      index = next - 1;
+      continue;
+    }
+    if (parsed.opensChildren) {
+      stack.push({ indent: parsed.indent, node: parsed.node });
+    }
+  }
+  if (roots.length === 0) return null;
+  if (roots.length === 1) return roots[0];
+  return { role: "document", children: roots };
+}
+function parseLine(raw) {
+  const indent = raw.length - raw.trimStart().length;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("- ") && trimmed !== "-") return null;
+  let body = trimmed.slice(1).trim();
+  if (body.length === 0) return null;
+  const opensChildren = body.endsWith(":");
+  if (opensChildren) body = body.slice(0, -1).trimEnd();
+  const property = matchProperty(body);
+  if (property) {
+    if (property.value === "|" || property.value === "|-") {
+      return {
+        indent,
+        node: { role: property.key },
+        opensChildren: false,
+        blockScalar: true
+      };
+    }
+    return {
+      indent,
+      node: { role: property.key, name: property.value },
+      opensChildren: false,
+      blockScalar: false
+    };
+  }
+  const match = ROLE_LINE.exec(body);
+  if (!match) {
+    return {
+      indent,
+      node: { role: "text", name: body },
+      opensChildren,
+      blockScalar: false
+    };
+  }
+  const [, role, name, tail] = match;
+  const node = { role };
+  if (name !== void 0) node.name = unescapeName(name);
+  applyAttributes(node, tail);
+  return { indent, node, opensChildren, blockScalar: false };
+}
+function matchProperty(body) {
+  const colon = body.indexOf(": ");
+  const bare = body.endsWith(":") ? body.length - 1 : -1;
+  const at = colon >= 0 ? colon : bare;
+  if (at <= 0) return null;
+  const key = body.slice(0, at);
+  if (key.includes('"') || key.includes(" ")) return null;
+  return { key, value: body.slice(at + 1).trim() };
+}
+function applyAttributes(node, tail) {
+  if (!tail) return;
+  for (const match of tail.matchAll(ATTRIBUTE)) {
+    const key = match[1].trim();
+    if (!key) continue;
+    const value = match[2];
+    if (value === void 0) {
+      node[key] = true;
+      continue;
+    }
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+    node[key] = trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed;
+  }
+}
+function unescapeName(name) {
+  return name.replace(/\\(["\\])/g, "$1");
+}
+function readBlockScalar(lines, from, parentIndent) {
+  const collected = [];
+  let cursor = from;
+  let blockIndent = null;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line.trim().length === 0) {
+      collected.push("");
+      cursor += 1;
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent <= parentIndent) break;
+    blockIndent ??= indent;
+    collected.push(line.slice(Math.min(blockIndent, indent)));
+    cursor += 1;
+  }
+  while (collected.length > 0 && collected[collected.length - 1] === "") {
+    collected.pop();
+  }
+  return { text: collected.join("\n"), next: cursor };
+}
+
 // server/services/browserd/daemon/chromium-launch.ts
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
@@ -1577,6 +1759,8 @@ function abortPromise(signal) {
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
 var ACT_TIMEOUT_MS = 15e3;
+var A11Y_TIMEOUT_MS = 5e3;
+var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
   const consoleRing = [];
   page.on("console", (message) => {
@@ -1631,7 +1815,10 @@ function wrapPage(page) {
       return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
-      const buffer = await page.screenshot({ type: "png" });
+      const buffer = await page.screenshot({
+        type: "jpeg",
+        quality: SCREENSHOT_JPEG_QUALITY
+      });
       return buffer.toString("base64");
     },
     url: () => page.url(),
@@ -1662,9 +1849,14 @@ function wrapPage(page) {
       await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
     },
     // --- observation --------------------------------------------------------
-    async a11ySnapshot() {
-      const snapshot = await page.accessibility?.snapshot();
-      return snapshot ?? null;
+    async a11ySnapshot(rootSelector) {
+      const target = rootSelector ? page.locator(rootSelector).first() : page;
+      try {
+        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
+        return parseAriaSnapshot(yaml);
+      } catch {
+        return null;
+      }
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since) => {
