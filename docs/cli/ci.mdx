@@ -244,7 +244,7 @@ Single-run `protocol conformance`, `oauth conformance`, and `apps conformance` a
 
 ### Optional: verify Tool Outcome Attestation (TOA) after doctor / conformance
 
-Doctor and protocol conformance cover connect, capabilities, and protocol behavior. [Tool Outcome Attestation](https://github.com/Carmel-Labs-Inc/toa) (`toa/0.1`) is a separate, Apache-2.0 signed JSON artifact for **tool delivery** grades (reach, invoke, functional, shape, and related layers). It is not a wire protocol and is not meant to run on every live `tools/call`.
+Doctor and protocol conformance cover connect, capabilities, and protocol behavior. [Tool Outcome Attestation](https://github.com/Carmel-Labs-Inc/toa) (`toa/0.1`) is a separate, Ed25519-signed JSON artifact (Apache-2.0 project) for **tool delivery** grades (reach, invoke, functional, shape, and related layers). It is not a wire protocol and is not meant to run on every live `tools/call`.
 
 If your pipeline already has a `toa.json` from AgentStatus (or another emitter whose key you pin), you can fail the job when verify fails. The example below requires `emitter.name=agentstatus` and uses the packaged AgentStatus key; pass `--public-key` for another issuer. No AgentStatus account is required to verify.
 
