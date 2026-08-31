@@ -7,6 +7,13 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
+var BROWSERD_OBSERVATION_VIEWPORT = {
+  width: 1024,
+  height: 768
+};
+function isPointInViewport(x, y) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+}
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
   retainTtlMs: 15 * 60 * 1e3,
@@ -178,17 +185,145 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/lease.ts
+var DEFAULT_TTL_MS = 5 * 60 * 1e3;
+var MAX_TTL_MS = 30 * 60 * 1e3;
+var HandoffLease = class {
+  current = { state: "free" };
+  /**
+   * Set by `resume`, consumed once by the next observation. This is what makes
+   * the resume LOUD: the model is told the state may have changed — including
+   * logins and cookies — instead of continuing against a page it last saw
+   * before a human touched it.
+   */
+  resumedDirty = false;
+  /**
+   * When the CURRENT hold began — the start of the window whose captured
+   * console must not outlive the handoff. Set on the free→held transition
+   * only, so a heartbeat or a re-acquire out of `parked` does not shorten the
+   * window and leave the earliest (most sensitive) entries readable.
+   */
+  heldSince;
+  /**
+   * Start of the EARLIEST hold that has ended without its console being purged
+   * yet, consumed alongside the flag.
+   *
+   * Earliest, not latest, because the purge is consumed lazily — by the next
+   * command — and nothing says a second handoff cannot happen first. Two
+   * complete cycles back to back (sign in, hand back, solve a CAPTCHA, hand
+   * back) with no command in between would otherwise overwrite this with the
+   * SECOND hold's start, and the first hold's console — the sign-in, the most
+   * sensitive window of the two — would survive the purge and be readable.
+   */
+  resumedHeldSince;
+  now;
+  defaultTtlMs;
+  maxTtlMs;
+  constructor(options = {}) {
+    this.now = options.now ?? Date.now;
+    this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
+    this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+  }
+  /**
+   * The lease as of NOW. Expiry is evaluated lazily on every read — there is
+   * no timer to miss, and a state read after a restart or a long pause is
+   * still correct.
+   */
+  state() {
+    if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
+      this.current = { state: "parked", holder: this.current.holder };
+    }
+    return this.current;
+  }
+  /** True while any model-driven command (and every observation) is blocked. */
+  isBlocking() {
+    return this.state().state !== "free";
+  }
+  acquire(holder, ttlMs) {
+    const state = this.state();
+    if (state.state !== "free" && state.holder !== holder) {
+      return state;
+    }
+    const ttl = Math.min(
+      Math.max(1e3, ttlMs ?? this.defaultTtlMs),
+      this.maxTtlMs
+    );
+    if (state.state === "free") this.heldSince = this.now();
+    this.current = {
+      state: "held",
+      holder,
+      expiresAt: this.now() + ttl
+    };
+    return this.current;
+  }
+  /** Extend the holder's own lease; a no-op for anyone else. */
+  heartbeat(holder, ttlMs) {
+    const state = this.state();
+    if (state.state !== "held" || state.holder !== holder) return state;
+    return this.acquire(holder, ttlMs);
+  }
+  /**
+   * Hand control back. Only the holder may — including from `parked`, which
+   * is the ordinary "I'm done, carry on" path after a lease ran out while a
+   * person was still working.
+   */
+  resume(holder) {
+    const state = this.state();
+    if (state.state === "free") return state;
+    if (state.holder !== holder) return state;
+    this.current = { state: "free" };
+    this.resumedDirty = true;
+    if (this.resumedHeldSince === void 0) {
+      this.resumedHeldSince = this.heldSince;
+    }
+    this.heldSince = void 0;
+    return this.current;
+  }
+  /** `resume` under its user-facing name; identical semantics. */
+  release(holder) {
+    return this.resume(holder);
+  }
+  /**
+   * Whether the next observation must carry the loud-resume note, consumed
+   * once. The daemon asks this AFTER a command runs, so the note rides the
+   * first result a human handoff could have invalidated.
+   */
+  consumeResumedDirty() {
+    const dirty = this.resumedDirty;
+    this.resumedDirty = false;
+    return dirty;
+  }
+  /**
+   * The start of the hold that just ended, consumed once.
+   *
+   * The daemon uses it to DISCARD console captured while a person held the
+   * browser. The 423 gate stops an agent reading during the handoff, but the
+   * console ring fills eagerly from a page listener that knows nothing about
+   * leases — so without this, an auth token or a form value the page logged
+   * during someone's login is simply readable the moment they hand back. That
+   * would make the guarantee "you must wait to read it", not "it is private".
+   */
+  consumeResumedHeldSince() {
+    const since = this.resumedHeldSince;
+    this.resumedHeldSince = void 0;
+    return since;
+  }
+};
+var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
+
 // server/services/browserd/daemon/request-handler.ts
 var BrowserdRequestHandler = class {
   queue;
   driver;
   bootId;
   token;
+  lease;
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
+    this.lease = deps.lease ?? new HandoffLease();
   }
   async handle(req) {
     if (req.path === "/healthz") {
@@ -210,6 +345,22 @@ var BrowserdRequestHandler = class {
       }
       return this.handleCommand(req);
     }
+    if (req.path === "/v1/status") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      const health = await this.driver.health();
+      return health.ok ? { status: 200, body: { ok: true, bootId: this.bootId } } : {
+        status: 503,
+        body: { ok: false, detail: health.detail, bootId: this.bootId }
+      };
+    }
+    if (req.path === "/v1/lease") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleLease(req);
+    }
     return { status: 404 };
   }
   async handleCommand(req) {
@@ -225,6 +376,17 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_command", bootId: this.bootId }
       };
     }
+    const leaseState = this.lease.state();
+    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+      return {
+        status: 423,
+        body: {
+          error: leaseState.state === "held" ? "lease_held" : "lease_parked",
+          holder: leaseState.holder,
+          bootId: this.bootId
+        }
+      };
+    }
     if (parsed.expectedBootId !== void 0 && parsed.expectedBootId !== this.bootId) {
       return {
         status: 409,
@@ -233,6 +395,55 @@ var BrowserdRequestHandler = class {
     }
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Lease control. Every action names its `holder` so one person's lease
+   * cannot be released by another tab that happens to know the endpoint.
+   */
+  handleLease(req) {
+    if (req.method === "GET") {
+      return { status: 200, body: this.leaseBody(this.lease.state()) };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body);
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
+    if (!holder) {
+      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+    }
+    const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
+    let state;
+    switch (parsed?.action) {
+      case "acquire":
+        state = this.lease.acquire(holder, ttlMs);
+        break;
+      case "heartbeat":
+        state = this.lease.heartbeat(holder, ttlMs);
+        break;
+      case "resume":
+      case "release":
+        state = this.lease.resume(holder);
+        break;
+      default:
+        return {
+          status: 400,
+          body: { error: "invalid_lease_action", bootId: this.bootId }
+        };
+    }
+    const took = parsed.action !== "acquire" || state.state === "held" && state.holder === holder;
+    return {
+      status: took ? 200 : 409,
+      body: this.leaseBody(state)
+    };
+  }
+  leaseBody(state) {
+    return {
+      lease: state,
+      bootId: this.bootId
+    };
   }
   /** Map a queue outcome to an HTTP response. */
   mapOutcome(outcome) {
@@ -382,16 +593,18 @@ function headerValue(value) {
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
   const queue = new CommandQueue(guardStaleness(driver), bootId);
+  const lease = config.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
     bootId,
-    token: config.token
+    token: config.token,
+    lease
   });
   const server = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes
   });
-  return { server, handler, queue, bootId };
+  return { server, handler, queue, bootId, lease };
 }
 
 // server/services/browserd/daemon/state-token.ts
@@ -407,6 +620,392 @@ function computeStateToken(inputs) {
     domHash: shortHash(inputs.domSignal)
   };
 }
+
+// server/services/browserd/daemon/observation-budget.ts
+var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
+function countNodes(node) {
+  let total = 0;
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    total += 1;
+    const children = current.children;
+    if (children) {
+      for (const child of children) stack.push(child);
+    }
+  }
+  return total;
+}
+function omissionMarker(node, hiddenNodes) {
+  const label = node.name ? `${node.role ?? "node"} "${node.name}"` : node.role ?? "node";
+  return {
+    role: "omitted",
+    name: `${hiddenNodes} node(s) under ${label} omitted \u2014 re-observe with {mode:"a11y", rootSelector:"<selector for this element>"} to read this subtree`
+  };
+}
+function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
+  if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
+  const totalNodes = countNodes(root);
+  let remaining = Math.max(1, budget.maxNodes);
+  let omittedSubtrees = 0;
+  const visit = (node, depth) => {
+    remaining -= 1;
+    const { children, ...rest } = node;
+    if (!children || children.length === 0) return { ...rest };
+    if (depth >= budget.maxDepth || remaining <= 0) {
+      omittedSubtrees += 1;
+      const hidden = children.reduce((sum, child) => sum + countNodes(child), 0);
+      return { ...rest, children: [omissionMarker(node, hidden)] };
+    }
+    const kept = [];
+    for (let index = 0; index < children.length; index += 1) {
+      if (remaining <= 0) {
+        omittedSubtrees += 1;
+        const hidden = children.slice(index).reduce((sum, child) => sum + countNodes(child), 0);
+        kept.push(omissionMarker(node, hidden));
+        break;
+      }
+      kept.push(visit(children[index], depth + 1));
+    }
+    return { ...rest, children: kept };
+  };
+  return { tree: visit(root, 0), omittedSubtrees, totalNodes };
+}
+var TRUNCATION_SUFFIX = "\n\u2026[truncated]";
+function capText(text, maxBytes) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  if (bytes.byteLength <= maxBytes) return text;
+  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
+  if (maxBytes < suffixBytes) {
+    return decodeUpTo(bytes, maxBytes);
+  }
+  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+}
+function decodeUpTo(bytes, limit) {
+  let end = Math.max(0, Math.min(limit, bytes.byteLength));
+  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
+}
+var DEFAULT_CONSOLE_BUDGET = {
+  maxEntries: 50,
+  maxEntryBytes: 2e3
+};
+function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({
+      ...entry,
+      text: capText(entry.text, budget.maxEntryBytes)
+    })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+function capToolOutput(output, maxBytes) {
+  if (typeof output === "string") {
+    const capped = capText(output, maxBytes);
+    return { output: capped, omitted: capped !== output };
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(output) ?? "null";
+  } catch {
+    return {
+      output: "[output could not be serialized]",
+      omitted: true
+    };
+  }
+  if (new TextEncoder().encode(serialized).byteLength <= maxBytes) {
+    return { output, omitted: false };
+  }
+  return {
+    output: `[tool output omitted: ${serialized.length} chars exceeds the ${maxBytes}-byte budget \u2014 have the page return a smaller result, or read the rendered page instead]`,
+    omitted: true
+  };
+}
+
+// server/services/browserd/daemon/webmcp-bridge.ts
+var WebMcpBridgeError = class extends Error {
+  constructor(failure, message, cancelReason) {
+    super(message);
+    this.failure = failure;
+    this.cancelReason = cancelReason;
+    this.name = "WebMcpBridgeError";
+  }
+};
+var MAX_EARLY_RESPONSES = 16;
+var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
+var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "about:blank";
+  }
+}
+var WebMcpBridge = class {
+  constructor(cdp, options = {}) {
+    this.cdp = cdp;
+    this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
+    this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
+  }
+  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
+  tools = /* @__PURE__ */ new Map();
+  /** frameId → last known URL, for origin labelling. */
+  frames = /* @__PURE__ */ new Map();
+  pending = /* @__PURE__ */ new Map();
+  /** Responses that arrived before their invocation was registered. */
+  earlyResponses = /* @__PURE__ */ new Map();
+  mainFrameId = "";
+  invocationTimeoutMs;
+  cancelSettleGraceMs;
+  supported = false;
+  disposed = false;
+  /**
+   * Enable the domains and wire the events. `probeSupported` is the page-side
+   * check for `document.modelContext`: `WebMCP.enable` RESOLVES even on a
+   * browser with the feature off (it just never reports a tool), so the domain
+   * is never the probe.
+   */
+  async start(probeSupported) {
+    this.wire();
+    await this.cdp.send("Page.enable").catch(() => {
+    });
+    await this.cdp.send("WebMCP.enable").catch(() => {
+    });
+    this.supported = await probeSupported().catch(() => false);
+  }
+  isSupported() {
+    return this.supported;
+  }
+  wire() {
+    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.set(this.key(tool.frameId, tool.name), tool);
+      }
+    });
+    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.delete(this.key(tool.frameId, tool.name));
+      }
+    });
+    this.cdp.on("WebMCP.toolResponded", (payload) => {
+      const responded = payload ?? {};
+      const id = responded.invocationId;
+      if (!id) return;
+      const waiter = this.pending.get(id);
+      if (!waiter) {
+        if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
+          const oldest = this.earlyResponses.keys().next().value;
+          if (oldest !== void 0) this.earlyResponses.delete(oldest);
+        }
+        this.earlyResponses.set(id, responded);
+        return;
+      }
+      this.settle(id);
+      this.deliver(waiter, responded);
+    });
+    this.cdp.on("Page.frameNavigated", (payload) => {
+      const { frame } = payload ?? {};
+      if (!frame) return;
+      this.frames.set(frame.id, frame.url);
+      this.dropFrame(frame.id);
+      if (!frame.parentId) this.mainFrameId = frame.id;
+    });
+    this.cdp.on("Page.frameDetached", (payload) => {
+      const { frameId } = payload ?? {};
+      if (!frameId) return;
+      this.frames.delete(frameId);
+      this.dropFrame(frameId);
+    });
+  }
+  key(frameId, name) {
+    return `${frameId} ${name}`;
+  }
+  dropFrame(frameId) {
+    for (const key of [...this.tools.keys()]) {
+      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+    }
+  }
+  settle(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter?.timer) clearTimeout(waiter.timer);
+    if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
+    this.pending.delete(invocationId);
+  }
+  /** Resolve or reject a waiter from the page's response. */
+  deliver(waiter, responded) {
+    if (responded.status === "Completed") {
+      waiter.resolve({ output: responded.output });
+      return;
+    }
+    if (responded.status === "Canceled") {
+      const reason = waiter.cancelReason ?? "cancelled";
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          reason
+        )
+      );
+      return;
+    }
+    waiter.reject(
+      new WebMcpBridgeError(
+        "webmcp_error",
+        responded.exception?.description?.split("\n")[0] || responded.errorText || "The page tool failed without a message."
+      )
+    );
+  }
+  /** The tools currently on offer, as the model should see them. */
+  list() {
+    return [...this.tools.values()].map((tool) => ({
+      name: tool.name,
+      ...tool.description !== void 0 ? { description: tool.description } : {},
+      ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
+      ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
+      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      isMainFrame: tool.frameId === this.mainFrameId,
+      registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
+    }));
+  }
+  /**
+   * Resolve a tool NAME to the frame currently offering it, preferring the
+   * main frame. Frame ids churn across navigations, so this happens at invoke
+   * time rather than being carried around as identity.
+   */
+  resolveFrame(toolName) {
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName && tool.frameId === this.mainFrameId) {
+        return tool.frameId;
+      }
+    }
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName) return tool.frameId;
+    }
+    throw new WebMcpBridgeError(
+      "webmcp_tool_gone",
+      `The page no longer offers a tool named "${toolName}".`
+    );
+  }
+  /** Invoke a page tool and wait for the page's own response. */
+  async invoke(args) {
+    if (this.disposed) {
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        "The browser tab was closed.",
+        "cancelled"
+      );
+    }
+    if (!this.supported) {
+      throw new WebMcpBridgeError(
+        "webmcp_unsupported",
+        "This browser build does not expose the WebMCP page API, so the page's tools cannot be invoked."
+      );
+    }
+    const frameId = this.resolveFrame(args.toolName);
+    let invocationId;
+    try {
+      const result = await this.cdp.send("WebMCP.invokeTool", {
+        frameId,
+        toolName: args.toolName,
+        input: args.input
+      });
+      if (!result?.invocationId) {
+        throw new WebMcpBridgeError(
+          "webmcp_error",
+          "The browser accepted the invocation but returned no invocation id."
+        );
+      }
+      invocationId = result.invocationId;
+    } catch (error) {
+      if (error instanceof WebMcpBridgeError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/tool not found/i.test(message)) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `The page no longer offers a tool named "${args.toolName}".`
+        );
+      }
+      throw error;
+    }
+    const output = await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
+      const early = this.earlyResponses.get(invocationId);
+      if (early) {
+        this.earlyResponses.delete(invocationId);
+        this.deliver(waiter, early);
+        return;
+      }
+      this.pending.set(invocationId, waiter);
+      let cancelling = false;
+      const cancel = (reason) => {
+        if (cancelling) return;
+        cancelling = true;
+        waiter.cancelReason = reason;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        void Promise.resolve(
+          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        });
+        waiter.cancelTimer = setTimeout(() => {
+          if (!this.pending.has(invocationId)) return;
+          this.pending.delete(invocationId);
+          reject(
+            new WebMcpBridgeError(
+              "webmcp_cancelled",
+              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              reason
+            )
+          );
+        }, this.cancelSettleGraceMs);
+      };
+      waiter.timer = setTimeout(
+        () => cancel("timeout"),
+        this.invocationTimeoutMs
+      );
+      args.signal?.addEventListener("abort", () => cancel("cancelled"), {
+        once: true
+      });
+      if (args.signal?.aborted) cancel("cancelled");
+    });
+    return { invocationId, output: output.output };
+  }
+  /**
+   * Cancel an in-flight invocation by id (the `webmcp_cancel` action). The
+   * browser is told to stop either way — a caller may hold an id whose
+   * invocation this bridge no longer tracks — and the boolean reports whether
+   * we had a waiter to mark, so the caller can say "already finished".
+   */
+  async cancel(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter) waiter.cancelReason = "cancelled";
+    await Promise.resolve(
+      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+    ).catch(() => {
+    });
+    return Boolean(waiter);
+  }
+  /** Reject every waiter; called when the tab or daemon goes away. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const [id, waiter] of this.pending) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          "The browser tab was closed.",
+          "cancelled"
+        )
+      );
+      this.pending.delete(id);
+    }
+  }
+};
 
 // server/services/browserd/daemon/settle.ts
 var DEFAULT_SETTLE_OPTIONS = { maxWaitMs: 1e4 };
@@ -432,27 +1031,68 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
+function parsePoint(value) {
+  if (!value) return null;
+  const match = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(value);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+var DEFAULT_SCROLL_STEP = 600;
+function parseScrollDelta(value) {
+  const point = parsePoint(value);
+  if (point) return [point.x, point.y];
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  if (trimmed === "up") return [0, -DEFAULT_SCROLL_STEP];
+  if (trimmed === "down" || trimmed === "") return [0, DEFAULT_SCROLL_STEP];
+  if (trimmed === "top") return [0, -1e6];
+  if (trimmed === "bottom") return [0, 1e6];
+  const pixels = Number(trimmed);
+  if (Number.isFinite(pixels)) return [0, pixels];
+  return [0, DEFAULT_SCROLL_STEP];
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
+  a11yBudget;
+  consoleBudget;
+  webmcpOutputBudgetBytes;
+  lease;
   tabs = /* @__PURE__ */ new Map();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
+    this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
+    this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.lease = options.lease;
   }
   async execute(command) {
+    this.purgeHandoffConsole();
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
-      case "navigate":
+      case "navigate": {
         if (action.newTab) {
-          return { ok: false, error: "unimplemented_in_w1: navigate/newTab" };
+          if (command.tabId === void 0) {
+            return {
+              ok: false,
+              error: "newTab requires an explicit tabId to address the new tab by"
+            };
+          }
+          const existing = this.tabs.get(tabId);
+          if (existing && !existing.page.isClosed()) {
+            return {
+              ok: false,
+              error: `tab_exists: ${tabId} \u2014 omit newTab to navigate it, or choose another tabId`
+            };
+          }
         }
         return this.navigateVerb(
           tabId,
           await this.getOrCreateTab(tabId),
           (page) => page.goto(action.url)
         );
+      }
       case "back":
       case "reload": {
         const entry = this.tabs.get(tabId);
@@ -468,10 +1108,182 @@ var ChromiumDriver = class {
       case "observe":
         return this.observe(tabId, action);
       case "act":
+        return this.act(tabId, action);
       case "webmcp_invoke":
+        return this.webmcpInvoke(tabId, action);
       case "webmcp_cancel":
-        return { ok: false, error: `unimplemented_in_w1: ${action.kind}` };
+        return this.webmcpCancel(tabId, action);
     }
+  }
+  /**
+   * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
+   * returns the post-act screenshot + URL with a fresh state token, so the
+   * model never has to spend a turn asking "what happened?" — and the token it
+   * gets back is the one its NEXT act should be pinned to.
+   *
+   * L3 staleness is enforced upstream by `guardStaleness`, which compares the
+   * act's `expectedState` before this runs.
+   */
+  async act(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const page = entry.page;
+    if (action.verb === "close_tab") {
+      await page.close().catch(() => {
+      });
+      this.tabs.delete(tabId);
+      return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "activate_tab") {
+      await page.bringToFront();
+      const frame2 = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame2.url }, frame2);
+    }
+    try {
+      await this.dispatchVerb(page, action);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const frame2 = await this.snapshot(page).catch(() => null);
+      return {
+        ok: false,
+        error: `${kind}: ${message.split("\n")[0]}`,
+        // Hand back the CURRENT state anyway: a failed act still moves the
+        // model forward if it can see what the page actually looks like. It
+        // carries the handoff note too — an act that failed right after a
+        // person used the browser most likely failed BECAUSE the page is now
+        // somewhere else, and "your click missed" would be the wrong lesson.
+        ...frame2 ? {
+          stateToken: this.tokenFor(tabId, entry, frame2),
+          output: this.withHandoffNote({ url: frame2.url })
+        } : {}
+      };
+    }
+    const settled = await this.settle(page);
+    const frame = await this.snapshot(page);
+    const screenshot = await page.screenshotBase64().catch(() => void 0);
+    return {
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url, ...screenshot ? { screenshot } : {} },
+        frame
+      ),
+      settled
+    };
+  }
+  /** Map an act verb onto the page primitives. */
+  async dispatchVerb(page, action) {
+    const target = action.target;
+    const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
+    if (point && !isPointInViewport(point.x, point.y)) {
+      throw new Error(
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+      );
+    }
+    const selector = target && "selector" in target ? target.selector : null;
+    if (target && "a11yRef" in target) {
+      throw new Error(
+        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
+      );
+    }
+    switch (action.verb) {
+      case "click":
+        if (point) return page.clickAt(point);
+        if (selector) return page.clickSelector(selector);
+        throw new Error("no element: click needs coordinates or a selector");
+      case "hover":
+        if (point) return page.hoverAt(point);
+        if (selector) return page.hoverSelector(selector);
+        throw new Error("no element: hover needs coordinates or a selector");
+      case "type": {
+        const text = action.value ?? "";
+        if (selector) return page.fillSelector(selector, text);
+        return page.typeText(text);
+      }
+      case "press":
+        if (!action.value) throw new Error("press needs a key in `value`");
+        return page.press(action.value);
+      case "scroll": {
+        const [dx, dy] = parseScrollDelta(action.value);
+        return page.scrollBy({ dx, dy });
+      }
+      case "drag": {
+        if (!point) throw new Error("drag needs start coordinates");
+        const to = parsePoint(action.value);
+        if (!to) {
+          throw new Error(
+            'drag needs a destination in `value` as "x,y" (viewport coordinates)'
+          );
+        }
+        if (!isPointInViewport(to.x, to.y)) {
+          throw new Error(
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
+          );
+        }
+        return page.dragTo(point, to);
+      }
+      case "select":
+        if (!selector) throw new Error("select needs a selector");
+        if (action.value === void 0) {
+          throw new Error("select needs the option value in `value`");
+        }
+        return page.selectOption(selector, action.value);
+      case "close_tab":
+      case "activate_tab":
+        return;
+    }
+  }
+  async webmcpInvoke(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge || !bridge.isSupported()) {
+      return {
+        ok: false,
+        error: "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools"
+      };
+    }
+    try {
+      const { invocationId, output } = await bridge.invoke({
+        toolName: action.toolKey,
+        input: action.input
+      });
+      const { output: capped, omitted } = capToolOutput(
+        output,
+        this.webmcpOutputBudgetBytes
+      );
+      const frame = await this.snapshot(entry.page);
+      return {
+        ...this.observation(
+          tabId,
+          entry,
+          { invocationId, result: capped, ...omitted ? { omitted } : {} },
+          frame
+        )
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+  async webmcpCancel(tabId, action) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge) {
+      return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    const known = await bridge.cancel(action.invocationId);
+    return { ok: true, output: { cancelled: known } };
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -505,10 +1317,60 @@ var ChromiumDriver = class {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry);
-      case "a11y":
-      case "console":
-      case "webmcp_tools":
-        return { ok: false, error: `unimplemented_in_w1: observe/${action.mode}` };
+      case "a11y": {
+        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
+        if (action.rootSelector && snapshot === null) {
+          return {
+            ok: false,
+            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
+          };
+        }
+        const frame = await this.snapshot(entry.page);
+        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+          snapshot,
+          this.a11yBudget
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            a11y: tree,
+            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+          },
+          frame
+        );
+      }
+      case "console": {
+        const { entries, omitted } = capConsole(
+          entry.page.consoleEntries(),
+          this.consoleBudget
+        );
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { console: entries, ...omitted > 0 ? { omitted } : {} },
+          frame
+        );
+      }
+      case "webmcp_tools": {
+        const bridge = await entry.page.webmcp();
+        const frame = await this.snapshot(entry.page);
+        if (!bridge || !bridge.isSupported()) {
+          return this.observation(
+            tabId,
+            entry,
+            { webmcpSupported: false, tools: [] },
+            frame
+          );
+        }
+        return this.observation(
+          tabId,
+          entry,
+          { webmcpSupported: true, tools: bridge.list() },
+          frame
+        );
+      }
     }
   }
   /**
@@ -566,13 +1428,46 @@ var ChromiumDriver = class {
    * than the returned output (P1).
    */
   observation(tabId, entry, output, frame) {
-    const stateToken = computeStateToken({
+    return {
+      ok: true,
+      output: this.withHandoffNote(output),
+      stateToken: this.tokenFor(tabId, entry, frame)
+    };
+  }
+  /**
+   * L6 — LOUD RESUME. The first result after a person handed the browser back
+   * says so, explicitly naming auth and cookies: the common handoff is a
+   * login, and "something may have changed" would understate exactly the
+   * change that just happened. Consumed once, so it marks the result that
+   * actually crossed the handoff rather than every later one.
+   */
+  withHandoffNote(output) {
+    return this.lease?.consumeResumedDirty() ? { ...output, handoffNote: RESUMED_AFTER_HANDOFF_NOTE } : output;
+  }
+  /**
+   * Drop console captured while a person held the browser, across EVERY tab —
+   * they may have opened one, and a leak in a tab nobody was watching is
+   * still a leak. Consumed once per handoff.
+   */
+  purgeHandoffConsole() {
+    const since = this.lease?.consumeResumedHeldSince?.();
+    if (since === void 0) return;
+    for (const entry of this.tabs.values()) {
+      if (entry.page.isClosed()) continue;
+      try {
+        entry.page.dropConsoleSince(since);
+      } catch {
+      }
+    }
+  }
+  /** The L3 token for a frame snapshot the caller already captured. */
+  tokenFor(tabId, entry, frame) {
+    return computeStateToken({
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal
     });
-    return { ok: true, output, stateToken };
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
   async snapshot(page) {
@@ -607,6 +1502,21 @@ var WEBMCP_LAUNCH_ARGS = [
 ];
 
 // server/services/browserd/daemon/launch-args.ts
+var ENABLE_FEATURES = "--enable-features=";
+var DISABLE_FEATURES = "--disable-features=";
+function featuresEnabledBy(args) {
+  return args.flatMap(
+    (arg) => arg.startsWith(ENABLE_FEATURES) ? arg.slice(ENABLE_FEATURES.length).split(",").filter(Boolean) : []
+  );
+}
+var BROWSERD_ENABLED_FEATURES = [
+  ...featuresEnabledBy(WEBMCP_LAUNCH_ARGS),
+  // Playwright enables this itself (unless PLAYWRIGHT_LEGACY_SCREENSHOT is
+  // set) and our switch would otherwise drop it, quietly moving every capture
+  // back to the legacy screenshot surface. Restated to preserve the pinned
+  // version's own default rather than to change it.
+  "CDPScreenshotNewSurface"
+];
 var BROWSERD_HARDENING_ARGS = [
   // Crash-avoidance in a container with a small /dev/shm. Its ABSENCE is exactly
   // what reads as "E2B is flaky" under load. (Local inspector carries this too.)
@@ -616,9 +1526,13 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-blink-features=AutomationControlled",
   // Determinism for the eval double-run bar: identical color across hosts.
   "--force-color-profile=srgb",
-  // Otherwise a navigation can hold the OLD frame and we screenshot a page that
-  // no longer exists — poison for both the agent and the eval.
-  "--disable-features=PaintHolding",
+  // NOTE — there is deliberately no `--disable-features=PaintHolding` here.
+  // Holding the old frame across a navigation really would poison a capture,
+  // but Playwright ALREADY disables PaintHolding in its own combined switch;
+  // restating it bought nothing and destroyed the other eleven entries in that
+  // list (see the ENABLE_FEATURES/DISABLE_FEATURES note above). Anything
+  // browserd genuinely needs disabled has to be added to Playwright's list,
+  // not emitted as a competing switch.
   // The panel/stream is frequently occluded and the driven tab is often not
   // foreground; without these, timers throttle and the agent sees a frozen app.
   "--disable-background-timer-throttling",
@@ -639,7 +1553,6 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-gpu",
   "--use-angle=swiftshader-webgl"
 ];
-var BROWSERD_OBSERVATION_VIEWPORT = { width: 1024, height: 768 };
 var BROWSERD_CONTEXT_OPTIONS = {
   viewport: BROWSERD_OBSERVATION_VIEWPORT,
   deviceScaleFactor: 1,
@@ -650,7 +1563,22 @@ var BROWSERD_CONTEXT_OPTIONS = {
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 MCPJam-Browser/1.0"
 };
 function buildBrowserdLaunchArgs(extra = []) {
-  return [...WEBMCP_LAUNCH_ARGS, ...BROWSERD_HARDENING_ARGS, ...extra];
+  const passthrough = WEBMCP_LAUNCH_ARGS.filter(
+    (arg) => !arg.startsWith(ENABLE_FEATURES)
+  );
+  const args = [
+    ...passthrough,
+    `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
+    ...BROWSERD_HARDENING_ARGS,
+    ...extra
+  ];
+  const clobbering = args.find((arg) => arg.startsWith(DISABLE_FEATURES));
+  if (clobbering) {
+    throw new Error(
+      `browserd launch args must not carry ${DISABLE_FEATURES} (got "${clobbering}"): Chromium honours only the last occurrence, so this would discard Playwright's own disabled-feature list wholesale`
+    );
+  }
+  return args;
 }
 
 // server/services/browserd/daemon/profile-lock.ts
@@ -681,7 +1609,134 @@ function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
 }
 
+// server/services/browserd/daemon/aria-snapshot.ts
+var ROLE_LINE = /^([^\s":]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*(.*)$/;
+var ATTRIBUTE = /\[([^\]=]+)(?:=([^\]]*))?\]/g;
+function parseAriaSnapshot(yaml) {
+  if (!yaml) return null;
+  const lines = yaml.split("\n");
+  const roots = [];
+  const stack = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (raw.trim().length === 0) continue;
+    const parsed = parseLine(raw);
+    if (!parsed) continue;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= parsed.indent) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1];
+    if (parent) {
+      (parent.node.children ??= []).push(parsed.node);
+    } else {
+      roots.push(parsed.node);
+    }
+    if (parsed.blockScalar) {
+      const { text, next } = readBlockScalar(lines, index + 1, parsed.indent);
+      if (text) parsed.node.name = text;
+      index = next - 1;
+      continue;
+    }
+    if (parsed.opensChildren) {
+      stack.push({ indent: parsed.indent, node: parsed.node });
+    }
+  }
+  if (roots.length === 0) return null;
+  if (roots.length === 1) return roots[0];
+  return { role: "document", children: roots };
+}
+function parseLine(raw) {
+  const indent = raw.length - raw.trimStart().length;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("- ") && trimmed !== "-") return null;
+  let body = trimmed.slice(1).trim();
+  if (body.length === 0) return null;
+  const opensChildren = body.endsWith(":");
+  if (opensChildren) body = body.slice(0, -1).trimEnd();
+  const property = matchProperty(body);
+  if (property) {
+    if (property.value === "|" || property.value === "|-") {
+      return {
+        indent,
+        node: { role: property.key },
+        opensChildren: false,
+        blockScalar: true
+      };
+    }
+    return {
+      indent,
+      node: { role: property.key, name: property.value },
+      opensChildren: false,
+      blockScalar: false
+    };
+  }
+  const match = ROLE_LINE.exec(body);
+  if (!match) {
+    return {
+      indent,
+      node: { role: "text", name: body },
+      opensChildren,
+      blockScalar: false
+    };
+  }
+  const [, role, name, tail] = match;
+  const node = { role };
+  if (name !== void 0) node.name = unescapeName(name);
+  applyAttributes(node, tail);
+  return { indent, node, opensChildren, blockScalar: false };
+}
+function matchProperty(body) {
+  const colon = body.indexOf(": ");
+  const bare = body.endsWith(":") ? body.length - 1 : -1;
+  const at = colon >= 0 ? colon : bare;
+  if (at <= 0) return null;
+  const key = body.slice(0, at);
+  if (key.includes('"') || key.includes(" ")) return null;
+  return { key, value: body.slice(at + 1).trim() };
+}
+function applyAttributes(node, tail) {
+  if (!tail) return;
+  for (const match of tail.matchAll(ATTRIBUTE)) {
+    const key = match[1].trim();
+    if (!key) continue;
+    const value = match[2];
+    if (value === void 0) {
+      node[key] = true;
+      continue;
+    }
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+    node[key] = trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed;
+  }
+}
+function unescapeName(name) {
+  return name.replace(/\\(["\\])/g, "$1");
+}
+function readBlockScalar(lines, from, parentIndent) {
+  const collected = [];
+  let cursor = from;
+  let blockIndent = null;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line.trim().length === 0) {
+      collected.push("");
+      cursor += 1;
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent <= parentIndent) break;
+    blockIndent ??= indent;
+    collected.push(line.slice(Math.min(blockIndent, indent)));
+    cursor += 1;
+  }
+  while (collected.length > 0 && collected[collected.length - 1] === "") {
+    collected.pop();
+  }
+  return { text: collected.join("\n"), next: cursor };
+}
+
 // server/services/browserd/daemon/chromium-launch.ts
+var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
   const parts = [];
@@ -701,7 +1756,37 @@ function abortPromise(signal) {
     });
   });
 }
+var CONSOLE_RING_SIZE = 200;
+var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var ACT_TIMEOUT_MS = 15e3;
+var A11Y_TIMEOUT_MS = 5e3;
+var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
+  const consoleRing = [];
+  page.on("console", (message) => {
+    try {
+      const text = message.text?.() ?? "";
+      consoleRing.push({
+        type: message.type?.() ?? "log",
+        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+        at: Date.now()
+      });
+      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  page.on("pageerror", (error) => {
+    consoleRing.push({
+      type: "pageerror",
+      text: capText(
+        error instanceof Error ? error.message : String(error),
+        CONSOLE_ENTRY_CAPTURE_BYTES
+      ),
+      at: Date.now()
+    });
+    if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+  });
+  let webmcpPromise = null;
   return {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
@@ -721,49 +1806,147 @@ function wrapPage(page) {
     async requestAnimationFrame(signal) {
       await Promise.race([
         page.evaluate(
-          "() => new Promise((r) => requestAnimationFrame(() => r()))"
+          "(() => new Promise((r) => requestAnimationFrame(() => r())))()"
         ),
         abortPromise(signal)
       ]);
     },
     domStructureSignal() {
-      return page.evaluate(DOM_SIGNAL_FN);
+      return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
-      const buffer = await page.screenshot({ type: "png" });
+      const buffer = await page.screenshot({
+        type: "jpeg",
+        quality: SCREENSHOT_JPEG_QUALITY
+      });
       return buffer.toString("base64");
     },
     url: () => page.url(),
     close: () => page.close(),
-    isClosed: () => page.isClosed()
+    isClosed: () => page.isClosed(),
+    bringToFront: () => page.bringToFront(),
+    // --- act primitives -----------------------------------------------------
+    // Coordinates are already in the canonical observation viewport (L5), so
+    // no scaling happens here: what the model saw IS what it clicks.
+    clickAt: (point, options) => page.mouse.click(point.x, point.y, {
+      ...options?.button ? { button: options.button } : {}
+    }),
+    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverAt: (point) => page.mouse.move(point.x, point.y),
+    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    typeText: (text) => page.keyboard.type(text),
+    fillSelector: (selector, text) => page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
+    press: (key) => page.keyboard.press(key),
+    scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    async dragTo(from, to) {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2);
+      await page.mouse.move(to.x, to.y);
+      await page.mouse.up();
+    },
+    async selectOption(selector, value) {
+      await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
+    },
+    // --- observation --------------------------------------------------------
+    async a11ySnapshot(rootSelector) {
+      const target = rootSelector ? page.locator(rootSelector).first() : page;
+      try {
+        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
+        return parseAriaSnapshot(yaml);
+      } catch {
+        return null;
+      }
+    },
+    consoleEntries: () => consoleRing,
+    dropConsoleSince: (since) => {
+      let keep = consoleRing.length;
+      while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;
+      consoleRing.length = keep;
+    },
+    webmcp() {
+      webmcpPromise ??= attachWebMcp(page);
+      return webmcpPromise;
+    }
   };
 }
+async function attachWebMcp(page) {
+  const attach = cdpAttachers.get(page);
+  if (!attach) return null;
+  try {
+    const session = await attach();
+    const bridge = new WebMcpBridge(session);
+    await bridge.start(async () => {
+      const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
+      return supported === true;
+    });
+    return bridge;
+  } catch {
+    return null;
+  }
+}
+var cdpAttachers = /* @__PURE__ */ new WeakMap();
+function registerCdpAttacher(page, attach) {
+  cdpAttachers.set(page, attach);
+}
 async function launchBrowserdContext(options) {
-  await clearStaleSingletonLock(options.userDataDir);
   const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
+  const launchArgs = {
     headless: options.headless ?? false,
+    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+    // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs),
+    args: buildBrowserdLaunchArgs(options.extraArgs)
+  };
+  if (options.contextMode === "ephemeral") {
+    const browser = await chromium.launch(launchArgs);
+    let context2;
+    try {
+      context2 = await browser.newContext({
+        acceptDownloads: false,
+        permissions: [],
+        ...BROWSERD_CONTEXT_OPTIONS
+      });
+    } catch (error) {
+      await browser.close().catch(() => {
+      });
+      throw error;
+    }
+    return adaptContext(context2, {
+      // The browser outlives the context, so closing the context alone would
+      // leave a Chromium process behind in the box.
+      onClose: () => browser.close()
+    });
+  }
+  await clearStaleSingletonLock(options.userDataDir);
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    ...launchArgs,
     acceptDownloads: false,
     permissions: [],
     ...BROWSERD_CONTEXT_OPTIONS
   });
   return adaptContext(context);
 }
-function adaptContext(context) {
+function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
   return {
     async newPage() {
       const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
+      if (context.newCDPSession) {
+        registerCdpAttacher(page, () => context.newCDPSession(page));
+      }
       return wrapPage(page);
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
     },
-    close() {
-      return context.close();
+    async close() {
+      try {
+        await context.close();
+      } finally {
+        await options.onClose?.();
+      }
     }
   };
 }
@@ -792,7 +1975,11 @@ function readBrowserdConfig(env = process.env) {
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
     headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
-    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0
+    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent"
   };
 }
 function extraArgsFor(config) {
@@ -812,10 +1999,12 @@ async function main() {
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
-    extraArgs: extraArgsFor(config)
+    extraArgs: extraArgsFor(config),
+    contextMode: config.contextMode
   });
-  const driver = new ChromiumDriver(context);
-  const stack = buildBrowserdStack(driver, { token: config.token });
+  const lease = new HandoffLease();
+  const driver = new ChromiumDriver(context, { lease });
+  const stack = buildBrowserdStack(driver, { token: config.token, lease });
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;

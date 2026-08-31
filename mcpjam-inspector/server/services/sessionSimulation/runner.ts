@@ -38,6 +38,7 @@ import {
 } from "../../utils/built-in-tools/registry.js";
 import type { TrustedHarnessSandboxBinding } from "../../utils/harness/resolve-sandbox.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { browserApprovalDeliveryFor } from "../evals/browser-tool-policy.js";
 import {
   listCloudRuntimeSkills,
   shouldEnableCloudSkillTools,
@@ -238,6 +239,13 @@ export interface SyntheticHostRuntime {
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
   builtInToolIds?: string[];
+  /**
+   * What the hosted `browser_*` tools may do in this unattended run. A
+   * journey/swarm session never pauses, so approval does not exist here and a
+   * DECLARED policy is the only thing that can authorize them; absent or
+   * malformed ⇒ they are not advertised (fail-closed).
+   */
+  browserToolPolicy?: unknown;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
@@ -410,6 +418,7 @@ export async function runSyntheticHostSession(
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
+    browserToolPolicy,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
@@ -595,6 +604,10 @@ export async function runSyntheticHostSession(
     // Built-in tools from the scenario host config (e.g. web_search) resolve
     // the same way a real visitor's chat-v2 turn would: billed via Convex
     // against this project, namespaced under the synthetic session id.
+    const browserApprovalDelivery = browserApprovalDeliveryFor(
+      browserToolPolicy,
+      { source: "sessionSimulation" },
+    );
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
@@ -607,6 +620,9 @@ export async function runSyntheticHostSession(
         // would otherwise share the launcher's one project computer. See the
         // `bash` gate in registry.ts.
         isJourneySession: persist.sourceType === "swarm",
+        // Unattended: the run's declared policy is the only authorization
+        // browser tools can have here, since nothing can pause to ask.
+        ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.

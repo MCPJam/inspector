@@ -35,6 +35,7 @@ import {
   syncScenarioBootstrapHash,
   syncScenarioSessionHash,
 } from "@/lib/embedded-preview";
+import { clearScenarioChatTranscript } from "@/lib/scenario-chat-transcript";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/lib/scenario-server-optional";
 import { useHostedOAuthRequirements } from "@/hooks/hosted/use-hosted-oauth-requirements";
 import { useScenarioTurnRating } from "@/hooks/useScenarioTurnRating";
@@ -378,11 +379,22 @@ export function ScenarioChatPage({
     writeScenarioSession(nextSession);
   }, []);
 
-  const clearCurrentSession = useCallback(() => {
+  /**
+   * Drop the grant AND the tester's resumable transcript for it. Access loss is
+   * terminal here (`handleHostedAccessRevoked`, or a redeem that no longer
+   * resolves), so leaving the conversation in sessionStorage would offer a
+   * resume for a scenario this visitor can no longer reach. Takes the scenario
+   * id explicitly because the session it belongs to is being torn down in the
+   * same breath.
+   */
+  const clearCurrentSession = useCallback((scenarioId?: string | null) => {
     if (isEmbeddedPreview()) {
       return;
     }
 
+    if (scenarioId) {
+      clearScenarioChatTranscript(scenarioId);
+    }
     clearScenarioSession();
   }, []);
 
@@ -647,7 +659,7 @@ export function ScenarioChatPage({
         } catch (error) {
           if (cancelled) return;
           setSession(null);
-          clearCurrentSession();
+          clearCurrentSession(sessionRef.current?.scenarioId ?? null);
 
           const nextError = isScenarioRouteError(error)
             ? error
@@ -823,7 +835,7 @@ export function ScenarioChatPage({
   const handleHostedAccessRevoked = useCallback(
     (error: HostedAccessErrorDetail) => {
       setSession(null);
-      clearCurrentSession();
+      clearCurrentSession(sessionRef.current?.scenarioId ?? null);
       setRouteError(
         createScenarioRouteError(error.status, error.message, error.code)
       );
