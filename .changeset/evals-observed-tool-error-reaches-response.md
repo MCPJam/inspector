@@ -15,4 +15,6 @@ Two boundaries are deliberate. A span carrying an `mcpErrorCode` never reached t
 
 This is the one evidence-driven entry in the applicability table, and it is a _positive observation_ rather than a gap, which is what keeps the surrounding rule intact: a stage turned on by observed evidence cannot then be reported as an evidence gap, because the deriver holds the very span that turned it on.
 
+The chain says this whether or not the policy agrees. Under `failOnToolError: false` the trial passes on the very run whose tool errored, and the `response` row is still red — the verdict answers "did policy fail this trial", the chain answers "what happened", and those are allowed to differ. Without that, a suite run entirely under that policy would report a clean funnel over servers that were failing calls.
+
 Analyzer 6 → 7. `STAGE_REASONS` does not move (`toolError` already existed), so the backend mirror needs no re-pin.
