@@ -259,6 +259,7 @@ export type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformServerGroup,
   PlatformCatalogOauthProbe,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,

@@ -5341,6 +5341,7 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
+            "--compose-host-servers",
             "--compose-computer",
             "default",
             "--compose-model",
@@ -5390,6 +5391,7 @@ test("eval run --compose-model variadic launches one group without attaching", a
             "suite-1",
             "--compose-host",
             "Claude Code",
+            "--compose-host-servers",
             "--compose-model",
             "anthropic/claude-haiku-4.5",
             "google/gemini-2.5-flash"
@@ -5438,6 +5440,7 @@ test("eval run --save-targets attaches the composed cell", async () => {
             "suite-1",
             "--compose-host",
             "Claude Code",
+            "--compose-host-servers",
             "--save-targets"
           ),
           "--format",
@@ -5483,6 +5486,37 @@ test("eval run rejects a --compose-* refinement with no --compose-host", async (
     assert.notEqual(run.result.exitCode, 0);
     assert.match(run.stderr, /--compose-\* flags need --compose-host/);
     assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run refuses a composed run that names no servers", async () => {
+  // The server is what the suite tests. Left unsaid, the run reads the host's
+  // CURRENT list, so editing that shared host repoints every eval composed
+  // against it — silently, with a real score to show for it.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-server/);
+    assert.match(run.stderr, /--compose-host-servers/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
   } finally {
     await fixture.close();
   }

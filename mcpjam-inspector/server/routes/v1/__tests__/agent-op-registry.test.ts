@@ -586,6 +586,103 @@ describe("agent op registry", () => {
     });
   });
 
+  it("freezes compose server names to server ids, and folds the singular in", async () => {
+    // Frozen to SERVER ids, not to a group id: the group is minted at execute
+    // time and is content-determined by these ids, so freezing them closes the
+    // pointer without doing a write inside what must stay a read.
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+      listImages: async () => ({ items: [] }),
+      listProjectServers: async () => ({
+        items: [
+          { id: "srv_vercel", name: "Vercel" },
+          { id: "srv_sentry", name: "Sentry" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        hostLabel: "Claude Code",
+        servers: ["srv_vercel"],
+      },
+    });
+  });
+
+  it("leaves compose servers as written when the platform cannot resolve them", async () => {
+    // Freezing is a narrowing, and a platform that cannot answer must not cost
+    // the caller the proposal — execute still resolves the selector.
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+      listImages: async () => ({ items: [] }),
+      listProjectServers: async () => {
+        throw new Error("platform unavailable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        hostLabel: "Claude Code",
+        server: "Vercel",
+      },
+    });
+  });
+
+  it("freezes no server when only SOME of the list resolves", async () => {
+    // All-or-nothing: a half-frozen list would pair resolved ids with a name
+    // still free to repoint, which is worse than freezing none.
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+      listImages: async () => ({ items: [] }),
+      listProjectServers: async () => ({
+        items: [{ id: "srv_vercel", name: "Vercel" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          compose: { host: "Claude Code", servers: ["Vercel", "Ghost"] },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        hostLabel: "Claude Code",
+        servers: ["Vercel", "Ghost"],
+      },
+    });
+  });
+
   it("freezes a case run's compose the same way the suite run's is frozen", async () => {
     // run_eval_case takes the full compose input — including `saveTargets`,
     // which ATTACHES the minted cell to the suite. Without normalization its

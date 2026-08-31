@@ -457,6 +457,15 @@ export interface PlatformOperation<TInput, TOutput> {
 const PROJECT_SELECTOR_DESCRIPTION =
   "Project name or ID. Defaults to the most recently updated accessible project.";
 
+/**
+ * Up here, not beside the compose resolvers it belongs to, for the same
+ * temporal-dead-zone reason `composeRunTargetInput` is declared above the run
+ * inputs: both compose schemas read this at module-init time, and the earlier
+ * of the two sits thousands of lines above those resolvers.
+ */
+const SERVERS_SELECTOR_DESCRIPTION =
+  "Server(s) (name or ID) the stack must run against. Resolves to a pinned standalone server group holding exactly these servers, so the stack keeps testing them even if the host's own server list is edited later. Mutually exclusive with `serverGroup`.";
+
 const listProjectsInput = z.object({
   organizationId: z
     .string()
@@ -2954,6 +2963,9 @@ async function composeRunEnvironment(
   stack: {
     host: string;
     serverGroup?: string;
+    server?: string;
+    servers?: string[];
+    hostServers?: boolean;
     model?: string;
     models?: string[];
     includeClientDefault?: boolean;
@@ -2965,13 +2977,47 @@ async function composeRunEnvironment(
   signal: AbortSignal | undefined,
   options: { attach: boolean } = { attach: true }
 ): Promise<ComposedRunEnvironment> {
-  const choices = expandComposeModelChoices(stack);
+  // Once, before the fan-out: every model cell shares one server group, and
+  // resolving inside the loop would re-list (and race to create) per cell.
+  const pinned = await materializeComposeServers(
+    client,
+    project,
+    stack,
+    signal
+  );
+  // Truthiness, not `!== undefined`, because that is what actually reaches the
+  // wire: `resolveComposeStack` drops a blank `serverGroup`, so a `""` checked
+  // for presence alone would clear this guard and then compose the exact
+  // unpinned environment it exists to refuse.
+  const pinnedGroup = pinned.serverGroup?.trim();
+  // Asking to follow the host AND to pin is a contradiction, and resolving it
+  // silently would drop one of the two things the caller said. The CLI rejects
+  // the pair too; repeated here because `execute` is reachable without it.
+  if (
+    stack.hostServers === true &&
+    (pinnedGroup || stack.server !== undefined || stack.servers !== undefined)
+  ) {
+    throw operationInputError(
+      "`hostServers` runs against the host's current list, so it cannot be combined with `server`/`servers`/`serverGroup`, which pin one."
+    );
+  }
+  // The server is the thing under test, so a composed RUN has to say which one.
+  // Without a pin the run reads the host's list at execution time, and editing
+  // that shared host silently repoints every eval composed against it — the
+  // failure this guard exists to stop. Following the host stays available, but
+  // only as something the caller asked for out loud.
+  if (!pinnedGroup && stack.hostServers !== true) {
+    throw operationInputError(
+      "A composed eval run must say which servers to test: pass `server`/`servers` (or `serverGroup`). To deliberately run against the host's current list — which changes when the host is edited — pass `hostServers: true`."
+    );
+  }
+  const choices = expandComposeModelChoices(pinned);
   const cells: ComposedCell[] = [];
   for (const choice of choices) {
     const body = await resolveComposeStack(
       client,
       project,
-      { ...stack, model: choice.modelId },
+      { ...pinned, model: choice.modelId },
       signal
     );
     const ensured = await client.ensureAdhocEnvironment(
@@ -3442,8 +3488,25 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Standalone server group to pin (by ID). Omit to use the host's own servers."
+        "Standalone server group to pin (by ID). One of `server`/`servers`/`serverGroup` is required unless `hostServers` opts into the host's live list."
       ),
+    hostServers: z
+      .boolean()
+      .optional()
+      .describe(
+        "Run against the host's CURRENT server list instead of pinning one. The list is read at run time, so editing the host later changes what a rerun tests — opt in only when following the host is the point."
+      ),
+    server: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Singular alias for `servers`."),
+    servers: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(SERVERS_SELECTOR_DESCRIPTION),
     model: z
       .string()
       .trim()
@@ -3488,6 +3551,7 @@ const composeRunTargetInput = z
       .optional()
       .describe("Plugin VERSION IDs to pin for the composed stack."),
   })
+  .superRefine(refineComposeServerSelectors)
   .describe(
     "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached."
   );
@@ -8944,6 +9008,17 @@ const composeStackFields = {
     .describe(
       "Standalone server group to pin (by ID). Omit to use the host's own servers."
     ),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Singular alias for `servers`."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(SERVERS_SELECTOR_DESCRIPTION),
   model: z
     .string()
     .trim()
@@ -8972,7 +9047,7 @@ const ensureAdhocEnvironmentInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   ...composeStackFields,
-});
+}).superRefine(refineComposeServerSelectors);
 export type EnsureAdhocEnvironmentInput = z.infer<
   typeof ensureAdhocEnvironmentInput
 >;
@@ -8983,6 +9058,183 @@ export type EnsureAdhocEnvironmentResult = {
   /** False when this stack had already been composed — see the op description. */
   created: boolean;
 };
+
+/** How many `name (n)` variants to try before giving up on a colliding name. */
+const SERVER_GROUP_NAME_ATTEMPTS = 5;
+
+/**
+ * `server`/`servers` are two spellings of one axis, and `serverGroup` is the
+ * already-resolved form of the same thing — so at most one may be set. Shared
+ * by both compose schemas (a function declaration, so it is in scope for the
+ * run-target schema declared far above `composeStackFields`).
+ */
+function refineComposeServerSelectors(
+  value: { server?: string; servers?: string[]; serverGroup?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.server !== undefined && value.servers !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["servers"],
+      message: "Provide either `server` or `servers`, not both.",
+    });
+  }
+  if (
+    value.serverGroup !== undefined &&
+    (value.server !== undefined || value.servers !== undefined)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["serverGroup"],
+      message:
+        "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    });
+  }
+}
+
+/** Order-independent set equality over two id lists. */
+function sameServerSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = new Set(a);
+  return left.size === new Set(b).size && b.every((id) => left.has(id));
+}
+
+/**
+ * A stable, human-readable name for a group minted from server selectors.
+ *
+ * Sorted so the name does not depend on the order the selectors were typed —
+ * `--compose-server A B` and `--compose-server B A` describe one group and
+ * should not mint two.
+ */
+function composeServerGroupName(servers: PlatformProjectServer[]): string {
+  return [...servers]
+    .map((server) => server.name)
+    .sort((a, b) => a.localeCompare(b))
+    .join(" + ");
+}
+
+/**
+ * Resolve server selectors to a pinned server group, creating one if no
+ * existing group already holds exactly that set.
+ *
+ * Reuse is matched on CONTENT, not name, because the environment fingerprint
+ * keys on the group's ID: two same-content groups mint two ad-hoc
+ * environments, and a group a live environment pins cannot be deleted. So
+ * minting one per run would accumulate undeletable near-duplicates and defeat
+ * the content-addressing that makes re-composing a stack free.
+ *
+ * A name collision means someone already has a DIFFERENT group under the name
+ * we derived. We re-list before suffixing because the likeliest cause is a
+ * concurrent identical compose that won the race — reusing its group is the
+ * whole point. Only when the name is genuinely taken by other content do we
+ * suffix.
+ */
+async function resolveComposeServerGroup(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  // Reuses the run-server resolver: same name-or-id rules, same up-front
+  // refusal of stdio/URL-less servers the hosted runner could never connect.
+  const servers = await resolveRunServers(client, project, selectors, signal);
+  const wanted = servers.map((server) => server.id);
+
+  const findMatch = async () => {
+    let page;
+    try {
+      page = await client.listServerGroups(
+        { projectId: project.id },
+        { signal }
+      );
+    } catch (error) {
+      // A deployment that predates the server-group routes answers 404 for the
+      // ROUTE, which would otherwise surface as a bare "not found" naming
+      // nothing the caller can act on. `--compose-server-group` still works
+      // there, so say so rather than leaving them to guess.
+      if (error instanceof PlatformApiError && error.status === 404) {
+        throw resolutionError(
+          "This deployment does not support --compose-server yet. Create a server group in the app and pass it with --compose-server-group <id>.",
+        );
+      }
+      throw error;
+    }
+    return page.items.find((group) => sameServerSet(group.serverIds, wanted));
+  };
+
+  const existing = await findMatch();
+  if (existing) return existing.id;
+
+  const baseName = composeServerGroupName(servers);
+  for (let attempt = 1; attempt <= SERVER_GROUP_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 1 ? baseName : `${baseName} (${attempt})`;
+    try {
+      const created = await client.createServerGroup(
+        {
+          projectId: project.id,
+          body: { name, serverIds: wanted },
+        },
+        { signal },
+      );
+      return created.id;
+    } catch (error) {
+      if (!(error instanceof PlatformApiError) || error.status !== 409) {
+        throw error;
+      }
+      const raced = await findMatch();
+      if (raced) return raced.id;
+    }
+  }
+
+  throw resolutionError(
+    `Could not create a server group named "${baseName}": that name and ${
+      SERVER_GROUP_NAME_ATTEMPTS - 1
+    } numbered variants are already taken by groups holding different servers. Rename one, or pass an existing group with --compose-server-group.`,
+  );
+}
+
+/**
+ * Rewrite a stack's `server`/`servers` selectors into the `serverGroup` the
+ * rest of the pipeline already understands.
+ *
+ * Deliberately separate from `resolveComposeStack`, which run composition
+ * calls once PER MODEL CELL: doing the list-and-maybe-create in there would
+ * repeat it per cell and let a fan-out race itself into a name conflict.
+ * Callers run this once, up front.
+ */
+async function materializeComposeServers<
+  T extends { serverGroup?: string; server?: string; servers?: string[] },
+>(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  stack: T,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  // Both refinement rules are repeated below, not just the group one: the
+  // schemas only run for callers that PARSE their input, and a direct
+  // `execute()` caller passing both would otherwise have one selector
+  // silently dropped and spend a run against the wrong servers.
+  if (stack.server !== undefined && stack.servers !== undefined) {
+    throw operationInputError(
+      "Provide either `server` or `servers`, not both."
+    );
+  }
+  const selectors = stack.servers ?? (stack.server ? [stack.server] : []);
+  if (selectors.length === 0) return stack;
+  if (stack.serverGroup !== undefined) {
+    throw operationInputError(
+      "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+    );
+  }
+  const serverGroup = await resolveComposeServerGroup(
+    client,
+    project,
+    selectors,
+    signal
+  );
+  const { server: _server, servers: _servers, ...rest } = stack;
+  return { ...rest, serverGroup } as T;
+}
 
 /**
  * Resolve a composed stack's selectors to the ids the platform stores.
@@ -9040,7 +9292,13 @@ export const ensureAdhocEnvironmentOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const body = await resolveComposeStack(client, project, input, signal);
+    const stack = await materializeComposeServers(
+      client,
+      project,
+      input,
+      signal
+    );
+    const body = await resolveComposeStack(client, project, stack, signal);
     const ensured = await client.ensureAdhocEnvironment(
       { projectId: project.id, body },
       { signal }
