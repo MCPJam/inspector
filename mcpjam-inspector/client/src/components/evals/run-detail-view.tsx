@@ -45,7 +45,10 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
-import { SuiteRunStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  SuiteRunStageFunnelAvailability,
+  SuiteRunStageFunnelPanel,
+} from "@/components/shared/user-value-chain/StageFunnelPanels";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -63,6 +66,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
+  runHasInsightContent,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
@@ -576,6 +580,30 @@ export function RunDetailView({
 
   const embeddedInResultsSplit = hideKpiStrip;
 
+  /**
+   * Whether this run has a stage funnel to draw, reported by the probe below.
+   *
+   * Stored WITH the run it describes, and read only when that run is the one
+   * on screen. This component is reused across runs by the run selector, so a
+   * bare boolean would survive a switch and a stale `true` would open an empty
+   * rail on the run you moved to. Starting empty also means a run without a
+   * funnel never flashes one on the way to finding out.
+   */
+  const [stageFunnelFor, setStageFunnelFor] = useState<{
+    suiteRunId: string | undefined;
+    hasFunnel: boolean;
+  }>({ suiteRunId: undefined, hasFunnel: false });
+
+  const handleStageFunnelAvailability = useCallback(
+    (suiteRunId: string | undefined, hasFunnel: boolean) =>
+      setStageFunnelFor({ suiteRunId, hasFunnel }),
+    [],
+  );
+
+  const hasStageFunnel =
+    stageFunnelFor.suiteRunId === selectedRunDetails._id &&
+    stageFunnelFor.hasFunnel;
+
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
       <AiTriageCard
@@ -780,6 +808,19 @@ export function RunDetailView({
     </>
   );
 
+  /**
+   * Mounted unconditionally, and deliberately NOT inside the rail or the band
+   * it informs — it answers whether those should open, so it has to exist
+   * before they do. Renders nothing; costs one query, which Convex shares with
+   * the panel's own subscription.
+   */
+  const stageFunnelProbe = (
+    <SuiteRunStageFunnelAvailability
+      suiteRunId={selectedRunDetails._id}
+      onChange={handleStageFunnelAvailability}
+    />
+  );
+
   const insightRail = (
     <RunInsightRail
       triageCard={
@@ -795,16 +836,30 @@ export function RunDetailView({
       goalCompletionCard={goalCompletionPanel}
       groundednessCard={groundednessPanel}
       userValueChainCard={userValueChainPanel}
+      userValueChainHasContent={hasStageFunnel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(
-    serverQualityTriage ||
-      goalCompletionPanel ||
-      groundednessPanel ||
-      actionableFindingsPanel,
-  );
+  /**
+   * The chain counts toward "is there anything to show" — but only when it
+   * actually has a funnel to draw.
+   *
+   * Both gates below read this ONE boolean, and it comes from a probe rather
+   * than from the panel, because the panel cannot answer: neither gate mounts
+   * it until they have already decided to open. Counting the card itself
+   * instead would keep a rail alive on every run with no insight content at
+   * all, since the node is truthy whether or not it renders anything — which
+   * is why it was excluded from these checks in the first place, and why the
+   * fix has to be data-driven rather than a matter of adding the node.
+   */
+  const hasInsightContent = runHasInsightContent({
+    serverQualityTriage,
+    goalCompletionPanel,
+    groundednessPanel,
+    actionableFindingsPanel,
+    hasStageFunnel,
+  });
 
   const triageFixCount = useMemo(
     () =>
@@ -1041,6 +1096,9 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3",
       )}
     >
+      {/* Renders nothing. Sits above every layout branch below because all of
+          them gate on the answer it reports. */}
+      {stageFunnelProbe}
       {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.

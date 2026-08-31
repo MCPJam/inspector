@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - "claude/mcp-benchmarks-v2-b0tw4b-**"
+      - "claude/uvc-mcp-eval-reporting-gyycwl**"
   push:
     branches: [main]
 
