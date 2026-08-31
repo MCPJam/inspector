@@ -409,6 +409,47 @@ export function RunDetailMetricsCharts({
   );
 }
 
+/**
+ * Whether the run-detail INSIGHT BAND should exist at all.
+ *
+ * The outer half of the same decision `RunInsightRail` makes below, and the
+ * one that runs first: the band wraps the rail, so a rail that correctly
+ * decides to open is never seen if this says no. They are separate conditions
+ * because they count different things — the band also counts the actionable-
+ * findings panel, which the rail does not render — but they must agree about
+ * the chain, and this is where that agreement is written down.
+ *
+ * `hasStageFunnel` is the member worth naming. Like `userValueChainHasContent`
+ * below it is a fact about the DATA, not about a node: the chain card is a
+ * fragment whose two halves each self-suppress while the fragment itself stays
+ * truthy, so counting the node would keep an otherwise-empty band alive as
+ * dead space. Dropping it, conversely, hides the band on exactly the runs
+ * whose chain is the only thing there is to show — the bug this lane exists to
+ * fix, and one the rail's own tests cannot catch from inside a band that never
+ * rendered.
+ */
+export function runHasInsightContent({
+  serverQualityTriage,
+  goalCompletionPanel,
+  groundednessPanel,
+  actionableFindingsPanel,
+  hasStageFunnel,
+}: {
+  serverQualityTriage?: ReactNode;
+  goalCompletionPanel?: ReactNode;
+  groundednessPanel?: ReactNode;
+  actionableFindingsPanel?: ReactNode;
+  hasStageFunnel?: boolean;
+}): boolean {
+  return Boolean(
+    serverQualityTriage ||
+      goalCompletionPanel ||
+      groundednessPanel ||
+      actionableFindingsPanel ||
+      hasStageFunnel,
+  );
+}
+
 /** Right column: AI insights only. */
 export function RunInsightRail({
   triageCard,
