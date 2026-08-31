@@ -1436,7 +1436,15 @@ const PROVIDER_UNKNOWABLE_FAILURES: ReadonlyArray<StageReason | undefined> = [
 /**
  * Re-label what a MODEL-CALL failure made unknowable.
  *
- * Applied last, and in two parts.
+ * Applied BEFORE the positional cascade, and again in `finalize` for the
+ * early-return paths that never reach it — idempotent, so the second pass over
+ * already-converted rows finds nothing to do. An earlier revision of this
+ * docblock said "applied last"; that was true until the withdrawal had to move
+ * ahead of the cascade, which reads `failed` rows to decide which later stages
+ * never ran. Withdrawing after it ran left three rows citing a failure the
+ * chain no longer recorded. See the comment at the call site.
+ *
+ * Two parts.
  *
  * BLANK ROWS. A stage that measured nothing is re-labelled, while a stage with
  * its own evidence keeps its own row: the provider dying at turn 4 does not

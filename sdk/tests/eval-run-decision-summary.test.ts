@@ -13,6 +13,8 @@ import { describe, expect, it } from "vitest";
 import {
   assembleEvalRunDecisionSummary,
   DECISION_LABEL_VOCABULARIES,
+  DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
+  DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   EVAL_RUN_DECISION_SUMMARY_SCHEMA_VERSION,
   EVAL_RUN_DECISION_UNDECIDED_REASON_LABELS,
   EVAL_RUN_DECISION_UNDECIDED_REASONS,
@@ -300,10 +302,10 @@ describe("evidence is attached to the claim it supports", () => {
         ...(opts.failSelection
           ? { state: "failed", reason: "missingToolCall" }
           : opts.unmeasureSelection
-          ? { state: "notMeasured", reason: "noEvidenceCaptured" }
-          : opts.selectionNotApplicable
-          ? { state: "notApplicable", reason: "notAuthored" }
-          : { state: "passed", reason: "observed" }),
+            ? { state: "notMeasured", reason: "noEvidenceCaptured" }
+            : opts.selectionNotApplicable
+              ? { state: "notApplicable", reason: "notAuthored" }
+              : { state: "passed", reason: "observed" }),
       },
       { stage: "call", state: "passed", reason: "observed" },
       { stage: "response", state: "passed", reason: "observed" },
@@ -324,7 +326,7 @@ describe("evidence is attached to the claim it supports", () => {
       disagreementInput({ analyzerVersion: STAGE_ANALYZER_VERSION })
     );
     expect(summary.diagnostics.items[0]!.nextAction).toBe(
-      "the recorded verdict disagrees with the measured chain; inspect the case trace"
+      DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION
     );
   });
 
@@ -337,6 +339,13 @@ describe("evidence is attached to the claim it supports", () => {
       disagreementInput({ analyzerVersion: 6 })
     ).diagnostics.items[0]!.nextAction;
 
+    // Asserted against the exported constant, so a copy edit moves both at
+    // once — and so the export itself is load-bearing: these two strings are
+    // what the diagnostics RETURN, and a published consumer that cannot import
+    // them has to hard-code our prose to recognise them.
+    expect(action).toBe(
+      DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION
+    );
     expect(action).toContain("older analyzer that measures less");
     expect(action).toContain("re-run");
     // The claim it must NOT make.
@@ -371,7 +380,7 @@ describe("evidence is attached to the claim it supports", () => {
       })
     );
     expect(summary.diagnostics.items[0]!.nextAction).toBe(
-      "the recorded verdict disagrees with the measured chain; inspect the case trace"
+      DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION
     );
   });
 

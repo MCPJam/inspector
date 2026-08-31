@@ -13,6 +13,7 @@
 
 import { describe, expect, test } from "vitest";
 import { STAGE_REASON_LABELS } from "../src/contract/decision-labels.js";
+import { finalizePassedForEval } from "../src/eval-tool-execution";
 import {
   MAX_EVIDENCE_REASONS,
   MAX_EVIDENCE_REASON_CHARS,
@@ -1045,6 +1046,51 @@ describe("an observed tool error reaches response, even unauthored", () => {
       },
     });
     expect(stageResults.some((r) => r.state === "failed")).toBe(true);
+  });
+
+  test("the chain reports the error even when POLICY passes the trial", () => {
+    // The other half of the disagreement, and the one that shows why the
+    // chain is not just a mirror of the verdict. With `failOnToolError: false`
+    // the legacy verdict PASSES on the very run whose tool errored — so if the
+    // chain also went all-green, a suite run entirely under that policy would
+    // report a clean funnel over servers that were failing calls.
+    //
+    // Both halves are exercised against the SAME scenario rather than asserted
+    // separately, because the property is the relationship between them: the
+    // verdict answers "did policy fail this trial", the chain answers "what
+    // happened", and those are allowed to differ.
+    const erroredSpan = erroredToolSpan();
+
+    const passed = finalizePassedForEval({
+      matchPassed: true,
+      trace: { spans: [erroredSpan] },
+      failOnToolError: false,
+      predicateResults: [{ passed: true }],
+    });
+    expect(passed).toBe(true);
+
+    const { stageResults } = derive({
+      authored: predicateOnlyCase,
+      evidence: {
+        spans: [erroredSpan],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "toolError",
+    });
+
+    // And the control: the same span DOES fail the trial under the default
+    // policy, so the test above is about the policy and not about a span that
+    // was never failure-worthy.
+    expect(
+      finalizePassedForEval({
+        matchPassed: true,
+        trace: { spans: [erroredSpan] },
+        predicateResults: [{ passed: true }],
+      })
+    ).toBe(false);
   });
 
   test("a transport-local error does NOT turn the stage on", () => {

@@ -323,10 +323,16 @@ export function failedLayerForEngineError(
 }
 
 export async function driveHostedEvalTurn(
-  params: DriveHostedEvalTurnParams,
+  params: DriveHostedEvalTurnParams
 ): Promise<HostedEvalTurnOutcome> {
-  const { promptIndex, browser, prepared, acc, isAborted, abortSignal } =
-    params;
+  const {
+    promptIndex,
+    browser,
+    prepared,
+    acc,
+    isAborted,
+    abortSignal,
+  } = params;
   const logSuffix = params.logSuffix ?? "";
 
   // Browser-rendered MCP App eval (PR 14): stamp collected artifacts with
@@ -353,7 +359,7 @@ export async function driveHostedEvalTurn(
       ? params.toolPolicyGate.wrap(mergedTools)
       : mergedTools,
     traceCtx,
-    promptIndex,
+    promptIndex
   );
 
   // Push the user prompt into `messageHistory` BEFORE the engine call so a
@@ -378,9 +384,8 @@ export async function driveHostedEvalTurn(
   // parent's already-committed calls end so the post-turn reconcile below
   // replaces only THIS turn's live entries (the stream runner's `onToolCall`
   // populates the array live) without wiping the parent's.
-  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[
-    promptIndex
-  ] ??= []);
+  const promptToolsCalled: ToolCall[] = (acc.toolsCalledByPrompt[promptIndex] ??=
+    []);
   const promptToolsBaseline = promptToolsCalled.length;
 
   // Built inside the pre-turn try below; `{}` until then so the failure
@@ -401,14 +406,14 @@ export async function driveHostedEvalTurn(
   // failure branches below (CodeRabbit, PR 2610).
   const mapThrownTurnError = (
     error: unknown,
-    failedStage: string,
+    failedStage: string
   ): HostedEvalTurnOutcome => {
     if (
       isAborted() ||
       (error instanceof Error && error.name === "AbortError")
     ) {
       logger.debug(
-        `[evals] backend iteration${logSuffix} aborted due to cancellation`,
+        `[evals] backend iteration${logSuffix} aborted due to cancellation`
       );
       return { kind: "cancelled" };
     }
@@ -503,7 +508,7 @@ export async function driveHostedEvalTurn(
       systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
-            browser.browserInteractionSteps,
+            browser.browserInteractionSteps
           )
         : prepared.enhancedSystemPrompt,
       ...(prepared.resolvedTemperature != null
@@ -577,7 +582,8 @@ export async function driveHostedEvalTurn(
             // opt-out and a truthy check would erase it.
             ...(params.modelVisibleMcpToolResults !== undefined
               ? {
-                  modelVisibleMcpToolResults: params.modelVisibleMcpToolResults,
+                  modelVisibleMcpToolResults:
+                    params.modelVisibleMcpToolResults,
                 }
               : {}),
             ...(params.respectToolVisibility !== undefined
@@ -630,7 +636,7 @@ export async function driveHostedEvalTurn(
   // aborted run as a verdict failure.
   if (isAborted()) {
     logger.debug(
-      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`,
+      `[evals] backend iteration${logSuffix} aborted mid-turn; skipping record`
     );
     return { kind: "cancelled" };
   }
@@ -697,7 +703,7 @@ export async function driveHostedEvalTurn(
   // generic fallbacks.
   const failTurn = (
     fallbackError: string,
-    logLine: string,
+    logLine: string
   ): HostedEvalTurnOutcome => {
     const failure = lastEngineError
       ? {
@@ -743,7 +749,7 @@ export async function driveHostedEvalTurn(
         newMessages.length > 0
       }, engineError=${
         lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`,
+      })`
     );
   }
   if (newMessages.length === 0) {
@@ -751,7 +757,7 @@ export async function driveHostedEvalTurn(
       "Backend step returned no content (stream error or empty response)",
       `[evals] runAssistantTurn${logSuffix} produced no new messages this turn; treating as cycle failure (engineError=${
         lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`,
+      })`
     );
   }
   // Cursor / Codex review fix: filter to backend step / LLM failure spans
@@ -764,7 +770,7 @@ export async function driveHostedEvalTurn(
     (span) =>
       span.status === "error" &&
       span.category !== "tool" &&
-      !(span as { toolCallId?: string }).toolCallId,
+      !(span as { toolCallId?: string }).toolCallId
   );
   if (stepErrorSpan) {
     return failTurn(
@@ -773,7 +779,7 @@ export async function driveHostedEvalTurn(
         stepErrorSpan.name
       } category=${stepErrorSpan.category} engineError=${
         lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
-      })`,
+      })`
     );
   }
 

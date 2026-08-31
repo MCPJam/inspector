@@ -168,6 +168,29 @@ export function SuiteRunStageFunnelPanel({
  * whole run-detail page down with it would be worse than the empty rail it
  * exists to prevent. Undeployed reads as "no funnel", which is correct.
  */
+/**
+ * The two failure shapes this probe genuinely EXPECTS, and nothing else.
+ *
+ * `useQuery` throws a plain `Error` when the deployed backend has no such
+ * function — the dark-ship window, which is an intended state, not a
+ * malfunction — and again when there is no `ConvexProvider` above it, which is
+ * every test tree that renders this component without one.
+ *
+ * Matched on the message because that is all Convex gives us: neither throw
+ * carries a code or a distinguishing class. Narrow by design — a query that
+ * fails for any OTHER reason is a real failure and still reports. Anyone
+ * widening this list is turning off an alarm, and should have to say so here.
+ */
+export function isConvexQueryUnavailable(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  return (
+    // The function is not deployed (dark ship, or a browser outliving a rollback).
+    message.includes("Could not find public function") ||
+    // No ConvexProvider above this tree.
+    message.includes("Could not find Convex client")
+  );
+}
+
 export function SuiteRunStageFunnelAvailability({
   suiteRunId,
   onChange,
@@ -196,6 +219,13 @@ export function SuiteRunStageFunnelAvailability({
     <ErrorBoundary
       key={suiteRunId ?? "no-run"}
       fallback={null}
+      // The dark-ship window is the state this probe is DESIGNED to sit in,
+      // and it is mounted on a page users open again and again — so without
+      // this every run viewed would file one Sentry issue and one PostHog
+      // event for a condition we deliberately shipped. `onError` below still
+      // fires, so the rail still closes; only the telemetry is suppressed, and
+      // only for the two shapes `isConvexQueryUnavailable` can name.
+      isExpectedError={isConvexQueryUnavailable}
       onError={() => onChange(suiteRunId, false)}
     >
       <SuiteRunStageFunnelProbe suiteRunId={suiteRunId} onChange={onChange} />

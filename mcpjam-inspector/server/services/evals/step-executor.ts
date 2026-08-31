@@ -24,7 +24,10 @@
  */
 
 import type { ModelMessage } from "ai";
-import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
+import type {
+  PredicateResult,
+  ToolErrorRecord,
+} from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   evaluatePredicates,
@@ -237,7 +240,8 @@ export interface StepExecutorResult {
 export function hasWidgetDrivingStep(steps: TestStep[]): boolean {
   return steps.some(
     (s) =>
-      isInteractStep(s) || (isAssertStep(s) && isWidgetAssertion(s.assertion)),
+      isInteractStep(s) ||
+      (isAssertStep(s) && isWidgetAssertion(s.assertion)),
   );
 }
 
@@ -262,8 +266,7 @@ function applyOutcome(
   turn: number,
 ): void {
   if (outcome.messages?.length) state.messages.push(...outcome.messages);
-  if (outcome.toolCalls?.length)
-    recordToolCalls(state, turn, outcome.toolCalls);
+  if (outcome.toolCalls?.length) recordToolCalls(state, turn, outcome.toolCalls);
   if (outcome.toolErrors?.length) state.toolErrors.push(...outcome.toolErrors);
   if (outcome.usage) {
     state.usage.inputTokens += outcome.usage.inputTokens ?? 0;
@@ -277,7 +280,9 @@ function snapshotTranscript(state: StepExecutionState) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
-    ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
+    ...(finalAssistantMessage !== undefined
+      ? { finalAssistantMessage }
+      : {}),
     usage:
       state.usage.inputTokens ||
       state.usage.outputTokens ||
@@ -353,7 +358,10 @@ async function drainAndDriveFollowUps(
   browser: Pick<BrowserSessionContext, "drainFollowUps">,
   handlers: StepExecutorHandlers,
   state: StepExecutionState,
-): Promise<string | undefined> {
+  // The failing OUTCOME, not just its message. Reducing it to a string here
+  // discarded the layer attribution, so a provider failure on a widget
+  // follow-up turn stayed uncategorised even once the hosted bridge carried it.
+): Promise<StepEngineOutcome | undefined> {
   if (!handlers.onFollowUp) return undefined;
   let remaining = MAX_WIDGET_FOLLOWUP_TURNS;
   while (remaining > 0) {
@@ -373,13 +381,9 @@ async function drainAndDriveFollowUps(
         return undefined;
       }
       remaining -= 1;
-      const outcome = await handlers.onFollowUp!({
-        text,
-        stepIndex,
-        turnOrdinal: turn,
-      });
+      const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
       applyOutcome(state, outcome, turn);
-      if (outcome.iterationError) return outcome.iterationError;
+      if (outcome.iterationError) return outcome;
     }
   }
   return undefined;
@@ -404,7 +408,8 @@ async function runAssertStep(
       passed: outcome.ok,
       reason: outcome.ok
         ? `widget assertion "${step.assertion.kind}" passed`
-        : outcome.reason ?? `widget assertion "${step.assertion.kind}" failed`,
+        : outcome.reason ??
+          `widget assertion "${step.assertion.kind}" failed`,
     });
     return;
   }
@@ -523,7 +528,7 @@ export async function executeSteps(args: {
     sIdx: number,
     turn: number,
   ): Promise<StepExecutorResult | undefined> => {
-    const err = await drainAndDriveFollowUps(
+    const failed = await drainAndDriveFollowUps(
       label,
       sIdx,
       turn,
@@ -531,16 +536,32 @@ export async function executeSteps(args: {
       handlers,
       state,
     );
-    if (!err) return undefined;
+    if (!failed) return undefined;
     emitStatus(sIdx, "fail");
     recordSkippedSteps(
       state,
       steps,
       sIdx + 1,
-      `widget follow-up turn errored (step ${sIdx}): ${err}`,
+      `widget follow-up turn errored (step ${sIdx}): ${failed.iterationError}`,
     );
     emitSkipped(sIdx + 1);
-    return { state, iterationError: err, setupFailure: false };
+    // The SAME shape the prompt-step failure path returns. A follow-up turn
+    // dying on the provider is the same event as a prompt turn dying on it, and
+    // reporting one and not the other made the attribution depend on which
+    // turn the model happened to fail.
+    return {
+      state,
+      iterationError: failed.iterationError,
+      ...(failed.iterationErrorDetails
+        ? { iterationErrorDetails: failed.iterationErrorDetails }
+        : {}),
+      ...(failed.errorSource ? { errorSource: failed.errorSource } : {}),
+      ...(failed.errorCode ? { errorCode: failed.errorCode } : {}),
+      ...(typeof failed.errorHttpStatus === "number"
+        ? { errorHttpStatus: failed.errorHttpStatus }
+        : {}),
+      setupFailure: false,
+    };
   };
 
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
