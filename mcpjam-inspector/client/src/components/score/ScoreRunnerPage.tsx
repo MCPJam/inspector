@@ -20,16 +20,25 @@ import {
   isScoreRunnerBusy,
   type ScoreRunnerPhase,
 } from "./score-runner-view-model";
-import { normalizeScoreEmail } from "./score-email";
-import { normalizeScoreUrl } from "./score-url";
 import { deriveScoreServerName } from "./score-server-name";
 import {
   clearScoreRunResume,
   readScoreRunResume,
   writeScoreRunResume,
 } from "./score-run-resume";
+import { useScoreRunDraft, type ScoreRunIntent } from "./use-score-run-draft";
 
-type Phase = ScoreRunnerPhase;
+const EMPTY_SERVER: ServerWithName = {
+  name: "",
+  config: {} as ServerWithName["config"],
+  lastConnectionTime: new Date(0),
+  connectionStatus: "disconnected",
+  retryCount: 0,
+};
+
+function getServerUrl(server: ServerWithName | null): string | null {
+  return (server?.config as { url?: string } | undefined)?.url ?? null;
+}
 
 /** `oauthRequired` is carried on a thrown, tagged 401 — never on a return value. */
 function isOAuthRequiredError(error: unknown): boolean {
@@ -52,11 +61,17 @@ export function ScoreRunnerPage({
     "servers:createServerIfMissing" as any,
   );
   const updateServer = useMutation("servers:updateServer" as any);
+  const {
+    urlInput,
+    emailInput,
+    setUrlInput,
+    setEmailInput,
+    acceptServerUrl,
+    createRunIntent,
+    restoreRun,
+  } = useScoreRunDraft();
 
-  const [urlInput, setUrlInput] = useState("");
-  const [emailInput, setEmailInput] = useState("");
-  const [pendingServerUrl, setPendingServerUrl] = useState<string | null>(null);
-  const [phase, setPhase] = useState<Phase>("form");
+  const [phase, setPhase] = useState<ScoreRunnerPhase>("form");
   const [error, setError] = useState<string | null>(null);
   const [server, setServer] = useState<ServerWithName | null>(null);
   const [resultToken, setResultToken] = useState<string | null>(null);
@@ -66,13 +81,7 @@ export function ScoreRunnerPage({
     // A placeholder keeps the hook's contract simple: it always has a server.
     // Nothing runs until `runAll` is called, and that only happens once a real
     // row exists.
-    server: server ?? {
-      name: "",
-      config: {} as ServerWithName["config"],
-      lastConnectionTime: new Date(),
-      connectionStatus: "disconnected",
-      retryCount: 0,
-    },
+    server: server ?? EMPTY_SERVER,
     // OAuth is opt-in here. A public landing page must not throw an
     // unrequested popup at a visitor, and a skipped OAuth suite shows as
     // *not scored* — never a deduction.
@@ -100,8 +109,7 @@ export function ScoreRunnerPage({
               serverId,
               serverName: server.name,
               useOAuth: true,
-              serverUrl:
-                (server.config as { url?: string } | undefined)?.url ?? null,
+              serverUrl: getServerUrl(server),
               clientId: null,
               oauthScopes: null,
             },
@@ -329,7 +337,7 @@ export function ScoreRunnerPage({
   const persistedRunRef = useRef<string | null>(null);
   useEffect(() => {
     if (phase !== "run-complete" || !server) return;
-    const serverUrl = (server.config as { url?: string } | undefined)?.url;
+    const serverUrl = getServerUrl(server);
     if (!serverUrl) {
       setPhase("done");
       return;
@@ -364,7 +372,7 @@ export function ScoreRunnerPage({
     // failed, a settled OAuth run is the visitor's second chance at getting a
     // link at all.
     if (phase !== "done") return;
-    const serverUrl = (server?.config as { url?: string } | undefined)?.url;
+    const serverUrl = getServerUrl(server);
     if (!serverUrl) return;
     // Only a transition INTO a finished OAuth state re-saves; a repeat render
     // of the same state must not.
@@ -386,6 +394,22 @@ export function ScoreRunnerPage({
     });
   }, [phase, run.oauth.status, run.oauthScore, server, persistRun]);
 
+  const beginRun = useCallback(
+    (intent: ScoreRunIntent) => {
+      clearScoreRunResume();
+      startedForRef.current = null;
+      persistedRunRef.current = null;
+      persistedOAuthStatusRef.current = null;
+      oauthResaveAttemptsRef.current = 0;
+      oauthResaveInFlightRef.current = false;
+      // Re-key the conformance hook so a retry cannot display results from the
+      // previous server while the new handshake is preparing.
+      setServer(null);
+      void startRun(intent.serverUrl, intent.deliveryEmail);
+    },
+    [startRun],
+  );
+
   // Coming back from a connect-OAuth redirect: the hosted marker restored the
   // server's authorization, but only this record knows a scan was in flight.
   const resumedRef = useRef(false);
@@ -396,11 +420,13 @@ export function ScoreRunnerPage({
     if (!resume) return;
     resumedRef.current = true;
     clearScoreRunResume();
-    setUrlInput(resume.serverUrl);
-    const deliveryEmail = resume.deliveryEmail ?? "";
-    setEmailInput(deliveryEmail);
-    void startRun(resume.serverUrl, deliveryEmail);
-  }, [appReady.status, startRun]);
+    const restored = restoreRun(resume);
+    if (restored.kind === "collect-email") {
+      setPhase("email");
+      return;
+    }
+    if (restored.kind === "run") beginRun(restored.intent);
+  }, [appReady.status, beginRun, restoreRun]);
 
   const resultUrl = useMemo(
     () =>
@@ -414,47 +440,23 @@ export function ScoreRunnerPage({
 
   const onSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    const normalized = normalizeScoreUrl(urlInput);
-    if (!normalized) {
+    if (!acceptServerUrl()) {
       setError("Enter a valid http(s) MCP server URL.");
       return;
     }
     setError(null);
-    setPendingServerUrl(normalized);
     setPhase("email");
   };
 
   const onEmailSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    const normalizedEmail = normalizeScoreEmail(emailInput);
-    if (!normalizedEmail) {
+    const intent = createRunIntent();
+    if (!intent) {
       setError("Enter a valid email address.");
       return;
     }
-    if (!pendingServerUrl) {
-      setError("Enter the MCP server URL again.");
-      setPhase("form");
-      return;
-    }
-
-    setEmailInput(normalizedEmail);
     setError(null);
-    startedForRef.current = null;
-    // Drop any resume record from an abandoned run. `authorizing` leaves the
-    // form enabled, so a visitor can walk away from an OAuth prompt and paste
-    // a different URL — and a stale record would hijack the next reload back
-    // to the server they gave up on.
-    clearScoreRunResume();
-    persistedRunRef.current = null;
-    persistedOAuthStatusRef.current = null;
-    oauthResaveAttemptsRef.current = 0;
-    oauthResaveInFlightRef.current = false;
-    // Clearing the server re-keys `useConformanceRun`, which drops the prior
-    // suite states. Without it the old server's score stays on screen through
-    // "preparing" — and stays there permanently if setup fails and the phase
-    // returns to "form" — labelled with the URL the visitor just typed.
-    setServer(null);
-    void startRun(pendingServerUrl, normalizedEmail);
+    beginRun(intent);
   };
 
   const copyResultUrl = () => {
@@ -498,8 +500,7 @@ export function ScoreRunnerPage({
           serverId,
           serverName: server.name,
           useOAuth: true,
-          serverUrl:
-            (server.config as { url?: string } | undefined)?.url ?? null,
+          serverUrl: getServerUrl(server),
           clientId: null,
           oauthScopes: null,
         });

@@ -50,6 +50,116 @@ function SubmitLabel({
   return "Score this server";
 }
 
+type ServerUrlFormProps = Pick<
+  ScoreRunnerViewProps,
+  | "urlInput"
+  | "onUrlChange"
+  | "onSubmit"
+  | "phase"
+  | "error"
+  | "busy"
+  | "formDisabled"
+>;
+
+function ServerUrlForm({
+  urlInput,
+  onUrlChange,
+  onSubmit,
+  phase,
+  error,
+  busy,
+  formDisabled,
+}: ServerUrlFormProps) {
+  return (
+    <>
+      <form
+        onSubmit={onSubmit}
+        className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
+      >
+        <label className="sr-only" htmlFor="score-server-url">
+          MCP server URL
+        </label>
+        <input
+          id="score-server-url"
+          type="text"
+          inputMode="url"
+          autoComplete="off"
+          spellCheck={false}
+          value={urlInput}
+          onChange={(event) => onUrlChange(event.target.value)}
+          placeholder="https://mcp.acme.com/mcp"
+          disabled={formDisabled}
+          aria-invalid={Boolean(error) && !busy}
+          aria-describedby={error ? "score-runner-error" : "score-runner-hint"}
+          className="h-12 min-w-0 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm leading-5 text-[var(--score-fg)] placeholder:text-[var(--score-muted)] disabled:opacity-60 sm:flex-1"
+        />
+        <button
+          type="submit"
+          disabled={formDisabled}
+          aria-busy={busy}
+          className="h-12 shrink-0 rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
+        >
+          <SubmitLabel phase={phase} busy={busy} />
+        </button>
+      </form>
+      <p
+        id="score-runner-hint"
+        className="text-[13px] leading-[18px] text-[var(--score-muted)]"
+      >
+        Public URL. No login. About 15 minutes.
+      </p>
+    </>
+  );
+}
+
+type DeliveryEmailFormProps = Pick<
+  ScoreRunnerViewProps,
+  "emailInput" | "onEmailChange" | "onEmailSubmit" | "error" | "formDisabled"
+>;
+
+function DeliveryEmailForm({
+  emailInput,
+  onEmailChange,
+  onEmailSubmit,
+  error,
+  formDisabled,
+}: DeliveryEmailFormProps) {
+  return (
+    <form
+      onSubmit={onEmailSubmit}
+      noValidate
+      className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
+    >
+      <label className="sr-only" htmlFor="score-delivery-email">
+        Scorecard email
+      </label>
+      <input
+        id="score-delivery-email"
+        type="email"
+        inputMode="email"
+        autoComplete="email"
+        spellCheck={false}
+        required
+        maxLength={320}
+        value={emailInput}
+        onChange={(event) => onEmailChange(event.target.value)}
+        placeholder="you@acme.com"
+        disabled={formDisabled}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? "score-runner-error" : undefined}
+        className="h-12 min-w-0 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm leading-5 text-[var(--score-fg)] placeholder:text-[var(--score-muted)] disabled:opacity-60 sm:flex-1"
+      />
+      <button
+        type="submit"
+        disabled={formDisabled}
+        className="h-12 shrink-0 rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
+      >
+        Email the scorecard
+      </button>
+    </form>
+  );
+}
+
 const FEATURED_SCORES = [
   ["https://mcp.linear.app/mcp", "71"],
   ["https://api.githubcopilot.com/mcp/", "84"],
@@ -158,82 +268,25 @@ export function ScoreRunnerView({
           </p>
 
           {showUrlForm && (
-            <form
+            <ServerUrlForm
+              urlInput={urlInput}
+              onUrlChange={onUrlChange}
               onSubmit={onSubmit}
-              className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
-            >
-              <label className="sr-only" htmlFor="score-server-url">
-                MCP server URL
-              </label>
-              <input
-                id="score-server-url"
-                type="text"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                value={urlInput}
-                onChange={(event) => onUrlChange(event.target.value)}
-                placeholder="https://mcp.acme.com/mcp"
-                disabled={formDisabled}
-                aria-invalid={Boolean(error) && !busy}
-                aria-describedby={
-                  error ? "score-runner-error" : "score-runner-hint"
-                }
-                className="h-12 min-w-0 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm leading-5 text-[var(--score-fg)] placeholder:text-[var(--score-muted)] disabled:opacity-60 sm:flex-1"
-              />
-              <button
-                type="submit"
-                disabled={formDisabled}
-                aria-busy={busy}
-                className="h-12 shrink-0 rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
-              >
-                <SubmitLabel phase={phase} busy={busy} />
-              </button>
-            </form>
-          )}
-
-          {showUrlForm && (
-            <p
-              id="score-runner-hint"
-              className="text-[13px] leading-[18px] text-[var(--score-muted)]"
-            >
-              Public URL. No login. About 15 minutes.
-            </p>
+              phase={phase}
+              error={error}
+              busy={busy}
+              formDisabled={formDisabled}
+            />
           )}
 
           {showEmailForm && (
-            <form
-              onSubmit={onEmailSubmit}
-              noValidate
-              className="flex w-full max-w-[624px] flex-col gap-2 pt-3 sm:flex-row"
-            >
-              <label className="sr-only" htmlFor="score-delivery-email">
-                Scorecard email
-              </label>
-              <input
-                id="score-delivery-email"
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                spellCheck={false}
-                required
-                maxLength={320}
-                value={emailInput}
-                onChange={(event) => onEmailChange(event.target.value)}
-                placeholder="you@acme.com"
-                disabled={formDisabled}
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? "score-runner-error" : undefined}
-                className="h-12 min-w-0 shrink-0 rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-4 font-[family-name:var(--font-score-mono)] text-sm leading-5 text-[var(--score-fg)] placeholder:text-[var(--score-muted)] disabled:opacity-60 sm:flex-1"
-              />
-              <button
-                type="submit"
-                disabled={formDisabled}
-                className="h-12 shrink-0 rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)] disabled:opacity-60"
-              >
-                Email the scorecard
-              </button>
-            </form>
+            <DeliveryEmailForm
+              emailInput={emailInput}
+              onEmailChange={onEmailChange}
+              onEmailSubmit={onEmailSubmit}
+              error={error}
+              formDisabled={formDisabled}
+            />
           )}
 
           {appReadyMessage && (

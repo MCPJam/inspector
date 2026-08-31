@@ -1,7 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { UserEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebApiError } from "@/lib/apis/web/base";
+import { readScoreRunResume, writeScoreRunResume } from "../score-run-resume";
 
 const {
   mockCreateServerIfMissing,
@@ -82,6 +84,19 @@ vi.mock("../score-server-name", () => ({
 
 import { ScoreRunnerPage } from "../ScoreRunnerPage";
 
+const SERVER_URL = "https://mcp.acme.com/mcp";
+const DELIVERY_EMAIL = "dev@acme.com";
+
+async function submitServerUrl(user: UserEvent, url = SERVER_URL) {
+  await user.type(screen.getByLabelText("MCP server URL"), url);
+  await user.click(screen.getByRole("button", { name: "Score this server" }));
+}
+
+async function submitDeliveryEmail(user: UserEvent, email = DELIVERY_EMAIL) {
+  await user.type(screen.getByLabelText("Scorecard email"), email);
+  await user.click(screen.getByRole("button", { name: "Email the scorecard" }));
+}
+
 beforeEach(() => {
   mockCreateServerIfMissing.mockReset().mockResolvedValue(undefined);
   mockUpdateServer.mockReset().mockResolvedValue(undefined);
@@ -108,11 +123,7 @@ describe("ScoreRunnerPage", () => {
   it("handshakes before running suites", async () => {
     const user = userEvent.setup();
     render(<ScoreRunnerPage convexProjectId="proj_1" />);
-    await user.type(
-      screen.getByLabelText("MCP server URL"),
-      "https://mcp.acme.com/mcp",
-    );
-    await user.click(screen.getByRole("button", { name: "Score this server" }));
+    await submitServerUrl(user);
 
     expect(
       screen.getByRole("heading", {
@@ -121,10 +132,7 @@ describe("ScoreRunnerPage", () => {
     ).toBeInTheDocument();
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
 
-    await user.type(screen.getByLabelText("Scorecard email"), "dev@acme.com");
-    await user.click(
-      screen.getByRole("button", { name: "Email the scorecard" }),
-    );
+    await submitDeliveryEmail(user);
 
     await waitFor(() => {
       expect(mockValidateHostedServer).toHaveBeenCalled();
@@ -141,21 +149,120 @@ describe("ScoreRunnerPage", () => {
   it("rejects an invalid email without starting a handshake", async () => {
     const user = userEvent.setup();
     render(<ScoreRunnerPage convexProjectId="proj_1" />);
-    await user.type(
-      screen.getByLabelText("MCP server URL"),
-      "https://mcp.acme.com/mcp",
-    );
-    await user.click(screen.getByRole("button", { name: "Score this server" }));
-    await user.type(screen.getByLabelText("Scorecard email"), "not-an-email");
-    await user.click(
-      screen.getByRole("button", { name: "Email the scorecard" }),
-    );
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user, "not-an-email");
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Enter a valid email address.",
     );
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
     expect(mockValidateHostedServer).not.toHaveBeenCalled();
+  });
+
+  it("allows a valid email retry and starts exactly one handshake", async () => {
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user, "not-an-email");
+
+    await user.clear(screen.getByLabelText("Scorecard email"));
+    await submitDeliveryEmail(user);
+
+    await waitFor(() =>
+      expect(mockValidateHostedServer).toHaveBeenCalledOnce(),
+    );
+    expect(mockCreateServerIfMissing).toHaveBeenCalledOnce();
+  });
+
+  it("normalizes the URL and email before starting an OAuth-gated run", async () => {
+    mockValidateHostedServer.mockRejectedValue(
+      new WebApiError(
+        401,
+        "unauthorized",
+        "Authorization required",
+        undefined,
+        { oauthRequired: true },
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    await submitServerUrl(user, `  ${SERVER_URL}  `);
+    await submitDeliveryEmail(user, `  ${DELIVERY_EMAIL}  `);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Authorize and continue" }),
+      ).toBeInTheDocument();
+    });
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({ url: SERVER_URL }),
+    );
+    expect(readScoreRunResume()).toMatchObject({
+      serverUrl: SERVER_URL,
+      deliveryEmail: DELIVERY_EMAIL,
+    });
+  });
+
+  it("returns to the URL form with context when the handshake fails", async () => {
+    mockValidateHostedServer.mockRejectedValue(new Error("Handshake failed"));
+    const user = userEvent.setup();
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Handshake failed");
+    });
+    expect(screen.getByLabelText("MCP server URL")).toHaveValue(SERVER_URL);
+    expect(screen.queryByLabelText("Scorecard email")).not.toBeInTheDocument();
+    expect(mockRunAll).not.toHaveBeenCalled();
+  });
+
+  it("resumes an OAuth run with its saved email and clears the record", async () => {
+    writeScoreRunResume({
+      serverUrl: SERVER_URL,
+      serverName: "score-acme",
+      deliveryEmail: DELIVERY_EMAIL,
+    });
+
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    await waitFor(() =>
+      expect(mockValidateHostedServer).toHaveBeenCalledOnce(),
+    );
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({ url: SERVER_URL }),
+    );
+    expect(readScoreRunResume()).toBeNull();
+  });
+
+  it("asks for an email when resuming a legacy record without one", async () => {
+    const user = userEvent.setup();
+    writeScoreRunResume({
+      serverUrl: SERVER_URL,
+      serverName: "score-acme",
+    });
+
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Where should we send the scorecard?",
+      }),
+    ).toBeInTheDocument();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Scorecard email")).toHaveValue("");
+
+    await submitDeliveryEmail(user);
+
+    await waitFor(() =>
+      expect(mockValidateHostedServer).toHaveBeenCalledOnce(),
+    );
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({ url: SERVER_URL }),
+    );
   });
 
   it("exposes authorize when the handshake requires OAuth", async () => {
@@ -172,15 +279,8 @@ describe("ScoreRunnerPage", () => {
     );
     const user = userEvent.setup();
     render(<ScoreRunnerPage convexProjectId="proj_1" />);
-    await user.type(
-      screen.getByLabelText("MCP server URL"),
-      "https://mcp.acme.com/mcp",
-    );
-    await user.click(screen.getByRole("button", { name: "Score this server" }));
-    await user.type(screen.getByLabelText("Scorecard email"), "dev@acme.com");
-    await user.click(
-      screen.getByRole("button", { name: "Email the scorecard" }),
-    );
+    await submitServerUrl(user);
+    await submitDeliveryEmail(user);
 
     await waitFor(() => {
       expect(

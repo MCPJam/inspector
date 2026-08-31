@@ -64,6 +64,7 @@ export function readScoreRunResume(): ScoreRunResumeRecord | null {
       startedAt: parsed.startedAt,
     };
   } catch {
+    clearScoreRunResume();
     return null;
   }
 }
