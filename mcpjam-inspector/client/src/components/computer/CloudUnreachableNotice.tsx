@@ -46,6 +46,7 @@ export function CloudUnreachableNotice({
 }) {
   const isWarning = tone === "warning";
   const Icon = isWarning ? AlertTriangle : Server;
+  const rootTestId = testId ?? "cloud-unreachable-notice";
   return (
     <div
       className={cn(
@@ -55,7 +56,7 @@ export function CloudUnreachableNotice({
           : "border-border bg-muted/40",
       )}
       data-tone={tone}
-      data-testid={testId ?? "cloud-unreachable-notice"}
+      data-testid={rootTestId}
     >
       <Icon
         className={cn(
@@ -64,7 +65,7 @@ export function CloudUnreachableNotice({
             ? "text-amber-600 dark:text-amber-500"
             : "text-muted-foreground",
         )}
-        {...(isWarning ? { "data-testid": "cloud-notice-alert-icon" } : {})}
+        {...(isWarning ? { "data-testid": `${rootTestId}-alert-icon` } : {})}
       />
       <div className="min-w-0 text-sm">
         <p className="font-medium text-foreground">{message}</p>
@@ -75,7 +76,7 @@ export function CloudUnreachableNotice({
           <button
             type="button"
             onClick={action.onClick}
-            data-testid="cloud-notice-action"
+            data-testid={`${rootTestId}-action`}
             className="mt-2 inline-flex items-center rounded border border-border bg-background px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {action.label}

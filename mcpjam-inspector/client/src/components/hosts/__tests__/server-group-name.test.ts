@@ -96,3 +96,36 @@ describe("newGroupDraft", () => {
     });
   });
 });
+
+/**
+ * Review finding 3. Ticking a server the run cannot reach walks the user from
+ * the calm state into the amber one by doing what the form offered.
+ */
+describe("newGroupDraft leaves unreachable servers alone", () => {
+  it("does not preselect a stdio server", () => {
+    expect(
+      newGroupDraft([{ _id: "s-0", name: "big-mcp", command: "uvx" }], [])
+    ).toEqual({ serverIds: [], name: "group 1" });
+  });
+
+  it("does not preselect a loopback server", () => {
+    expect(
+      newGroupDraft(
+        [{ _id: "s-0", name: "local", url: "http://localhost:3000/mcp" }],
+        []
+      )
+    ).toEqual({ serverIds: [], name: "group 1" });
+  });
+
+  it("preselects only the reachable half of a mixed pool", () => {
+    expect(
+      newGroupDraft(
+        [
+          { _id: "s-0", name: "big-mcp", command: "uvx" },
+          { _id: "s-1", name: "draw", url: "https://mcp.example.com/mcp" },
+        ],
+        []
+      )
+    ).toEqual({ serverIds: ["s-1"], name: "draw" });
+  });
+});

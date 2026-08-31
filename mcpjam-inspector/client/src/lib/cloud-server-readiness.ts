@@ -65,8 +65,11 @@ export type CloudServerReadiness =
       labels: string[];
       /** Reachable only: offering one the run refuses leads straight to `unrunnable_servers`. */
       attachable: string[];
-      /** Whole catalog. Separates an empty project from an unreachable one. */
-      poolSize: number;
+      /**
+       * Whole catalog. Separates an empty project from an unreachable one.
+       * `null` while the catalog query has not answered — not the same as zero.
+       */
+      poolSize: number | null;
     }
   /** A target carries a server the run refuses: one stdio member, or a set
    * that is unreachable end to end. `serverNames` lists only the offenders. */
@@ -117,10 +120,11 @@ export function serversAreRunnable(
  */
 export function assessCloudServerReadiness(args: {
   targets: readonly CloudLaunchTarget[];
-  /** The project's server catalog. Empty while it loads — treated as unknown. */
-  servers: readonly CloudServerCatalogEntry[];
+  /** The project's server catalog. `undefined` until the query answers. */
+  servers: readonly CloudServerCatalogEntry[] | undefined;
 }): CloudServerReadiness {
-  const byId = new Map(args.servers.map((server) => [server._id, server]));
+  const catalog = args.servers ?? [];
+  const byId = new Map(catalog.map((server) => [server._id, server]));
   const emptyLabels: string[] = [];
   const unrunnableLabels: string[] = [];
   const unrunnableServerNames = new Set<string>();
@@ -148,7 +152,7 @@ export function assessCloudServerReadiness(args: {
       if (typeof target.serverCount !== "number" || target.serverCount === 0) {
         continue;
       }
-      candidates = [...args.servers];
+      candidates = [...catalog];
     }
 
     if (candidates.length === 0) continue;
@@ -163,10 +167,10 @@ export function assessCloudServerReadiness(args: {
       status: "no_servers",
       labels: emptyLabels,
       // Catalog order: the copy has to match the order shown in the picker.
-      attachable: args.servers
+      attachable: catalog
         .filter((server) => !isLocalOnlyMcpServerConfig(server))
         .map((server) => server.name),
-      poolSize: args.servers.length,
+      poolSize: args.servers === undefined ? null : args.servers.length,
     };
   }
   if (unrunnableLabels.length > 0) {
@@ -185,9 +189,13 @@ export function joinLabels(labels: readonly string[]): string {
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
-/** Name up to `cap` servers and count the rest, so a large catalog stays one sentence. */
+/**
+ * Name up to `cap` servers and count the rest, so a large catalog stays one
+ * sentence. One over the cap still spells out — "a, b and 1 more" is longer
+ * than "a, b and c" and tells you less.
+ */
 function joinNamesCapped(names: readonly string[], cap = 2): string {
-  if (names.length <= cap) return joinLabels(names);
+  if (names.length <= cap + 1) return joinLabels(names);
   return `${names.slice(0, cap).join(", ")} and ${names.length - cap} more`;
 }
 
@@ -230,6 +238,15 @@ export function describeCloudServerBlock(
         detail: `Your project has ${joinNamesCapped(
           readiness.attachable
         )}. Pick what this run should use.`,
+        tone: "guidance",
+      };
+    }
+    // Nothing is known about the project yet, so neither remedy can be
+    // claimed. Say only what holds in every case, and offer no shortcut.
+    if (readiness.poolSize === null) {
+      return {
+        message: `${subject} ${verb} no servers attached yet.`,
+        detail: "Pick the servers this run should use.",
         tone: "guidance",
       };
     }

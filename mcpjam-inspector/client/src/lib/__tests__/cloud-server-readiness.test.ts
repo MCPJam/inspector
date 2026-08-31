@@ -474,3 +474,63 @@ describe("describeCloudServerBlock offers a way out of an empty project (BB-63)"
     expect(copy?.detail).toMatch(/shows up here/i);
   });
 });
+
+/**
+ * Review finding 1. The catalog arrives on its own query, so "still loading"
+ * and "project is empty" reach this module as the same empty array. They lead
+ * to opposite advice, and the wrong one ships a button that navigates away.
+ */
+describe("an unknown catalog is not an empty project (review)", () => {
+  it("reports the pool as unknown rather than zero", () => {
+    expect(
+      assessCloudServerReadiness({
+        targets: [client("Claude", 0)],
+        servers: undefined,
+      })
+    ).toEqual({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: null,
+    });
+  });
+
+  it("offers no shortcut and claims nothing while the pool is unknown", () => {
+    const copy = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: [],
+      poolSize: null,
+    });
+    expect(copy?.action).toBeUndefined();
+    expect(copy?.tone).toBe("guidance");
+    // Neither "connect your first one" nor "expose it over HTTPS" is known to
+    // be true yet, so it must say neither.
+    expect(copy?.detail).not.toMatch(/connect/i);
+    expect(copy?.detail).not.toMatch(/https|tunnel/i);
+  });
+});
+
+/** Review finding 2. Capping at two costs characters when there are three. */
+describe("naming three servers (review)", () => {
+  it("spells all three out instead of counting one of them", () => {
+    const copy = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: ["a", "b", "c"],
+      poolSize: 3,
+    });
+    expect(copy?.detail).toContain("a, b and c");
+    expect(copy?.detail).not.toMatch(/1 more/);
+  });
+
+  it("still counts the tail at four", () => {
+    const copy = describeCloudServerBlock({
+      status: "no_servers",
+      labels: ["Claude"],
+      attachable: ["a", "b", "c", "d"],
+      poolSize: 4,
+    });
+    expect(copy?.detail).toMatch(/a, b and 2 more/);
+  });
+});

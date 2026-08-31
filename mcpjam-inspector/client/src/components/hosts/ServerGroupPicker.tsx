@@ -199,6 +199,8 @@ export function ServerGroupPicker({
   );
 
   // The name follows the picked servers until the user writes their own.
+  // Re-deriving when the group list changes can rename the field mid-edit; that
+  // is preferred to letting them submit a name that has since been taken.
   useEffect(() => {
     if (!showCreate || nameEdited) return;
     setCreateName(

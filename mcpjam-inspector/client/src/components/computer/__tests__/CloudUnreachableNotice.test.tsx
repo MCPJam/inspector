@@ -15,7 +15,7 @@ describe("CloudUnreachableNotice", () => {
     const root = screen.getByTestId("cloud-unreachable-notice");
     expect(root).toHaveAttribute("data-tone", "warning");
     expect(root.className).toMatch(/amber/);
-    expect(screen.getByTestId("cloud-notice-alert-icon")).toBeInTheDocument();
+    expect(screen.getByTestId("cloud-unreachable-notice-alert-icon")).toBeInTheDocument();
   });
 
   // The actual BB-63 requirement, as an assertion: no alarm colour, no alarm
@@ -33,7 +33,7 @@ describe("CloudUnreachableNotice", () => {
     expect(root).toHaveAttribute("data-tone", "guidance");
     expect(root.className).not.toMatch(/amber/);
     expect(
-      screen.queryByTestId("cloud-notice-alert-icon")
+      screen.queryByTestId("cloud-unreachable-notice-alert-icon")
     ).not.toBeInTheDocument();
   });
 
@@ -53,7 +53,7 @@ describe("CloudUnreachableNotice action", () => {
   it("renders nothing extra when no action is given", () => {
     render(<CloudUnreachableNotice message="m" detail="d" tone="guidance" />);
     expect(
-      screen.queryByTestId("cloud-notice-action")
+      screen.queryByTestId("cloud-unreachable-notice-action")
     ).not.toBeInTheDocument();
   });
 
@@ -70,5 +70,21 @@ describe("CloudUnreachableNotice action", () => {
     const button = screen.getByRole("button", { name: "Connect a server" });
     await userEvent.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  // Review finding 5. Two of these bands already share one screen; a fixed id
+  // makes them indistinguishable the moment the second one gains an action.
+  it("scopes the action testid to the notice it belongs to", () => {
+    render(
+      <CloudUnreachableNotice
+        message="m"
+        detail="d"
+        data-testid="new-swarm-server-unreachable"
+        action={{ label: "Connect a server", onClick: vi.fn() }}
+      />
+    );
+    expect(
+      screen.getByTestId("new-swarm-server-unreachable-action")
+    ).toBeInTheDocument();
   });
 });
