@@ -2004,7 +2004,15 @@ export function SkillsRoute() {
       // renders its protocol half immediately and the Cloud store appears when
       // the flag resolves — content arriving is a better first paint than a
       // blank page for every user who only has the protocol half.
-      cloudSkillsEnabled={skillsEnabled === true}
+      //
+      // AND member-ness, because the flag is not a proxy for it: a PostHog
+      // rollout is evaluated per distinct-id and resolves for anonymous ones
+      // too, while the project store is a MEMBERSHIP resource whose every
+      // Convex function is signed-in-only. Guests reach this tab by design
+      // (see the bare-view branch below), so the flag alone offered them a
+      // store they could only be refused from — a listing that fails and an
+      // upload button whose mutation cannot land.
+      cloudSkillsEnabled={skillsEnabled === true && isSignedInMember}
     />
   );
 

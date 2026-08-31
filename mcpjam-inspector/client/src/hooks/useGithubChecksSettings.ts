@@ -1,7 +1,7 @@
 import { useCallback } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 
 /**
  * GitHub Checks settings — data layer.
@@ -210,12 +210,14 @@ const BINDINGS_QUERY = "github/appInstallLink:listBindingsForOrganization";
 export function useGithubChecksAvailability(
   organizationId: string | null | undefined
 ): GithubChecksAvailability {
-  const { user } = useAuth();
-  const { isAuthenticated } = useConvexAuth();
+  // `useIsMemberActor`, not `useAuth().user`: the WorkOS user object flips
+  // truthy while the Convex socket is still carrying the guest bearer that
+  // hosted prod injects into every document, and this query is signed-in-only.
+  // That window is what put 320 guest-identity refusals into CONVEX-19R. See
+  // the hook for the sequence.
+  const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
-  const canQuery = Boolean(
-    isAuthenticated && user && isUserReady && organizationId
-  );
+  const canQuery = Boolean(isMember && isUserReady && organizationId);
 
   return useQuery(
     AVAILABILITY_QUERY as any,
@@ -226,7 +228,7 @@ export function useGithubChecksAvailability(
 export function useGithubChecksSettings(
   organizationId: string | null | undefined
 ) {
-  const { isAuthenticated } = useConvexAuth();
+  const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
 
   const availability = useGithubChecksAvailability(organizationId);
@@ -236,8 +238,13 @@ export function useGithubChecksSettings(
   // `enabled`. Asking earlier would fire two queries the backend answers with
   // an empty list anyway, and would make the page flash content it may not be
   // allowed to show.
+  //
+  // `isMember` is repeated here rather than leaned on transitively: these two
+  // queries are signed-in-only in their own right, and this gate used to carry
+  // `isAuthenticated` where the availability gate carried `isAuthenticated &&
+  // user` — a weaker term that only `isEnabled` was holding shut.
   const canQuery = Boolean(
-    isAuthenticated && isUserReady && organizationId && isEnabled
+    isMember && isUserReady && organizationId && isEnabled
   );
 
   const repos = useQuery(

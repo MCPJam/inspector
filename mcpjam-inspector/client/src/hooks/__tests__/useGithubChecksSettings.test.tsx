@@ -20,6 +20,14 @@ const mocks = vi.hoisted(() => {
   const requests: Array<{ kind: string; name: string; args: unknown }> = [];
   return {
     user: { value: null as { id: string } | null },
+    /**
+     * What `users:getCurrentUser` answers — the identity CONVEX resolved from
+     * the JWT it actually received, which is what `useIsMemberActor` reads and
+     * what the gate now turns on. `undefined` is "not resolved yet".
+     */
+    currentUser: {
+      value: undefined as { isAnonymous?: boolean } | null | undefined,
+    },
     isAuthenticated: { value: true },
     isUserReady: { value: true },
     useQuery: vi.fn(),
@@ -55,7 +63,14 @@ vi.mock("convex/react", () => ({
     isAuthenticated: mocks.isAuthenticated.value,
     isLoading: false,
   }),
-  useQuery: (name: unknown, args: unknown) => mocks.useQuery(name, args),
+  // `users:getCurrentUser` is answered from its own handle, so the assertions
+  // below can keep watching `mocks.useQuery` for the availability query alone.
+  useQuery: (name: unknown, args: unknown) =>
+    name === "users:getCurrentUser"
+      ? args === "skip"
+        ? undefined
+        : mocks.currentUser.value
+      : mocks.useQuery(name, args),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -95,6 +110,7 @@ function renderProbe(organizationId: string | null | undefined = "org-1") {
 describe("useGithubChecksAvailability", () => {
   beforeEach(() => {
     mocks.user.value = null;
+    mocks.currentUser.value = { isAnonymous: true };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     vi.clearAllMocks();
@@ -119,15 +135,38 @@ describe("useGithubChecksAvailability", () => {
     expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
   });
 
+  it("does NOT query while the WorkOS user is set but Convex still holds the guest", () => {
+    // CONVEX-19R's other half, and the reason the gate moved off
+    // `useAuth().user`. Hosted prod injects a guest bearer into EVERY document
+    // (`server/app.ts`), so the guest JWT is installed first and Convex
+    // confirms auth on it; AuthKit resolves the real user one commit before the
+    // token swap lands. Every term the old gate asked was true, and the socket
+    // was still carrying `guest|<uuid>`.
+    mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: true };
+
+    renderProbe();
+
+    expect(screen.getByText("unavailable")).toBeInTheDocument();
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "github/checkRepoConfigs:getGithubChecksSettingsAvailability",
+      "skip"
+    );
+    expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["an unauthenticated session", false, true, "org-1"],
-    ["an unready user", true, false, "org-1"],
-    ["a null organization id", true, true, null],
-    ["an empty organization id", true, true, ""],
+    ["an unauthenticated session", false, true, "org-1", { isAnonymous: false }],
+    ["an unready user", true, false, "org-1", { isAnonymous: false }],
+    ["an unresolved actor", true, true, "org-1", undefined],
+    ["an identity with no readable row", true, true, "org-1", null],
+    ["a null organization id", true, true, null, { isAnonymous: false }],
+    ["an empty organization id", true, true, "", { isAnonymous: false }],
   ] as const)(
     "skips the query and reporting for %s",
-    (_state, isAuthenticated, isUserReady, organizationId) => {
+    (_state, isAuthenticated, isUserReady, organizationId, currentUser) => {
       mocks.user.value = { id: "user-1" };
+      mocks.currentUser.value = currentUser;
       mocks.isAuthenticated.value = isAuthenticated;
       mocks.isUserReady.value = isUserReady;
 
@@ -142,8 +181,9 @@ describe("useGithubChecksAvailability", () => {
     }
   );
 
-  it("still asks the backend for a signed-in WorkOS user", () => {
+  it("asks the backend once Convex reports a signed-in member", () => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.useQuery.mockReturnValue({ state: "enabled" });
 
     renderProbe();
@@ -157,6 +197,7 @@ describe("useGithubChecksAvailability", () => {
 
   it("contains a signed-in membership refusal in the error boundary", () => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     const refusal = new ConvexError({
       kind: "forbidden",
       message: "Not a member of this organization",
@@ -251,6 +292,7 @@ describe("useGithubChecksSettings writes", () => {
 
   beforeEach(() => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     mocks.resetConvexBindings();
@@ -422,6 +464,7 @@ describe("useGithubInstallCallbacks", () => {
 
   beforeEach(() => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     mocks.resetConvexBindings();

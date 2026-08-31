@@ -144,7 +144,7 @@ describe("SkillsRoute — local Connect chrome", () => {
 });
 
 /**
- * The project store's gate must be the FLAG, in local mode too.
+ * The project store's gate is the FLAG **and** member-ness, in local mode too.
  *
  * It reached the tab as `!HOSTED_MODE || flag`, which is unconditionally true
  * on the desktop. That was harmless only while the Local/Cloud toggle carried
@@ -152,8 +152,20 @@ describe("SkillsRoute — local Connect chrome", () => {
  * reading this prop — which is the correct flag for it — the tautology became
  * "no gate at all", offering every local user a switch to a store the backend
  * gates independently.
+ *
+ * The flag alone was still not enough. A PostHog rollout is evaluated per
+ * distinct-id and resolves for anonymous ones too, while every Convex function
+ * behind the store is signed-in-only — so a flagged-in guest was offered a
+ * listing that could only be refused (CONVEX-19R). Both terms are asserted
+ * here, and separately, so a future edit cannot drop one and stay green.
  */
 describe("SkillsRoute — the project store's gate in local mode", () => {
+  beforeEach(() => {
+    // Default this block to a MEMBER, so each case isolates one term. The outer
+    // `beforeEach` leaves a guest, which would mask the flag assertions.
+    mockRouteContext.isGuestProjectActor = false;
+  });
+
   it("passes the flag through rather than a local-mode tautology", () => {
     skillsFlag.value = false;
 
@@ -184,6 +196,31 @@ describe("SkillsRoute — the project store's gate in local mode", () => {
     expect(screen.getByTestId("skills-view")).toHaveAttribute(
       "data-cloud-skills",
       "true"
+    );
+  });
+
+  it("keeps the store off for a guest actor even with the flag on", () => {
+    skillsFlag.value = true;
+    mockRouteContext.isGuestProjectActor = true;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
+    );
+  });
+
+  it("keeps the store off when there is no Convex identity at all", () => {
+    skillsFlag.value = true;
+    mockRouteContext.isAuthenticated = false;
+    mockRouteContext.isGuestProjectActor = false;
+
+    render(<SkillsRoute />);
+
+    expect(screen.getByTestId("skills-view")).toHaveAttribute(
+      "data-cloud-skills",
+      "false"
     );
   });
 });
