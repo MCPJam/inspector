@@ -164,7 +164,8 @@ export function assessCloudServerReadiness(args: {
   return { status: "ok" };
 }
 
-function joinLabels(labels: readonly string[]): string {
+/** The one prose form for a list of labels, shared by every block surface. */
+export function joinLabels(labels: readonly string[]): string {
   if (labels.length <= 2) return labels.join(" and ");
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }

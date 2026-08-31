@@ -49,6 +49,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { inheritedGoalTarget } from "@/components/swarms/inherited-goal-target";
+import { joinLabels } from "@/lib/cloud-server-readiness";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
@@ -1904,7 +1905,7 @@ function NewJourneyForm({
           role="alert"
           className="mb-2.5 rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
         >
-          {target.noServers.labels.join(", ")} has no servers assigned. Turn on
+          {joinLabels(target.noServers.labels)} has no servers assigned. Turn on
           Auto-connect on the Servers tab.
         </p>
       ) : null}

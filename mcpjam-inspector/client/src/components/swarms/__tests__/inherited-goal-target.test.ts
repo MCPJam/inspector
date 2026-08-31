@@ -12,19 +12,23 @@ describe("inheritedGoalTarget", () => {
 
   it("takes the most common target, so one stray experiment does not win", () => {
     expect(
-      inheritedGoalTarget([goal("env-bad"), goal("env-good"), goal("env-good")])
+      inheritedGoalTarget([
+        goal("env-bad"),
+        goal("env-good"),
+        goal("env-good"),
+      ]),
     ).toEqual(["env-good"]);
   });
 
   it("keeps a multi-environment fan-out together", () => {
     expect(
-      inheritedGoalTarget([goal("env-a", "env-b"), goal("env-a", "env-b")])
+      inheritedGoalTarget([goal("env-a", "env-b"), goal("env-a", "env-b")]),
     ).toEqual(["env-a", "env-b"]);
   });
 
   it("treats a different order as the same target", () => {
     expect(
-      inheritedGoalTarget([goal("env-a", "env-b"), goal("env-b", "env-a")])
+      inheritedGoalTarget([goal("env-a", "env-b"), goal("env-b", "env-a")]),
     ).toEqual(["env-a", "env-b"]);
   });
 
@@ -36,7 +40,7 @@ describe("inheritedGoalTarget", () => {
 
   it("ignores goals with no target of their own", () => {
     expect(
-      inheritedGoalTarget([{ environmentIds: null }, goal("env-a")])
+      inheritedGoalTarget([{ environmentIds: null }, goal("env-a")]),
     ).toEqual(["env-a"]);
   });
 
@@ -58,7 +62,7 @@ describe("inheritedGoalTarget — stale targets", () => {
 
   it("ignores a sibling whose environment is gone", () => {
     expect(
-      inheritedGoalTarget([goal("env-archived")], live("env-a"))
+      inheritedGoalTarget([goal("env-archived")], live("env-a")),
     ).toBeNull();
   });
 
@@ -66,15 +70,15 @@ describe("inheritedGoalTarget — stale targets", () => {
     expect(
       inheritedGoalTarget(
         [goal("env-dead"), goal("env-dead"), goal("env-live")],
-        live("env-live")
-      )
+        live("env-live"),
+      ),
     ).toEqual(["env-live"]);
   });
 
   it("drops a fan-out when any of its environments is gone", () => {
     // Half a fan-out is a different target than the one the sibling ran.
     expect(
-      inheritedGoalTarget([goal("env-a", "env-gone")], live("env-a"))
+      inheritedGoalTarget([goal("env-a", "env-gone")], live("env-a")),
     ).toBeNull();
   });
 

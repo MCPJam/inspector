@@ -21,8 +21,8 @@ describe("mostRecentlyConnectedAttachmentId", () => {
     expect(
       mostRecentlyConnectedAttachmentId(
         [group("att-1", "alpha"), group("att-2", "beta")],
-        servers
-      )
+        servers,
+      ),
     ).toBe("att-2");
   });
 
@@ -31,20 +31,20 @@ describe("mostRecentlyConnectedAttachmentId", () => {
       stale: at("2026-01-01T00:00:00Z"),
       fresh: at("2026-08-29T00:00:00Z"),
     };
-    expect(attachmentConnectedAt(group("att-1", "stale", "fresh"), servers)).toBe(
-      new Date("2026-08-29T00:00:00Z").getTime()
-    );
+    expect(
+      attachmentConnectedAt(group("att-1", "stale", "fresh"), servers),
+    ).toBe(new Date("2026-08-29T00:00:00Z").getTime());
   });
 
   it("returns null when nothing has ever connected", () => {
     expect(
-      mostRecentlyConnectedAttachmentId([group("att-1", "alpha")], {})
+      mostRecentlyConnectedAttachmentId([group("att-1", "alpha")], {}),
     ).toBeNull();
   });
 
   it("returns null outside an AppStateProvider", () => {
     expect(
-      mostRecentlyConnectedAttachmentId([group("att-1", "alpha")], undefined)
+      mostRecentlyConnectedAttachmentId([group("att-1", "alpha")], undefined),
     ).toBeNull();
   });
 
@@ -53,8 +53,8 @@ describe("mostRecentlyConnectedAttachmentId", () => {
     expect(
       mostRecentlyConnectedAttachmentId(
         [group("att-ghost", "not-connected-yet"), group("att-1", "alpha")],
-        servers
-      )
+        servers,
+      ),
     ).toBe("att-1");
   });
 
@@ -66,8 +66,8 @@ describe("mostRecentlyConnectedAttachmentId", () => {
     expect(
       mostRecentlyConnectedAttachmentId(
         [group("att-broken", "broken"), group("att-1", "alpha")],
-        servers
-      )
+        servers,
+      ),
     ).toBe("att-1");
   });
 
@@ -94,10 +94,13 @@ describe("preferredAttachmentId", () => {
     };
     expect(
       preferredAttachmentId({
-        attachments: [group("att-stdio", "stdio"), group("att-remote", "remote")],
+        attachments: [
+          group("att-stdio", "stdio"),
+          group("att-remote", "remote"),
+        ],
         environments: [used("att-remote", 1788100000000)],
         servers,
-      })
+      }),
     ).toBe("att-remote");
   });
 
@@ -111,7 +114,7 @@ describe("preferredAttachmentId", () => {
         attachments: [group("att-1", "alpha"), group("att-2", "beta")],
         environments: [],
         servers,
-      })
+      }),
     ).toBe("att-2");
   });
 
@@ -122,7 +125,7 @@ describe("preferredAttachmentId", () => {
         attachments: [group("att-1", "alpha"), group("att-2", "beta")],
         environments: [used("att-1")],
         servers,
-      })
+      }),
     ).toBe("att-2");
   });
 
@@ -132,7 +135,7 @@ describe("preferredAttachmentId", () => {
         attachments: [group("att-1", "alpha")],
         environments: [{ lastUsedAt: 1788100000000 }],
         servers: {},
-      })
+      }),
     ).toBeNull();
   });
 
@@ -142,7 +145,7 @@ describe("preferredAttachmentId", () => {
         attachments: [group("att-1", "alpha")],
         environments: [used("att-gone", 1788100000000)],
         servers: {},
-      })
+      }),
     ).toBeNull();
   });
 
@@ -152,7 +155,7 @@ describe("preferredAttachmentId", () => {
         attachments: [group("att-1", "alpha")],
         environments: [],
         servers: {},
-      })
+      }),
     ).toBeNull();
   });
 });

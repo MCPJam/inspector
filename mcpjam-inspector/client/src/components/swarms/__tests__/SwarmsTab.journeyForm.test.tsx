@@ -27,6 +27,8 @@ const host = {
   ownerScope: { type: "journeys" },
   serverCount: 2,
 };
+/** Same client with nothing enrolled, so the composed default cannot run. */
+const hostWithoutServers = { ...host, serverCount: 0 };
 // Carries a server group, so the composed default (client, no group) does not
 // match it — the resolver reuses an equivalent row when there is one.
 const environments = [
@@ -65,13 +67,14 @@ const {
   ensureAdhocMock,
   environmentsEnabled,
   siblingGoals,
-} =
-  vi.hoisted(() => ({
-    createJourneyMutation: vi.fn(),
-    ensureAdhocMock: vi.fn(),
-    environmentsEnabled: { value: false },
-    siblingGoals: { value: [] as unknown },
-  }));
+  hostRows,
+} = vi.hoisted(() => ({
+  createJourneyMutation: vi.fn(),
+  ensureAdhocMock: vi.fn(),
+  environmentsEnabled: { value: false },
+  siblingGoals: { value: [] as unknown },
+  hostRows: { value: [] as unknown[] },
+}));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => environmentsEnabled.value,
@@ -87,7 +90,7 @@ vi.mock("convex/react", () => ({
       case "journeys:listJourneysByPersona":
         return siblingGoals.value;
       case "hosts:listHosts":
-        return [host];
+        return hostRows.value;
       case "projectEnvironments:listEnvironments":
         return environments;
       default:
@@ -143,6 +146,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   environmentsEnabled.value = false;
   siblingGoals.value = [];
+  hostRows.value = [host];
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
   ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
 });
@@ -187,7 +191,7 @@ describe("SwarmsTab — new goal form", () => {
 
     await waitFor(() => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
-        expect.objectContaining({ stacks: [{ hostId: "host-1" }] })
+        expect.objectContaining({ stacks: [{ hostId: "host-1" }] }),
       );
     });
     const payload = createJourneyMutation.mock.calls[0]![0] as Record<
@@ -208,7 +212,8 @@ describe("SwarmsTab — new goal form", () => {
       expect(createJourneyMutation).toHaveBeenCalledTimes(1);
     });
     expect(
-      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>).config
+      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
+        .config,
     ).toEqual({ sessionsPerTarget: 1, maxTurns: 6 });
   });
 
@@ -237,7 +242,7 @@ describe("SwarmsTab — new goal form", () => {
     });
     expect(
       (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
-        .environmentIds
+        .environmentIds,
     ).toEqual(["env-1"]);
     expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
@@ -252,7 +257,7 @@ describe("SwarmsTab — new goal form", () => {
     });
     // The text survives so the user can retry without retyping it.
     expect((screen.getByLabelText("Goal") as HTMLTextAreaElement).value).toBe(
-      "buy a plan"
+      "buy a plan",
     );
   });
 
@@ -276,9 +281,7 @@ describe("SwarmsTab — new goal form", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "buy a plan" },
     });
-    expect(
-      screen.getByRole("button", { name: /create goal/i })
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /create goal/i })).toBeDisabled();
   });
 
   it("runs a new goal where the persona's existing goals run", async () => {
@@ -298,7 +301,7 @@ describe("SwarmsTab — new goal form", () => {
     });
     expect(
       (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
-        .environmentIds
+        .environmentIds,
     ).toEqual(["env-sibling"]);
     expect(ensureAdhocMock).not.toHaveBeenCalled();
   });
@@ -316,5 +319,31 @@ describe("SwarmsTab — new goal form", () => {
       target: { value: "buy a plan, carefully" },
     });
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("creates against the siblings even when the default cannot run", async () => {
+    // The branch the whole inheritance path exists for: this client has no
+    // servers of its own, so the composed default is blocked — but the goals
+    // already on this persona name a target that works.
+    hostRows.value = [hostWithoutServers];
+    siblingGoals.value = [
+      {
+        _id: "j-1",
+        goal: "an existing goal",
+        hostIds: [],
+        environmentIds: ["env-sibling"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    await createGoal("buy a plan");
+
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      (createJourneyMutation.mock.calls[0]![0] as Record<string, unknown>)
+        .environmentIds,
+    ).toEqual(["env-sibling"]);
   });
 });

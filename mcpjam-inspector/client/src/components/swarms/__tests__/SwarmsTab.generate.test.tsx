@@ -109,11 +109,7 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 
 // The button is the handle the mid-flight test needs to retarget the dialog.
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({
-    onChange,
-  }: {
-    onChange: (id: string) => void;
-  }) => (
+  ServerGroupPicker: ({ onChange }: { onChange: (id: string) => void }) => (
     <button
       type="button"
       data-testid="generate-server-group-picker"
@@ -191,10 +187,9 @@ function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   openPersonasTab();
   fireEvent.click(
-    screen.getByRole("button", { name: /generate persona with ai/i })
+    screen.getByRole("button", { name: /generate persona with ai/i }),
   );
 }
-
 
 describe("SwarmsTab — generate persona", () => {
   it("opens ready to submit", async () => {
@@ -202,7 +197,7 @@ describe("SwarmsTab — generate persona", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /generate persona/i })
+        screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
   });
@@ -226,7 +221,7 @@ describe("SwarmsTab — generate persona", () => {
         name: "Curious Newcomer",
         role: "hobbyist",
         notes: "n",
-      })
+      }),
     );
     // Avatar indices must be in `createPersona`'s accepted range — the
     // mutation throws (not clamps) on out-of-range values.
@@ -249,7 +244,7 @@ describe("SwarmsTab — generate persona", () => {
         hostIds: [],
         environmentIds: ["env-1"],
         config: { sessionsPerTarget: 1, maxTurns: 6 },
-      })
+      }),
     );
     // The unnamed journey must not send an empty `name`.
     const secondCall = createJourneyMutation.mock.calls[1]![0] as any;
@@ -269,7 +264,7 @@ describe("SwarmsTab — generate persona", () => {
         projectId: "proj-1",
         environmentId: "env-1",
         journeyCount: 3,
-      })
+      }),
     );
   });
 
@@ -287,7 +282,7 @@ describe("SwarmsTab — generate persona", () => {
 
     await waitFor(() => {
       expect(toastMock.success).toHaveBeenCalledWith(
-        "Created persona + 1 of 2 goals"
+        "Created persona + 1 of 2 goals",
       );
     });
   });
@@ -297,9 +292,7 @@ describe("SwarmsTab — generate persona", () => {
       persona: { name: "P", role: "R" },
       journeys: [{ goal: "one" }, { goal: "two" }],
     });
-    createJourneyMutation.mockRejectedValue(
-      new Error("Environment not found")
-    );
+    createJourneyMutation.mockRejectedValue(new Error("Environment not found"));
 
     openGeneratePersona();
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
@@ -324,7 +317,7 @@ describe("SwarmsTab — generate persona", () => {
     // footer action is relabelled. (Radix renders its own "Close" X, so assert
     // the absence of "Cancel" rather than the presence of "Close".)
     expect(
-      screen.queryByRole("button", { name: /^cancel$/i })
+      screen.queryByRole("button", { name: /^cancel$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -350,7 +343,7 @@ describe("SwarmsTab — generate persona", () => {
       () =>
         new Promise((resolve) => {
           releaseGenerate = resolve;
-        })
+        }),
     );
 
     openGeneratePersona();
@@ -373,18 +366,18 @@ describe("SwarmsTab — generate persona", () => {
     // The snapshot wins: without it this would be [] and the mutation would
     // fail after the quota was already spent.
     expect(
-      (createJourneyMutation.mock.calls[0]![0] as any).environmentIds
+      (createJourneyMutation.mock.calls[0]![0] as any).environmentIds,
     ).toEqual(["env-1"]);
     // Env-based: no derived host list is stored.
     expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual(
-      []
+      [],
     );
   });
 
   it("dispatches one billed generation even on a double-click", async () => {
     let release: (v: unknown) => void = () => {};
     generatePersonaMock.mockImplementation(
-      () => new Promise((resolve) => (release = resolve))
+      () => new Promise((resolve) => (release = resolve)),
     );
 
     openGeneratePersona();
@@ -407,7 +400,7 @@ describe("SwarmsTab — generate persona", () => {
 
   it("renders a quota 429 inline instead of closing the dialog", async () => {
     generatePersonaMock.mockRejectedValue(
-      new SwarmGenerateError(429, "You've hit your usage limit for today.")
+      new SwarmGenerateError(429, "You've hit your usage limit for today."),
     );
 
     openGeneratePersona();
@@ -417,7 +410,7 @@ describe("SwarmsTab — generate persona", () => {
     expect(alert).toHaveTextContent("You've hit your usage limit for today.");
     expect(createPersonaMutation).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", { name: /generate persona/i })
+      screen.getByRole("button", { name: /generate persona/i }),
     ).toBeInTheDocument();
   });
 });
@@ -433,7 +426,7 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate goals with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
@@ -449,7 +442,7 @@ describe("SwarmsTab — generate journeys", () => {
             role: "tester",
             notes: "cares about speed",
           },
-        })
+        }),
       );
     });
 
@@ -461,7 +454,7 @@ describe("SwarmsTab — generate journeys", () => {
           goal: "goal a",
           hostIds: [],
           environmentIds: ["env-1"],
-        })
+        }),
       );
     });
     // Generating journeys must never create a persona.
@@ -479,7 +472,7 @@ describe("SwarmsTab — generate journeys", () => {
     // SwarmsTab auto-selects the first persona, so the journeys panel (and its
     // Generate button) is already mounted.
     fireEvent.click(
-      screen.getByRole("button", { name: /generate goals with ai/i })
+      screen.getByRole("button", { name: /generate goals with ai/i }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: /generate goals/i }));
@@ -516,11 +509,11 @@ describe("GenerateSwarmDialog — latch release on early rejection", () => {
     });
 
     const { rerender } = render(
-      <GenerateSwarmDialog {...baseProps} personaCount={200} />
+      <GenerateSwarmDialog {...baseProps} personaCount={200} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "already has 200 personas"
+      "already has 200 personas",
     );
     expect(generatePersonaMock).not.toHaveBeenCalled();
 

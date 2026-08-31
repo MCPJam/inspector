@@ -57,7 +57,7 @@ const REMOTE = {
 };
 
 function composeState(
-  stack: Partial<EnvironmentComposerState["stack"]> = {}
+  stack: Partial<EnvironmentComposerState["stack"]> = {},
 ): EnvironmentComposerState {
   return {
     environmentIds: [],
@@ -74,7 +74,7 @@ function composeState(
 }
 
 function environment(
-  overrides: Partial<ProjectEnvironmentView> = {}
+  overrides: Partial<ProjectEnvironmentView> = {},
 ): ProjectEnvironmentView {
   return {
     environmentId: "env-1",
@@ -90,10 +90,10 @@ function environment(
 
 function assess(
   state: EnvironmentComposerState,
-  environments: ProjectEnvironmentView[] = []
+  environments: ProjectEnvironmentView[] = [],
 ) {
   return renderHook(() =>
-    useCloudServerReadiness({ projectId: "proj-1", state, environments })
+    useCloudServerReadiness({ projectId: "proj-1", state, environments }),
   ).result.current;
 }
 
@@ -136,8 +136,8 @@ describe("useCloudServerReadiness", () => {
           stack: composeState().stack,
           customized: false,
         },
-        [environment()]
-      )
+        [environment()],
+      ),
     ).toEqual({ status: "no_servers", labels: ["Staging"] });
   });
 
@@ -153,8 +153,8 @@ describe("useCloudServerReadiness", () => {
           stack: composeState().stack,
           customized: false,
         },
-        [environment({ pluginVersionIds: ["pv-1"] })]
-      )
+        [environment({ pluginVersionIds: ["pv-1"] })],
+      ),
     ).toEqual({ status: "ok" });
   });
 

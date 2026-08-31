@@ -28,7 +28,7 @@ const LOOPBACK = {
 function client(
   label: string,
   serverCount: number | null,
-  extra: Partial<CloudLaunchTarget> = {}
+  extra: Partial<CloudLaunchTarget> = {},
 ): CloudLaunchTarget {
   return { label, serverIds: null, serverCount, ...extra };
 }
@@ -39,7 +39,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 1)],
         servers: [REMOTE],
-      })
+      }),
     ).toEqual({ status: "ok" });
   });
 
@@ -48,7 +48,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 0), client("Cursor", 1)],
         servers: [REMOTE],
-      })
+      }),
     ).toEqual({ status: "no_servers", labels: ["Claude"] });
   });
 
@@ -57,7 +57,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 2)],
         servers: [STDIO, LOOPBACK],
-      })
+      }),
     ).toEqual({
       status: "unrunnable_servers",
       labels: ["Claude"],
@@ -72,7 +72,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 2)],
         servers: [STDIO, REMOTE],
-      })
+      }),
     ).toEqual({
       status: "unrunnable_servers",
       labels: ["Claude"],
@@ -94,7 +94,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 2)],
         servers: [LOOPBACK, REMOTE],
-      })
+      }),
     ).toEqual({ status: "ok" });
   });
 
@@ -105,7 +105,7 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [client("Claude", 0), client("Cursor", 1)],
         servers: [STDIO],
-      })
+      }),
     ).toEqual({ status: "no_servers", labels: ["Claude"] });
   });
 
@@ -119,13 +119,13 @@ describe("assessCloudServerReadiness", () => {
       assessCloudServerReadiness({
         targets: [group],
         servers: [REMOTE, STDIO],
-      })
+      }),
     ).toEqual({ status: "ok" });
     expect(
       assessCloudServerReadiness({
         targets: [{ ...group, serverIds: [STDIO._id] }],
         servers: [REMOTE, STDIO],
-      })
+      }),
     ).toEqual({
       status: "unrunnable_servers",
       labels: ["Prod group"],
@@ -139,7 +139,7 @@ describe("assessCloudServerReadiness", () => {
         assessCloudServerReadiness({
           targets: [client("Claude", null)],
           servers: [STDIO],
-        })
+        }),
       ).toEqual({ status: "ok" });
     });
 
@@ -148,7 +148,7 @@ describe("assessCloudServerReadiness", () => {
         assessCloudServerReadiness({
           targets: [client("Claude", 3)],
           servers: [],
-        })
+        }),
       ).toEqual({ status: "ok" });
     });
 
@@ -163,7 +163,7 @@ describe("assessCloudServerReadiness", () => {
             },
           ],
           servers: [STDIO],
-        })
+        }),
       ).toEqual({ status: "ok" });
     });
 
@@ -172,13 +172,13 @@ describe("assessCloudServerReadiness", () => {
         assessCloudServerReadiness({
           targets: [client("Plugin env", 0, { opaque: true })],
           servers: [],
-        })
+        }),
       ).toEqual({ status: "ok" });
     });
 
     it("passes an empty selection — other validation owns 'nothing picked'", () => {
       expect(
-        assessCloudServerReadiness({ targets: [], servers: [REMOTE] })
+        assessCloudServerReadiness({ targets: [], servers: [REMOTE] }),
       ).toEqual({ status: "ok" });
     });
   });
@@ -195,7 +195,7 @@ describe("describeCloudServerBlock", () => {
       labels: ["Claude", "Cursor"],
     });
     expect(copy?.message).toBe(
-      "Claude and Cursor have no servers to run against."
+      "Claude and Cursor have no servers to run against.",
     );
     expect(copy?.detail).toMatch(/connect a server/i);
   });

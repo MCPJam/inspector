@@ -183,7 +183,7 @@ function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   openPersonasTab();
   fireEvent.click(
-    screen.getByRole("button", { name: /generate persona with ai/i })
+    screen.getByRole("button", { name: /generate persona with ai/i }),
   );
 }
 
@@ -212,11 +212,11 @@ describe("GenerateSwarmDialog — composed target", () => {
     openGeneratePersona();
 
     expect(
-      screen.queryByTestId("generate-environments-picker")
+      screen.queryByTestId("generate-environments-picker"),
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /generate persona/i })
+        screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
   });
@@ -236,13 +236,13 @@ describe("GenerateSwarmDialog — composed target", () => {
       expect.objectContaining({
         projectId: "proj-1",
         stacks: [{ hostId: "host-1" }],
-      })
+      }),
     );
     await waitFor(() => {
       expect(generatePersonaMock).toHaveBeenCalledTimes(1);
     });
     expect(generatePersonaMock).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: "env-adhoc-1" })
+      expect.objectContaining({ environmentId: "env-adhoc-1" }),
     );
   });
 
@@ -291,7 +291,7 @@ describe("GenerateSwarmDialog — composed target", () => {
 
     await waitFor(() => {
       expect(generatePersonaMock).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentId: "env-1" })
+        expect.objectContaining({ environmentId: "env-1" }),
       );
     });
     expect(ensureAdhocMock).not.toHaveBeenCalled();
@@ -319,7 +319,7 @@ describe("GenerateSwarmDialog — composed target", () => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
         expect.objectContaining({
           stacks: [{ hostId: "host-1", serverAttachmentId: "att-1" }],
-        })
+        }),
       );
     });
   });
@@ -344,7 +344,7 @@ describe("GenerateSwarmDialog — composed target", () => {
     };
     const { rerender } = render(<GenerateSwarmDialog {...props} />);
     expect(
-      screen.getByRole("button", { name: /generate persona/i })
+      screen.getByRole("button", { name: /generate persona/i }),
     ).toBeDisabled();
 
     // The query settles.
@@ -353,7 +353,7 @@ describe("GenerateSwarmDialog — composed target", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /generate persona/i })
+        screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
     fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
@@ -361,7 +361,7 @@ describe("GenerateSwarmDialog — composed target", () => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
         expect.objectContaining({
           stacks: [{ hostId: "host-1", serverAttachmentId: "att-1" }],
-        })
+        }),
       );
     });
   });
@@ -373,11 +373,11 @@ describe("GenerateSwarmDialog — composed target", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(
-        /no servers assigned/i
+        /no servers assigned/i,
       );
     });
     expect(
-      screen.getByRole("button", { name: /generate persona/i })
+      screen.getByRole("button", { name: /generate persona/i }),
     ).toBeDisabled();
   });
 
@@ -389,7 +389,7 @@ describe("GenerateSwarmDialog — composed target", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /generate persona/i })
+        screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -470,7 +470,7 @@ describe("GenerateSwarmDialog — composed target", () => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
         expect.objectContaining({
           stacks: [{ hostId: "host-1", serverAttachmentId: "att-used" }],
-        })
+        }),
       );
     });
   });
@@ -485,7 +485,7 @@ describe("GenerateSwarmDialog — composed target", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /generate persona/i })
+        screen.getByRole("button", { name: /generate persona/i }),
       ).not.toBeDisabled();
     });
   });

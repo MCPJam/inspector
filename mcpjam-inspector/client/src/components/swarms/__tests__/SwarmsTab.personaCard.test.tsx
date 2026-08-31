@@ -120,11 +120,11 @@ describe("persona sidebar card", () => {
 
     expect(within(aside).getByText(LONG_NAME)).toHaveAttribute(
       "title",
-      LONG_NAME
+      LONG_NAME,
     );
     expect(within(aside).getByText(LONG_ROLE)).toHaveAttribute(
       "title",
-      LONG_ROLE
+      LONG_ROLE,
     );
   });
 
@@ -177,7 +177,7 @@ describe("persona sidebar card", () => {
 
     expect(rows).toHaveLength(personas.length);
     const heights = new Set(
-      rows.map((el) => el.className.match(/min-h-\[\d+px\]/)?.[0])
+      rows.map((el) => el.className.match(/min-h-\[\d+px\]/)?.[0]),
     );
     expect(heights.size).toBe(1);
     expect([...heights][0]).toBeDefined();

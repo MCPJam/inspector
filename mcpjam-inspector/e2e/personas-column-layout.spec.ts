@@ -42,26 +42,43 @@ const PERSONAS = [
   ],
   // The control: short on both lines, so its role must not be elided.
   ["Ana", "QA"],
+  // A quote would end the title attribute early and silently reshape the DOM
+  // these tests measure.
+  ['Ana "la jefa" Diaz', "QA"],
 ];
 
-async function renderSidebar(page: Page): Promise<void> {
+/** The fixture builds attributes by concatenation, so quotes must not end them. */
+function attr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+/** Compiled once: neither the CSS nor the drift check varies per test. */
+let fixtureCss: Promise<string> | null = null;
+
+function buildCss(): Promise<string> {
   const source = readFileSync(`${packageRoot}${SOURCE}`, "utf8");
   const missing = Object.entries(CLS).filter(([, v]) => !source.includes(v));
   expect(
     missing.map(([k]) => k),
-    `${SOURCE} no longer contains these class strings — the fixture has drifted from the component and would be measuring a layout nobody ships`
+    `${SOURCE} no longer contains these class strings — the fixture has drifted from the component and would be measuring a layout nobody ships`,
   ).toEqual([]);
 
-  const compiler = await compile(
-    `@import "tailwindcss";\n@theme { --spacing: 0.25rem; }`,
-    { base: packageRoot, onDependency() {} }
+  return compile(`@import "tailwindcss";\n@theme { --spacing: 0.25rem; }`, {
+    base: packageRoot,
+    onDependency() {},
+  }).then((compiler) =>
+    compiler.build([
+      ...new Set(Object.values(CLS).flatMap((s) => s.split(/\s+/))),
+      "mr-2",
+      "size-8",
+      "shrink-0",
+    ]),
   );
-  const css = compiler.build([
-    ...new Set(Object.values(CLS).flatMap((s) => s.split(/\s+/))),
-    "mr-2",
-    "size-8",
-    "shrink-0",
-  ]);
+}
+
+async function renderSidebar(page: Page): Promise<void> {
+  fixtureCss ??= buildCss();
+  const css = await fixtureCss;
 
   const rows = PERSONAS.map(
     ([name, role], i) => `
@@ -69,12 +86,12 @@ async function renderSidebar(page: Page): Promise<void> {
       <button type="button" class="${CLS.button}">
         <span style="width:32px;height:40px;background:#8aa" class="shrink-0"></span>
         <span class="${CLS.textColumn}">
-          <span class="${CLS.name}" data-name="${i}" title="${name}">${name}</span>
-          <span class="${CLS.role}" data-role="${i}" title="${role}">${role}</span>
+          <span class="${CLS.name}" data-name="${i}" title="${attr(name)}">${name}</span>
+          <span class="${CLS.role}" data-role="${i}" title="${attr(role)}">${role}</span>
         </span>
       </button>
       <span class="mr-2 size-8 shrink-0"></span>
-    </div>`
+    </div>`,
   ).join("");
 
   await page.setContent(`<!doctype html><meta charset="utf-8">
@@ -120,9 +137,9 @@ test.describe("personas sidebar column", () => {
   test("stops at two lines and elides the rest", async ({ page }) => {
     const el = page.locator("[data-name='2']");
     expect(await lineCount(page, "[data-name='2']")).toBe(2);
-    expect(
-      await el.evaluate((n) => n.scrollHeight > n.clientHeight + 1)
-    ).toBe(true);
+    expect(await el.evaluate((n) => n.scrollHeight > n.clientHeight + 1)).toBe(
+      true,
+    );
   });
 
   test("keeps every role on a single line", async ({ page }) => {
@@ -142,6 +159,7 @@ test.describe("personas sidebar column", () => {
 
     for (const i of [0, 1, 2]) expect(await elided(i)).toBe(true);
     expect(await elided(3)).toBe(false);
+    expect(await elided(4)).toBe(false);
   });
 
   test("gives a one-word name the same card height as a wrapped one", async ({
@@ -164,7 +182,7 @@ async function lineCount(page: Page, selector: string): Promise<number> {
     .evaluate((el) =>
       Math.round(
         el.getBoundingClientRect().height /
-          parseFloat(getComputedStyle(el).lineHeight)
-      )
+          parseFloat(getComputedStyle(el).lineHeight),
+      ),
     );
 }

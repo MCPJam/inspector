@@ -31,6 +31,7 @@ import { Label } from "@mcpjam/design-system/label";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { joinLabels } from "@/lib/cloud-server-readiness";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   generateSwarmJourneys,
@@ -54,9 +55,6 @@ const PERSONA_AVATAR_PALETTE_COUNT = 6;
 export const MAX_PERSONAS_PER_PROJECT = 200;
 
 const randomAvatarIndex = (count: number) => Math.floor(Math.random() * count);
-
-const joinNames = (names: string[]) =>
-  names.length <= 1 ? (names[0] ?? "This client") : names.join(", ");
 
 const EMPTY_SLATE_MESSAGE =
   "Generation returned no goals. Try again, or make sure the environment's servers have been connected so their tools are inspected.";
@@ -411,7 +409,7 @@ export function GenerateSwarmDialog({
               role="alert"
               className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
             >
-              {joinNames(noServers.labels)} has no servers assigned. Turn on
+              {joinLabels(noServers.labels)} has no servers assigned. Turn on
               Auto-connect on the{" "}
               <button
                 type="button"
