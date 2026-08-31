@@ -273,6 +273,28 @@ const UNREPORTED_STEP_FAILURES = new Set([
 ]);
 
 /**
+ * One failure, or two?
+ *
+ * A step that fails twice over — DCR, say — writes its bare message first and
+ * then the same message with the recovery hint appended
+ * (`errorWithFallbackHint` in the SDK is `${error} ${FALLBACK_HINT}`). Exact
+ * comparison saw two different strings and reported both, one millisecond
+ * apart, so a single refusal arrived as a pair: 29 of 378 events over 18 days.
+ *
+ * Prefix, not equality, and in whichever order they arrive. This is
+ * deliberately narrow — an unrelated failure never begins with the whole text
+ * of the one before it, so widening a step's message cannot swallow the next
+ * step's.
+ */
+function isSameStepFailure(
+  error: string,
+  lastReported: string | undefined
+): boolean {
+  if (lastReported === undefined) return false;
+  return error.startsWith(lastReported) || lastReported.startsWith(error);
+}
+
+/**
  * Wrap the caller's `updateState` so every NEW step failure is reported.
  *
  * This is the only reliable hook: the SDK state machine catches its own step
@@ -309,7 +331,11 @@ function withStepFailureReporting(
       updateState(updates);
       return;
     }
-    if (typeof error === "string" && error !== "" && error !== lastReportedError) {
+    if (
+      typeof error === "string" &&
+      error !== "" &&
+      !isSameStepFailure(error, lastReportedError)
+    ) {
       lastReportedError = error;
       reportCaught(new Error(sanitizeStepError(error)), {
         source: "oauth_debugger_step",

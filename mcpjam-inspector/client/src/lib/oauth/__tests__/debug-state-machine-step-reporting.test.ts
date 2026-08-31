@@ -163,6 +163,43 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(reportCaught).toHaveBeenCalledTimes(2);
   });
 
+  it("reports one failure once when the hint is appended after it", () => {
+    // The SDK writes the bare message, then the same message with the recovery
+    // hint (`errorWithFallbackHint`). Two strings, one refusal — and exact
+    // comparison reported both, a millisecond apart.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Dynamic Client Registration failed (400)." });
+    wrapped({
+      error:
+        "Dynamic Client Registration failed (400). Configure a pre-registered client or enable DCR on the authorization server.",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows the pair in the other order too", () => {
+    // Nothing guarantees which of the two lands first, and a guard that only
+    // works one way round is a guard that works half the time.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Client registration failed: timeout. Configure a pre-registered client." });
+    wrapped({ error: "Client registration failed: timeout." });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not swallow a different failure that merely follows", () => {
+    // The narrowness is the point: an unrelated message never begins with the
+    // whole text of the one before it.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Dynamic Client Registration failed (400)." });
+    wrapped({ error: "Authenticated request failed: 401 Unauthorized" });
+
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+  });
+
   it("still forwards every update to the caller's updateState", () => {
     const { wrapped, updateState } = wrappedUpdateState();
 

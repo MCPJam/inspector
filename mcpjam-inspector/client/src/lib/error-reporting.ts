@@ -189,6 +189,22 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
       posthog.captureException(normalized, {
         source: options.source,
         level: options.level ?? "error",
+        // The severity PostHog actually reads. `captureException(err, props)`
+        // merges `props` OVER the properties it built, and error tracking
+        // groups, alerts and filters on `$exception_level` — so the plain
+        // `level` above lands as a custom property nothing looks at, and every
+        // report kept the `error` default no matter what the caller declared.
+        //
+        // That silently overrode the one caller that asks for anything else.
+        // `oauth_debugger_step` is `warning` on purpose — it reports the
+        // server UNDER TEST misbehaving, which is what a debugger is for, and
+        // its value is the aggregate trend rather than a page. It alerted as
+        // an Inspector crash anyway: 378 events across 97 users in 18 days,
+        // more than half of every client `$exception` in the project.
+        //
+        // `level` is kept alongside it: it has been on these events since the
+        // sink was written, and dropping it would break any saved filter.
+        $exception_level: options.level ?? "error",
         ...(options.extra ?? {}),
       });
     }
