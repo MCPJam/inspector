@@ -44,7 +44,7 @@ mcpjam tasks conformance \
 A `--tool-name` the server does not list is treated the same way: the run is incomplete, and the message names both the tool you asked for and the tools the server actually lists.
 
 <Check>
-The run now reaches a `passed` or `failed` outcome rather than `incomplete`.
+Naming the tool clears the selection blocker, not the verdict. If the named tool returns a normal result instead of creating a task, or the task never becomes readable, the task-dependent checks still cannot run and the outcome stays `incomplete`.
 </Check>
 </Step>
 
