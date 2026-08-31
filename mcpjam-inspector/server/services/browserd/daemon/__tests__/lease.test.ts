@@ -222,4 +222,36 @@ describe("HandoffLease — the hold window", () => {
     lease.resume("panel-a");
     expect(lease.consumeResumedHeldSince()).toBe(1_000);
   });
+
+  it("two handoffs with NO command between them keep the EARLIER window", () => {
+    // The purge is consumed lazily, by the next command — so a second handoff
+    // can begin while the first one's console is still unpurged. Overwriting
+    // the window here would drop only the second hold's console and leave the
+    // first hold's — the sign-in, the more sensitive of the two — readable the
+    // moment the person handed back.
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000); // hold #1 opens at 1_000
+    advance(5_000);
+    lease.resume("panel-a"); // window pending at 1_000, nothing consumes it
+    advance(5_000);
+    lease.acquire("panel-a", 30_000); // hold #2 opens at 11_000
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000);
+  });
+
+  it("a fresh handoff after the window was consumed opens a NEW window", () => {
+    // The widening must not become stickiness: once the purge has run, the next
+    // hold is a genuinely new window and must not re-purge from the old start.
+    const { lease, advance } = atClock();
+    lease.acquire("panel-a", 30_000);
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(1_000); // consumed
+    advance(5_000);
+    lease.acquire("panel-a", 30_000); // opens at 11_000
+    advance(5_000);
+    lease.resume("panel-a");
+    expect(lease.consumeResumedHeldSince()).toBe(11_000);
+  });
 });

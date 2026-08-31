@@ -769,4 +769,41 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     expect(JSON.stringify(a.output)).not.toContain("LEAK-A");
     expect(JSON.stringify(b.output)).not.toContain("LEAK-B");
   });
+
+  it("DISCARDS both holds when two handoffs run back to back with no command between", async () => {
+    // The realistic shape: sign in, hand back, a CAPTCHA appears, take it again,
+    // hand back — and only THEN does the model get a turn. The purge is consumed
+    // lazily, so at that point two holds are pending against one window. Keeping
+    // the later start would drop the CAPTCHA's console and serve the sign-in's.
+    let now = 1_000;
+    const lease = new HandoffLease({ now: () => now });
+    const page = fakePage({
+      url: "https://bank.test/",
+      console: [{ type: "log", text: "before any handoff", at: 500 }],
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://bank.test/" }));
+
+    // Hold #1 — the sign-in.
+    lease.acquire("panel-a", 60_000);
+    now = 2_000;
+    page.pushConsole({ type: "log", text: "auth token: SECRET-ONE", at: 2_100 });
+    now = 3_000;
+    lease.resume("panel-a");
+
+    // Hold #2 — the CAPTCHA, before the model has run anything at all.
+    now = 4_000;
+    lease.acquire("panel-a", 60_000);
+    now = 5_000;
+    page.pushConsole({ type: "log", text: "captcha answer: SECRET-TWO", at: 5_100 });
+    now = 6_000;
+    lease.resume("panel-a");
+
+    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const text = JSON.stringify(observed.output);
+    expect(text).not.toContain("SECRET-ONE");
+    expect(text).not.toContain("SECRET-TWO");
+    expect(text).toContain("before any handoff");
+  });
 });

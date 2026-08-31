@@ -60,7 +60,17 @@ export class HandoffLease {
    * window and leave the earliest (most sensitive) entries readable.
    */
   private heldSince: number | undefined;
-  /** `heldSince` of the hold that just ended, consumed alongside the flag. */
+  /**
+   * Start of the EARLIEST hold that has ended without its console being purged
+   * yet, consumed alongside the flag.
+   *
+   * Earliest, not latest, because the purge is consumed lazily — by the next
+   * command — and nothing says a second handoff cannot happen first. Two
+   * complete cycles back to back (sign in, hand back, solve a CAPTCHA, hand
+   * back) with no command in between would otherwise overwrite this with the
+   * SECOND hold's start, and the first hold's console — the sign-in, the most
+   * sensitive window of the two — would survive the purge and be readable.
+   */
   private resumedHeldSince: number | undefined;
   private readonly now: () => number;
   private readonly defaultTtlMs: number;
@@ -129,7 +139,12 @@ export class HandoffLease {
     if (state.holder !== holder) return state;
     this.current = { state: "free" };
     this.resumedDirty = true;
-    this.resumedHeldSince = this.heldSince;
+    // Widen to the earliest un-consumed hold, never replace it: a pending purge
+    // means no command has run since that hold ended, so its console is still
+    // in the ring waiting to be dropped. See `resumedHeldSince`.
+    if (this.resumedHeldSince === undefined) {
+      this.resumedHeldSince = this.heldSince;
+    }
     this.heldSince = undefined;
     return this.current;
   }
