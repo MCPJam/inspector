@@ -129,7 +129,7 @@ describe("MCPClientManager Automatic legacy fallback", () => {
     await fixture.close();
   });
 
-  it("accepts 2025-06-18 after disconnect and reconnect despite a stale list", async () => {
+  it("honors a per-server support list after disconnect and reconnect", async () => {
     await manager.connectToServer("bart", {
       url: fixture.url,
       timeout: 5_000,
@@ -139,15 +139,13 @@ describe("MCPClientManager Automatic legacy fallback", () => {
     );
 
     await manager.removeServer("bart");
-    await manager.connectToServer("bart", {
-      url: fixture.url,
-      timeout: 5_000,
-      supportedProtocolVersions: STALE_ACCEPT_LIST,
-    });
-
-    expect(manager.getInitializationInfo("bart")?.protocolVersion).toBe(
-      NEGOTIATED_VERSION
-    );
+    await expect(
+      manager.connectToServer("bart", {
+        url: fixture.url,
+        timeout: 5_000,
+        supportedProtocolVersions: STALE_ACCEPT_LIST,
+      })
+    ).rejects.toThrow(/Server's protocol version is not supported: 2025-06-18/);
     const initializeRequests = fixture.requests.filter(
       (request) => request.rpcMethod === "initialize"
     );
@@ -155,24 +153,22 @@ describe("MCPClientManager Automatic legacy fallback", () => {
     expect(
       initializeRequests.map((request) => request.proposedProtocolVersion)
     ).toEqual(["2025-11-25", "2025-11-25"]);
-    expect(sseConstructedCount).toBe(0);
+    expect(sseConstructedCount).toBe(1);
   });
 
-  it("ignores a stale manager-default accept-list in Automatic mode", async () => {
+  it("honors the manager-default support list in Automatic mode", async () => {
     await manager.disconnectAllServers();
     manager = new MCPClientManager(
       {},
       { defaultSupportedProtocolVersions: STALE_ACCEPT_LIST }
     );
 
-    await manager.connectToServer("bart", {
-      url: fixture.url,
-      timeout: 5_000,
-    });
-
-    expect(manager.getInitializationInfo("bart")?.protocolVersion).toBe(
-      NEGOTIATED_VERSION
-    );
+    await expect(
+      manager.connectToServer("bart", {
+        url: fixture.url,
+        timeout: 5_000,
+      })
+    ).rejects.toThrow(/Server's protocol version is not supported: 2025-06-18/);
   });
 
   it("keeps an explicit legacy protocol pin strict", async () => {

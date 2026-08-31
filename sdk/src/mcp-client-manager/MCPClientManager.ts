@@ -2395,16 +2395,13 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
-      // Resolve negotiation before the legacy initialize accept-list so Auto
-      // has one source of truth. An unpinned connection probes the modern era
-      // first and, on a legacy signal, must fall back with the upstream SDK's
-      // complete built-in supported-version list. Forwarding a persisted
-      // per-server or manager-default list here can make the first connection
-      // succeed but a later reconnect reject the server's valid counter-offer.
+      // Resolve negotiation independently from the client's support list. The
+      // list says which revisions the client can speak; the selection says
+      // whether to auto-negotiate or pin one era. Upstream uses the same list
+      // to constrain modern discovery candidates and legacy fallback.
       const versionNegotiation = resolveVersionNegotiation(
         resolvedProtocolVersion
       );
-      const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
       // so `initialize.params.protocolVersion` actually goes out as the
@@ -2412,15 +2409,16 @@ export class MCPClientManager {
       // explicit `supportedProtocolVersions` (per-server or default) still
       // wins for an explicit pin — pinning at one layer while overriding the
       // other would be ambiguous and the override is the more specific signal.
-      // Auto deliberately ignores both lists so its legacy fallback negotiates
-      // against every version supported by the upstream SDK.
-      const resolvedSupportedProtocolVersions = wantsAutoNegotiation
-        ? undefined
-        : config.supportedProtocolVersions ??
-          this.defaultSupportedProtocolVersions ??
-          (!wantsStateless && resolvedProtocolVersion !== undefined
-            ? [resolvedProtocolVersion]
-            : undefined);
+      // Automatic mode honors the same declared support list. This is what
+      // lets a host truthfully say "2025-11-25 + 2026-07-28" once, then let
+      // the SDK select between those eras without accidentally falling back
+      // to some other legacy revision.
+      const resolvedSupportedProtocolVersions =
+        config.supportedProtocolVersions ??
+        this.defaultSupportedProtocolVersions ??
+        (!wantsStateless && resolvedProtocolVersion !== undefined
+          ? [resolvedProtocolVersion]
+          : undefined);
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
