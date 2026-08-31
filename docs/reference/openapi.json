@@ -14815,6 +14815,7 @@
               "executorEmitsNoSpans",
               "blockedByPolicy",
               "evaluatorError",
+              "providerError",
               "setupAborted",
               "connectFailed",
               "toolsListFailed",
